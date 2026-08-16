@@ -1,3 +1,62 @@
+// Микс стилей: 1-3 пресета склеиваются в один согласованный промпт.
+// Первый выбранный — ОСНОВА (структура, свет, техника исполнения), остальные
+// подмешивают палитру, фактуру и реквизит. Правила слияния прописаны явно,
+// чтобы генераторы не выдавали кашу из конфликтующих эстетик.
+function buildFusionStyle(labels) {
+  const chosen = STYLE_PRESETS.filter((p) => labels.includes(p.label));
+  if (!chosen.length) return "";
+  if (chosen.length === 1) return chosen[0].value;
+  const parts = chosen.map((p, i) =>
+    `STYLE ${i + 1}${i === 0 ? " (PRIMARY — defines rendering technique, lighting logic and composition)" : " (FLAVOR — contributes palette, textures, props and mood)"}: ${p.value}`
+  );
+  return (
+    "COHERENT STYLE FUSION of " + chosen.length + " aesthetics blended into ONE " +
+    "consistent look for the whole video. " + parts.join(" ") +
+    " FUSION RULES: single unified color palette per scene derived from all styles; " +
+    "rendering technique and level of realism come from STYLE 1 only (no style " +
+    "switching between shots); flavor styles influence wardrobe, props, set dressing, " +
+    "color accents and atmosphere; the result must look like one intentional art " +
+    "direction, not a collage. Vertical 9:16, no text, no watermarks."
+  );
+}
+
+function styleLabelsFromValue(value) {
+  // Восстановление выбора из сохранённого промпта: и одиночного, и фьюжна.
+  if (!value) return [];
+  const found = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.label);
+  return found;
+}
+
+function buildStylePicker(container, current, onChange) {
+  container.innerHTML = "";
+  const active = styleLabelsFromValue(current);
+  for (const p of STYLE_PRESETS) {
+    const label = document.createElement("label");
+    label.className = "style-chip" + (active.includes(p.label) ? " on" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = p.label;
+    cb.checked = active.includes(p.label);
+    cb.addEventListener("change", () => {
+      const checked = [...container.querySelectorAll("input:checked")].map((x) => x.value);
+      // максимум 3 стиля: лишний снимаем сразу
+      if (checked.length > 3) { cb.checked = false; return; }
+      label.classList.toggle("on", cb.checked);
+      onChange(buildFusionStyle([...container.querySelectorAll("input:checked")].map((x) => x.value)));
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(p.label));
+    container.appendChild(label);
+  }
+  // Кастомный стиль старого трека, не совпавший с пресетами
+  if (current && !active.length) {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.textContent = "(у трека свой кастомный стиль — выбор пресетов заменит его)";
+    container.appendChild(note);
+  }
+}
+
 // Стили клипов: выбор ТОЛЬКО из пресетов — каждый промпт полностью
 // срежиссирован (эстетика, свет, палитра, фактура), чтобы кадры внутри
 // трека не разъезжались. value уходит в промпты as-is.
@@ -203,7 +262,8 @@ function renderTrack(t) {
   card.dataset.id = t.id;
   $(".pos", card).textContent = `#${t.position}`;
   $(".t-title", card).value = t.title;
-  fillStyleSelect($(".t-style", card), t.style);
+  $(".t-style", card).value = t.style;
+  buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
   $(".t-comment", card).value = t.comment;
   $(".t-lyrics", card).value = t.lyrics;
   const audioEl = $(".t-audio", card);
@@ -221,6 +281,18 @@ function renderTrack(t) {
   $(".save-track", card).addEventListener("click", () => saveTrack(t.id, card));
 
   $(".add-scene", card).addEventListener("click", () => addManualScene(t.id));
+  const allBtn = $(".gen-all-frames", card);
+  const framesBusy = (t.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
+  const framesTodo = (t.scenes || []).filter((s) => !(s.image_url && s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
+  allBtn.disabled = framesBusy || !framesTodo;
+  allBtn.textContent = framesBusy ? "генерирую кадры…" : `Сгенерировать кадры всех сцен (${framesTodo})`;
+  $(".all-frames-note", card).textContent = framesBusy
+    ? "очередь идёт по одной сцене — можно закрыть вкладку, прогресс не потеряется"
+    : "";
+  allBtn.addEventListener("click", async () => {
+    await api(`/api/tracks/${t.id}/generate-all-frames`, { method: "POST" });
+    await loadProject();
+  });
   const genBtn = $(".gen-scenes", card);
   const busy = t.scenes_status === "queued" || t.scenes_status === "running";
   genBtn.disabled = busy || !project.story;
@@ -561,7 +633,10 @@ async function addManualScene(trackId) {
   await loadProject();
 }
 
-fillStyleSelect(document.querySelector('#add-track-form select[name=style]'), "");
+{
+  const form = document.querySelector("#add-track-form");
+  buildStylePicker(form.querySelector(".style-picker"), "", (v) => { form.style.value = v; });
+}
 
 (async () => {
   const me = await api("/api/me");

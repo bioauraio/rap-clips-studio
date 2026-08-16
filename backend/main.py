@@ -968,6 +968,50 @@ async def add_scene(track_id: int, request: Request, _=Depends(require_auth), db
     return scene_dict(scene)
 
 
+
+def _run_all_frames(track_id: int) -> None:
+    """Пакетная генерация: кадры ВСЕХ сцен трека подряд, одна за другой.
+
+    Последовательно, а не парал­лельно: шлюзы картинок обслуживают один
+    браузер, и залп из 25 сцен просто выстроится в ту же очередь, но с
+    таймаутами. Сцены с уже готовыми кадрами пропускаются."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        scene_ids = [s.id for s in track.scenes
+                     if not (s.image_filename and s.image_last_filename)
+                     and (s.image_prompt or "").strip()
+                     and not s.image_prompt.startswith("(готовый кадр")]
+        db.close()
+        log.info("пакет кадров трека %s: %s сцен", track_id, len(scene_ids))
+        for sid in scene_ids:
+            _run_scene_frames(sid)
+    except Exception as e:  # noqa: BLE001
+        log.warning("пакет кадров трека %s упал: %s", track_id, e)
+
+
+@app.post("/api/tracks/{track_id}/generate-all-frames")
+def generate_all_frames(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    track = db.get(Track, track_id)
+    if not track:
+        raise HTTPException(404, "трек не найден")
+    if not track.scenes:
+        raise HTTPException(400, "сначала сгенерируй раскадровку")
+    todo = 0
+    for s in track.scenes:
+        if not (s.image_filename and s.image_last_filename) and (s.image_prompt or "").strip()                 and not s.image_prompt.startswith("(готовый кадр"):
+            s.image_status = "queued"
+            todo += 1
+    db.commit()
+    if not todo:
+        raise HTTPException(400, "у всех сцен кадры уже готовы")
+    Thread(target=_run_all_frames, args=(track_id,), daemon=True).start()
+    return {"ok": True, "queued": todo}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "ts": int(time.time())}

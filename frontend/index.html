@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>RAP CLIPS STUDIO</title>
-<link rel="stylesheet" href="/style.css?v=8" />
+<link rel="stylesheet" href="/style.css?v=10" />
 </head>
 <body>
 <div id="login" class="login-screen hidden">
@@ -58,7 +58,9 @@
       <summary>+ добавить трек</summary>
       <form id="add-track-form" class="track-form">
         <input name="title" placeholder="Название трека" required />
-        <select name="style" required></select>
+        <label>Стили (1–3, первый выбранный — основа)</label>
+        <div class="style-picker"></div>
+        <input type="hidden" name="style" />
         <textarea name="lyrics" placeholder="Текст песни" rows="6"></textarea>
         <textarea name="comment" placeholder="Комментарий: что имел в виду, контекст" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
@@ -82,7 +84,8 @@
     <div class="track-body">
       <div class="track-left">
         <label>Стиль ролика</label>
-        <select class="t-style"></select>
+        <div class="t-style-picker style-picker"></div>
+        <input type="hidden" class="t-style" />
         <label>Аудио</label>
         <audio class="t-audio" controls></audio>
         <span class="t-duration"></span>
@@ -116,6 +119,8 @@
     <div class="scenes"></div>
     <div class="row">
       <button class="add-scene">+ добавить кадр вручную</button>
+      <button class="gen-all-frames primary">Сгенерировать кадры всех сцен</button>
+      <span class="all-frames-note muted"></span>
     </div>
 
     <div class="clip-block">
@@ -232,6 +237,6 @@
   </div>
 </template>
 
-<script src="/app.js?v=8"></script>
+<script src="/app.js?v=10"></script>
 </body>
 </html>

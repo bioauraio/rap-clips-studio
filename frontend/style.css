@@ -242,3 +242,18 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   border: 2px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
 }
+
+/* ────────── выбор/микс стилей ────────── */
+.style-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.style-chip {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  font-size: 12.5px; font-weight: 700; padding: 8px 12px; border-radius: 999px;
+  border: 2px solid #2d211a; background: var(--inset); box-shadow: 0 3px 0 #2d211a;
+  transition: transform .08s, box-shadow .08s, background .12s;
+  user-select: none;
+}
+.style-chip input { accent-color: var(--accent); width: auto; }
+.style-chip.on {
+  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+}
+.style-chip:active { transform: translateY(3px); box-shadow: 0 0 0 #2d211a; }
