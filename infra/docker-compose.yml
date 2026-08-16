@@ -1,0 +1,33 @@
+# rap-clips-studio — личный проект, файлы и деплой полностью изолированы от
+# /opt/bioaura-organism. Наружу порт не публикуется: локальный nginx
+# проксирует 127.0.0.1:8930 → clips.resetaura.io.
+#
+# Сеть organism_net — ЕДИНСТВЕННАЯ связь с организмом: это внешняя docker-сеть
+# bioaura-organism (172.18.0.0/16), к ней привязан ufw-допуск на agent-gateway
+# (Claude по подписке, порт 8765). Без неё контейнер не в разрешённой подсети
+# и шлюз недоступен даже теоретически — свой брандмауэр не трогаем.
+services:
+  rapclips:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: rapclips-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AGENT_GATEWAY_URL: http://172.18.0.1:8765
+    ports:
+      - "127.0.0.1:8930:8000"
+    volumes:
+      - rapclips_data:/data
+    networks:
+      - default
+      - organism_net
+
+networks:
+  organism_net:
+    external: true
+    name: bioaura-organism_default
+
+volumes:
+  rapclips_data:

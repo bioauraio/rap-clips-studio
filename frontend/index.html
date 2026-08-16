@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>rap clips studio</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="login" class="login-screen hidden">
+  <form id="login-form" class="login-box">
+    <h1>rap clips studio</h1>
+    <input id="login-password" type="password" placeholder="пароль" autofocus />
+    <button type="submit">войти</button>
+    <p id="login-error" class="error hidden"></p>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <input id="project-name" class="project-name" placeholder="название клипа" />
+    <button id="logout-btn" class="ghost">выйти</button>
+  </header>
+
+  <section class="panel">
+    <h2>Герой и сюжет</h2>
+    <label>Библия героя (внешность, характер — одна на все треки)</label>
+    <textarea id="character-bible" rows="4" placeholder="Оставь пустым — Claude придумает героя сам по первым трекам"></textarea>
+
+    <label>Сквозной сюжет</label>
+    <textarea id="story" rows="8" placeholder="Появится после генерации"></textarea>
+
+    <div class="row">
+      <button id="save-project-btn">Сохранить</button>
+      <button id="gen-story-btn" class="primary">Сгенерировать сюжет по всем трекам</button>
+      <span id="story-status" class="status"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Треки (перетаскивай порядком мыслей — вверх/вниз)</h2>
+    <div id="tracks"></div>
+    <details class="add-track">
+      <summary>+ добавить трек</summary>
+      <form id="add-track-form" class="track-form">
+        <input name="title" placeholder="Название трека" required />
+        <select name="style">
+          <option value="">стиль — впиши свой ниже</option>
+          <option value="3D Pixar-style animation">3D мультяшный (Pixar-style)</option>
+          <option value="Anime style, cinematic">Аниме</option>
+          <option value="Photorealistic cinematic">Реализм</option>
+          <option value="2D flat animation">2D плоская анимация</option>
+          <option value="Noir comic-book style">Нуарный комикс</option>
+        </select>
+        <input name="style_custom" placeholder="или впиши стиль своими словами" />
+        <textarea name="lyrics" placeholder="Текст песни" rows="6"></textarea>
+        <textarea name="comment" placeholder="Комментарий: что имел в виду, контекст" rows="3"></textarea>
+        <input name="audio" type="file" accept="audio/*" />
+        <button type="submit" class="primary">Добавить трек</button>
+      </form>
+    </details>
+  </section>
+</div>
+
+<template id="track-tpl">
+  <div class="track-card">
+    <div class="track-head">
+      <span class="pos"></span>
+      <input class="t-title" placeholder="Название" />
+      <div class="order-btns">
+        <button class="up ghost" title="выше">↑</button>
+        <button class="down ghost" title="ниже">↓</button>
+        <button class="del ghost danger" title="удалить">✕</button>
+      </div>
+    </div>
+    <div class="track-body">
+      <div class="track-left">
+        <label>Стиль ролика</label>
+        <input class="t-style" placeholder="напр. 3D Pixar-style animation" />
+        <label>Аудио</label>
+        <audio class="t-audio" controls></audio>
+        <span class="t-duration"></span>
+        <label>Комментарий</label>
+        <textarea class="t-comment" rows="3"></textarea>
+      </div>
+      <div class="track-right">
+        <label>Текст песни</label>
+        <textarea class="t-lyrics" rows="8"></textarea>
+      </div>
+    </div>
+    <div class="row">
+      <button class="save-track">Сохранить трек</button>
+      <button class="gen-scenes primary">Сгенерировать раскадровку</button>
+      <span class="scenes-status status"></span>
+    </div>
+    <div class="scenes"></div>
+  </div>
+</template>
+
+<template id="scene-tpl">
+  <div class="scene-card">
+    <div class="scene-head">
+      <button class="s-play ghost" title="прослушать этот кадр">▶</button>
+      <span class="s-pos"></span>
+      <span class="s-time"></span>
+      <input class="s-duration" type="number" min="2" max="12" title="секунд" />
+      <button class="s-del ghost danger" title="удалить кадр">✕</button>
+    </div>
+    <div class="shot-row">
+      <select class="s-shotsize">
+        <option value="">крупность —</option>
+        <option value="extreme close-up">деталь (extreme close-up)</option>
+        <option value="close-up">крупный (close-up)</option>
+        <option value="medium">средний (medium)</option>
+        <option value="wide">общий (wide)</option>
+        <option value="establishing">заявочный (establishing)</option>
+      </select>
+      <input class="s-camera" placeholder="движение камеры, напр. slow push-in" />
+    </div>
+    <label>Строка / момент лирики</label>
+    <input class="s-lyric" />
+    <label>Что в кадре (по-русски)</label>
+    <input class="s-note" />
+    <label>Промпт картинки (для генерации изображения)</label>
+    <textarea class="s-image" rows="3"></textarea>
+    <label>Промпт анимации кадра</label>
+    <textarea class="s-motion" rows="3"></textarea>
+    <button class="s-save">Сохранить кадр</button>
+  </div>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>

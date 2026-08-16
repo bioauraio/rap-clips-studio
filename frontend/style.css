@@ -1,0 +1,79 @@
+:root {
+  --bg: #14141a;
+  --panel: #1c1c24;
+  --card: #23232d;
+  --border: #33333f;
+  --text: #e8e8ee;
+  --muted: #9494a6;
+  --accent: #7c5cff;
+  --danger: #ff5c7c;
+  --ok: #5cff9c;
+  font-family: -apple-system, "Nunito", "Segoe UI", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+.hidden { display: none !important; }
+
+.login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-box { display: flex; flex-direction: column; gap: 12px; width: 280px; }
+.login-box h1 { font-size: 18px; text-align: center; margin-bottom: 8px; }
+.login-box input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); }
+.login-box button { padding: 10px; border-radius: 8px; border: none; background: var(--accent); color: white; font-weight: 700; cursor: pointer; }
+.error { color: var(--danger); font-size: 13px; }
+
+.app { max-width: 980px; margin: 0 auto; padding: 20px; }
+.topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.project-name { flex: 1; font-size: 20px; font-weight: 800; background: transparent; border: none; color: var(--text); padding: 6px; }
+.project-name:focus { outline: 1px solid var(--border); border-radius: 6px; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 18px; }
+.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; }
+
+label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+textarea, input[type=text], input[type=number], input:not([type]), select {
+  width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); font-family: inherit; font-size: 13.5px;
+}
+textarea { resize: vertical; }
+
+.row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+button { padding: 9px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: white; font-weight: 700; }
+button.ghost { background: transparent; border: none; color: var(--muted); padding: 4px 8px; }
+button.danger, button.ghost.danger { color: var(--danger); }
+button:disabled { opacity: .5; cursor: default; }
+.status { font-size: 12px; color: var(--muted); }
+.status.error { color: var(--danger); }
+.status.done { color: var(--ok); }
+
+.track-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.track-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.pos { font-weight: 800; color: var(--accent); width: 24px; }
+.t-title { flex: 1; font-weight: 700; font-size: 15px; }
+.order-btns { display: flex; gap: 2px; }
+.track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
+.t-audio { width: 100%; }
+.t-duration { font-size: 12px; color: var(--muted); }
+
+.add-track { margin-top: 10px; }
+.add-track summary { cursor: pointer; color: var(--accent); font-weight: 700; padding: 6px 0; }
+.track-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
+.scenes { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.scene-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; transition: border-color .15s, box-shadow .15s; }
+.scene-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.s-play { font-size: 13px; }
+.scene-head { display: flex; align-items: center; gap: 10px; }
+.s-pos { font-weight: 800; color: var(--accent); }
+.s-time { font-size: 12px; color: var(--muted); flex: 1; }
+.s-duration { width: 70px; }
+.shot-row { display: flex; gap: 8px; margin: 8px 0; }
+.shot-row select { width: auto; flex: 1; }
+.shot-row input { flex: 1; }
+/* Крупность плана — цветовая метка слева, чтобы монтажный ритм (чередование
+   крупных/дальних) было видно на глаз при пролистывании раскадровки. */
+.scene-card { border-left: 3px solid transparent; }
+.scene-card.shot-extreme-close-up, .scene-card.shot-close-up { border-left-color: #ff7c9c; }
+.scene-card.shot-medium { border-left-color: #ffd27c; }
+.scene-card.shot-wide, .scene-card.shot-establishing { border-left-color: #7cc8ff; }
