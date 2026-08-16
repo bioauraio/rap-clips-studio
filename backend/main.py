@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 import claude
 import mediagen
-from db import Project, Scene, SessionLocal, Track, init_db, now
+from db import Character, CharacterPhoto, Project, Scene, SessionLocal, Track, init_db, now
 
 log = logging.getLogger("rapclips")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rapclips] %(message)s")
@@ -105,10 +105,31 @@ async def me(request: Request):
 
 # ──────────────────────────── сериализация ───────────────────────────
 
+def character_dict(c: Character) -> dict:
+    return {
+        "id": c.id, "position": c.position, "name": c.name,
+        "description": c.description, "is_main": c.is_main,
+        "photos": [
+            {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in c.photos
+        ],
+    }
+
+
+def characters_payload(project: Project) -> list[dict]:
+    """Роспись персонажей для промптов Claude."""
+    return [
+        {"name": c.name, "description": c.description,
+         "is_main": c.is_main, "photos": len(c.photos)}
+        for c in sorted(project.characters, key=lambda x: x.position)
+        if c.name.strip()
+    ]
+
+
 def scene_dict(s: Scene) -> dict:
     return {
         "id": s.id, "position": s.position, "start_sec": s.start_sec,
         "duration_sec": s.duration_sec, "lyric_line": s.lyric_line,
+        "characters": s.characters,
         "shot_size": s.shot_size, "camera_move": s.camera_move,
         "image_prompt": s.image_prompt, "motion_prompt": s.motion_prompt,
         "shot_note": s.shot_note,
@@ -145,6 +166,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
 def project_dict(p: Project, with_scenes: bool = False) -> dict:
     return {
         "id": p.id, "name": p.name, "character_bible": p.character_bible,
+        "characters": [character_dict(c) for c in sorted(p.characters, key=lambda x: x.position)],
         "story": p.story, "story_status": p.story_status, "story_error": p.story_error,
         "tracks": [track_dict(t, with_scenes) for t in p.tracks],
     }
@@ -184,7 +206,7 @@ def _run_story_generation(project_id: int) -> None:
             for t in project.tracks
         ]
         import asyncio
-        result = asyncio.run(claude.generate_story(project.character_bible, tracks))
+        result = asyncio.run(claude.generate_story(project.character_bible, tracks, characters_payload(project)))
         project.character_bible = result.get("character_bible", project.character_bible)
         project.story = result.get("story", "")
         notes = {n.get("position"): n.get("note", "") for n in result.get("track_notes", [])}
@@ -334,6 +356,7 @@ def _run_scene_generation(track_id: int) -> None:
             track_note=track_note, title=track.title, lyrics=track.lyrics,
             comment=track.comment, style=track.style,
             duration_sec=track.audio_duration_sec or 180,
+            characters=characters_payload(project),
         ))
         for s in list(track.scenes):
             _remove_media(s.image_filename)
@@ -346,6 +369,7 @@ def _run_scene_generation(track_id: int) -> None:
             db.add(Scene(
                 track_id=track.id, position=i, start_sec=cursor, duration_sec=dur,
                 lyric_line=str(sc.get("lyric_line") or ""),
+                characters=", ".join(str(n) for n in (sc.get("characters") or []) if str(n).strip()),
                 shot_size=str(sc.get("shot_size") or ""),
                 camera_move=str(sc.get("camera_move") or ""),
                 image_prompt=str(sc.get("image_prompt") or ""),
@@ -402,9 +426,13 @@ def delete_scene(scene_id: int, _=Depends(require_auth), db: Session = Depends(d
     scene = db.get(Scene, scene_id)
     if not scene:
         raise HTTPException(404, "кадр не найден")
-    _remove_media(scene.image_filename)
-    _remove_media(scene.video_filename)
+    for f in (scene.image_filename, scene.image_last_filename,
+              scene.video_filename, scene.audio_filename):
+        _remove_media(f)
+    track = scene.track
     db.delete(scene)
+    db.flush()
+    _renumber_scenes(track)
     db.commit()
     return {"ok": True}
 
@@ -499,6 +527,29 @@ def generate_storyboard(track_id: int, _=Depends(require_auth), db: Session = De
     return {"ok": True}
 
 
+def _scene_characters(scene: Scene, project: Project) -> list[Character]:
+    """Персонажи, указанные у кадра (по именам, без регистра)."""
+    names = [n.strip().lower() for n in (scene.characters or "").split(",") if n.strip()]
+    if not names:
+        return []
+    by_name = {c.name.strip().lower(): c for c in project.characters if c.name.strip()}
+    return [by_name[n] for n in names if n in by_name]
+
+
+def _scene_reference_photo(scene: Scene, project: Project) -> str | None:
+    """Фото-моделька для генерации кадра: первый персонаж кадра, у которого
+    загружены фото (или главный герой, если персонажи кадра не указаны)."""
+    chars = _scene_characters(scene, project)
+    if not chars:
+        chars = [c for c in project.characters if c.is_main]
+    for c in chars:
+        if c.photos:
+            path = os.path.join(UPLOAD_DIR, c.photos[0].filename)
+            if os.path.exists(path):
+                return path
+    return None
+
+
 # ───────────────────── первый и последний кадр сцены ─────────────────────
 
 # Общий хвост промпта: и первый, и последний кадр рисуются с оглядкой на
@@ -513,8 +564,20 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
     parts = [
         base,
         f"Consistent single continuous music video, unified visual style: {track.style}.",
-        f"Main character reference (must stay identical across every shot): {project.character_bible}",
     ]
+    # Персонажи кадра: их канонические описания обязаны попасть в промпт
+    # (внешность НЕ переизобретается, меняется только стилистика подачи).
+    scene_chars = _scene_characters(scene, project)
+    if scene_chars:
+        for c in scene_chars:
+            parts.append(
+                f"Character '{c.name}' (must stay identical across every shot"
+                f" of the whole album): {c.description}"
+            )
+    else:
+        parts.append(
+            f"Main character reference (must stay identical across every shot): {project.character_bible}"
+        )
     if neighbours:
         parts.append("Adjacent shots for continuity: " + " | ".join(neighbours))
     parts.append("Vertical 9:16 composition, no text, no captions, no watermarks, no logos.")
@@ -532,10 +595,11 @@ def _run_scene_frames(scene_id: int) -> None:
         db.commit()
         track = scene.track
         import asyncio
+        reference = _scene_reference_photo(scene, track.project)
         first_data, first_mime = asyncio.run(
-            mediagen.generate_image(_frame_prompt(scene, track, "first")))
+            mediagen.generate_image(_frame_prompt(scene, track, "first"), reference_path=reference))
         last_data, last_mime = asyncio.run(
-            mediagen.generate_image(_frame_prompt(scene, track, "last")))
+            mediagen.generate_image(_frame_prompt(scene, track, "last"), reference_path=reference))
 
         old_first, old_last = scene.image_filename, scene.image_last_filename
         old_video, old_audio = scene.video_filename, scene.audio_filename
@@ -720,6 +784,136 @@ def get_media(filename: str, _=Depends(require_auth)):
 @app.get("/api/providers")
 def providers(_=Depends(require_auth)):
     return {"video": mediagen.video_providers(), "seedance": mediagen.seedance_available()}
+
+
+
+# ─────────────────────────── персонажи альбома ───────────────────────────
+
+@app.post("/api/characters")
+async def create_character(request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    body = await request.json()
+    project = get_or_create_project(db)
+    max_pos = max((c.position for c in project.characters), default=0)
+    ch = Character(
+        project_id=project.id, position=max_pos + 1,
+        name=str(body.get("name") or "Без имени"),
+        description=str(body.get("description") or ""),
+        is_main=bool(body.get("is_main")),
+    )
+    db.add(ch)
+    db.commit()
+    db.refresh(ch)
+    return character_dict(ch)
+
+
+@app.patch("/api/characters/{char_id}")
+async def update_character(char_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    ch = db.get(Character, char_id)
+    if not ch:
+        raise HTTPException(404, "персонаж не найден")
+    body = await request.json()
+    if "name" in body:
+        ch.name = str(body["name"])
+    if "description" in body:
+        ch.description = str(body["description"])
+    if "is_main" in body:
+        ch.is_main = bool(body["is_main"])
+        if ch.is_main:  # главный герой один
+            for other in ch.project.characters:
+                if other.id != ch.id:
+                    other.is_main = False
+    db.commit()
+    return character_dict(ch)
+
+
+@app.delete("/api/characters/{char_id}")
+def delete_character(char_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    ch = db.get(Character, char_id)
+    if not ch:
+        raise HTTPException(404, "персонаж не найден")
+    for ph in ch.photos:
+        _remove_media(ph.filename)
+    db.delete(ch)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/characters/{char_id}/photos")
+async def add_character_photo(char_id: int, photo: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
+    ch = db.get(Character, char_id)
+    if not ch:
+        raise HTTPException(404, "персонаж не найден")
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"char_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(await photo.read())
+    max_pos = max((p.position for p in ch.photos), default=0)
+    ph = CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname)
+    db.add(ph)
+    db.commit()
+    return character_dict(ch)
+
+
+@app.delete("/api/characters/photos/{photo_id}")
+def delete_character_photo(photo_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    ph = db.get(CharacterPhoto, photo_id)
+    if not ph:
+        raise HTTPException(404, "фото не найдено")
+    _remove_media(ph.filename)
+    db.delete(ph)
+    db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────── ручное добавление кадра ───────────────────────────
+
+def _renumber_scenes(track: Track) -> None:
+    """После вставки/удаления кадра: позиции подряд и честный таймлайн."""
+    cursor = 0
+    for i, s in enumerate(sorted(track.scenes, key=lambda x: (x.position, x.id)), start=1):
+        s.position = i
+        s.start_sec = cursor
+        cursor += s.duration_sec
+
+
+@app.post("/api/tracks/{track_id}/scenes")
+async def add_scene(track_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    """Ручной кадр. after_position: после какого кадра вставить (0 = в начало,
+    не передан = в конец)."""
+    track = db.get(Track, track_id)
+    if not track:
+        raise HTTPException(404, "трек не найден")
+    body = await request.json()
+    after = body.get("after_position")
+    max_pos = max((s.position for s in track.scenes), default=0)
+    after = max_pos if after is None else max(0, min(int(after), max_pos))
+    for s in track.scenes:
+        if s.position > after:
+            s.position += 1
+    scene = Scene(
+        track_id=track.id, position=after + 1,
+        duration_sec=max(2, min(12, int(body.get("duration_sec") or 5))),
+        lyric_line=str(body.get("lyric_line") or ""),
+        characters=str(body.get("characters") or ""),
+        shot_size=str(body.get("shot_size") or ""),
+        camera_move=str(body.get("camera_move") or ""),
+        shot_note=str(body.get("shot_note") or ""),
+        image_prompt=str(body.get("image_prompt") or ""),
+        image_prompt_last=str(body.get("image_prompt_last") or ""),
+        motion_prompt=str(body.get("motion_prompt") or ""),
+        video_provider="seedance" if mediagen.seedance_available() else "grok",
+    )
+    db.add(scene)
+    db.flush()
+    # ORM-коллекция track.scenes собрана ДО вставки — без expire пересчёт
+    # не увидит новый кадр и раздаст задвоенные позиции.
+    db.expire(track, ["scenes"])
+    _renumber_scenes(track)
+    db.commit()
+    db.refresh(scene)
+    return scene_dict(scene)
 
 
 @app.get("/api/health")

@@ -78,7 +78,21 @@ STORY_SYSTEM = """Ты — режиссёр и сценарист музыкал
 }"""
 
 
-async def generate_story(character_bible: str, tracks: list[dict]) -> dict:
+def _characters_block(characters: list[dict]) -> str:
+    """Роспись персонажей альбома для промптов: имя + характер/внешность."""
+    if not characters:
+        return ""
+    lines = ["ПЕРСОНАЖИ АЛЬБОМА (заведены владельцем; их имена используй ДОСЛОВНО,"
+             " их внешность из описания не переизобретай — только пересказывай"
+             " в стилистике конкретного трека):"]
+    for c in characters:
+        mark = " (ГЛАВНЫЙ ГЕРОЙ)" if c.get("is_main") else ""
+        photos = f" [есть {c['photos']} фото-модельки лица]" if c.get("photos") else ""
+        lines.append(f"- {c['name']}{mark}{photos}: {c['description']}")
+    return "\n".join(lines)
+
+
+async def generate_story(character_bible: str, tracks: list[dict], characters: list[dict] | None = None) -> dict:
     lines = []
     for t in tracks:
         lines.append(
@@ -87,8 +101,10 @@ async def generate_story(character_bible: str, tracks: list[dict]) -> dict:
             f"Комментарий автора: {t['comment'] or '(нет)'}\n"
             f"Текст песни:\n{t['lyrics'] or '(текст не загружен)'}\n"
         )
+    chars = _characters_block(characters or [])
     prompt = (
-        f"character_bible (может быть пустым): {character_bible or '(пусто — придумай героя)'}\n\n"
+        (chars + "\n\n" if chars else "")
+        + f"character_bible (может быть пустым): {character_bible or '(пусто — придумай героя)'}\n\n"
         + "\n".join(lines)
     )
     return await _ask(prompt, STORY_SYSTEM)
@@ -150,6 +166,11 @@ down (герой выглядит уязвимее). Выбор угла и дв
   для кадров-связок и establishing-планов это нормально).
 - "shot_note": по-русски, 1-2 фразы — что в кадре, что происходит, почему именно
   такая крупность/движение здесь.
+- "characters": массив ИМЁН персонажей, которые находятся в этом кадре (точно
+  как в списке персонажей альбома; пустой массив — если кадр без персонажей).
+  В image_prompt и image_prompt_last каждого кадра с персонажем ОБЯЗАТЕЛЬНО
+  входит полное описание внешности каждого присутствующего персонажа (из его
+  карточки), пересказанное в стилистике трека; имя персонажа тоже упоминается.
 - "image_prompt": промпт ПЕРВОГО кадра сцены (её начало), на английском. Начинай со
   стиля, затем крупность плана и ракурс, затем герой (если в кадре — его полное
   описание из character_bible), окружение, композиция, свет, настроение.
@@ -169,7 +190,7 @@ down (герой выглядит уязвимее). Выбор угла и дв
   правдоподобное. Без морфинга и резких трансформаций.
 
 Выведи СТРОГО один JSON без markdown-обёртки:
-{"scenes":[{"duration_sec":6,"shot_size":"close-up","camera_move":"slow push-in","lyric_line":"...","shot_note":"...","image_prompt":"...","image_prompt_last":"...","motion_prompt":"..."}]}"""
+{"scenes":[{"duration_sec":6,"shot_size":"close-up","camera_move":"slow push-in","lyric_line":"...","shot_note":"...","characters":["Имя"],"image_prompt":"...","image_prompt_last":"...","motion_prompt":"..."}]}"""
 
 
 STORYBOARD_SHEET_SYSTEM = """Ты пишешь промпт для генерации ЕДИНОГО ЛИСТА РАСКАДРОВКИ
@@ -212,10 +233,13 @@ async def generate_storyboard_sheet_prompt(
 async def generate_scenes(
     *, story: str, character_bible: str, track_note: str, title: str,
     lyrics: str, comment: str, style: str, duration_sec: int,
+    characters: list[dict] | None = None,
 ) -> dict:
     system = SCENES_SYSTEM.replace("{STYLE}", style or "стиль на твой выбор, подходящий треку")
+    chars = _characters_block(characters or [])
     prompt = (
-        f"Сюжет всего клипа:\n{story}\n\n"
+        (chars + "\n\n" if chars else "")
+        + f"Сюжет всего клипа:\n{story}\n\n"
         f"Библия героя:\n{character_bible}\n\n"
         f"Роль этого трека в сюжете:\n{track_note or '(нет заметки — определи сам по тексту песни)'}\n\n"
         f"Трек: {title}\nСтиль ролика: {style or '(на твой выбор)'}\n"

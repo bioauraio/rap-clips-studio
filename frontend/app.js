@@ -92,6 +92,10 @@ function render() {
   statusEl.className = "status " + st.cls;
   $("#gen-story-btn").disabled = project.story_status === "queued" || project.story_status === "running";
 
+  const charsBox = $("#characters");
+  charsBox.innerHTML = "";
+  (project.characters || []).forEach((c) => charsBox.appendChild(renderCharacter(c)));
+
   const container = $("#tracks");
   container.innerHTML = "";
   project.tracks.forEach((t) => container.appendChild(renderTrack(t)));
@@ -120,6 +124,7 @@ function renderTrack(t) {
   $(".del", card).addEventListener("click", () => deleteTrack(t.id));
   $(".save-track", card).addEventListener("click", () => saveTrack(t.id, card));
 
+  $(".add-scene", card).addEventListener("click", () => addManualScene(t.id));
   const genBtn = $(".gen-scenes", card);
   const busy = t.scenes_status === "queued" || t.scenes_status === "running";
   genBtn.disabled = busy || !project.story;
@@ -203,6 +208,7 @@ function renderScene(s, audioEl) {
   $(".s-shotsize", card).value = s.shot_size || "";
   $(".s-camera", card).value = s.camera_move || "";
   card.classList.add("shot-" + (s.shot_size || "").replace(/\s+/g, "-"));
+  $(".s-chars", card).value = s.characters || "";
   $(".s-lyric", card).value = s.lyric_line;
   $(".s-note", card).value = s.shot_note;
   $(".s-image", card).value = s.image_prompt;
@@ -347,6 +353,7 @@ async function saveScene(id, card) {
       duration_sec: Number($(".s-duration", card).value) || 6,
       shot_size: $(".s-shotsize", card).value,
       camera_move: $(".s-camera", card).value,
+      characters: $(".s-chars", card).value,
       lyric_line: $(".s-lyric", card).value,
       shot_note: $(".s-note", card).value,
       image_prompt: $(".s-image", card).value,
@@ -396,6 +403,68 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   form.reset();
   await loadProject();
 });
+
+function renderCharacter(c) {
+  const tpl = $("#char-tpl").content.cloneNode(true);
+  const card = tpl.querySelector(".char-card");
+  card.dataset.id = c.id;
+  $(".c-name", card).value = c.name;
+  $(".c-desc", card).value = c.description;
+  $(".c-main", card).checked = c.is_main;
+  const photosBox = $(".char-photos", card);
+  (c.photos || []).forEach((ph) => {
+    const wrap = document.createElement("div");
+    wrap.className = "char-photo";
+    const img = document.createElement("img");
+    img.src = ph.url + `?t=${ph.id}`;
+    const del = document.createElement("button");
+    del.className = "ghost danger char-photo-del";
+    del.textContent = "✕";
+    del.title = "удалить фото";
+    del.addEventListener("click", async () => {
+      await api(`/api/characters/photos/${ph.id}`, { method: "DELETE" });
+      await loadProject();
+    });
+    wrap.appendChild(img);
+    wrap.appendChild(del);
+    photosBox.appendChild(wrap);
+  });
+  $(".c-save", card).addEventListener("click", async () => {
+    await api(`/api/characters/${c.id}`, { method: "PATCH", body: {
+      name: $(".c-name", card).value,
+      description: $(".c-desc", card).value,
+      is_main: $(".c-main", card).checked,
+    }});
+    await loadProject();
+  });
+  $(".c-del", card).addEventListener("click", async () => {
+    if (!confirm(`Удалить персонажа «${c.name}» вместе с фото?`)) return;
+    await api(`/api/characters/${c.id}`, { method: "DELETE" });
+    await loadProject();
+  });
+  const input = $(".c-photo-input", card);
+  input.addEventListener("change", async () => {
+    for (const file of input.files) {
+      const fd = new FormData();
+      fd.append("photo", file);
+      await api(`/api/characters/${c.id}/photos`, { method: "POST", body: fd });
+    }
+    await loadProject();
+  });
+  return card;
+}
+
+$("#add-character-btn").addEventListener("click", async () => {
+  const name = prompt("Имя персонажа:");
+  if (!name) return;
+  await api("/api/characters", { method: "POST", body: { name } });
+  await loadProject();
+});
+
+async function addManualScene(trackId) {
+  await api(`/api/tracks/${trackId}/scenes`, { method: "POST", body: {} });
+  await loadProject();
+}
 
 (async () => {
   const me = await api("/api/me");

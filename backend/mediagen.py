@@ -75,29 +75,47 @@ def video_providers() -> list[str]:
 
 # ──────────────────────────── картинки ────────────────────────────
 
-async def generate_image(prompt: str) -> tuple[bytes, str]:
-    """ChatGPT-подписка → фолбэк Grok. Возвращает (байты, mime)."""
+async def generate_image(prompt: str, reference_path: str | None = None) -> tuple[bytes, str]:
+    """Генерация картинки кадра. Возвращает (байты, mime).
+
+    reference_path — фото-моделька персонажа (путь в контейнере). Референс
+    умеет только Grok-шлюз (кладём файл на вход его Imagine-композера), поэтому
+    с референсом порядок провайдеров разворачивается: Grok — первым, ChatGPT —
+    запасным (уже без модельки, чисто по словесному описанию)."""
     errors = []
-    try:
-        async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
-            r = await client.post(IMAGE_GATEWAY_URL, json={"prompt": prompt})
-        if r.status_code == 200:
-            data = r.json()
-            return base64.b64decode(data["image_b64"]), data.get("mime", "image/png")
-        errors.append(f"ChatGPT-шлюз {r.status_code}: {r.text[:150]}")
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"ChatGPT-шлюз недоступен: {e}")
 
-    try:
-        async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
-            r = await client.post(f"{GROK_GATEWAY_URL}/generate_image", json={"prompt": prompt})
-        if r.status_code == 200:
-            data = r.json()
-            return base64.b64decode(data["image_b64"]), data.get("mime", "image/jpeg")
-        errors.append(f"Grok-шлюз {r.status_code}: {r.text[:150]}")
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"Grok-шлюз недоступен: {e}")
+    async def _chatgpt() -> tuple[bytes, str] | None:
+        try:
+            async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
+                r = await client.post(IMAGE_GATEWAY_URL, json={"prompt": prompt})
+            if r.status_code == 200:
+                data = r.json()
+                return base64.b64decode(data["image_b64"]), data.get("mime", "image/png")
+            errors.append(f"ChatGPT-шлюз {r.status_code}: {r.text[:150]}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"ChatGPT-шлюз недоступен: {e}")
+        return None
 
+    async def _grok() -> tuple[bytes, str] | None:
+        payload: dict = {"prompt": prompt}
+        if reference_path and os.path.exists(reference_path):
+            payload["image_path"] = _host_path(reference_path)
+        try:
+            async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
+                r = await client.post(f"{GROK_GATEWAY_URL}/generate_image", json=payload)
+            if r.status_code == 200:
+                data = r.json()
+                return base64.b64decode(data["image_b64"]), data.get("mime", "image/jpeg")
+            errors.append(f"Grok-шлюз {r.status_code}: {r.text[:150]}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"Grok-шлюз недоступен: {e}")
+        return None
+
+    order = (_grok, _chatgpt) if reference_path else (_chatgpt, _grok)
+    for fn in order:
+        result = await fn()
+        if result:
+            return result
     raise MediaError(" / ".join(errors))
 
 

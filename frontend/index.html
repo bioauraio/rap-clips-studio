@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>RAP CLIPS STUDIO</title>
-<link rel="stylesheet" href="/style.css?v=4" />
+<link rel="stylesheet" href="/style.css?v=5" />
 </head>
 <body>
 <div id="login" class="login-screen hidden">
@@ -35,6 +35,16 @@
       <button id="save-project-btn">Сохранить</button>
       <button id="gen-story-btn" class="primary">Сгенерировать сюжет по всем трекам</button>
       <span id="story-status" class="status"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Персонажи альбома</h2>
+    <p class="muted" style="margin:0 0 10px">Имя + характер + фото-модельки. Распространяются на весь альбом:
+      в промптах кадров пишутся имена, внешность подтягивается всегда, меняется только стилистика под трек.</p>
+    <div id="characters"></div>
+    <div class="row">
+      <button id="add-character-btn">+ добавить персонажа</button>
     </div>
   </section>
 
@@ -110,6 +120,9 @@
     </div>
 
     <div class="scenes"></div>
+    <div class="row">
+      <button class="add-scene">+ добавить кадр вручную</button>
+    </div>
 
     <div class="clip-block">
       <div class="media-head">
@@ -123,6 +136,26 @@
         <button class="assemble primary">Собрать клип из утверждённых сцен</button>
         <a class="clip-download ghost hidden" download>скачать</a>
       </div>
+    </div>
+  </div>
+</template>
+
+<template id="char-tpl">
+  <div class="char-card">
+    <div class="char-head">
+      <input class="c-name" placeholder="Имя персонажа" />
+      <label class="approve-check c-main-label"><input type="checkbox" class="c-main" /> главный</label>
+      <button class="c-del ghost danger" title="удалить">✕</button>
+    </div>
+    <label>Характер и внешность (пойдёт в промпты дословно)</label>
+    <textarea class="c-desc" rows="3"></textarea>
+    <div class="char-photos"></div>
+    <div class="row">
+      <button class="c-save">Сохранить</button>
+      <label class="c-upload-label">
+        <input type="file" class="c-photo-input hidden" accept="image/*" multiple />
+        <span class="c-upload-btn">+ фото-моделька</span>
+      </label>
     </div>
   </div>
 </template>
@@ -147,6 +180,8 @@
       </select>
       <input class="s-camera" placeholder="движение камеры, напр. slow push-in" />
     </div>
+    <label>Персонажи в кадре (имена через запятую — модельки подтянутся сами)</label>
+    <input class="s-chars" placeholder="напр. Артём, Тень" />
     <label>Строка / момент лирики</label>
     <input class="s-lyric" />
     <label>Что в кадре (по-русски)</label>
@@ -203,6 +238,6 @@
   </div>
 </template>
 
-<script src="/app.js?v=4"></script>
+<script src="/app.js?v=5"></script>
 </body>
 </html>
