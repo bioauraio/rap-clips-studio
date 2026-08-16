@@ -18,6 +18,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
 import claude
+import mediagen
 from db import Project, Scene, SessionLocal, Track, init_db, now
 
 log = logging.getLogger("rapclips")
@@ -111,6 +112,12 @@ def scene_dict(s: Scene) -> dict:
         "shot_size": s.shot_size, "camera_move": s.camera_move,
         "image_prompt": s.image_prompt, "motion_prompt": s.motion_prompt,
         "shot_note": s.shot_note,
+        "image_url": f"/api/media/{s.image_filename}" if s.image_filename else "",
+        "image_status": s.image_status, "image_error": s.image_error,
+        "approved": s.approved,
+        "video_url": f"/api/media/{s.video_filename}" if s.video_filename else "",
+        "video_status": s.video_status, "video_error": s.video_error,
+        "video_provider": s.video_provider,
     }
 
 
@@ -268,6 +275,9 @@ def delete_track(track_id: int, _=Depends(require_auth), db: Session = Depends(d
         path = os.path.join(UPLOAD_DIR, track.audio_filename)
         if os.path.exists(path):
             os.remove(path)
+    for s in track.scenes:
+        _remove_media(s.image_filename)
+        _remove_media(s.video_filename)
     db.delete(track)
     db.commit()
     return {"ok": True}
@@ -318,6 +328,8 @@ def _run_scene_generation(track_id: int) -> None:
             duration_sec=track.audio_duration_sec or 180,
         ))
         for s in list(track.scenes):
+            _remove_media(s.image_filename)
+            _remove_media(s.video_filename)
             db.delete(s)
         db.flush()
         cursor = 0
@@ -380,9 +392,140 @@ def delete_scene(scene_id: int, _=Depends(require_auth), db: Session = Depends(d
     scene = db.get(Scene, scene_id)
     if not scene:
         raise HTTPException(404, "кадр не найден")
+    _remove_media(scene.image_filename)
+    _remove_media(scene.video_filename)
     db.delete(scene)
     db.commit()
     return {"ok": True}
+
+
+# ───────────────────────── картинка кадра → анимация ─────────────────────────
+
+def _remove_media(filename: str) -> None:
+    if not filename:
+        return
+    path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _mime_ext(mime: str) -> str:
+    return ".jpg" if "jpeg" in mime else ".png"
+
+
+def _run_image_generation(scene_id: int) -> None:
+    db = SessionLocal()
+    try:
+        scene = db.get(Scene, scene_id)
+        if not scene:
+            return
+        scene.image_status = "running"
+        scene.image_error = ""
+        db.commit()
+        import asyncio
+        data, mime = asyncio.run(mediagen.generate_image(scene.image_prompt))
+        old = scene.image_filename
+        fname = f"scene_{uuid.uuid4().hex}{_mime_ext(mime)}"
+        with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+            f.write(data)
+        scene.image_filename = fname
+        scene.image_status = "done"
+        # Новая картинка — старое утверждение и видео больше не относятся к ней.
+        scene.approved = False
+        old_video = scene.video_filename
+        scene.video_filename = ""
+        scene.video_status = ""
+        scene.video_error = ""
+        db.commit()
+        _remove_media(old)
+        _remove_media(old_video)
+        log.info("картинка кадра %s готова", scene_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        scene = db.get(Scene, scene_id)
+        if scene:
+            scene.image_status = "error"
+            scene.image_error = str(e)[:500]
+            db.commit()
+        log.warning("генерация картинки кадра %s упала: %s", scene_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/scenes/{scene_id}/generate-image")
+def generate_scene_image(scene_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    scene = db.get(Scene, scene_id)
+    if not scene:
+        raise HTTPException(404, "кадр не найден")
+    if not scene.image_prompt.strip():
+        raise HTTPException(400, "у кадра пуст промпт картинки")
+    scene.image_status = "queued"
+    db.commit()
+    Thread(target=_run_image_generation, args=(scene_id,), daemon=True).start()
+    return {"ok": True}
+
+
+def _run_video_generation(scene_id: int) -> None:
+    db = SessionLocal()
+    try:
+        scene = db.get(Scene, scene_id)
+        if not scene:
+            return
+        scene.video_status = "running"
+        scene.video_error = ""
+        db.commit()
+        image_path = os.path.join(UPLOAD_DIR, scene.image_filename)
+        import asyncio
+        fname = asyncio.run(mediagen.animate_scene(
+            scene.motion_prompt, image_path, provider=scene.video_provider,
+        ))
+        old_video = scene.video_filename
+        scene.video_filename = fname
+        scene.video_status = "done"
+        db.commit()
+        _remove_media(old_video)
+        log.info("видео кадра %s готово", scene_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        scene = db.get(Scene, scene_id)
+        if scene:
+            scene.video_status = "error"
+            scene.video_error = str(e)[:500]
+            db.commit()
+        log.warning("анимация кадра %s упала: %s", scene_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/scenes/{scene_id}/approve")
+async def approve_scene(scene_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    scene = db.get(Scene, scene_id)
+    if not scene:
+        raise HTTPException(404, "кадр не найден")
+    body = await request.json()
+    approved = bool(body.get("approved", True))
+    scene.approved = approved
+    if approved and not scene.image_filename:
+        raise HTTPException(400, "сначала сгенерируй картинку кадра")
+    db.commit()
+    if approved and scene.video_status not in ("queued", "running"):
+        scene.video_status = "queued"
+        db.commit()
+        Thread(target=_run_video_generation, args=(scene_id,), daemon=True).start()
+    return scene_dict(scene)
+
+
+@app.get("/api/media/{filename}")
+def get_media(filename: str, _=Depends(require_auth)):
+    path = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+    if not os.path.exists(path):
+        raise HTTPException(404, "файл не найден")
+    return FileResponse(path)
 
 
 @app.get("/api/health")

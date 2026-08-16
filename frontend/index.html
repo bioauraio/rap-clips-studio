@@ -127,6 +127,32 @@
     <label>Промпт анимации кадра</label>
     <textarea class="s-motion" rows="3"></textarea>
     <button class="s-save">Сохранить кадр</button>
+
+    <div class="media-row">
+      <div class="media-col">
+        <div class="media-head">
+          <span>Картинка</span>
+          <span class="s-image-status status"></span>
+        </div>
+        <div class="media-box s-image-box">
+          <img class="s-image-preview hidden" />
+        </div>
+        <button class="s-gen-image">Сгенерировать картинку</button>
+      </div>
+      <div class="media-col">
+        <div class="media-head">
+          <span>Видео (Grok)</span>
+          <span class="s-video-status status"></span>
+        </div>
+        <div class="media-box s-video-box">
+          <video class="s-video-preview hidden" controls loop></video>
+        </div>
+        <label class="approve-check">
+          <input type="checkbox" class="s-approve" />
+          Утвердить кадр — запускает анимацию Grok
+        </label>
+      </div>
+    </div>
   </div>
 </template>
 

@@ -48,11 +48,18 @@ async function loadProject() {
   schedulePoll();
 }
 
+function sceneBusy(s) {
+  return ["queued", "running"].includes(s.image_status) || ["queued", "running"].includes(s.video_status);
+}
+
 function schedulePoll() {
   clearTimeout(pollTimer);
   const busy =
     project.story_status === "queued" || project.story_status === "running" ||
-    project.tracks.some((t) => t.scenes_status === "queued" || t.scenes_status === "running");
+    project.tracks.some(
+      (t) => t.scenes_status === "queued" || t.scenes_status === "running" ||
+        (t.scenes || []).some(sceneBusy),
+    );
   if (busy) pollTimer = setTimeout(loadProject, 3000);
 }
 
@@ -165,6 +172,39 @@ function renderScene(s, audioEl) {
     audioEl.currentTime = s.start_sec;
     audioEl.play();
   });
+
+  // Картинка кадра.
+  const imgStatus = statusLabel(s.image_status, "готово");
+  const imgStatusEl = $(".s-image-status", card);
+  imgStatusEl.textContent = imgStatus.text;
+  imgStatusEl.className = "status " + imgStatus.cls;
+  const imgPreview = $(".s-image-preview", card);
+  if (s.image_url) {
+    imgPreview.src = s.image_url + `?t=${s.id}`;
+    imgPreview.classList.remove("hidden");
+  }
+  const genImgBtn = $(".s-gen-image", card);
+  const imgBusy = ["queued", "running"].includes(s.image_status);
+  genImgBtn.disabled = imgBusy;
+  genImgBtn.textContent = imgBusy ? "генерирую…" : s.image_url ? "Перегенерировать картинку" : "Сгенерировать картинку";
+  genImgBtn.addEventListener("click", () => genSceneImage(s.id));
+
+  // Видео кадра (утверждение).
+  const vidStatus = statusLabel(s.video_status, "готово");
+  const vidStatusEl = $(".s-video-status", card);
+  vidStatusEl.textContent = vidStatus.text;
+  vidStatusEl.className = "status " + vidStatus.cls;
+  const vidPreview = $(".s-video-preview", card);
+  if (s.video_url) {
+    vidPreview.src = s.video_url + `?t=${s.id}`;
+    vidPreview.classList.remove("hidden");
+  }
+  const approveBox = $(".s-approve", card);
+  approveBox.checked = s.approved;
+  approveBox.disabled = !s.image_url || ["queued", "running"].includes(s.video_status);
+  approveBox.title = s.image_url ? "" : "сначала сгенерируй картинку";
+  approveBox.addEventListener("change", () => approveScene(s.id, approveBox.checked));
+
   return card;
 }
 
@@ -235,6 +275,20 @@ async function saveScene(id, card) {
 async function deleteScene(id) {
   if (!confirm("Удалить кадр?")) return;
   await api(`/api/scenes/${id}`, { method: "DELETE" });
+  await loadProject();
+}
+
+async function genSceneImage(id) {
+  await api(`/api/scenes/${id}/generate-image`, { method: "POST" });
+  await loadProject();
+}
+
+async function approveScene(id, approved) {
+  try {
+    await api(`/api/scenes/${id}/approve`, { method: "POST", body: { approved } });
+  } catch (e) {
+    alert(e.message);
+  }
   await loadProject();
 }
 

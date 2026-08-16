@@ -16,10 +16,23 @@ services:
     env_file: .env
     environment:
       AGENT_GATEWAY_URL: http://172.18.0.1:8765
+      IMAGE_GATEWAY_URL: http://172.18.0.1:8766
+      GROK_GATEWAY_URL: http://172.18.0.1:8767
+      # Хостовый эквивалент bind-mount'а ./data ниже — Grok (процесс на хосте,
+      # не в докере) должен уметь ОТКРЫТЬ файл картинки по реальному пути.
+      HOST_DATA_DIR: /opt/rapclips/data
+      ORGANISM_UPLOADS_DIR: /organism-uploads
     ports:
       - "127.0.0.1:8930:8000"
     volumes:
-      - rapclips_data:/data
+      # Bind-mount АБСОЛЮТНЫМ путём (не именованный volume, не относительный!) —
+      # должен буква-в-букву совпадать с HOST_DATA_DIR: тот путь читает Grok,
+      # процесс на хосте, а не внутри этого контейнера.
+      - /opt/rapclips/data:/data
+      # ТОЛЬКО чтобы забрать готовое видео и тут же стереть его оттуда —
+      # Grok физически пишет mp4 в общий каталог организма (см. mediagen.py).
+      # Ничего своего сюда не пишем и не читаем, кроме этой очистки.
+      - /opt/bioaura-organism/matrix/data/uploads:/organism-uploads
     networks:
       - default
       - organism_net
@@ -28,6 +41,3 @@ networks:
   organism_net:
     external: true
     name: bioaura-organism_default
-
-volumes:
-  rapclips_data:

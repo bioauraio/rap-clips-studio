@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text, create_engine,
+    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -82,6 +82,21 @@ class Scene(Base):
     # Промпт анимации ЭТОГО кадра (self-contained, без ссылок на другие кадры).
     motion_prompt = Column(Text, nullable=False, default="")
     shot_note = Column(Text, nullable=False, default="")  # по-русски: что происходит
+
+    # Картинка кадра (ChatGPT-подписка → фолбэк Grok). Имя файла в /data/uploads.
+    image_filename = Column(String, nullable=False, default="")
+    image_status = Column(String, nullable=False, default="")  # '' | queued | running | error
+    image_error = Column(Text, nullable=False, default="")
+
+    # Утверждение картинки → запускает анимацию (см. mediagen.py).
+    approved = Column(Boolean, nullable=False, default=False)
+
+    # Видео кадра. provider — сейчас всегда grok, задел под Seedance.
+    video_filename = Column(String, nullable=False, default="")
+    video_status = Column(String, nullable=False, default="")  # '' | queued | running | error
+    video_error = Column(Text, nullable=False, default="")
+    video_provider = Column(String, nullable=False, default="grok")
+
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
