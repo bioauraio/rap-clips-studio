@@ -1,3 +1,61 @@
+// Стили клипов: выбор ТОЛЬКО из пресетов — каждый промпт полностью
+// срежиссирован (эстетика, свет, палитра, фактура), чтобы кадры внутри
+// трека не разъезжались. value уходит в промпты as-is.
+const STYLE_PRESETS = [
+  {
+    label: "Хаяо Миядзаки (ламповое аниме)",
+    value: "Hand-painted Studio Ghibli style anime inspired by Hayao Miyazaki films, vertical 9:16. Soft watercolor backgrounds with visible brush texture, lush painterly clouds and greenery, warm golden-hour sunlight or cozy lamp glow through windows. Gentle pleasant palette: warm cream, soft sky blue, grass green, sunset amber — nothing acidic, everything nostalgic and comforting. Characters drawn in classic 2D anime cel style with simple expressive faces, natural relaxed poses, wind gently moving hair and clothes. Quiet magical realism mood: dust motes in sunbeams, steam from food, fireflies, rustling leaves. Every frame feels like a warm memory — calm, humane, a little wistful. No harsh shadows, no neon, no 3D render look, no text."
+  },
+  {
+    label: "3D мультяшный (Pixar-style)",
+    value: "High-end 3D animated feature film style like Pixar and DreamWorks, vertical 9:16, ultra HD render. Rounded appealing character design with large expressive eyes, soft subsurface scattering skin, detailed hair and fabric simulation. Rich cinematic lighting: warm key light, colorful bounce light, gentle rim light separating character from background. Vibrant but tasteful saturated palette, shallow depth of field with creamy bokeh, subtle film grain. Polished storytelling composition, emotional facial expressions. No text, no watermark."
+  },
+  {
+    label: "Кинематографичное аниме (Синкай)",
+    value: "Modern cinematic anime film style inspired by Makoto Shinkai, vertical 9:16. Breathtaking hyper-detailed backgrounds: glowing skies with layered clouds, lens flares, glittering city lights, rain droplets catching light. Emotional color grading with luminous gradients — deep blues into warm oranges and pinks. Crisp 2D character animation with delicate lighting on hair and eyes. Dramatic sense of scale: vast skies over small human figures. Melancholic-hopeful atmosphere. No text, no watermark."
+  },
+  {
+    label: "Реализм (кино)",
+    value: "Photorealistic cinematic film still, vertical 9:16, shot on ARRI Alexa with anamorphic lenses. Natural skin texture and imperfections, real physical lighting: practical sources, soft window light or hard sun with true shadows. Film color grading with gentle teal-orange balance, subtle 35mm grain, shallow depth of field. Documentary-authentic staging: real locations, lived-in details, honest emotion on faces. No CGI look, no oversharpening, no text."
+  },
+  {
+    label: "2D плоская анимация",
+    value: "Bold flat 2D vector animation style, vertical 9:16. Clean geometric shapes, thick confident outlines, limited harmonious palette of 4-6 colors per scene, flat color fills with simple two-tone shading. Playful exaggerated proportions and snappy poses, minimal but expressive faces. Mid-century modern and contemporary motion-design influence: textured paper grain overlay, simple patterned backgrounds. Cheerful, graphic, poster-like compositions. No gradients overload, no 3D, no text."
+  },
+  {
+    label: "Нуарный комикс",
+    value: "Gritty noir graphic novel style like Sin City and Batman animated classics, vertical 9:16. High-contrast chiaroscuro: deep ink-black shadows swallowing half of every frame, stark white or single warm accent color (red neon, amber streetlight) cutting through darkness. Heavy dramatic hatching and ink texture, rain-slick streets reflecting light, cigarette smoke curling through venetian-blind shadows. Hard-boiled atmosphere: trench coats, brooding silhouettes, low camera angles. Monochrome with one accent color per scene. No text, no captions."
+  },
+  {
+    label: "Длинные бошки (аналоговый сюр 90-х)",
+    value: "1990s analog film street photography, scanned 35mm frame with heavy grain and slightly faded Kodak colors, candid documentary framing. Surreal characters with elongated non-human heads on long necks (ostrich-like, greyhound, pale alien with almond eyes, porcelain mannequin mask) on completely ordinary human bodies in baggy 90s streetwear: oversized denim jackets, loose white shirts, wide pants, chunky chains, plastic grocery bags, coffee cups. Deadpan poses, mundane everyday activities, nobody reacts to the surrealism. Locations: laundromats, convenience stores, crosswalks, chain-link fences, boxy 80s sedans, night streets with neon signage and wet asphalt reflections. Muted denim-blue palette with warm cream skin tones and red/neon accents, harsh daylight or direct flash by day, deep black sky and neon glow by night. Vertical 9:16, no text."
+  },
+];
+
+function fillStyleSelect(sel, current) {
+  sel.innerHTML = "";
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "— выбери стиль —";
+  sel.appendChild(empty);
+  let matched = false;
+  for (const p of STYLE_PRESETS) {
+    const o = document.createElement("option");
+    o.value = p.value;
+    o.textContent = p.label;
+    if (current && current === p.value) { o.selected = true; matched = true; }
+    sel.appendChild(o);
+  }
+  // Старый/кастомный стиль трека не теряем: показываем его отдельным пунктом.
+  if (current && !matched) {
+    const o = document.createElement("option");
+    o.value = current;
+    o.textContent = "(текущий стиль трека)";
+    o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -107,7 +165,7 @@ function renderTrack(t) {
   card.dataset.id = t.id;
   $(".pos", card).textContent = `#${t.position}`;
   $(".t-title", card).value = t.title;
-  $(".t-style", card).value = t.style;
+  fillStyleSelect($(".t-style", card), t.style);
   $(".t-comment", card).value = t.comment;
   $(".t-lyrics", card).value = t.lyrics;
   const audioEl = $(".t-audio", card);
@@ -394,8 +452,7 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   const form = e.target;
   const fd = new FormData();
   fd.append("title", form.title.value);
-  const style = form.style_custom.value.trim() || form.style.value;
-  fd.append("style", style);
+  fd.append("style", form.style.value);
   fd.append("lyrics", form.lyrics.value);
   fd.append("comment", form.comment.value);
   if (form.audio.files[0]) fd.append("audio", form.audio.files[0]);
@@ -465,6 +522,8 @@ async function addManualScene(trackId) {
   await api(`/api/tracks/${trackId}/scenes`, { method: "POST", body: {} });
   await loadProject();
 }
+
+fillStyleSelect(document.querySelector('#add-track-form select[name=style]'), "");
 
 (async () => {
   const me = await api("/api/me");
