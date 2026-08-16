@@ -1,11 +1,11 @@
 """Медиа-слой: картинки кадров, видео сцен, нарезка аудио, сборка клипа.
 
 Картинки — через host-шлюзы BIOAURA (ChatGPT/Grok по подписке), чистый HTTP.
-Видео — два провайдера:
-  * seedance — официальный Volcengine Ark (модель Seedance). Умеет ПЕРВЫЙ и
-    ПОСЛЕДНИЙ кадр: сцена интерполируется между двумя нашими картинками, что
-    даёт связный монтаж вместо отдельного «оживления» одного кадра. Нужен ключ
-    SEEDANCE_API_KEY; без него провайдер просто недоступен.
+Видео — два провайдера, оба по ПОДПИСКЕ (ключей не покупаем):
+  * seedance — host-шлюз с живым UI Dreamina (infra/seedance_gateway.py).
+    Умеет ПЕРВЫЙ и ПОСЛЕДНИЙ кадр: сцена интерполируется между двумя нашими
+    картинками, отсюда связный монтаж вместо отдельного «оживления» одного
+    кадра. Доступен, только когда в шлюзе живая сессия владельца.
   * grok — резервный, оживляет ТОЛЬКО первый кадр (последний игнорирует).
     Работает через ту же подписочную сессию, что и контент-конвейер, и пишет
     результат в общий каталог организма — забираем файл себе и стираем оттуда.
@@ -35,18 +35,10 @@ UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 
-# Seedance (Volcengine Ark). База и модель вынесены в env: если перейдём на
-# агрегатор (fal/replicate), меняется конфиг, а не код.
-SEEDANCE_API_KEY = os.environ.get("SEEDANCE_API_KEY", "").strip()
-SEEDANCE_BASE_URL = os.environ.get(
-    "SEEDANCE_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3",
-).rstrip("/")
-SEEDANCE_MODEL = os.environ.get("SEEDANCE_MODEL", "doubao-seedance-1-0-pro-250528")
-SEEDANCE_RESOLUTION = os.environ.get("SEEDANCE_RESOLUTION", "1080p")
-# Куда наши файлы видны Seedance: у Ark картинки передаются публичной ссылкой
-# либо data-URL. Мы шлём data-URL — приложение закрыто паролем, наружу ничего
-# публиковать не нужно.
-SEEDANCE_POLL_S = float(os.environ.get("SEEDANCE_POLL_S", "6"))
+# Seedance — по ПОДПИСКЕ через host-шлюз с живым веб-UI Dreamina
+# (infra/seedance_gateway.py), как Grok: ключей не покупаем, ходим сессией
+# владельца. Шлюз читает картинки с диска хоста и туда же кладёт mp4.
+SEEDANCE_GATEWAY_URL = os.environ.get("SEEDANCE_GATEWAY_URL", "http://172.18.0.1:8768")
 SEEDANCE_TIMEOUT_S = float(os.environ.get("SEEDANCE_TIMEOUT_S", "900"))
 
 IMAGE_TIMEOUT = httpx.Timeout(200.0, connect=15.0)
@@ -65,7 +57,12 @@ class MediaError(RuntimeError):
 
 
 def seedance_available() -> bool:
-    return bool(SEEDANCE_API_KEY)
+    """Провайдер доступен, только если шлюз поднят И в нём живая сессия."""
+    try:
+        r = httpx.get(f"{SEEDANCE_GATEWAY_URL}/health", timeout=4.0)
+        return r.status_code == 200 and bool((r.json() or {}).get("cookies"))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def video_providers() -> list[str]:
@@ -150,69 +147,37 @@ def _data_url(path: str) -> str:
 async def _animate_seedance(
     prompt: str, first_path: str, last_path: str | None, duration_sec: int,
 ) -> str:
-    """Seedance: интерполяция между первым и последним кадром сцены."""
-    content: list[dict] = [{
-        "type": "text",
-        # Параметры модели передаются суффиксами прямо в тексте промпта — так
-        # устроен Ark: --resolution/--dur/--ratio.
-        "text": f"{prompt} --resolution {SEEDANCE_RESOLUTION} --dur {duration_sec} --ratio 9:16",
-    }, {
-        "type": "image_url",
-        "image_url": {"url": _data_url(first_path)},
-        "role": "first_frame",
-    }]
+    """Шлюз драйвит UI Dreamina: первый кадр + последний кадр -> ролик."""
+    payload = {
+        "prompt": prompt,
+        "first_image_path": _host_path(first_path),
+        "duration_sec": duration_sec,
+    }
     if last_path and os.path.exists(last_path):
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": _data_url(last_path)},
-            "role": "last_frame",
-        })
+        payload["last_image_path"] = _host_path(last_path)
 
-    headers = {"Authorization": f"Bearer {SEEDANCE_API_KEY}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=VIDEO_TIMEOUT) as client:
-        r = await client.post(
-            f"{SEEDANCE_BASE_URL}/contents/generations/tasks",
-            headers=headers, json={"model": SEEDANCE_MODEL, "content": content},
-        )
-        if r.status_code not in (200, 201):
-            raise MediaError(f"Seedance создание задачи {r.status_code}: {r.text[:250]}")
-        task_id = (r.json() or {}).get("id")
-        if not task_id:
-            raise MediaError(f"Seedance не вернул id задачи: {r.text[:200]}")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(SEEDANCE_TIMEOUT_S, connect=15.0)) as client:
+        r = await client.post(f"{SEEDANCE_GATEWAY_URL}/animate", json=payload)
+    if r.status_code != 200:
+        raise MediaError(f"Seedance {r.status_code}: {r.text[:250]}")
+    data = r.json() or {}
+    fname = data.get("filename") or ""
+    if not fname:
+        raise MediaError(f"Seedance: пустой ответ шлюза ({str(data)[:200]})")
+    # Шлюз пишет прямо в наш каталог загрузок (SEEDANCE_OUT_DIR), копировать
+    # ничего не нужно — файл уже на месте.
+    if not os.path.exists(os.path.join(UPLOAD_DIR, fname)):
+        raise MediaError(f"Seedance отчитался об успехе, но файла нет: {fname}")
+    return fname
 
-        deadline = time.monotonic() + SEEDANCE_TIMEOUT_S
-        video_url = ""
-        while time.monotonic() < deadline:
-            await asyncio.sleep(SEEDANCE_POLL_S)
-            q = await client.get(
-                f"{SEEDANCE_BASE_URL}/contents/generations/tasks/{task_id}", headers=headers)
-            if q.status_code != 200:
-                continue
-            data = q.json() or {}
-            status = data.get("status")
-            if status in ("succeeded", "success"):
-                video_url = ((data.get("content") or {}).get("video_url")) or ""
-                if not video_url:
-                    raise MediaError(f"Seedance: задача готова, но без ссылки: {str(data)[:200]}")
-                break
-            if status in ("failed", "canceled"):
-                raise MediaError(f"Seedance: задача {status}: {str(data.get('error'))[:200]}")
-        if not video_url:
-            raise MediaError("Seedance: задача не завершилась за отведённое время")
 
-        out_name = f"scene_{uuid.uuid4().hex}.mp4"
-        out_path = os.path.join(UPLOAD_DIR, out_name)
-        async with client.stream("GET", video_url) as resp:
-            resp.raise_for_status()
-            with open(out_path, "wb") as f:
-                async for chunk in resp.aiter_bytes():
-                    f.write(chunk)
-    return out_name
+def _host_path(container_path: str) -> str:
+    """Путь внутри контейнера -> путь на хосте: шлюзы живут вне докера."""
+    return os.path.join(HOST_DATA_DIR, os.path.relpath(container_path, "/data"))
 
 
 async def _animate_grok(prompt: str, first_path: str) -> str:
-    rel = os.path.relpath(first_path, "/data")
-    host_image_path = os.path.join(HOST_DATA_DIR, rel)
+    host_image_path = _host_path(first_path)
     async with httpx.AsyncClient(timeout=VIDEO_TIMEOUT) as client:
         r = await client.post(f"{GROK_GATEWAY_URL}/animate", json={
             "prompt": prompt, "image_path": host_image_path,
@@ -248,7 +213,9 @@ async def animate_scene(
     """Возвращает имя mp4 в UPLOAD_DIR."""
     if provider == "seedance":
         if not seedance_available():
-            raise MediaError("Seedance не настроен: нет SEEDANCE_API_KEY в infra/.env")
+            raise MediaError(
+                "Seedance недоступен: шлюз не поднят или нет сессии "
+                "(запусти infra/seedance_login_local.py и войди в Dreamina)")
         return await _animate_seedance(prompt, first_path, last_path, duration_sec)
     if provider == "grok":
         return await _animate_grok(prompt, first_path)

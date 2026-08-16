@@ -1,0 +1,16 @@
+[Unit]
+Description=Seedance gateway (Dreamina по подписке, headless Playwright -> видео из 2 кадров)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=/root
+Environment=PATH=/usr/bin:/usr/local/bin:/bin
+EnvironmentFile=-/opt/claude-agents/openai/seedance_gateway.env
+ExecStart=/opt/claude-agents/social-browser-venv/bin/python /opt/claude-agents/seedance_gateway.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
