@@ -57,6 +57,18 @@ class Track(Base):
     audio_duration_sec = Column(Integer, nullable=False, default=0)
     scenes_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     scenes_error = Column(Text, nullable=False, default="")
+
+    # Раскадровка ОДНИМ листом: все кадры трека на одной картинке. Рисуется
+    # раньше покадровой генерации — по ней видно, целостно ли выглядит клип,
+    # и она же идёт контекстом в промпты отдельных кадров.
+    storyboard_filename = Column(String, nullable=False, default="")
+    storyboard_status = Column(String, nullable=False, default="")
+    storyboard_error = Column(Text, nullable=False, default="")
+
+    # Итоговый клип трека (склейка утверждённых сцен + дорожка).
+    clip_filename = Column(String, nullable=False, default="")
+    clip_status = Column(String, nullable=False, default="")
+    clip_error = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -83,19 +95,25 @@ class Scene(Base):
     motion_prompt = Column(Text, nullable=False, default="")
     shot_note = Column(Text, nullable=False, default="")  # по-русски: что происходит
 
-    # Картинка кадра (ChatGPT-подписка → фолбэк Grok). Имя файла в /data/uploads.
-    image_filename = Column(String, nullable=False, default="")
+    # ПЕРВЫЙ и ПОСЛЕДНИЙ кадр сцены (ChatGPT-подписка → фолбэк Grok), 4К.
+    # Seedance интерполирует видео между ними — отсюда связный монтаж.
+    image_filename = Column(String, nullable=False, default="")       # первый кадр
+    image_last_filename = Column(String, nullable=False, default="")  # последний кадр
     image_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     image_error = Column(Text, nullable=False, default="")
+    # Промпт последнего кадра — пишется Claude'ом вместе со сценарием.
+    image_prompt_last = Column(Text, nullable=False, default="")
 
-    # Утверждение картинки → запускает анимацию (см. mediagen.py).
+    # Отрезок трека под эту сцену (ffmpeg-нарезка при генерации видео).
+    audio_filename = Column(String, nullable=False, default="")
+
+    # Утверждение ВИДЕО (не картинки): утверждённые сцены идут в общий клип.
     approved = Column(Boolean, nullable=False, default=False)
 
-    # Видео кадра. provider — сейчас всегда grok, задел под Seedance.
     video_filename = Column(String, nullable=False, default="")
     video_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     video_error = Column(Text, nullable=False, default="")
-    video_provider = Column(String, nullable=False, default="grok")
+    video_provider = Column(String, nullable=False, default="seedance")
 
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)

@@ -94,7 +94,35 @@
       <button class="gen-scenes primary">Сгенерировать раскадровку</button>
       <span class="scenes-status status"></span>
     </div>
+
+    <div class="storyboard-block">
+      <div class="media-head">
+        <span>Лист раскадровки — весь клип одной картинкой</span>
+        <span class="sb-status status"></span>
+      </div>
+      <div class="storyboard-box">
+        <img class="sb-preview hidden" />
+      </div>
+      <div class="row">
+        <button class="gen-storyboard">Сгенерировать лист раскадровки</button>
+      </div>
+    </div>
+
     <div class="scenes"></div>
+
+    <div class="clip-block">
+      <div class="media-head">
+        <span class="clip-title">Готовый клип трека</span>
+        <span class="clip-status status"></span>
+      </div>
+      <div class="media-box clip-box">
+        <video class="clip-preview hidden" controls></video>
+      </div>
+      <div class="row">
+        <button class="assemble primary">Собрать клип из утверждённых сцен</button>
+        <a class="clip-download ghost hidden" download>скачать</a>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -128,30 +156,48 @@
     <textarea class="s-motion" rows="3"></textarea>
     <button class="s-save">Сохранить кадр</button>
 
-    <div class="media-row">
+    <label>Промпт последнего кадра сцены</label>
+    <textarea class="s-motion-last" rows="3"></textarea>
+
+    <div class="media-row three">
       <div class="media-col">
         <div class="media-head">
-          <span>Картинка</span>
+          <span>Первый кадр</span>
           <span class="s-image-status status"></span>
         </div>
-        <div class="media-box s-image-box">
+        <div class="media-box">
           <img class="s-image-preview hidden" />
         </div>
-        <button class="s-gen-image">Сгенерировать картинку</button>
+      </div>
+      <div class="media-col">
+        <div class="media-head"><span>Последний кадр</span></div>
+        <div class="media-box">
+          <img class="s-image-last-preview hidden" />
+        </div>
       </div>
       <div class="media-col">
         <div class="media-head">
-          <span>Видео (Grok)</span>
+          <span>Видео сцены</span>
           <span class="s-video-status status"></span>
         </div>
-        <div class="media-box s-video-box">
+        <div class="media-box">
           <video class="s-video-preview hidden" controls loop></video>
         </div>
-        <label class="approve-check">
-          <input type="checkbox" class="s-approve" />
-          Утвердить кадр — запускает анимацию Grok
-        </label>
       </div>
+    </div>
+
+    <div class="row">
+      <button class="s-gen-frames">Сгенерировать кадры (4К)</button>
+      <select class="s-provider"></select>
+      <button class="s-gen-video primary">Сгенерировать видео сцены</button>
+      <label class="approve-check">
+        <input type="checkbox" class="s-approve" />
+        Утвердить → в общий клип
+      </label>
+    </div>
+    <div class="scene-audio-row hidden">
+      <span class="muted">Отрезок трека под сцену:</span>
+      <audio class="s-audio" controls></audio>
     </div>
   </div>
 </template>

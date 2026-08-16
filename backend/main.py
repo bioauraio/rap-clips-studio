@@ -112,8 +112,11 @@ def scene_dict(s: Scene) -> dict:
         "shot_size": s.shot_size, "camera_move": s.camera_move,
         "image_prompt": s.image_prompt, "motion_prompt": s.motion_prompt,
         "shot_note": s.shot_note,
+        "image_prompt_last": s.image_prompt_last,
         "image_url": f"/api/media/{s.image_filename}" if s.image_filename else "",
+        "image_last_url": f"/api/media/{s.image_last_filename}" if s.image_last_filename else "",
         "image_status": s.image_status, "image_error": s.image_error,
+        "audio_url": f"/api/media/{s.audio_filename}" if s.audio_filename else "",
         "approved": s.approved,
         "video_url": f"/api/media/{s.video_filename}" if s.video_filename else "",
         "video_status": s.video_status, "video_error": s.video_error,
@@ -128,6 +131,11 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "audio_duration_sec": t.audio_duration_sec,
         "scenes_status": t.scenes_status, "scenes_error": t.scenes_error,
         "scenes_count": len(t.scenes),
+        "approved_count": sum(1 for s in t.scenes if s.approved),
+        "storyboard_url": f"/api/media/{t.storyboard_filename}" if t.storyboard_filename else "",
+        "storyboard_status": t.storyboard_status, "storyboard_error": t.storyboard_error,
+        "clip_url": f"/api/media/{t.clip_filename}" if t.clip_filename else "",
+        "clip_status": t.clip_status, "clip_error": t.clip_error,
     }
     if with_scenes:
         d["scenes"] = [scene_dict(s) for s in t.scenes]
@@ -341,8 +349,10 @@ def _run_scene_generation(track_id: int) -> None:
                 shot_size=str(sc.get("shot_size") or ""),
                 camera_move=str(sc.get("camera_move") or ""),
                 image_prompt=str(sc.get("image_prompt") or ""),
+                image_prompt_last=str(sc.get("image_prompt_last") or ""),
                 motion_prompt=str(sc.get("motion_prompt") or ""),
                 shot_note=str(sc.get("shot_note") or ""),
+                video_provider="seedance" if mediagen.seedance_available() else "grok",
             ))
             cursor += dur
         track.scenes_status = "done"
@@ -398,8 +408,7 @@ def delete_scene(scene_id: int, _=Depends(require_auth), db: Session = Depends(d
     db.commit()
     return {"ok": True}
 
-
-# ───────────────────────── картинка кадра → анимация ─────────────────────────
+# ───────── лист раскадровки → кадры сцены → видео → сборка клипа ─────────
 
 def _remove_media(filename: str) -> None:
     if not filename:
@@ -416,7 +425,103 @@ def _mime_ext(mime: str) -> str:
     return ".jpg" if "jpeg" in mime else ".png"
 
 
-def _run_image_generation(scene_id: int) -> None:
+def _save_image(data: bytes, mime: str, *, upscale: bool = True) -> str:
+    fname = f"scene_{uuid.uuid4().hex}{_mime_ext(mime)}"
+    path = os.path.join(UPLOAD_DIR, fname)
+    with open(path, "wb") as f:
+        f.write(data)
+    if upscale:
+        mediagen.upscale_to_4k(path)
+    return fname
+
+
+def _track_audio_path(track: Track) -> str | None:
+    if not track.audio_filename:
+        return None
+    return os.path.join(UPLOAD_DIR, track.audio_filename)
+
+
+# ─────────────────────────── лист раскадровки ───────────────────────────
+
+def _run_storyboard(track_id: int) -> None:
+    """Весь трек ОДНОЙ картинкой-сеткой: проверка целостности до покадровой
+    отрисовки. Лист потом идёт контекстом в промпты отдельных кадров."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        track.storyboard_status = "running"
+        track.storyboard_error = ""
+        db.commit()
+        scenes = [
+            {"position": s.position, "shot_size": s.shot_size, "shot_note": s.shot_note}
+            for s in track.scenes
+        ]
+        import asyncio
+        built = asyncio.run(claude.generate_storyboard_sheet_prompt(
+            style=track.style, character_bible=track.project.character_bible, scenes=scenes,
+        ))
+        prompt = built.get("prompt") or ""
+        if not prompt:
+            raise RuntimeError("Claude не вернул промпт листа раскадровки")
+        data, mime = asyncio.run(mediagen.generate_image(prompt))
+        old = track.storyboard_filename
+        # Лист смотрят целиком, апскейл до 4К ему не нужен.
+        track.storyboard_filename = _save_image(data, mime, upscale=False)
+        track.storyboard_status = "done"
+        db.commit()
+        _remove_media(old)
+        log.info("лист раскадровки трека %s готов", track_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        track = db.get(Track, track_id)
+        if track:
+            track.storyboard_status = "error"
+            track.storyboard_error = str(e)[:500]
+            db.commit()
+        log.warning("лист раскадровки трека %s упал: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/generate-storyboard")
+def generate_storyboard(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    track = db.get(Track, track_id)
+    if not track:
+        raise HTTPException(404, "трек не найден")
+    if not track.scenes:
+        raise HTTPException(400, "сначала сгенерируй раскадровку трека")
+    track.storyboard_status = "queued"
+    db.commit()
+    Thread(target=_run_storyboard, args=(track_id,), daemon=True).start()
+    return {"ok": True}
+
+
+# ───────────────────── первый и последний кадр сцены ─────────────────────
+
+# Общий хвост промпта: и первый, и последний кадр рисуются с оглядкой на
+# соседей и на весь клип — иначе сцены выглядят как набор открыток.
+def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
+    project = track.project
+    neighbours = []
+    for s in track.scenes:
+        if abs(s.position - scene.position) <= 1 and s.id != scene.id:
+            neighbours.append(f"{s.position}. {s.shot_note}")
+    base = scene.image_prompt if which == "first" else (scene.image_prompt_last or scene.image_prompt)
+    parts = [
+        base,
+        f"Consistent single continuous music video, unified visual style: {track.style}.",
+        f"Main character reference (must stay identical across every shot): {project.character_bible}",
+    ]
+    if neighbours:
+        parts.append("Adjacent shots for continuity: " + " | ".join(neighbours))
+    parts.append("Vertical 9:16 composition, no text, no captions, no watermarks, no logos.")
+    return "\n".join(p for p in parts if p.strip())
+
+
+def _run_scene_frames(scene_id: int) -> None:
     db = SessionLocal()
     try:
         scene = db.get(Scene, scene_id)
@@ -425,24 +530,28 @@ def _run_image_generation(scene_id: int) -> None:
         scene.image_status = "running"
         scene.image_error = ""
         db.commit()
+        track = scene.track
         import asyncio
-        data, mime = asyncio.run(mediagen.generate_image(scene.image_prompt))
-        old = scene.image_filename
-        fname = f"scene_{uuid.uuid4().hex}{_mime_ext(mime)}"
-        with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
-            f.write(data)
-        scene.image_filename = fname
+        first_data, first_mime = asyncio.run(
+            mediagen.generate_image(_frame_prompt(scene, track, "first")))
+        last_data, last_mime = asyncio.run(
+            mediagen.generate_image(_frame_prompt(scene, track, "last")))
+
+        old_first, old_last = scene.image_filename, scene.image_last_filename
+        old_video, old_audio = scene.video_filename, scene.audio_filename
+        scene.image_filename = _save_image(first_data, first_mime)
+        scene.image_last_filename = _save_image(last_data, last_mime)
         scene.image_status = "done"
-        # Новая картинка — старое утверждение и видео больше не относятся к ней.
+        # Кадры переснялись — старое видео и утверждение к ним не относятся.
         scene.approved = False
-        old_video = scene.video_filename
         scene.video_filename = ""
         scene.video_status = ""
         scene.video_error = ""
+        scene.audio_filename = ""
         db.commit()
-        _remove_media(old)
-        _remove_media(old_video)
-        log.info("картинка кадра %s готова", scene_id)
+        for f in (old_first, old_last, old_video, old_audio):
+            _remove_media(f)
+        log.info("кадры сцены %s готовы", scene_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
         scene = db.get(Scene, scene_id)
@@ -450,26 +559,28 @@ def _run_image_generation(scene_id: int) -> None:
             scene.image_status = "error"
             scene.image_error = str(e)[:500]
             db.commit()
-        log.warning("генерация картинки кадра %s упала: %s", scene_id, e)
+        log.warning("генерация кадров сцены %s упала: %s", scene_id, e)
     finally:
         db.close()
 
 
-@app.post("/api/scenes/{scene_id}/generate-image")
-def generate_scene_image(scene_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+@app.post("/api/scenes/{scene_id}/generate-frames")
+def generate_scene_frames(scene_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
     from threading import Thread
     scene = db.get(Scene, scene_id)
     if not scene:
         raise HTTPException(404, "кадр не найден")
     if not scene.image_prompt.strip():
-        raise HTTPException(400, "у кадра пуст промпт картинки")
+        raise HTTPException(400, "у сцены пуст промпт первого кадра")
     scene.image_status = "queued"
     db.commit()
-    Thread(target=_run_image_generation, args=(scene_id,), daemon=True).start()
+    Thread(target=_run_scene_frames, args=(scene_id,), daemon=True).start()
     return {"ok": True}
 
 
-def _run_video_generation(scene_id: int) -> None:
+# ───────────────── видео сцены + отрезок трека под неё ─────────────────
+
+def _run_scene_video(scene_id: int) -> None:
     db = SessionLocal()
     try:
         scene = db.get(Scene, scene_id)
@@ -478,17 +589,35 @@ def _run_video_generation(scene_id: int) -> None:
         scene.video_status = "running"
         scene.video_error = ""
         db.commit()
-        image_path = os.path.join(UPLOAD_DIR, scene.image_filename)
+        track = scene.track
+        first_path = os.path.join(UPLOAD_DIR, scene.image_filename)
+        last_path = (
+            os.path.join(UPLOAD_DIR, scene.image_last_filename)
+            if scene.image_last_filename else None
+        )
         import asyncio
         fname = asyncio.run(mediagen.animate_scene(
-            scene.motion_prompt, image_path, provider=scene.video_provider,
+            prompt=scene.motion_prompt, first_path=first_path, last_path=last_path,
+            duration_sec=scene.duration_sec, provider=scene.video_provider,
         ))
         old_video = scene.video_filename
         scene.video_filename = fname
         scene.video_status = "done"
+
+        # Отрезок трека ровно под эту сцену — слушаем видео с его музыкой.
+        old_audio = scene.audio_filename
+        audio_src = _track_audio_path(track)
+        if audio_src:
+            try:
+                scene.audio_filename = mediagen.slice_audio(
+                    audio_src, scene.start_sec, scene.duration_sec)
+            except Exception as e:  # noqa: BLE001
+                log.warning("нарезка аудио сцены %s не удалась: %s", scene_id, e)
+                old_audio = ""  # старый отрезок не трогаем, если новый не вышел
         db.commit()
         _remove_media(old_video)
-        log.info("видео кадра %s готово", scene_id)
+        _remove_media(old_audio)
+        log.info("видео сцены %s готово (%s)", scene_id, scene.video_provider)
     except Exception as e:  # noqa: BLE001
         db.rollback()
         scene = db.get(Scene, scene_id)
@@ -496,28 +625,88 @@ def _run_video_generation(scene_id: int) -> None:
             scene.video_status = "error"
             scene.video_error = str(e)[:500]
             db.commit()
-        log.warning("анимация кадра %s упала: %s", scene_id, e)
+        log.warning("видео сцены %s упало: %s", scene_id, e)
     finally:
         db.close()
 
 
+@app.post("/api/scenes/{scene_id}/generate-video")
+async def generate_scene_video(scene_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    scene = db.get(Scene, scene_id)
+    if not scene:
+        raise HTTPException(404, "кадр не найден")
+    if not scene.image_filename:
+        raise HTTPException(400, "сначала сгенерируй кадры сцены")
+    body = await request.json() if await request.body() else {}
+    provider = str(body.get("provider") or scene.video_provider or "seedance")
+    if provider not in mediagen.video_providers():
+        raise HTTPException(400, f"провайдер {provider} недоступен: {mediagen.video_providers()}")
+    scene.video_provider = provider
+    scene.video_status = "queued"
+    db.commit()
+    Thread(target=_run_scene_video, args=(scene_id,), daemon=True).start()
+    return {"ok": True}
+
+
 @app.post("/api/scenes/{scene_id}/approve")
 async def approve_scene(scene_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
-    from threading import Thread
+    """Утверждение ВИДЕО сцены: утверждённые идут в общий клип трека."""
     scene = db.get(Scene, scene_id)
     if not scene:
         raise HTTPException(404, "кадр не найден")
     body = await request.json()
     approved = bool(body.get("approved", True))
+    if approved and not scene.video_filename:
+        raise HTTPException(400, "сначала сгенерируй видео сцены")
     scene.approved = approved
-    if approved and not scene.image_filename:
-        raise HTTPException(400, "сначала сгенерируй картинку кадра")
     db.commit()
-    if approved and scene.video_status not in ("queued", "running"):
-        scene.video_status = "queued"
-        db.commit()
-        Thread(target=_run_video_generation, args=(scene_id,), daemon=True).start()
     return scene_dict(scene)
+
+
+# ───────────────────────── сборка клипа трека ─────────────────────────
+
+def _run_assemble(track_id: int) -> None:
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        track.clip_status = "running"
+        track.clip_error = ""
+        db.commit()
+        videos = [s.video_filename for s in track.scenes if s.approved and s.video_filename]
+        old = track.clip_filename
+        track.clip_filename = mediagen.assemble_clip(videos, _track_audio_path(track))
+        track.clip_status = "done"
+        db.commit()
+        _remove_media(old)
+        log.info("клип трека %s собран из %s сцен", track_id, len(videos))
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        track = db.get(Track, track_id)
+        if track:
+            track.clip_status = "error"
+            track.clip_error = str(e)[:500]
+            db.commit()
+        log.warning("сборка клипа трека %s упала: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/assemble")
+def assemble_track_clip(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    track = db.get(Track, track_id)
+    if not track:
+        raise HTTPException(404, "трек не найден")
+    approved = [s for s in track.scenes if s.approved and s.video_filename]
+    if not approved:
+        raise HTTPException(400, "нет утверждённых сцен с видео")
+    track.clip_status = "queued"
+    db.commit()
+    Thread(target=_run_assemble, args=(track_id,), daemon=True).start()
+    return {"ok": True, "scenes": len(approved)}
 
 
 @app.get("/api/media/{filename}")
@@ -526,6 +715,11 @@ def get_media(filename: str, _=Depends(require_auth)):
     if not os.path.exists(path):
         raise HTTPException(404, "файл не найден")
     return FileResponse(path)
+
+
+@app.get("/api/providers")
+def providers(_=Depends(require_auth)):
+    return {"video": mediagen.video_providers(), "seedance": mediagen.seedance_available()}
 
 
 @app.get("/api/health")

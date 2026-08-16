@@ -40,10 +40,14 @@ $("#logout-btn").addEventListener("click", async () => {
 });
 
 let project = null;
+let providers = { video: ["grok"], seedance: false };
 let pollTimer = null;
 
 async function loadProject() {
   project = await api("/api/project");
+  if (!providers.loaded) {
+    providers = { ...(await api("/api/providers")), loaded: true };
+  }
   render();
   schedulePoll();
 }
@@ -57,7 +61,9 @@ function schedulePoll() {
   const busy =
     project.story_status === "queued" || project.story_status === "running" ||
     project.tracks.some(
-      (t) => t.scenes_status === "queued" || t.scenes_status === "running" ||
+      (t) => ["queued", "running"].includes(t.scenes_status) ||
+        ["queued", "running"].includes(t.storyboard_status) ||
+        ["queued", "running"].includes(t.clip_status) ||
         (t.scenes || []).some(sceneBusy),
     );
   if (busy) pollTimer = setTimeout(loadProject, 3000);
@@ -124,8 +130,46 @@ function renderTrack(t) {
   stEl.textContent = st.text || (t.scenes_count ? `кадров: ${t.scenes_count}` : "");
   stEl.className = "status " + st.cls;
 
+  // Лист раскадровки: весь клип одной картинкой — до покадровой отрисовки.
+  const sbStatus = statusLabel(t.storyboard_status, "готово");
+  const sbStatusEl = $(".sb-status", card);
+  sbStatusEl.textContent = sbStatus.text;
+  sbStatusEl.className = "status " + sbStatus.cls;
+  if (t.storyboard_url) {
+    const img = $(".sb-preview", card);
+    img.src = t.storyboard_url;
+    img.classList.remove("hidden");
+  }
+  const sbBtn = $(".gen-storyboard", card);
+  const sbBusy = ["queued", "running"].includes(t.storyboard_status);
+  sbBtn.disabled = sbBusy || !t.scenes_count;
+  sbBtn.textContent = sbBusy ? "рисую лист…" : t.storyboard_url ? "Перерисовать лист" : "Сгенерировать лист раскадровки";
+  sbBtn.addEventListener("click", () => genStoryboard(t.id));
+
   const scenesBox = $(".scenes", card);
   (t.scenes || []).forEach((s) => scenesBox.appendChild(renderScene(s, audioEl)));
+
+  // Сборка готового клипа из утверждённых сцен.
+  const clipStatus = statusLabel(t.clip_status, "клип готов");
+  const clipStatusEl = $(".clip-status", card);
+  clipStatusEl.textContent = clipStatus.text;
+  clipStatusEl.className = "status " + clipStatus.cls;
+  $(".clip-title", card).textContent =
+    `Готовый клип трека — утверждено сцен: ${t.approved_count}/${t.scenes_count}`;
+  if (t.clip_url) {
+    const v = $(".clip-preview", card);
+    v.src = t.clip_url;
+    v.classList.remove("hidden");
+    const dl = $(".clip-download", card);
+    dl.href = t.clip_url;
+    dl.classList.remove("hidden");
+  }
+  const asmBtn = $(".assemble", card);
+  const asmBusy = ["queued", "running"].includes(t.clip_status);
+  asmBtn.disabled = asmBusy || !t.approved_count;
+  asmBtn.title = t.approved_count ? "" : "утверди хотя бы одну сцену";
+  asmBtn.textContent = asmBusy ? "собираю клип…" : "Собрать клип из утверждённых сцен";
+  asmBtn.addEventListener("click", () => assembleClip(t.id));
 
   return card;
 }
@@ -173,36 +217,62 @@ function renderScene(s, audioEl) {
     audioEl.play();
   });
 
-  // Картинка кадра.
+  $(".s-motion-last", card).value = s.image_prompt_last || "";
+
+  // Кадры сцены: первый и последний (Seedance интерполирует между ними).
   const imgStatus = statusLabel(s.image_status, "готово");
   const imgStatusEl = $(".s-image-status", card);
   imgStatusEl.textContent = imgStatus.text;
   imgStatusEl.className = "status " + imgStatus.cls;
-  const imgPreview = $(".s-image-preview", card);
   if (s.image_url) {
-    imgPreview.src = s.image_url + `?t=${s.id}`;
-    imgPreview.classList.remove("hidden");
+    const p = $(".s-image-preview", card);
+    p.src = s.image_url; p.classList.remove("hidden");
   }
-  const genImgBtn = $(".s-gen-image", card);
+  if (s.image_last_url) {
+    const p = $(".s-image-last-preview", card);
+    p.src = s.image_last_url; p.classList.remove("hidden");
+  }
+  const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
-  genImgBtn.disabled = imgBusy;
-  genImgBtn.textContent = imgBusy ? "генерирую…" : s.image_url ? "Перегенерировать картинку" : "Сгенерировать картинку";
-  genImgBtn.addEventListener("click", () => genSceneImage(s.id));
+  framesBtn.disabled = imgBusy;
+  framesBtn.textContent = imgBusy ? "рисую кадры…" : s.image_url ? "Перегенерировать кадры" : "Сгенерировать кадры (4К)";
+  framesBtn.addEventListener("click", () => genSceneFrames(s.id));
 
-  // Видео кадра (утверждение).
+  // Видео сцены + отрезок трека под неё.
   const vidStatus = statusLabel(s.video_status, "готово");
   const vidStatusEl = $(".s-video-status", card);
   vidStatusEl.textContent = vidStatus.text;
   vidStatusEl.className = "status " + vidStatus.cls;
-  const vidPreview = $(".s-video-preview", card);
   if (s.video_url) {
-    vidPreview.src = s.video_url + `?t=${s.id}`;
-    vidPreview.classList.remove("hidden");
+    const v = $(".s-video-preview", card);
+    v.src = s.video_url; v.classList.remove("hidden");
   }
+  const provSel = $(".s-provider", card);
+  provSel.innerHTML = "";
+  (providers.video || ["grok"]).forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p === "seedance" ? "Seedance (2 кадра)" : "Grok (1 кадр)";
+    provSel.appendChild(opt);
+  });
+  provSel.value = s.video_provider;
+
+  const vidBtn = $(".s-gen-video", card);
+  const vidBusy = ["queued", "running"].includes(s.video_status);
+  vidBtn.disabled = vidBusy || !s.image_url;
+  vidBtn.textContent = vidBusy ? "генерирую видео…" : s.video_url ? "Перегенерировать видео" : "Сгенерировать видео сцены";
+  vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value));
+
+  if (s.audio_url) {
+    const row = $(".scene-audio-row", card);
+    row.classList.remove("hidden");
+    $(".s-audio", row).src = s.audio_url;
+  }
+
   const approveBox = $(".s-approve", card);
   approveBox.checked = s.approved;
-  approveBox.disabled = !s.image_url || ["queued", "running"].includes(s.video_status);
-  approveBox.title = s.image_url ? "" : "сначала сгенерируй картинку";
+  approveBox.disabled = !s.video_url;
+  approveBox.title = s.video_url ? "" : "сначала сгенерируй видео сцены";
   approveBox.addEventListener("change", () => approveScene(s.id, approveBox.checked));
 
   return card;
@@ -251,6 +321,20 @@ async function saveTrack(id, card) {
   await loadProject();
 }
 
+async function genStoryboard(id) {
+  await api(`/api/tracks/${id}/generate-storyboard`, { method: "POST" });
+  await loadProject();
+}
+
+async function assembleClip(id) {
+  try {
+    await api(`/api/tracks/${id}/assemble`, { method: "POST" });
+  } catch (e) {
+    alert(e.message);
+  }
+  await loadProject();
+}
+
 async function genScenes(id) {
   await api(`/api/tracks/${id}/generate-scenes`, { method: "POST" });
   await loadProject();
@@ -267,6 +351,7 @@ async function saveScene(id, card) {
       shot_note: $(".s-note", card).value,
       image_prompt: $(".s-image", card).value,
       motion_prompt: $(".s-motion", card).value,
+      image_prompt_last: $(".s-motion-last", card).value,
     },
   });
   await loadProject();
@@ -278,8 +363,13 @@ async function deleteScene(id) {
   await loadProject();
 }
 
-async function genSceneImage(id) {
-  await api(`/api/scenes/${id}/generate-image`, { method: "POST" });
+async function genSceneFrames(id) {
+  await api(`/api/scenes/${id}/generate-frames`, { method: "POST" });
+  await loadProject();
+}
+
+async function genSceneVideo(id, provider) {
+  await api(`/api/scenes/${id}/generate-video`, { method: "POST", body: { provider } });
   await loadProject();
 }
 
