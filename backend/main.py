@@ -58,10 +58,15 @@ def require_auth(request: Request) -> None:
         raise HTTPException(401, "сессия истекла")
 
 
-def get_or_create_project(db: Session) -> Project:
-    project = db.query(Project).first()
+def get_or_create_project(db: Session, project_id: int | None = None) -> Project:
+    if project_id:
+        project = db.get(Project, project_id)
+        if not project:
+            raise HTTPException(404, "проект не найден")
+        return project
+    project = db.query(Project).order_by(Project.id).first()
     if not project:
-        project = Project(name="Клип")
+        project = Project(name="Клип", kind="album")
         db.add(project)
         db.commit()
         db.refresh(project)
@@ -165,7 +170,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
 
 def project_dict(p: Project, with_scenes: bool = False) -> dict:
     return {
-        "id": p.id, "name": p.name, "character_bible": p.character_bible,
+        "id": p.id, "name": p.name, "kind": p.kind, "character_bible": p.character_bible,
         "characters": [character_dict(c) for c in sorted(p.characters, key=lambda x: x.position)],
         "story": p.story, "story_status": p.story_status, "story_error": p.story_error,
         "tracks": [track_dict(t, with_scenes) for t in p.tracks],
@@ -174,15 +179,59 @@ def project_dict(p: Project, with_scenes: bool = False) -> dict:
 
 # ─────────────────────────────── проект ───────────────────────────────
 
+@app.get("/api/projects")
+def list_projects(_=Depends(require_auth), db: Session = Depends(db_session)):
+    return [
+        {"id": p.id, "name": p.name, "kind": p.kind, "tracks": len(p.tracks)}
+        for p in db.query(Project).order_by(Project.id).all()
+    ]
+
+
+@app.post("/api/projects")
+async def create_project(request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    body = await request.json()
+    kind = str(body.get("kind") or "album")
+    if kind not in ("album", "single"):
+        kind = "album"
+    project = Project(name=str(body.get("name") or "Новый проект"), kind=kind)
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return {"id": project.id, "name": project.name, "kind": project.kind}
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "проект не найден")
+    if db.query(Project).count() <= 1:
+        raise HTTPException(400, "нельзя удалить последний проект")
+    for t in project.tracks:
+        if t.audio_filename:
+            _remove_media(t.audio_filename)
+        for sc in t.scenes:
+            for f in (sc.image_filename, sc.image_last_filename, sc.video_filename, sc.audio_filename):
+                _remove_media(f)
+        _remove_media(t.storyboard_filename)
+        _remove_media(t.clip_filename)
+    for c in project.characters:
+        for ph in c.photos:
+            _remove_media(ph.filename)
+    db.delete(project)
+    db.commit()
+    return {"ok": True}
+
+
 @app.get("/api/project")
-def get_project(_=Depends(require_auth), db: Session = Depends(db_session)):
-    return project_dict(get_or_create_project(db), with_scenes=True)
+def get_project(project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
+    return project_dict(get_or_create_project(db, project_id), with_scenes=True)
 
 
 @app.patch("/api/project")
-async def update_project(request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def update_project(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
     body = await request.json()
-    project = get_or_create_project(db)
+    project = get_or_create_project(db, project_id)
     if "name" in body:
         project.name = str(body["name"])
     if "character_bible" in body:
@@ -230,9 +279,9 @@ def _run_story_generation(project_id: int) -> None:
 
 
 @app.post("/api/project/generate-story")
-def generate_story(_=Depends(require_auth), db: Session = Depends(db_session)):
+def generate_story(project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
     from threading import Thread
-    project = get_or_create_project(db)
+    project = get_or_create_project(db, project_id)
     if not project.tracks:
         raise HTTPException(400, "сначала загрузи хотя бы один трек")
     project.story_status = "queued"
@@ -260,9 +309,12 @@ def _ffprobe_duration(path: str) -> int:
 async def create_track(
     title: str = Form(""), lyrics: str = Form(""), comment: str = Form(""), style: str = Form(""),
     audio: UploadFile | None = None,
+    project_id: int | None = None,
     _=Depends(require_auth), db: Session = Depends(db_session),
 ):
-    project = get_or_create_project(db)
+    project = get_or_create_project(db, project_id)
+    if project.kind == "single" and project.tracks:
+        raise HTTPException(400, "это сингл — трек может быть только один")
     max_pos = max((t.position for t in project.tracks), default=0)
     track = Track(
         project_id=project.id, position=max_pos + 1,
@@ -790,9 +842,9 @@ def providers(_=Depends(require_auth)):
 # ─────────────────────────── персонажи альбома ───────────────────────────
 
 @app.post("/api/characters")
-async def create_character(request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def create_character(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
     body = await request.json()
-    project = get_or_create_project(db)
+    project = get_or_create_project(db, project_id)
     max_pos = max((c.position for c in project.characters), default=0)
     ch = Character(
         project_id=project.id, position=max_pos + 1,

@@ -29,6 +29,8 @@ class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, default="Без названия")
+    # album — альбом на несколько треков, single — сингл с одним треком.
+    kind = Column(String, nullable=False, default="album")
     # Библия героя: внешность, характер, неизменные детали — вставляется в
     # КАЖДЫЙ промпт кадра, чтобы герой не "плыл" между сценами и треками.
     character_bible = Column(Text, nullable=False, default="")

@@ -98,17 +98,54 @@ $("#logout-btn").addEventListener("click", async () => {
 });
 
 let project = null;
+let projects = [];
+let activeProjectId = Number(localStorage.getItem("rc_project") || 0) || null;
 let providers = { video: ["grok"], seedance: false };
 let pollTimer = null;
 
 async function loadProject() {
-  project = await api("/api/project");
+  projects = await api("/api/projects");
+  if (!projects.length) { project = await api("/api/project"); projects = await api("/api/projects"); }
+  if (!activeProjectId || !projects.some((p) => p.id === activeProjectId)) {
+    activeProjectId = projects[0].id;
+  }
+  localStorage.setItem("rc_project", activeProjectId);
+  project = await api(`/api/project?project_id=${activeProjectId}`);
   if (!providers.loaded) {
     providers = { ...(await api("/api/providers")), loaded: true };
   }
   render();
   schedulePoll();
 }
+
+function renderProjectBar() {
+  const sel = $("#project-select");
+  sel.innerHTML = "";
+  for (const p of projects) {
+    const o = document.createElement("option");
+    o.value = p.id;
+    o.textContent = `${p.kind === "single" ? "🎵" : "💿"} ${p.name}`;
+    if (p.id === activeProjectId) o.selected = true;
+    sel.appendChild(o);
+  }
+  $("#project-kind").textContent = project.kind === "single" ? "сингл" : "альбом";
+}
+
+$("#project-select").addEventListener("change", (e) => {
+  activeProjectId = Number(e.target.value);
+  localStorage.setItem("rc_project", activeProjectId);
+  loadProject();
+});
+
+$("#new-project-btn").addEventListener("click", async () => {
+  const name = prompt("Название проекта:");
+  if (!name) return;
+  const kind = confirm("Это АЛЬБОМ (несколько треков)?\nОК — альбом · Отмена — сингл (один трек)") ? "album" : "single";
+  const created = await api("/api/projects", { method: "POST", body: { name, kind } });
+  activeProjectId = created.id;
+  localStorage.setItem("rc_project", activeProjectId);
+  await loadProject();
+});
 
 function sceneBusy(s) {
   return ["queued", "running"].includes(s.image_status) || ["queued", "running"].includes(s.video_status);
@@ -141,6 +178,7 @@ function statusLabel(status, doneWord = "готово") {
 }
 
 function render() {
+  renderProjectBar();
   $("#project-name").value = project.name;
   $("#character-bible").value = project.character_bible;
   $("#story").value = project.story;
@@ -343,7 +381,7 @@ function renderScene(s, audioEl) {
 }
 
 async function saveProject() {
-  await api("/api/project", {
+  await api(`/api/project?project_id=${activeProjectId}`, {
     method: "PATCH",
     body: { name: $("#project-name").value, character_bible: $("#character-bible").value },
   });
@@ -352,7 +390,7 @@ $("#save-project-btn").addEventListener("click", saveProject);
 
 $("#gen-story-btn").addEventListener("click", async () => {
   await saveProject();
-  await api("/api/project/generate-story", { method: "POST" });
+  await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
   await loadProject();
 });
 
@@ -456,7 +494,7 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   fd.append("lyrics", form.lyrics.value);
   fd.append("comment", form.comment.value);
   if (form.audio.files[0]) fd.append("audio", form.audio.files[0]);
-  await api("/api/tracks", { method: "POST", body: fd });
+  await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
   form.reset();
   await loadProject();
 });
@@ -514,7 +552,7 @@ function renderCharacter(c) {
 $("#add-character-btn").addEventListener("click", async () => {
   const name = prompt("Имя персонажа:");
   if (!name) return;
-  await api("/api/characters", { method: "POST", body: { name } });
+  await api(`/api/characters?project_id=${activeProjectId}`, { method: "POST", body: { name } });
   await loadProject();
 });
 

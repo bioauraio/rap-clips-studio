@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>RAP CLIPS STUDIO</title>
-<link rel="stylesheet" href="/style.css?v=7" />
+<link rel="stylesheet" href="/style.css?v=8" />
 </head>
 <body>
 <div id="login" class="login-screen hidden">
@@ -19,7 +19,10 @@
 
 <div id="app" class="app hidden">
   <header class="topbar">
+    <select id="project-select" class="project-select"></select>
     <input id="project-name" class="project-name" placeholder="название клипа" />
+    <span id="project-kind" class="kind-badge"></span>
+    <button id="new-project-btn">+ проект</button>
     <button id="logout-btn" class="ghost">выйти</button>
   </header>
 
@@ -229,6 +232,6 @@
   </div>
 </template>
 
-<script src="/app.js?v=7"></script>
+<script src="/app.js?v=8"></script>
 </body>
 </html>

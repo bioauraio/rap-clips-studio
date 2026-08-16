@@ -233,3 +233,12 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   border: 1px dashed var(--border-bright); color: var(--accent-2);
 }
 .c-upload-btn:hover { box-shadow: 0 4px 16px rgba(255,122,41,.22); }
+
+/* ────────── проекты ────────── */
+.project-select { width: auto; max-width: 260px; font-weight: 700; }
+.kind-badge {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: #fff; padding: 5px 10px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border: 2px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
+}
