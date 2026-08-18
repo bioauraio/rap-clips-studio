@@ -86,6 +86,10 @@ const STYLE_PRESETS = [
     value: "1990s analog film street photography, scanned 35mm frame with heavy grain and slightly faded Kodak colors, candid documentary framing. Surreal characters with elongated non-human heads on long necks (ostrich-like, greyhound, pale alien with almond eyes, porcelain mannequin mask) on completely ordinary human bodies in baggy 90s streetwear: oversized denim jackets, loose white shirts, wide pants, chunky chains, plastic grocery bags, coffee cups. Deadpan poses, mundane everyday activities, nobody reacts to the surrealism. Locations: laundromats, convenience stores, crosswalks, chain-link fences, boxy 80s sedans, night streets with neon signage and wet asphalt reflections. Muted denim-blue palette with warm cream skin tones and red/neon accents, harsh daylight or direct flash by day, deep black sky and neon glow by night. Vertical 9:16, no text."
   },
   {
+    label: "Картон (вышивка нитью)",
+    value: "Hand-embroidered thread-art illustration: the entire image is stitched in dense chain-stitch and satin-stitch embroidery with clearly visible thread loops and fiber texture, like a lovingly hand-sewn patch. Background of warm cream felt and kraft cardboard with soft fabric grain. Bold simplified shapes with clean dark outlines; characters rendered in colored thread, directional stitching following the forms of faces, hair and clothes; flames, smoke and effects also stitched in swirling orange-red-amber threads. Cozy handcrafted feel, slightly naive proportions, saturated yarn colors against the neutral textile background, tiny loose thread ends visible. Vertical 9:16, no text."
+  },
+  {
     label: "СПАЙК (русский кино-сюр, камео)",
     value: "Cinematic photorealistic night scene shot on vintage anamorphic lenses, warm tungsten and smoky haze, heavy 35mm film grain with teal-and-amber grade. Post-Soviet Russian setting reimagined with subtle Atomic Heart retrofuturism: khrushchyovka courtyards, cramped old Lada interiors, kiosks, snow-dusted parking lots, delivery couriers in Ozon blue jackets and yellow Yandex thermo-bag backpacks. Photorealistic larger-than-life characters and deadpan cartoon-headed cameos ride together in old cars filled with smoke, count worn banknotes in shabby ornate bedrooms, stare into the lens with calm swagger. Golden chains, tracksuit textures, cigarette smoke curling in headlight beams, wet asphalt reflections. Everyday grit filmed like an epic music video, nobody reacts to the surreal cameos. Vertical 9:16, no text."
   },
@@ -137,31 +141,112 @@ async function api(path, opts = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+// me — текущий пользователь: бейдж очков и кнопка «Сохранить аккаунт» живут от него.
+let me = { authed: false, user: null };
+
+function showWelcome() {
+  $("#welcome").classList.remove("hidden");
+  $("#login").classList.add("hidden");
+  $("#app").classList.add("hidden");
+}
 function showLogin() {
+  $("#welcome").classList.add("hidden");
   $("#login").classList.remove("hidden");
   $("#app").classList.add("hidden");
 }
 function showApp() {
+  $("#welcome").classList.add("hidden");
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  renderUserBar();
   loadProject();
+}
+
+// Бейдж «⚡ N» (не-админу) и «Сохранить аккаунт» (гостю без логина) в топбаре.
+function renderUserBar() {
+  const u = me && me.user;
+  const badge = $("#points-badge");
+  const saveBtn = $("#save-account-btn");
+  if (!u) {
+    badge.classList.add("hidden");
+    saveBtn.classList.add("hidden");
+    return;
+  }
+  badge.classList.toggle("hidden", Boolean(u.is_admin));
+  badge.textContent = `⚡ ${u.gen_points}`;
+  saveBtn.classList.toggle("hidden", Boolean(u.is_admin) || Boolean(u.login));
 }
 
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const password = $("#login-password").value;
+  const loginName = $("#login-login").value.trim();
   try {
-    await api("/api/login", { method: "POST", body: { password } });
+    // Пусто в логине = легаси-вход владельца одним паролем, как раньше.
+    await api("/api/login", { method: "POST", body: loginName ? { login: loginName, password } : { password } });
+    me = await api("/api/me");
     showApp();
   } catch (err) {
-    $("#login-error").textContent = "неверный пароль";
+    $("#login-error").textContent = "неверный логин или пароль";
     $("#login-error").classList.remove("hidden");
   }
 });
 
+$("#welcome-start").addEventListener("click", async () => {
+  // «Старт» = гостевой аккаунт сразу: без формы, регистрация — потом, по желанию.
+  await api("/api/start", { method: "POST" });
+  me = await api("/api/me");
+  showApp();
+});
+
+$("#welcome-login").addEventListener("click", showLogin);
+
 $("#logout-btn").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
-  showLogin();
+  me = { authed: false, user: null };
+  showWelcome();
+});
+
+// Гость превращается в постоянный аккаунт: тот же user id, проекты остаются.
+$("#save-account-btn").addEventListener("click", () => {
+  openModal("Сохранить аккаунт", (body) => {
+    body.innerHTML = `
+      <p class="muted" style="margin:0 0 10px">Логин и пароль закрепят этот аккаунт:
+        проекты и файлы останутся при тебе на любом устройстве.</p>
+      <label>Логин</label>
+      <input class="ra-login" autocomplete="username" placeholder="логин" />
+      <label>Пароль (от 6 символов)</label>
+      <input class="ra-pass" type="password" autocomplete="new-password" placeholder="пароль" />
+      <label>Имя (необязательно)</label>
+      <input class="ra-name" placeholder="как к тебе обращаться" />
+      <div class="row">
+        <button type="button" class="primary ra-save">Сохранить</button>
+        <span class="ra-error error hidden"></span>
+      </div>`;
+    const errEl = $(".ra-error", body);
+    const saveBtn = $(".ra-save", body);
+    const save = async () => {
+      saveBtn.disabled = true;
+      errEl.classList.add("hidden");
+      try {
+        await api("/api/register", { method: "POST", body: {
+          login: $(".ra-login", body).value.trim(),
+          password: $(".ra-pass", body).value,
+          name: $(".ra-name", body).value.trim(),
+        }});
+        me = await api("/api/me");
+        renderUserBar();
+        closeModal();
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+        saveBtn.disabled = false;
+      }
+    };
+    saveBtn.addEventListener("click", save);
+    $(".ra-pass", body).addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    $(".ra-login", body).focus();
+  });
 });
 
 // ────────── общая модалка: оверлей + карточка, закрытие по ✕ / фону / Esc ──────────
@@ -193,6 +278,9 @@ let providers = { video: ["grok"], seedance: false };
 let pollTimer = null;
 
 async function loadProject() {
+  // Обновляем и очки: после каждой генерации бейдж «⚡ N» должен быть честным.
+  me = await api("/api/me").catch(() => me);
+  renderUserBar();
   projects = await api("/api/projects");
   if (!projects.length) { project = await api("/api/project"); projects = await api("/api/projects"); }
   if (!activeProjectId || !projects.some((p) => p.id === activeProjectId)) {
@@ -431,7 +519,11 @@ function renderTrack(t) {
     ? "очередь идёт по одной сцене — можно закрыть вкладку, прогресс не потеряется"
     : "";
   allBtn.addEventListener("click", async () => {
-    await api(`/api/tracks/${t.id}/generate-all-frames`, { method: "POST" });
+    try {
+      await api(`/api/tracks/${t.id}/generate-all-frames`, { method: "POST" });
+    } catch (e) {
+      alert(e.message);
+    }
     await loadProject();
   });
   const genBtn = $(".gen-scenes", card);
@@ -632,7 +724,11 @@ $("#save-project-btn").addEventListener("click", saveProject);
 
 $("#gen-story-btn").addEventListener("click", async () => {
   await saveProject();
-  await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
+  try {
+    await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
+  } catch (e) {
+    alert(e.message);
+  }
   await loadProject();
 });
 
@@ -666,7 +762,11 @@ async function saveTrack(id, card) {
 }
 
 async function genStoryboard(id) {
-  await api(`/api/tracks/${id}/generate-storyboard`, { method: "POST" });
+  try {
+    await api(`/api/tracks/${id}/generate-storyboard`, { method: "POST" });
+  } catch (e) {
+    alert(e.message);
+  }
   await loadProject();
 }
 
@@ -735,7 +835,11 @@ function openSupergenModal(t) {
 }
 
 async function genScenes(id) {
-  await api(`/api/tracks/${id}/generate-scenes`, { method: "POST" });
+  try {
+    await api(`/api/tracks/${id}/generate-scenes`, { method: "POST" });
+  } catch (e) {
+    alert(e.message); // в т.ч. «лимит генераций исчерпан»
+  }
   await loadProject();
 }
 
@@ -764,12 +868,20 @@ async function deleteScene(id) {
 }
 
 async function genSceneFrames(id) {
-  await api(`/api/scenes/${id}/generate-frames`, { method: "POST" });
+  try {
+    await api(`/api/scenes/${id}/generate-frames`, { method: "POST" });
+  } catch (e) {
+    alert(e.message);
+  }
   await loadProject();
 }
 
 async function genSceneVideo(id, provider) {
-  await api(`/api/scenes/${id}/generate-video`, { method: "POST", body: { provider } });
+  try {
+    await api(`/api/scenes/${id}/generate-video`, { method: "POST", body: { provider } });
+  } catch (e) {
+    alert(e.message);
+  }
   await loadProject();
 }
 
@@ -1139,6 +1251,7 @@ async function addManualScene(trackId) {
 }
 
 (async () => {
-  const me = await api("/api/me");
-  if (me.authed) showApp(); else showLogin();
+  me = await api("/api/me");
+  // Без сессии гость видит лендинг, а не форму пароля.
+  if (me.authed) showApp(); else showWelcome();
 })();

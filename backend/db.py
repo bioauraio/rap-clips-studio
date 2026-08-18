@@ -25,9 +25,36 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """Пользователь публичного сервиса qlolvideo.
+
+    login без UNIQUE-констрейнта: базу не пересоздаём (мягкая миграция ALTER'ом),
+    уникальность проверяется кодом в момент установки логина (/api/register)."""
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    name = Column(String, nullable=False, default="")
+    login = Column(String, nullable=False, default="")
+    password_hash = Column(String, nullable=False, default="")
+    is_admin = Column(Boolean, nullable=False, default=False)
+    # Очки генераций: защита кошелька владельца — генерации идут через его
+    # подписки. Гость стартует с 60, админ получает практически бесконечность.
+    gen_points = Column(Integer, nullable=False, default=60)
+
+
+class FileOwner(Base):
+    """Владелец каждого файла в UPLOAD_DIR: /api/media отдаёт чужие файлы
+    только админу, чтобы приватные кадры/треки никуда не утекали."""
+    __tablename__ = "file_owners"
+    filename = Column(String, primary_key=True)
+    user_id = Column(Integer, nullable=False, default=0)
+
+
 class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True)
+    # Владелец проекта; NULL у легаси-строк до усыновления админом при старте.
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     name = Column(String, nullable=False, default="Без названия")
     # album — альбом на несколько треков, single — сингл с одним треком.
     kind = Column(String, nullable=False, default="album")

@@ -4,15 +4,34 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
-<title>RAP CLIPS STUDIO</title>
-<link rel="stylesheet" href="/style.css?v=20" />
+<title>QLOLVIDEO</title>
+<link rel="stylesheet" href="/style.css?v=22" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
+
+<!-- Мини-лендинг: первое, что видит гость без сессии. -->
+<div id="welcome" class="welcome-screen hidden">
+  <div class="welcome-box">
+    <h1 class="welcome-title">QLOLVIDEO</h1>
+    <p class="welcome-sub">студия ИИ-клипов под твою музыку</p>
+    <ul class="welcome-feats">
+      <li>🎬 трек → сюжет → раскадровка → 4К-кадры → видео каждой сцены → готовый клип</li>
+      <li>🧑‍🎤 персонажи с фото-модельками — герой не «плывёт» между кадрами</li>
+      <li>🎨 стили-пресеты: от лампового аниме до нуарного комикса</li>
+      <li>⚡ супергенерация: весь конвейер одной кнопкой</li>
+    </ul>
+    <button id="welcome-start" class="primary welcome-cta">Старт</button>
+    <button id="welcome-login" class="ghost welcome-have">У меня есть аккаунт</button>
+    <p class="welcome-privacy muted">файлы и проекты приватны — их видишь только ты</p>
+  </div>
+</div>
+
 <div id="login" class="login-screen hidden">
   <form id="login-form" class="login-box">
-    <h1>rap·clips·studio</h1>
-    <input id="login-password" type="password" placeholder="пароль" autofocus />
+    <h1>qlolvideo</h1>
+    <input id="login-login" type="text" placeholder="логин (пусто — вход владельца)" autocomplete="username" />
+    <input id="login-password" type="password" placeholder="пароль" autofocus autocomplete="current-password" />
     <button type="submit">войти</button>
     <p id="login-error" class="error hidden"></p>
   </form>
@@ -29,6 +48,8 @@
     <input id="project-name" class="project-name" placeholder="название клипа" />
     <span id="project-kind" class="kind-badge"></span>
     <button id="new-project-btn">+ проект</button>
+    <span id="points-badge" class="kind-badge points-badge hidden" title="остаток генераций"></span>
+    <button id="save-account-btn" class="hidden">Сохранить аккаунт</button>
     <button id="logout-btn" class="ghost">выйти</button>
   </header>
 
@@ -269,6 +290,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=20"></script>
+<script src="/app.js?v=22"></script>
 </body>
 </html>

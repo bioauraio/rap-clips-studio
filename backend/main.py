@@ -4,15 +4,18 @@
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import time
 import uuid
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -21,8 +24,8 @@ from sqlalchemy.orm import Session
 import claude
 import mediagen
 from db import (
-    AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Project,
-    Scene, SessionLocal, Track, init_db, now,
+    AttributePhoto, Character, CharacterAttribute, CharacterPhoto, FileOwner,
+    Project, Scene, SessionLocal, Track, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -31,8 +34,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [rapclips] %(message
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 SECRET_KEY = os.environ.get("SECRET_KEY", "")
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
-COOKIE_NAME = "rc_session"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 дней — личный инструмент, не банк
+COOKIE_NAME = "rc_session"  # легаси-кука владельца ({"ok": True}) — живёт дальше
+COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 дней — прежний срок легаси-куки
+QV_COOKIE = "qv_session"  # новая кука публичного сервиса: {"uid": user.id}
+QV_MAX_AGE = 60 * 60 * 24 * 180  # 180 дней — гости не должны терять проекты
 
 if not APP_PASSWORD or not SECRET_KEY:
     raise RuntimeError("заданы не все переменные окружения: APP_PASSWORD, SECRET_KEY")
@@ -40,7 +45,7 @@ if not APP_PASSWORD or not SECRET_KEY:
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 signer = URLSafeTimedSerializer(SECRET_KEY, salt="rapclips-session")
 
-app = FastAPI(title="rap-clips-studio")
+app = FastAPI(title="qlolvideo")
 init_db()
 
 
@@ -52,25 +57,201 @@ def db_session():
         session.close()
 
 
-def require_auth(request: Request) -> None:
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        raise HTTPException(401, "не авторизован")
+# ─────────────────── пользователи: пароли и сессии ───────────────────
+
+def _hash_password(password: str) -> str:
+    """pbkdf2 из стандартной библиотеки: соль хранится в самом хэше."""
+    iterations = 200_000
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), iterations)
+    return f"pbkdf2${iterations}${salt}${dk.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
     try:
-        signer.loads(token, max_age=COOKIE_MAX_AGE)
-    except BadSignature:
-        raise HTTPException(401, "сессия истекла")
+        algo, iterations, salt, digest = stored.split("$")
+        if algo != "pbkdf2":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(iterations))
+        return hmac.compare_digest(dk.hex(), digest)
+    except (ValueError, TypeError):
+        return False
 
 
-def get_or_create_project(db: Session, project_id: int | None = None) -> Project:
+def _resolve_user(request: Request, db: Session) -> User | None:
+    """qv_session ({"uid": …}) или легаси rc_session ({"ok": True} → админ)."""
+    token = request.cookies.get(QV_COOKIE)
+    if token:
+        try:
+            data = signer.loads(token, max_age=QV_MAX_AGE)
+            user = db.get(User, int(data.get("uid") or 0))
+            if user:
+                return user
+        except (BadSignature, ValueError, TypeError, AttributeError):
+            pass
+    legacy = request.cookies.get(COOKIE_NAME)
+    if legacy:
+        try:
+            data = signer.loads(legacy, max_age=COOKIE_MAX_AGE)
+            if isinstance(data, dict) and data.get("ok"):
+                return _admin_user(db)
+        except BadSignature:
+            pass
+    return None
+
+
+def current_user(request: Request, db: Session = Depends(db_session)) -> User:
+    user = _resolve_user(request, db)
+    if not user:
+        raise HTTPException(401, "не авторизован")
+    return user
+
+
+def _admin_user(db: Session) -> User | None:
+    return db.query(User).filter(User.is_admin.is_(True)).order_by(User.id).first()
+
+
+def _bootstrap_users() -> None:
+    """Одноразовый init при старте: админ-владелец, усыновление легаси-проектов
+    без owner_id и регистрация легаси-файлов в FileOwner. Дешёвый проход по
+    SQLite; повторные запуски ничего не трогают."""
+    db = SessionLocal()
+    try:
+        admin = _admin_user(db)
+        if not admin:
+            admin = User(name="владелец", is_admin=True, gen_points=10**9)
+            db.add(admin)
+            db.commit()
+            db.refresh(admin)
+        for p in db.query(Project).filter(Project.owner_id.is_(None)).all():
+            p.owner_id = admin.id
+        db.commit()
+
+        # Легаси-файлы: всё, что упомянуто в БД, приписываем владельцу проекта.
+        known = {row.filename for row in db.query(FileOwner).all()}
+
+        def reg(fname: str, owner_id: int | None) -> None:
+            if fname and fname not in known:
+                db.add(FileOwner(filename=fname, user_id=owner_id or admin.id))
+                known.add(fname)
+
+        for p in db.query(Project).all():
+            reg(p.cover_filename, p.owner_id)
+            for c in p.characters:
+                for ph in c.photos:
+                    reg(ph.filename, p.owner_id)
+                for attr in c.attributes:
+                    for aph in attr.photos:
+                        reg(aph.filename, p.owner_id)
+            for t in p.tracks:
+                for f in (t.audio_filename, t.cover_filename,
+                          t.storyboard_filename, t.clip_filename):
+                    reg(f, p.owner_id)
+                for s in t.scenes:
+                    for f in (s.image_filename, s.image_last_filename,
+                              s.video_filename, s.audio_filename):
+                        reg(f, p.owner_id)
+        db.commit()
+    finally:
+        db.close()
+
+
+_bootstrap_users()
+
+
+def _reg_file(db: Session, filename: str, owner_id: int | None) -> None:
+    """Каждый создаваемый файл приписывается владельцу (INSERT OR REPLACE):
+    без записи в FileOwner файл из /api/media увидит только админ."""
+    if not filename:
+        return
+    db.merge(FileOwner(filename=filename, user_id=int(owner_id or 0)))
+
+
+def _check_file_owner(db: Session, user: User, fname: str) -> None:
+    """Файлы приватны: чужой файл — 404 (не раскрываем существование).
+    Файл без записи (легаси) отдаётся только админу."""
+    if user.is_admin:
+        return
+    fo = db.get(FileOwner, fname)
+    if not fo or fo.user_id != user.id:
+        raise HTTPException(404, "файл не найден")
+
+
+def _charge(db: Session, user: User, points: int, what: str) -> None:
+    """Списание очков генерации В МОМЕНТ постановки задачи (не в треде):
+    генерации идут через подписки владельца, лимит защищает его кошелёк."""
+    if user.is_admin or points <= 0:
+        return
+    if user.gen_points < points:
+        raise HTTPException(402, "лимит генераций исчерпан — напиши владельцу сервиса")
+    user.gen_points -= points
+    db.commit()
+    log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
+
+
+# ─────────── владение: каждая сущность прослеживается до владельца ───────────
+
+def _owned(user: User, project: Project | None) -> bool:
+    return bool(project) and (user.is_admin or project.owner_id == user.id)
+
+
+def _own_project(db: Session, user: User, project_id: int) -> Project:
+    project = db.get(Project, project_id)
+    if not _owned(user, project):
+        # 404, а не 403 — чужим не раскрываем даже факт существования.
+        raise HTTPException(404, "проект не найден")
+    return project
+
+
+def _own_track(db: Session, user: User, track_id: int) -> Track:
+    track = db.get(Track, track_id)
+    if not track or not _owned(user, track.project):
+        raise HTTPException(404, "трек не найден")
+    return track
+
+
+def _own_scene(db: Session, user: User, scene_id: int) -> Scene:
+    scene = db.get(Scene, scene_id)
+    if not scene or not _owned(user, scene.track.project):
+        raise HTTPException(404, "кадр не найден")
+    return scene
+
+
+def _own_character(db: Session, user: User, char_id: int) -> Character:
+    ch = db.get(Character, char_id)
+    if not ch or not _owned(user, ch.project):
+        raise HTTPException(404, "персонаж не найден")
+    return ch
+
+
+def _own_attribute(db: Session, user: User, attr_id: int) -> CharacterAttribute:
+    attr = db.get(CharacterAttribute, attr_id)
+    if not attr or not _owned(user, attr.character.project):
+        raise HTTPException(404, "атрибут не найден")
+    return attr
+
+
+def _own_char_photo(db: Session, user: User, photo_id: int) -> CharacterPhoto:
+    ph = db.get(CharacterPhoto, photo_id)
+    if not ph or not _owned(user, ph.character.project):
+        raise HTTPException(404, "фото не найдено")
+    return ph
+
+
+def _own_attr_photo(db: Session, user: User, photo_id: int) -> AttributePhoto:
+    ph = db.get(AttributePhoto, photo_id)
+    if not ph or not _owned(user, ph.attribute.character.project):
+        raise HTTPException(404, "фото не найдено")
+    return ph
+
+
+def get_or_create_project(db: Session, user: User, project_id: int | None = None) -> Project:
     if project_id:
-        project = db.get(Project, project_id)
-        if not project:
-            raise HTTPException(404, "проект не найден")
-        return project
-    project = db.query(Project).order_by(Project.id).first()
+        return _own_project(db, user, project_id)
+    project = (db.query(Project).filter(Project.owner_id == user.id)
+               .order_by(Project.id).first())
     if not project:
-        project = Project(name="Клип", kind="album")
+        project = Project(name="Клип", kind="album", owner_id=user.id)
         db.add(project)
         db.commit()
         db.refresh(project)
@@ -79,37 +260,90 @@ def get_or_create_project(db: Session, project_id: int | None = None) -> Project
 
 # ─────────────────────────── авторизация ───────────────────────────
 
-@app.post("/api/login")
-async def login(request: Request, response: Response):
-    body = await request.json()
-    if str(body.get("password") or "") != APP_PASSWORD:
-        raise HTTPException(401, "неверный пароль")
-    token = signer.dumps({"ok": True})
+def _user_dict(user: User) -> dict:
+    return {"id": user.id, "name": user.name, "login": user.login,
+            "is_admin": user.is_admin, "gen_points": user.gen_points}
+
+
+def _session_response(user: User) -> JSONResponse:
     response = JSONResponse({"ok": True})
     response.set_cookie(
-        COOKIE_NAME, token, max_age=COOKIE_MAX_AGE, httponly=True,
-        samesite="lax", secure=True,
+        QV_COOKIE, signer.dumps({"uid": user.id}), max_age=QV_MAX_AGE,
+        httponly=True, samesite="lax", secure=True,
     )
     return response
+
+
+@app.post("/api/start")
+def start(db: Session = Depends(db_session)):
+    """Кнопка «Старт» лендинга: гостевой аккаунт сразу, без регистрации —
+    логин с паролем гость сможет добавить потом через /api/register."""
+    guest = User(name="гость")
+    db.add(guest)
+    db.commit()
+    db.refresh(guest)
+    return _session_response(guest)
+
+
+@app.post("/api/login")
+async def login(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    login_name = str(body.get("login") or "").strip()
+    password = str(body.get("password") or "")
+    if login_name:
+        user = db.query(User).filter(User.login == login_name).first()
+        if not user or not user.password_hash or not _verify_password(password, user.password_hash):
+            raise HTTPException(401, "неверный логин или пароль")
+        return _session_response(user)
+    # Легаси-вход владельца: один общий пароль, как было до qlolvideo.
+    if not password or password != APP_PASSWORD:
+        raise HTTPException(401, "неверный пароль")
+    admin = _admin_user(db)
+    if not admin:
+        raise HTTPException(500, "админ не инициализирован")
+    return _session_response(admin)
+
+
+@app.post("/api/register")
+async def register(request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Гость сохраняет аккаунт: логин и пароль вешаются на ТОТ ЖЕ user id,
+    так что проекты и файлы гостя остаются при нём."""
+    body = await request.json()
+    login_name = str(body.get("login") or "").strip()
+    password = str(body.get("password") or "")
+    name = str(body.get("name") or "").strip()
+    if user.login:
+        raise HTTPException(400, "у аккаунта уже есть логин")
+    if not login_name:
+        raise HTTPException(400, "введи логин")
+    if len(password) < 6:
+        raise HTTPException(400, "пароль от 6 символов")
+    # Уникальность логина проверяем кодом: UNIQUE-констрейнт не добавить
+    # мягкой ALTER-миграцией без пересоздания таблицы.
+    if db.query(User).filter(User.login == login_name, User.id != user.id).first():
+        raise HTTPException(400, "логин занят")
+    user.login = login_name
+    user.password_hash = _hash_password(password)
+    if name:
+        user.name = name
+    db.commit()
+    return {"ok": True, "user": _user_dict(user)}
 
 
 @app.post("/api/logout")
 async def logout():
     response = JSONResponse({"ok": True})
+    response.delete_cookie(QV_COOKIE)
     response.delete_cookie(COOKIE_NAME)
     return response
 
 
 @app.get("/api/me")
-async def me(request: Request):
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
+async def me(request: Request, db: Session = Depends(db_session)):
+    user = _resolve_user(request, db)
+    if not user:
         return {"authed": False}
-    try:
-        signer.loads(token, max_age=COOKIE_MAX_AGE)
-        return {"authed": True}
-    except BadSignature:
-        return {"authed": False}
+    return {"authed": True, "user": _user_dict(user)}
 
 
 # ──────────────────────────── сериализация ───────────────────────────
@@ -207,20 +441,22 @@ def project_dict(p: Project, with_scenes: bool = False) -> dict:
 # ─────────────────────────────── проект ───────────────────────────────
 
 @app.get("/api/projects")
-def list_projects(_=Depends(require_auth), db: Session = Depends(db_session)):
+def list_projects(user: User = Depends(current_user), db: Session = Depends(db_session)):
     return [
         {"id": p.id, "name": p.name, "kind": p.kind, "tracks": len(p.tracks)}
-        for p in db.query(Project).order_by(Project.id).all()
+        for p in db.query(Project).filter(Project.owner_id == user.id)
+                    .order_by(Project.id).all()
     ]
 
 
 @app.post("/api/projects")
-async def create_project(request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def create_project(request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     body = await request.json()
     kind = str(body.get("kind") or "album")
     if kind not in ("album", "single"):
         kind = "album"
-    project = Project(name=str(body.get("name") or "Новый проект"), kind=kind)
+    project = Project(name=str(body.get("name") or "Новый проект"), kind=kind,
+                      owner_id=user.id)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -228,11 +464,10 @@ async def create_project(request: Request, _=Depends(require_auth), db: Session 
 
 
 @app.delete("/api/projects/{project_id}")
-def delete_project(project_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    project = db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, "проект не найден")
-    if db.query(Project).count() <= 1:
+def delete_project(project_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    project = _own_project(db, user, project_id)
+    # «Последний» считаем в рамках владельца проекта — у каждого свой набор.
+    if db.query(Project).filter(Project.owner_id == project.owner_id).count() <= 1:
         raise HTTPException(400, "нельзя удалить последний проект")
     for t in project.tracks:
         if t.audio_filename:
@@ -256,14 +491,14 @@ def delete_project(project_id: int, _=Depends(require_auth), db: Session = Depen
 
 
 @app.get("/api/project")
-def get_project(project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
-    return project_dict(get_or_create_project(db, project_id), with_scenes=True)
+def get_project(project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    return project_dict(get_or_create_project(db, user, project_id), with_scenes=True)
 
 
 @app.patch("/api/project")
-async def update_project(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def update_project(request: Request, project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
     body = await request.json()
-    project = get_or_create_project(db, project_id)
+    project = get_or_create_project(db, user, project_id)
     if "name" in body:
         project.name = str(body["name"])
     if "character_bible" in body:
@@ -313,11 +548,12 @@ def _run_story_generation(project_id: int) -> None:
 
 
 @app.post("/api/project/generate-story")
-def generate_story(project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
+def generate_story(project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    project = get_or_create_project(db, project_id)
+    project = get_or_create_project(db, user, project_id)
     if not project.tracks:
         raise HTTPException(400, "сначала загрузи хотя бы один трек")
+    _charge(db, user, 1, "сюжет проекта")
     project.story_status = "queued"
     db.commit()
     Thread(target=_run_story_generation, args=(project.id,), daemon=True).start()
@@ -377,9 +613,9 @@ async def create_track(
     title: str = Form(""), lyrics: str = Form(""), comment: str = Form(""), style: str = Form(""),
     audio: UploadFile | None = None,
     project_id: int | None = None,
-    _=Depends(require_auth), db: Session = Depends(db_session),
+    user: User = Depends(current_user), db: Session = Depends(db_session),
 ):
-    project = get_or_create_project(db, project_id)
+    project = get_or_create_project(db, user, project_id)
     if project.kind == "single" and project.tracks:
         raise HTTPException(400, "это сингл — трек может быть только один")
     max_pos = max((t.position for t in project.tracks), default=0)
@@ -395,6 +631,7 @@ async def create_track(
         with open(path, "wb") as f:
             f.write(data)
         track.audio_filename = fname
+        _reg_file(db, fname, project.owner_id)
         track.audio_duration_sec = _ffprobe_duration(path)
         try:
             track.audio_profile = _audio_profile(path, track.audio_duration_sec)
@@ -407,10 +644,8 @@ async def create_track(
 
 
 @app.patch("/api/tracks/{track_id}")
-async def update_track(track_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+async def update_track(track_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    track = _own_track(db, user, track_id)
     body = await request.json()
     for field in ("title", "lyrics", "comment", "style"):
         if field in body:
@@ -420,10 +655,8 @@ async def update_track(track_id: int, request: Request, _=Depends(require_auth),
 
 
 @app.delete("/api/tracks/{track_id}")
-def delete_track(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+def delete_track(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    track = _own_track(db, user, track_id)
     if track.audio_filename:
         path = os.path.join(UPLOAD_DIR, track.audio_filename)
         if os.path.exists(path):
@@ -438,21 +671,22 @@ def delete_track(track_id: int, _=Depends(require_auth), db: Session = Depends(d
 
 
 @app.post("/api/tracks/reorder")
-async def reorder_tracks(request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def reorder_tracks(request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     body = await request.json()
     order = body.get("order") or []  # список id в новом порядке
     for i, track_id in enumerate(order, start=1):
         track = db.get(Track, int(track_id))
-        if track:
+        # Чужие id в списке молча пропускаем — порядок правится только у своих.
+        if track and _owned(user, track.project):
             track.position = i
     db.commit()
     return {"ok": True}
 
 
 @app.get("/api/tracks/{track_id}/audio")
-def get_audio(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    track = db.get(Track, track_id)
-    if not track or not track.audio_filename:
+def get_audio(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
         raise HTTPException(404, "аудио не найдено")
     path = os.path.join(UPLOAD_DIR, track.audio_filename)
     if not os.path.exists(path):
@@ -475,12 +709,11 @@ async def _save_cover_file(cover: UploadFile) -> str:
 
 
 @app.post("/api/projects/{project_id}/cover")
-async def upload_project_cover(project_id: int, cover: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
-    project = db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, "проект не найден")
+async def upload_project_cover(project_id: int, cover: UploadFile, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    project = _own_project(db, user, project_id)
     old = project.cover_filename
     project.cover_filename = await _save_cover_file(cover)
+    _reg_file(db, project.cover_filename, project.owner_id)
     db.commit()
     db.refresh(project)
     # Старый файл убираем только ПОСЛЕ commit: если запись не прошла,
@@ -490,12 +723,11 @@ async def upload_project_cover(project_id: int, cover: UploadFile, _=Depends(req
 
 
 @app.post("/api/tracks/{track_id}/cover")
-async def upload_track_cover(track_id: int, cover: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+async def upload_track_cover(track_id: int, cover: UploadFile, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    track = _own_track(db, user, track_id)
     old = track.cover_filename
     track.cover_filename = await _save_cover_file(cover)
+    _reg_file(db, track.cover_filename, track.project.owner_id)
     db.commit()
     db.refresh(track)
     _remove_media(old)
@@ -566,13 +798,12 @@ def _run_scene_generation(track_id: int) -> None:
 
 
 @app.post("/api/tracks/{track_id}/generate-scenes")
-def generate_scenes(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+def generate_scenes(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+    track = _own_track(db, user, track_id)
     if not track.project.story:
         raise HTTPException(400, "сначала сгенерируй общий сюжет проекта")
+    _charge(db, user, 1, f"раскадровка трека {track.id}")
     track.scenes_status = "queued"
     db.commit()
     Thread(target=_run_scene_generation, args=(track_id,), daemon=True).start()
@@ -580,10 +811,8 @@ def generate_scenes(track_id: int, _=Depends(require_auth), db: Session = Depend
 
 
 @app.patch("/api/scenes/{scene_id}")
-async def update_scene(scene_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
-    scene = db.get(Scene, scene_id)
-    if not scene:
-        raise HTTPException(404, "кадр не найден")
+async def update_scene(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    scene = _own_scene(db, user, scene_id)
     body = await request.json()
     for field in ("duration_sec", "lyric_line", "shot_size", "camera_move", "image_prompt", "motion_prompt", "shot_note"):
         if field in body:
@@ -593,10 +822,8 @@ async def update_scene(scene_id: int, request: Request, _=Depends(require_auth),
 
 
 @app.delete("/api/scenes/{scene_id}")
-def delete_scene(scene_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    scene = db.get(Scene, scene_id)
-    if not scene:
-        raise HTTPException(404, "кадр не найден")
+def delete_scene(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    scene = _own_scene(db, user, scene_id)
     for f in (scene.image_filename, scene.image_last_filename,
               scene.video_filename, scene.audio_filename):
         _remove_media(f)
@@ -668,6 +895,7 @@ def _run_storyboard(track_id: int) -> None:
         old = track.storyboard_filename
         # Лист смотрят целиком, апскейл до 4К ему не нужен.
         track.storyboard_filename = _save_image(data, mime, upscale=False)
+        _reg_file(db, track.storyboard_filename, track.project.owner_id)
         track.storyboard_status = "done"
         db.commit()
         _remove_media(old)
@@ -685,13 +913,12 @@ def _run_storyboard(track_id: int) -> None:
 
 
 @app.post("/api/tracks/{track_id}/generate-storyboard")
-def generate_storyboard(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+def generate_storyboard(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+    track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку трека")
+    _charge(db, user, 2, f"лист раскадровки трека {track.id}")
     track.storyboard_status = "queued"
     db.commit()
     Thread(target=_run_storyboard, args=(track_id,), daemon=True).start()
@@ -803,6 +1030,8 @@ def _run_scene_frames(scene_id: int) -> None:
         old_video, old_audio = scene.video_filename, scene.audio_filename
         scene.image_filename = _save_image(first_data, first_mime)
         scene.image_last_filename = _save_image(last_data, last_mime)
+        _reg_file(db, scene.image_filename, track.project.owner_id)
+        _reg_file(db, scene.image_last_filename, track.project.owner_id)
         scene.image_status = "done"
         # Кадры переснялись — старое видео и утверждение к ним не относятся.
         scene.approved = False
@@ -827,13 +1056,12 @@ def _run_scene_frames(scene_id: int) -> None:
 
 
 @app.post("/api/scenes/{scene_id}/generate-frames")
-def generate_scene_frames(scene_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+def generate_scene_frames(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    scene = db.get(Scene, scene_id)
-    if not scene:
-        raise HTTPException(404, "кадр не найден")
+    scene = _own_scene(db, user, scene_id)
     if not scene.image_prompt.strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
+    _charge(db, user, 2, f"кадры сцены {scene.id}")
     scene.image_status = "queued"
     db.commit()
     Thread(target=_run_scene_frames, args=(scene_id,), daemon=True).start()
@@ -864,6 +1092,7 @@ def _run_scene_video(scene_id: int) -> None:
         ))
         old_video = scene.video_filename
         scene.video_filename = fname
+        _reg_file(db, fname, track.project.owner_id)
         scene.video_status = "done"
 
         # Отрезок трека ровно под эту сцену — слушаем видео с его музыкой.
@@ -873,6 +1102,7 @@ def _run_scene_video(scene_id: int) -> None:
             try:
                 scene.audio_filename = mediagen.slice_audio(
                     audio_src, scene.start_sec, scene.duration_sec)
+                _reg_file(db, scene.audio_filename, track.project.owner_id)
             except Exception as e:  # noqa: BLE001
                 log.warning("нарезка аудио сцены %s не удалась: %s", scene_id, e)
                 old_audio = ""  # старый отрезок не трогаем, если новый не вышел
@@ -893,17 +1123,16 @@ def _run_scene_video(scene_id: int) -> None:
 
 
 @app.post("/api/scenes/{scene_id}/generate-video")
-async def generate_scene_video(scene_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def generate_scene_video(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    scene = db.get(Scene, scene_id)
-    if not scene:
-        raise HTTPException(404, "кадр не найден")
+    scene = _own_scene(db, user, scene_id)
     if not scene.image_filename:
         raise HTTPException(400, "сначала сгенерируй кадры сцены")
     body = await request.json() if await request.body() else {}
     provider = str(body.get("provider") or scene.video_provider or "seedance")
     if provider not in mediagen.video_providers():
         raise HTTPException(400, f"провайдер {provider} недоступен: {mediagen.video_providers()}")
+    _charge(db, user, 10, f"видео сцены {scene.id}")
     scene.video_provider = provider
     scene.video_status = "queued"
     db.commit()
@@ -912,11 +1141,9 @@ async def generate_scene_video(scene_id: int, request: Request, _=Depends(requir
 
 
 @app.post("/api/scenes/{scene_id}/approve")
-async def approve_scene(scene_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def approve_scene(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Утверждение ВИДЕО сцены: утверждённые идут в общий клип трека."""
-    scene = db.get(Scene, scene_id)
-    if not scene:
-        raise HTTPException(404, "кадр не найден")
+    scene = _own_scene(db, user, scene_id)
     body = await request.json()
     approved = bool(body.get("approved", True))
     if approved and not scene.video_filename:
@@ -940,6 +1167,7 @@ def _run_assemble(track_id: int) -> None:
         videos = [s.video_filename for s in track.scenes if s.approved and s.video_filename]
         old = track.clip_filename
         track.clip_filename = mediagen.assemble_clip(videos, _track_audio_path(track))
+        _reg_file(db, track.clip_filename, track.project.owner_id)
         track.clip_status = "done"
         db.commit()
         _remove_media(old)
@@ -957,11 +1185,9 @@ def _run_assemble(track_id: int) -> None:
 
 
 @app.post("/api/tracks/{track_id}/assemble")
-def assemble_track_clip(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+def assemble_track_clip(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+    track = _own_track(db, user, track_id)
     approved = [s for s in track.scenes if s.approved and s.video_filename]
     if not approved:
         raise HTTPException(400, "нет утверждённых сцен с видео")
@@ -1064,11 +1290,9 @@ def _run_supergen(track_id: int) -> None:
 
 
 @app.post("/api/tracks/{track_id}/supergen")
-def supergen(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+def supergen(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+    track = _own_track(db, user, track_id)
     if not track.audio_filename:
         raise HTTPException(400, "у трека нет аудио — загрузи дорожку")
     # Без стиля и персонажей Claude выдумывает свои: стиль обязателен, герои тоже.
@@ -1078,6 +1302,18 @@ def supergen(track_id: int, _=Depends(require_auth), db: Session = Depends(db_se
         raise HTTPException(400, "в проекте нет персонажей — добавь нового или клонируй из базы")
     if track.supergen_status in ("queued", "running"):
         raise HTTPException(400, "супергенерация уже идёт")
+    # Стоимость всего конвейера — вперёд, по фактическому объёму работ:
+    # сюжет 1 + раскадровка 1 + (кадры 2 + видео 10) на каждую сцену.
+    scenes = list(track.scenes)
+    cost = 0 if (track.project.story or "").strip() else 1
+    if scenes:
+        cost += 2 * sum(1 for s in scenes if not (s.image_filename and s.image_last_filename))
+        cost += 10 * sum(1 for s in scenes if not s.video_filename)
+    else:
+        cost += 1
+        # Сцен ещё нет — объём оцениваем по длительности трека (~6 сек на кадр).
+        cost += 12 * max(4, min(30, (track.audio_duration_sec or 180) // 6))
+    _charge(db, user, cost, f"супергенерация трека {track.id}")
     track.supergen_status = "queued"
     track.supergen_note = "старт…"
     db.commit()
@@ -1086,10 +1322,12 @@ def supergen(track_id: int, _=Depends(require_auth), db: Session = Depends(db_se
 
 
 @app.get("/api/media/{filename}")
-def get_media(filename: str, _=Depends(require_auth)):
-    path = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+def get_media(filename: str, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    fname = os.path.basename(filename)
+    path = os.path.join(UPLOAD_DIR, fname)
     if not os.path.exists(path):
         raise HTTPException(404, "файл не найден")
+    _check_file_owner(db, user, fname)
     return FileResponse(path)
 
 
@@ -1098,12 +1336,13 @@ os.makedirs(THUMB_DIR, exist_ok=True)
 
 
 @app.get("/api/thumb/{filename}")
-def get_thumb(filename: str, _=Depends(require_auth)):
+def get_thumb(filename: str, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Миниатюра кадра ~640px: полноразмерные 4К PNG в сетке карточек браузер
     не прогружает. Рендерится лениво, кэшируется рядом с данными."""
     src = os.path.join(UPLOAD_DIR, os.path.basename(filename))
     if not os.path.exists(src):
         raise HTTPException(404, "файл не найден")
+    _check_file_owner(db, user, os.path.basename(filename))
     dst = os.path.join(THUMB_DIR, os.path.basename(filename) + ".jpg")
     if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
         r = subprocess.run(
@@ -1128,7 +1367,7 @@ def get_outbox(filename: str):
 
 
 @app.get("/api/providers")
-def providers(_=Depends(require_auth)):
+def providers(user: User = Depends(current_user)):
     return {"video": mediagen.video_providers(), "seedance": mediagen.seedance_available()}
 
 
@@ -1136,11 +1375,11 @@ def providers(_=Depends(require_auth)):
 # ─────────────────────────── персонажи альбома ───────────────────────────
 
 @app.get("/api/characters/library")
-def characters_library(_=Depends(require_auth), db: Session = Depends(db_session)):
-    """Сквозная библиотека: персонажи ВСЕХ проектов разом — чтобы переносить
-    героя из альбома в альбом клонированием, а не заводить его заново."""
+def characters_library(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Сквозная библиотека: персонажи всех проектов ТЕКУЩЕГО пользователя —
+    чтобы переносить героя из альбома в альбом клонированием."""
     out = []
-    for p in db.query(Project).order_by(Project.id).all():
+    for p in db.query(Project).filter(Project.owner_id == user.id).order_by(Project.id).all():
         for c in sorted(p.characters, key=lambda x: x.position):
             out.append({
                 "id": c.id, "name": c.name, "description": c.description,
@@ -1154,14 +1393,14 @@ def characters_library(_=Depends(require_auth), db: Session = Depends(db_session
 
 
 @app.post("/api/characters/clone")
-async def clone_character(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def clone_character(request: Request, project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Клонирование персонажа из библиотеки в проект. Копия полностью
     самостоятельная: удаление оригинала (или его фото) не ломает клона."""
     body = await request.json()
     source = db.get(Character, int(body.get("source_id") or 0))
-    if not source:
+    if not source or not _owned(user, source.project):
         raise HTTPException(404, "исходный персонаж не найден")
-    project = get_or_create_project(db, project_id)
+    project = get_or_create_project(db, user, project_id)
     max_pos = max((c.position for c in project.characters), default=0)
     # Главный герой в проекте один (см. update_character): статус переносится
     # только если место главного в целевом проекте ещё свободно.
@@ -1182,6 +1421,7 @@ async def clone_character(request: Request, project_id: int | None = None, _=Dep
         ext = os.path.splitext(ph.filename)[1] or ".jpg"
         fname = f"char_{uuid.uuid4().hex}{ext}"
         shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
+        _reg_file(db, fname, project.owner_id)
         db.add(CharacterPhoto(character_id=clone.id, position=i, filename=fname))
     # Атрибуты — часть образа персонажа: клон получает их вместе с фото
     # (тоже байтами под новыми именами — по той же причине, что и лица).
@@ -1199,6 +1439,7 @@ async def clone_character(request: Request, project_id: int | None = None, _=Dep
             ext = os.path.splitext(ph.filename)[1] or ".jpg"
             fname = f"attr_{uuid.uuid4().hex}{ext}"
             shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
+            _reg_file(db, fname, project.owner_id)
             db.add(AttributePhoto(attribute_id=attr_clone.id, position=i, filename=fname))
     db.commit()
     # clone.photos закэширован ДО вставки фото — без refresh ответ уйдёт пустым.
@@ -1207,9 +1448,9 @@ async def clone_character(request: Request, project_id: int | None = None, _=Dep
 
 
 @app.post("/api/characters")
-async def create_character(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def create_character(request: Request, project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
     body = await request.json()
-    project = get_or_create_project(db, project_id)
+    project = get_or_create_project(db, user, project_id)
     max_pos = max((c.position for c in project.characters), default=0)
     ch = Character(
         project_id=project.id, position=max_pos + 1,
@@ -1224,10 +1465,8 @@ async def create_character(request: Request, project_id: int | None = None, _=De
 
 
 @app.patch("/api/characters/{char_id}")
-async def update_character(char_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
-    ch = db.get(Character, char_id)
-    if not ch:
-        raise HTTPException(404, "персонаж не найден")
+async def update_character(char_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ch = _own_character(db, user, char_id)
     body = await request.json()
     if "name" in body:
         ch.name = str(body["name"])
@@ -1244,10 +1483,8 @@ async def update_character(char_id: int, request: Request, _=Depends(require_aut
 
 
 @app.delete("/api/characters/{char_id}")
-def delete_character(char_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    ch = db.get(Character, char_id)
-    if not ch:
-        raise HTTPException(404, "персонаж не найден")
+def delete_character(char_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ch = _own_character(db, user, char_id)
     for ph in ch.photos:
         _remove_media(ph.filename)
     # Файлы фото атрибутов каскад БД не удалит — чистим их сами.
@@ -1260,10 +1497,8 @@ def delete_character(char_id: int, _=Depends(require_auth), db: Session = Depend
 
 
 @app.post("/api/characters/{char_id}/photos")
-async def add_character_photo(char_id: int, photo: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
-    ch = db.get(Character, char_id)
-    if not ch:
-        raise HTTPException(404, "персонаж не найден")
+async def add_character_photo(char_id: int, photo: UploadFile, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ch = _own_character(db, user, char_id)
     ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
     if ext not in (".jpg", ".jpeg", ".png", ".webp"):
         raise HTTPException(400, "поддерживаются jpg/png/webp")
@@ -1280,10 +1515,8 @@ async def add_character_photo(char_id: int, photo: UploadFile, _=Depends(require
 
 
 @app.delete("/api/characters/photos/{photo_id}")
-def delete_character_photo(photo_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    ph = db.get(CharacterPhoto, photo_id)
-    if not ph:
-        raise HTTPException(404, "фото не найдено")
+def delete_character_photo(photo_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ph = _own_char_photo(db, user, photo_id)
     _remove_media(ph.filename)
     db.delete(ph)
     db.commit()
@@ -1293,10 +1526,8 @@ def delete_character_photo(photo_id: int, _=Depends(require_auth), db: Session =
 # ─────────────────────────── атрибуты персонажей ───────────────────────────
 
 @app.post("/api/characters/{char_id}/attributes")
-async def create_attribute(char_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
-    ch = db.get(Character, char_id)
-    if not ch:
-        raise HTTPException(404, "персонаж не найден")
+async def create_attribute(char_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ch = _own_character(db, user, char_id)
     body = await request.json()
     max_pos = max((a.position for a in ch.attributes), default=0)
     attr = CharacterAttribute(
@@ -1311,10 +1542,8 @@ async def create_attribute(char_id: int, request: Request, _=Depends(require_aut
 
 
 @app.patch("/api/attributes/{attr_id}")
-async def update_attribute(attr_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
-    attr = db.get(CharacterAttribute, attr_id)
-    if not attr:
-        raise HTTPException(404, "атрибут не найден")
+async def update_attribute(attr_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    attr = _own_attribute(db, user, attr_id)
     body = await request.json()
     if "name" in body:
         attr.name = str(body["name"])
@@ -1325,10 +1554,8 @@ async def update_attribute(attr_id: int, request: Request, _=Depends(require_aut
 
 
 @app.delete("/api/attributes/{attr_id}")
-def delete_attribute(attr_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    attr = db.get(CharacterAttribute, attr_id)
-    if not attr:
-        raise HTTPException(404, "атрибут не найден")
+def delete_attribute(attr_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    attr = _own_attribute(db, user, attr_id)
     for ph in attr.photos:
         _remove_media(ph.filename)
     db.delete(attr)
@@ -1337,10 +1564,8 @@ def delete_attribute(attr_id: int, _=Depends(require_auth), db: Session = Depend
 
 
 @app.post("/api/attributes/{attr_id}/photos")
-async def add_attribute_photo(attr_id: int, photo: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
-    attr = db.get(CharacterAttribute, attr_id)
-    if not attr:
-        raise HTTPException(404, "атрибут не найден")
+async def add_attribute_photo(attr_id: int, photo: UploadFile, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    attr = _own_attribute(db, user, attr_id)
     ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
     if ext not in (".jpg", ".jpeg", ".png", ".webp"):
         raise HTTPException(400, "поддерживаются jpg/png/webp")
@@ -1357,10 +1582,8 @@ async def add_attribute_photo(attr_id: int, photo: UploadFile, _=Depends(require
 
 
 @app.delete("/api/attributes/photos/{photo_id}")
-def delete_attribute_photo(photo_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
-    ph = db.get(AttributePhoto, photo_id)
-    if not ph:
-        raise HTTPException(404, "фото не найдено")
+def delete_attribute_photo(photo_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ph = _own_attr_photo(db, user, photo_id)
     _remove_media(ph.filename)
     db.delete(ph)
     db.commit()
@@ -1379,12 +1602,10 @@ def _renumber_scenes(track: Track) -> None:
 
 
 @app.post("/api/tracks/{track_id}/scenes")
-async def add_scene(track_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+async def add_scene(track_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Ручной кадр. after_position: после какого кадра вставить (0 = в начало,
     не передан = в конец)."""
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+    track = _own_track(db, user, track_id)
     body = await request.json()
     after = body.get("after_position")
     max_pos = max((s.position for s in track.scenes), default=0)
@@ -1441,23 +1662,24 @@ def _run_all_frames(track_id: int) -> None:
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
-def generate_all_frames(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+def generate_all_frames(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
-    track = db.get(Track, track_id)
-    if not track:
-        raise HTTPException(404, "трек не найден")
+    track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку")
-    todo = 0
-    for s in track.scenes:
-        if not (s.image_filename and s.image_last_filename) and (s.image_prompt or "").strip()                 and not s.image_prompt.startswith("(готовый кадр"):
-            s.image_status = "queued"
-            todo += 1
-    db.commit()
+    todo = [s for s in track.scenes
+            if not (s.image_filename and s.image_last_filename)
+            and (s.image_prompt or "").strip()
+            and not s.image_prompt.startswith("(готовый кадр")]
     if not todo:
         raise HTTPException(400, "у всех сцен кадры уже готовы")
+    # Списываем за весь пакет вперёд — до того, как сцены встанут в очередь.
+    _charge(db, user, 2 * len(todo), f"кадры всех сцен трека {track.id}")
+    for s in todo:
+        s.image_status = "queued"
+    db.commit()
     Thread(target=_run_all_frames, args=(track_id,), daemon=True).start()
-    return {"ok": True, "queued": todo}
+    return {"ok": True, "queued": len(todo)}
 
 
 @app.get("/api/health")
