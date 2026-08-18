@@ -459,3 +459,23 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 @media (max-width: 700px) {
   .made-with { right: 10px; bottom: 6px; font-size: 9.5px; }
 }
+
+/* компактнее: поля растут по фокусу, пустые не занимают экран */
+#character-bible:focus, #story:focus { min-height: 140px; }
+textarea { transition: min-height .15s; }
+.panel h2 { margin-bottom: 10px; }
+
+/* инструкция на лендинге: нумерованные шаги */
+.welcome-steps {
+  margin: 2px 0 4px; padding: 0 0 0 4px; text-align: left; list-style: none;
+  counter-reset: step; display: flex; flex-direction: column; gap: 6px;
+  font-size: 13px; line-height: 1.4;
+}
+.welcome-steps li { counter-increment: step; display: flex; gap: 9px; align-items: baseline; }
+.welcome-steps li::before {
+  content: counter(step); flex: none; width: 20px; height: 20px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 800; color: #fff;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  border: 1.5px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
+}

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=22" />
+<link rel="stylesheet" href="/style.css?v=24" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
@@ -21,6 +21,12 @@
       <li>🎨 стили-пресеты: от лампового аниме до нуарного комикса</li>
       <li>⚡ супергенерация: весь конвейер одной кнопкой</li>
     </ul>
+    <ol class="welcome-steps">
+      <li><b>Старт</b> — аккаунт создастся сам, регистрация не нужна</li>
+      <li>Залей трек, выбери стиль клипа и добавь персонажей с фото</li>
+      <li>Жми <b>⚡ Супергенерацию</b> — сюжет, кадры и видео соберутся сами</li>
+      <li>Скачай готовый клип; любую сцену можно перегенерить отдельно</li>
+    </ol>
     <button id="welcome-start" class="primary welcome-cta">Старт</button>
     <button id="welcome-login" class="ghost welcome-have">У меня есть аккаунт</button>
     <p class="welcome-privacy muted">файлы и проекты приватны — их видишь только ты</p>
@@ -56,10 +62,10 @@
   <section class="panel">
     <h2>Герой и сюжет</h2>
     <label>Библия героя (внешность, характер — одна на все треки)</label>
-    <textarea id="character-bible" rows="4" placeholder="Оставь пустым — Claude придумает героя сам по первым трекам"></textarea>
+    <textarea id="character-bible" rows="2" placeholder="Оставь пустым — Claude придумает героя сам по первым трекам"></textarea>
 
     <label>Сквозной сюжет</label>
-    <textarea id="story" rows="8" placeholder="Появится после генерации"></textarea>
+    <textarea id="story" rows="3" placeholder="Появится после генерации"></textarea>
 
     <div class="row">
       <button id="save-project-btn">Сохранить</button>
@@ -88,7 +94,7 @@
         <label>Стиль клипа</label>
         <div class="style-picker"></div>
         <input type="hidden" name="style" />
-        <textarea name="lyrics" placeholder="Текст песни (необязательно — можно без текста, чисто бит: тогда идею закладывают комментарий и персонажи)" rows="6"></textarea>
+        <textarea name="lyrics" placeholder="Текст песни (необязательно — можно без текста, чисто бит: тогда идею закладывают комментарий и персонажи)" rows="4"></textarea>
         <textarea name="comment" placeholder="Комментарий: что имел в виду, контекст" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
         <button type="submit" class="primary">Добавить трек</button>
@@ -290,6 +296,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=22"></script>
+<script src="/app.js?v=24"></script>
 </body>
 </html>
