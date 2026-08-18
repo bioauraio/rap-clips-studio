@@ -87,9 +87,16 @@ async def generate_image(prompt: str, reference_path: str | None = None) -> tupl
     errors = []
 
     async def _chatgpt() -> tuple[bytes, str] | None:
+        payload: dict = {"prompt": prompt}
+        # ChatGPT-шлюз умеет референс напрямую (reference_image_b64) — модель
+        # держит лицо/предмет с фото, не только Grok.
+        if reference_path and os.path.exists(reference_path):
+            with open(reference_path, "rb") as f:
+                payload["reference_image_b64"] = base64.b64encode(f.read()).decode()
+            payload["reference_mime"] = "image/png" if reference_path.lower().endswith(".png") else "image/jpeg"
         try:
             async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
-                r = await client.post(IMAGE_GATEWAY_URL, json={"prompt": prompt})
+                r = await client.post(IMAGE_GATEWAY_URL, json=payload)
             if r.status_code == 200:
                 data = r.json()
                 return base64.b64decode(data["image_b64"]), data.get("mime", "image/png")
@@ -113,7 +120,8 @@ async def generate_image(prompt: str, reference_path: str | None = None) -> tupl
             errors.append(f"Grok-шлюз недоступен: {e}")
         return None
 
-    order = (_grok, _chatgpt) if reference_path else (_chatgpt, _grok)
+    # ChatGPT первым всегда: у него выше качество и он теперь тоже умеет референс.
+    order = (_chatgpt, _grok)
     for fn in order:
         result = await fn()
         if result:

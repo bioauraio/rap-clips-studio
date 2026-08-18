@@ -887,11 +887,21 @@ def _run_storyboard(track_id: int) -> None:
         import asyncio
         built = asyncio.run(claude.generate_storyboard_sheet_prompt(
             style=track.style, character_bible=track.project.character_bible, scenes=scenes,
+            characters=characters_payload(track.project),
         ))
         prompt = built.get("prompt") or ""
         if not prompt:
             raise RuntimeError("Claude не вернул промпт листа раскадровки")
-        data, mime = asyncio.run(mediagen.generate_image(prompt))
+        # Референс главного героя — чтобы на листе был НАШ персонаж, а не выдуманный.
+        ref = None
+        main_char = next(
+            (c for c in track.project.characters if c.is_main and c.photos), None,
+        ) or next((c for c in track.project.characters if c.photos), None)
+        if main_char:
+            cand = os.path.join(UPLOAD_DIR, main_char.photos[0].filename)
+            if os.path.exists(cand):
+                ref = cand
+        data, mime = asyncio.run(mediagen.generate_image(prompt, ref))
         old = track.storyboard_filename
         # Лист смотрят целиком, апскейл до 4К ему не нужен.
         track.storyboard_filename = _save_image(data, mime, upscale=False)

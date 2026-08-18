@@ -250,14 +250,20 @@ STORYBOARD_SHEET_SYSTEM = """Ты пишешь промпт для генера�
 
 async def generate_storyboard_sheet_prompt(
     *, style: str, character_bible: str, scenes: list[dict],
+    characters: list[dict] | None = None,
 ) -> dict:
     lines = [
         f"{s['position']}. [{s.get('shot_size') or 'plan'}] {s.get('shot_note') or ''}"
         for s in scenes
     ]
+    chars = _characters_block(characters or [])
     prompt = (
-        f"Стиль ролика: {style or '(на твой выбор)'}\n\n"
+        (chars + "\n\n" if chars else "")
+        + f"Стиль ролика: {style or '(на твой выбор)'}\n\n"
         f"Библия героя:\n{character_bible}\n\n"
+        "ВАЖНО: на каждом кадре листа, где есть персонаж, он обязан выглядеть "
+        "СТРОГО по своему описанию выше (лицо, причёска, одежда, татуировки, "
+        "атрибуты) — в выбранной стилистике, но узнаваемо. Не выдумывай других героев.\n\n"
         f"Кадры ({len(scenes)} шт.):\n" + "\n".join(lines)
     )
     return await _ask(prompt, STORYBOARD_SHEET_SYSTEM)
