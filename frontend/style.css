@@ -415,3 +415,14 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   .style-chip { font-size: 10.5px; padding: 4px 8px; }
   .kind-cards { flex-direction: column; }
 }
+
+/* ────────── подпись автора: «сделано :333» = сделано с любовью ────────── */
+.made-with {
+  position: fixed; right: 14px; bottom: 10px; z-index: 5;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em;
+  color: var(--muted); opacity: .75; pointer-events: none; user-select: none;
+  text-shadow: 0 1px 0 rgba(255,255,255,.7);
+}
+@media (max-width: 700px) {
+  .made-with { right: 10px; bottom: 6px; font-size: 9.5px; }
+}
