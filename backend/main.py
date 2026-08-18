@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -384,6 +385,21 @@ def characters_payload(project: Project) -> list[dict]:
     ]
 
 
+def _midframes(s: Scene) -> list[dict]:
+    """midframes_json → список; битый/пустой JSON = пустой список."""
+    try:
+        data = json.loads(s.midframes_json or "[]")
+        return data if isinstance(data, list) else []
+    except ValueError:
+        return []
+
+
+def _midframe_count(duration_sec: int) -> int:
+    """Сколько промежуточных кадров положено сцене: примерно раз в 2 секунды
+    между первым и последним, но не больше 4 (экономия очков и времени)."""
+    return max(0, min(4, round((duration_sec or 0) / 2) - 1))
+
+
 def scene_dict(s: Scene) -> dict:
     return {
         "id": s.id, "position": s.position, "start_sec": s.start_sec,
@@ -399,6 +415,11 @@ def scene_dict(s: Scene) -> dict:
         "image_thumb_url": f"/api/thumb/{s.image_filename}" if s.image_filename else "",
         "image_last_thumb_url": f"/api/thumb/{s.image_last_filename}" if s.image_last_filename else "",
         "image_status": s.image_status, "image_error": s.image_error,
+        "midframes": [
+            {"url": f"/api/media/{m['filename']}", "thumb_url": f"/api/thumb/{m['filename']}"}
+            for m in _midframes(s) if m.get("filename")
+        ],
+        "midframes_expected": _midframe_count(s.duration_sec),
         "audio_url": f"/api/media/{s.audio_filename}" if s.audio_filename else "",
         "approved": s.approved,
         "video_url": f"/api/media/{s.video_filename}" if s.video_filename else "",
@@ -475,6 +496,8 @@ def delete_project(project_id: int, user: User = Depends(current_user), db: Sess
         for sc in t.scenes:
             for f in (sc.image_filename, sc.image_last_filename, sc.video_filename, sc.audio_filename):
                 _remove_media(f)
+            for m in _midframes(sc):
+                _remove_media(m.get("filename", ""))
         _remove_media(t.storyboard_filename)
         _remove_media(t.clip_filename)
         _remove_media(t.cover_filename)
@@ -662,8 +685,10 @@ def delete_track(track_id: int, user: User = Depends(current_user), db: Session 
         if os.path.exists(path):
             os.remove(path)
     for s in track.scenes:
-        _remove_media(s.image_filename)
-        _remove_media(s.video_filename)
+        for f in (s.image_filename, s.image_last_filename, s.video_filename, s.audio_filename):
+            _remove_media(f)
+        for m in _midframes(s):
+            _remove_media(m.get("filename", ""))
     _remove_media(track.cover_filename)
     db.delete(track)
     db.commit()
@@ -814,9 +839,12 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
 async def update_scene(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
-    for field in ("duration_sec", "lyric_line", "shot_size", "camera_move", "image_prompt", "motion_prompt", "shot_note"):
+    # characters и image_prompt_last фронт слал всегда — бэк их молча ронял;
+    # чипы персонажей и правка последнего кадра держатся на этих полях.
+    for field in ("duration_sec", "lyric_line", "characters", "shot_size", "camera_move",
+                  "image_prompt", "motion_prompt", "shot_note", "image_prompt_last"):
         if field in body:
-            setattr(scene, field, body[field])
+            setattr(scene, field, str(body[field]) if field != "duration_sec" else body[field])
     db.commit()
     return scene_dict(scene)
 
@@ -827,6 +855,8 @@ def delete_scene(scene_id: int, user: User = Depends(current_user), db: Session 
     for f in (scene.image_filename, scene.image_last_filename,
               scene.video_filename, scene.audio_filename):
         _remove_media(f)
+    for m in _midframes(scene):
+        _remove_media(m.get("filename", ""))
     track = scene.track
     db.delete(scene)
     db.flush()
@@ -1038,19 +1068,22 @@ def _run_scene_frames(scene_id: int) -> None:
 
         old_first, old_last = scene.image_filename, scene.image_last_filename
         old_video, old_audio = scene.video_filename, scene.audio_filename
+        old_mids = [m.get("filename", "") for m in _midframes(scene)]
         scene.image_filename = _save_image(first_data, first_mime)
         scene.image_last_filename = _save_image(last_data, last_mime)
         _reg_file(db, scene.image_filename, track.project.owner_id)
         _reg_file(db, scene.image_last_filename, track.project.owner_id)
         scene.image_status = "done"
-        # Кадры переснялись — старое видео и утверждение к ним не относятся.
+        # Кадры переснялись — старое видео, утверждение и промежуточные
+        # кадры (интерполяция СТАРОЙ пары) к ним не относятся.
         scene.approved = False
         scene.video_filename = ""
         scene.video_status = ""
         scene.video_error = ""
         scene.audio_filename = ""
+        scene.midframes_json = ""
         db.commit()
-        for f in (old_first, old_last, old_video, old_audio):
+        for f in (old_first, old_last, old_video, old_audio, *old_mids):
             _remove_media(f)
         log.info("кадры сцены %s готовы", scene_id)
     except Exception as e:  # noqa: BLE001
@@ -1076,6 +1109,67 @@ def generate_scene_frames(scene_id: int, user: User = Depends(current_user), db:
     db.commit()
     Thread(target=_run_scene_frames, args=(scene_id,), daemon=True).start()
     return {"ok": True}
+
+
+# ─────────────────── промежуточные кадры сцены ───────────────────
+
+def _run_midframes(scene_id: int) -> None:
+    """Промежуточные кадры между первым и последним: промпт каждого строится
+    интерполяцией двух готовых промптов (Claude не нужен), референсом идёт
+    первый кадр сцены. Прогресс дописывается в midframes_json по одному кадру
+    с commit'ом — упавшая генерация не теряет уже готовые."""
+    db = SessionLocal()
+    try:
+        scene = db.get(Scene, scene_id)
+        if not scene:
+            return
+        track = scene.track
+        total = _midframe_count(scene.duration_sec)
+        # Старый набор заменяется целиком: файлы вычищаем, список обнуляем.
+        old = [m.get("filename", "") for m in _midframes(scene)]
+        scene.midframes_json = "[]"
+        db.commit()
+        for f in old:
+            _remove_media(f)
+
+        first = (scene.image_prompt or "").strip()
+        last = (scene.image_prompt_last or scene.image_prompt or "").strip()
+        ref = os.path.join(UPLOAD_DIR, scene.image_filename) if scene.image_filename else None
+        if ref and not os.path.exists(ref):
+            ref = None
+        import asyncio
+        done: list[dict] = []
+        for n in range(1, total + 1):
+            prompt = (f"Frame {n} of {total} between these two moments: "
+                      f"{first} → {last}, style unchanged")
+            data, mime = asyncio.run(mediagen.generate_image(prompt, reference_path=ref))
+            fname = _save_image(data, mime)
+            _reg_file(db, fname, track.project.owner_id)
+            done.append({"filename": fname, "prompt": prompt})
+            scene.midframes_json = json.dumps(done, ensure_ascii=False)
+            db.commit()
+        log.info("промежуточные кадры сцены %s готовы (%s шт.)", scene_id, total)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("промежуточные кадры сцены %s упали: %s", scene_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/scenes/{scene_id}/generate-midframes")
+def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    from threading import Thread
+    scene = _own_scene(db, user, scene_id)
+    total = _midframe_count(scene.duration_sec)
+    if total <= 0:
+        raise HTTPException(400, "сцена короткая — промежуточные кадры не нужны")
+    if not scene.image_filename:
+        raise HTTPException(400, "сначала сгенерируй кадры сцены — референсом идёт первый кадр")
+    if not (scene.image_prompt or "").strip():
+        raise HTTPException(400, "у сцены пуст промпт первого кадра")
+    _charge(db, user, total, f"промежуточные кадры сцены {scene.id}")
+    Thread(target=_run_midframes, args=(scene_id,), daemon=True).start()
+    return {"ok": True, "count": total}
 
 
 # ───────────────── видео сцены + отрезок трека под неё ─────────────────

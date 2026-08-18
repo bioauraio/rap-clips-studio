@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=24" />
+<link rel="stylesheet" href="/style.css?v=25" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
@@ -18,7 +18,7 @@
     <ul class="welcome-feats">
       <li>🎬 трек → сюжет → раскадровка → 4К-кадры → видео каждой сцены → готовый клип</li>
       <li>🧑‍🎤 персонажи с фото-модельками — герой не «плывёт» между кадрами</li>
-      <li>🎨 стили-пресеты: от лампового аниме до нуарного комикса</li>
+      <li>🎨 больше 10 стилей и миксы: от лампового аниме до клеймации и hood-кино</li>
       <li>⚡ супергенерация: весь конвейер одной кнопкой</li>
     </ul>
     <ol class="welcome-steps">
@@ -29,7 +29,7 @@
     </ol>
     <button id="welcome-start" class="primary welcome-cta">Старт</button>
     <button id="welcome-login" class="ghost welcome-have">У меня есть аккаунт</button>
-    <p class="welcome-privacy muted">файлы и проекты приватны — их видишь только ты</p>
+    <p class="welcome-privacy muted">файлы и проекты приватны — их видишь только ты · <a href="/report/styles.html" style="color:inherit">разбор виральных стилей</a></p>
   </div>
 </div>
 
@@ -61,8 +61,8 @@
 
   <section class="panel">
     <h2>Герой и сюжет</h2>
-    <label>Библия героя (внешность, характер — одна на все треки)</label>
-    <textarea id="character-bible" rows="2" placeholder="Оставь пустым — Claude придумает героя сам по первым трекам"></textarea>
+    <label title="внешность, характер — одна на все треки">Библия героя</label>
+    <textarea id="character-bible" rows="2" placeholder="Оставь пустым — придумается по первым трекам"></textarea>
 
     <label>Сквозной сюжет</label>
     <textarea id="story" rows="3" placeholder="Появится после генерации"></textarea>
@@ -75,9 +75,7 @@
   </section>
 
   <section class="panel">
-    <h2>Персонажи альбома</h2>
-    <p class="muted" style="margin:0 0 10px">Имя + характер + фото-модельки. Распространяются на весь альбом:
-      в промптах кадров пишутся имена, внешность подтягивается всегда, меняется только стилистика под трек.</p>
+    <h2 title="имя + характер + фото-модельки: распространяются на весь альбом, в промптах кадров пишутся имена, внешность подтягивается всегда">Персонажи альбома</h2>
     <div id="characters"></div>
     <div class="row">
       <button id="add-character-btn">+ добавить персонажа</button>
@@ -85,16 +83,16 @@
   </section>
 
   <section class="panel">
-    <h2>Треки (перетаскивай порядком мыслей — вверх/вниз)</h2>
+    <h2>Треки</h2>
     <div id="tracks"></div>
     <details class="add-track">
       <summary>+ добавить трек</summary>
       <form id="add-track-form" class="track-form">
         <input name="title" placeholder="Название трека" required />
-        <label>Стиль клипа</label>
+        <label>Стиль клипа (1–3 пресета, первый — основа)</label>
         <div class="style-picker"></div>
         <input type="hidden" name="style" />
-        <textarea name="lyrics" placeholder="Текст песни (необязательно — можно без текста, чисто бит: тогда идею закладывают комментарий и персонажи)" rows="4"></textarea>
+        <textarea name="lyrics" placeholder="Текст песни (необязательно — можно чисто бит: тогда идею закладывают комментарий и персонажи)" rows="4"></textarea>
         <textarea name="comment" placeholder="Комментарий: что имел в виду, контекст" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
         <button type="submit" class="primary">Добавить трек</button>
@@ -113,70 +111,114 @@
       </label>
       <span class="pos"></span>
       <input class="t-title" placeholder="Название" />
+      <button class="s-supergen primary" title="весь конвейер одной кнопкой">⚡ Супергенерация</button>
       <div class="order-btns">
         <button class="up ghost" title="выше">↑</button>
         <button class="down ghost" title="ниже">↓</button>
         <button class="del ghost danger" title="удалить">✕</button>
       </div>
     </div>
-    <div class="track-body">
-      <div class="track-left">
-        <label>Стиль клипа</label>
-        <div class="t-style-picker style-picker"></div>
-        <input type="hidden" class="t-style" />
-        <label>Аудио</label>
-        <audio class="t-audio" controls></audio>
-        <span class="t-duration"></span>
-        <label>Комментарий</label>
-        <textarea class="t-comment" rows="3"></textarea>
-      </div>
-      <div class="track-right">
-        <label>Текст песни (необязательно — можно чисто бит)</label>
-        <textarea class="t-lyrics" rows="8" placeholder="Пусто = чисто бит: идею раскадровки закладывают комментарий и персонажи"></textarea>
-      </div>
-    </div>
-    <div class="row">
-      <button class="save-track">Сохранить трек</button>
-      <button class="gen-scenes primary">Сгенерировать раскадровку</button>
-      <span class="scenes-status status"></span>
-    </div>
-    <div class="row supergen-row">
-      <button class="s-supergen primary">⚡ Супергенерация</button>
-      <span class="supergen-note status"></span>
-    </div>
+    <span class="supergen-note status"></span>
 
-    <div class="storyboard-block">
-      <div class="media-head">
-        <span>Лист раскадровки — весь клип одной картинкой</span>
-        <span class="sb-status status"></span>
-      </div>
-      <div class="storyboard-box">
-        <img class="sb-preview hidden" />
-      </div>
-      <div class="row">
-        <button class="gen-storyboard">Сгенерировать лист раскадровки</button>
-      </div>
-    </div>
+    <div class="stage-tabs"></div>
 
-    <div class="scenes"></div>
-    <div class="row">
-      <button class="add-scene">+ добавить кадр вручную</button>
-      <button class="gen-all-frames primary">Сгенерировать кадры всех сцен</button>
-      <span class="all-frames-note muted"></span>
-    </div>
+    <div class="stage-panes">
+      <!-- 1. Настройка -->
+      <section class="stage-pane" data-stage="setup">
+        <div class="track-body">
+          <div class="track-left">
+            <label title="1–3 пресета чекбоксами: первый выбранный — основа микса">Стиль клипа</label>
+            <div class="t-style-picker style-picker"></div>
+            <input type="hidden" class="t-style" />
+            <label>Аудио</label>
+            <audio class="t-audio" controls></audio>
+            <span class="t-duration"></span>
+            <label>Комментарий</label>
+            <textarea class="t-comment" rows="3" placeholder="что имел в виду, контекст"></textarea>
+          </div>
+          <div class="track-right">
+            <label>Текст песни</label>
+            <textarea class="t-lyrics" rows="8" placeholder="Пусто = чисто бит: идею закладывают комментарий и персонажи"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <button class="save-track">Сохранить трек</button>
+        </div>
+      </section>
 
-    <div class="clip-block">
-      <div class="media-head">
-        <span class="clip-title">Готовый клип трека</span>
-        <span class="clip-status status"></span>
-      </div>
-      <div class="media-box clip-box">
-        <video class="clip-preview hidden" controls></video>
-      </div>
-      <div class="row">
-        <button class="assemble primary">Собрать клип из утверждённых сцен</button>
-        <a class="clip-download ghost hidden" download>скачать</a>
-      </div>
+      <!-- 2. Сюжет -->
+      <section class="stage-pane" data-stage="plot">
+        <label>Сквозной сюжет проекта</label>
+        <blockquote class="t-story-quote"></blockquote>
+        <div class="t-note-view hidden">
+          <label>🎬 Режиссёрская заметка трека</label>
+          <p class="t-note-text muted"></p>
+        </div>
+        <div class="row">
+          <button class="gen-story-t primary hidden">Сгенерировать сюжет</button>
+          <span class="t-story-status status"></span>
+        </div>
+      </section>
+
+      <!-- 3. Раскадровка -->
+      <section class="stage-pane" data-stage="board">
+        <div class="row">
+          <button class="gen-scenes primary">Сгенерировать раскадровку</button>
+          <span class="scenes-status status"></span>
+        </div>
+        <div class="storyboard-block">
+          <div class="media-head">
+            <span>Лист раскадровки</span>
+            <span class="sb-status status"></span>
+          </div>
+          <div class="storyboard-box">
+            <img class="sb-preview hidden" />
+          </div>
+          <div class="row">
+            <button class="gen-storyboard">Сгенерировать лист</button>
+          </div>
+        </div>
+        <div class="strip-wrap">
+          <button class="strip-arrow strip-prev" type="button" aria-label="назад">‹</button>
+          <div class="scenes scenes-board"></div>
+          <button class="strip-arrow strip-next" type="button" aria-label="вперёд">›</button>
+        </div>
+        <div class="row">
+          <button class="add-scene">+ кадр вручную</button>
+          <button class="gen-all-frames primary">Сгенерировать кадры всех сцен</button>
+          <span class="all-frames-note muted"></span>
+        </div>
+      </section>
+
+      <!-- 4. Анимация -->
+      <section class="stage-pane" data-stage="anim">
+        <div class="strip-wrap">
+          <button class="strip-arrow strip-prev" type="button" aria-label="назад">‹</button>
+          <div class="scenes scenes-anim"></div>
+          <button class="strip-arrow strip-next" type="button" aria-label="вперёд">›</button>
+        </div>
+      </section>
+
+      <!-- 5. Готовое -->
+      <section class="stage-pane" data-stage="final">
+        <div class="clip-block">
+          <div class="media-head">
+            <span class="clip-title">Готовый клип трека</span>
+            <span class="clip-status status"></span>
+          </div>
+          <div class="media-box clip-box">
+            <video class="clip-preview hidden" controls></video>
+          </div>
+          <div class="row">
+            <button class="assemble primary">Собрать клип</button>
+            <a class="clip-download ghost hidden" download>скачать</a>
+          </div>
+        </div>
+        <div class="final-scenes">
+          <div class="media-head"><span>Видео всех сцен</span></div>
+          <div class="final-grid"></div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -188,7 +230,7 @@
       <label class="approve-check c-main-label"><input type="checkbox" class="c-main" /> главный</label>
       <button class="c-del ghost danger" title="удалить">✕</button>
     </div>
-    <label>Характер и внешность (пойдёт в промпты дословно)</label>
+    <label title="пойдёт в промпты дословно">Характер и внешность</label>
     <textarea class="c-desc" rows="3"></textarea>
     <div class="row">
       <button class="c-save">Сохранить</button>
@@ -200,7 +242,7 @@
     </div>
     <div class="char-attrs-block">
       <div class="attrs-head">
-        <span class="attrs-title">Атрибуты — фирменные вещи (шляпа, очки, квадрик…)</span>
+        <span class="attrs-title" title="фирменные вещи персонажа: шляпа, очки, квадрик…">Атрибуты</span>
         <button type="button" class="attr-add">+ атрибут</button>
       </div>
       <div class="char-attrs"></div>
@@ -214,74 +256,70 @@
       <button class="s-play ghost" title="прослушать этот кадр">▶</button>
       <span class="s-pos"></span>
       <span class="s-time"></span>
-      <input class="s-duration" type="number" min="2" max="12" title="секунд" />
-      <button class="s-del ghost danger" title="удалить кадр">✕</button>
+      <button class="s-edit-toggle ghost board-only" title="редактировать кадр">✎</button>
+      <button class="s-del ghost danger board-only" title="удалить кадр">✕</button>
     </div>
-    <div class="shot-row">
-      <select class="s-shotsize">
-        <option value="">крупность —</option>
-        <option value="extreme close-up">деталь (extreme close-up)</option>
-        <option value="close-up">крупный (close-up)</option>
-        <option value="medium">средний (medium)</option>
-        <option value="wide">общий (wide)</option>
-        <option value="establishing">заявочный (establishing)</option>
-      </select>
-      <input class="s-camera" placeholder="движение камеры, напр. slow push-in" />
-    </div>
-    <label>Персонажи в кадре (имена через запятую — модельки подтянутся сами)</label>
-    <input class="s-chars" placeholder="напр. Артём, Тень" />
-    <label>Строка / момент лирики</label>
-    <input class="s-lyric" />
-    <label>Что в кадре (по-русски)</label>
-    <input class="s-note" />
-    <label>Промпт картинки (для генерации изображения)</label>
-    <textarea class="s-image" rows="3"></textarea>
-    <label>Промпт анимации кадра</label>
-    <textarea class="s-motion" rows="3"></textarea>
-    <button class="s-save">Сохранить кадр</button>
 
-    <label>Промпт последнего кадра сцены</label>
-    <textarea class="s-motion-last" rows="3"></textarea>
-
-    <div class="media-row three">
-      <div class="media-col">
-        <div class="media-head">
-          <span>Первый кадр</span>
-          <span class="s-image-status status"></span>
+    <div class="board-only">
+      <div class="s-thumbs">
+        <div class="s-thumb" title="первый кадр">
+          <img class="s-image-preview hidden" alt="" />
+          <span class="s-thumb-cap">перв.</span>
         </div>
-        <div class="media-box">
-          <img class="s-image-preview hidden" />
+        <div class="s-thumb" title="последний кадр">
+          <img class="s-image-last-preview hidden" alt="" />
+          <span class="s-thumb-cap">посл.</span>
         </div>
       </div>
-      <div class="media-col">
-        <div class="media-head"><span>Последний кадр</span></div>
-        <div class="media-box">
-          <img class="s-image-last-preview hidden" />
+      <div class="s-midframes"></div>
+      <span class="s-image-status status"></span>
+      <div class="s-chars-chips" title="персонажи в кадре — клик включает/выключает"></div>
+      <input type="hidden" class="s-chars" />
+      <details class="s-prompt-details">
+        <summary>промпт</summary>
+        <textarea class="s-image" rows="4" title="промпт первого кадра"></textarea>
+      </details>
+      <div class="s-edit hidden">
+        <div class="shot-row">
+          <input class="s-duration" type="number" min="2" max="12" title="секунд" />
+          <select class="s-shotsize" title="крупность плана">
+            <option value="">крупность —</option>
+            <option value="extreme close-up">деталь</option>
+            <option value="close-up">крупный</option>
+            <option value="medium">средний</option>
+            <option value="wide">общий</option>
+            <option value="establishing">заявочный</option>
+          </select>
         </div>
+        <input class="s-camera" placeholder="движение камеры" title="напр. slow push-in" />
+        <input class="s-lyric" placeholder="строка лирики" />
+        <input class="s-note" placeholder="что в кадре (по-русски)" />
+        <textarea class="s-motion" rows="2" placeholder="промпт анимации кадра"></textarea>
+        <textarea class="s-motion-last" rows="2" placeholder="промпт последнего кадра сцены"></textarea>
+        <button class="s-save">Сохранить кадр</button>
       </div>
-      <div class="media-col">
-        <div class="media-head">
-          <span>Видео сцены</span>
-          <span class="s-video-status status"></span>
-        </div>
-        <div class="media-box">
-          <video class="s-video-preview hidden" controls loop></video>
-        </div>
+      <div class="row s-board-actions">
+        <button class="s-gen-frames">Перегенерировать кадры</button>
+        <button class="s-gen-mid">+ промежуточные кадры</button>
       </div>
     </div>
 
-    <div class="row">
-      <button class="s-gen-frames">Сгенерировать кадры (4К)</button>
-      <select class="s-provider"></select>
-      <button class="s-gen-video primary">Сгенерировать видео сцены</button>
-      <label class="approve-check">
+    <div class="anim-only">
+      <div class="media-box s-video-box">
+        <video class="s-video-preview hidden" controls loop></video>
+      </div>
+      <span class="s-video-status status"></span>
+      <div class="row">
+        <select class="s-provider" title="провайдер видео"></select>
+        <button class="s-gen-video primary">Видео сцены</button>
+      </div>
+      <label class="approve-check" title="утверждённые сцены идут в общий клип">
         <input type="checkbox" class="s-approve" />
-        Утвердить → в общий клип
+        в клип
       </label>
-    </div>
-    <div class="scene-audio-row hidden">
-      <span class="muted">Отрезок трека под сцену:</span>
-      <audio class="s-audio" controls></audio>
+      <div class="scene-audio-row hidden">
+        <audio class="s-audio" controls title="отрезок трека под сцену"></audio>
+      </div>
     </div>
   </div>
 </template>
@@ -296,6 +334,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=24"></script>
+<script src="/app.js?v=25"></script>
 </body>
 </html>

@@ -1,56 +1,95 @@
-// Один стиль на клип: выбранный пресет уходит в промпты чистым, без смесей.
-// Старые треки со «смесями» стилей хранят прежнюю строку как есть — она
-// продолжает работать, пока пользователь не выберет один пресет заново.
+// Микс стилей: 1–3 пресета чекбокс-чипами, ПЕРВЫЙ выбранный — основа.
+// 1 пресет — чистый value; 2–3 — value основы + короткие выжимки остальных.
+function styleExcerpt(value) {
+  // Первые ~2 предложения промпта: ими дополнительный стиль «подмешивается».
+  const m = value.match(/[^.]+\./g);
+  return m ? m.slice(0, 2).join("").trim() : value;
+}
+
 function buildFusionStyle(labels) {
-  const chosen = STYLE_PRESETS.find((p) => labels.includes(p.label));
-  return chosen ? chosen.value : "";
+  const chosen = labels
+    .map((l) => STYLE_PRESETS.find((p) => p.label === l))
+    .filter(Boolean);
+  if (!chosen.length) return "";
+  if (chosen.length === 1) return chosen[0].value;
+  const extras = chosen.slice(1).map((p) => styleExcerpt(p.value));
+  return chosen[0].value + "\n\nBlend in elements of: " + extras.join(" ");
 }
 
 function styleLabelsFromValue(value) {
-  // Восстановление выбора из сохранённого промпта: и одиночного, и старого фьюжна.
+  // Восстановление выбора из сохранённого промпта: основа хранится полным
+  // value (идёт первой), дополнительные — выжимками (идут следом).
   if (!value) return [];
-  const found = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.label);
-  return found;
+  const base = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.label);
+  const extras = STYLE_PRESETS
+    .filter((p) => !value.includes(p.value) && value.includes(styleExcerpt(p.value)))
+    .map((p) => p.label);
+  return [...base, ...extras];
 }
-
-let stylePickerSeq = 0;
 
 function buildStylePicker(container, current, onChange) {
   container.innerHTML = "";
-  const matched = styleLabelsFromValue(current);
-  // Одиночный выбор: активен ровно один пресет; старый микс не подсвечиваем,
-  // чтобы не врать, будто стиль равен одному из пресетов.
-  const active = matched.length === 1 ? matched[0] : null;
-  const group = `style-group-${++stylePickerSeq}`;
+  // Порядок выбора важен: order[0] — основа микса.
+  const order = styleLabelsFromValue(current);
+
+  const chipsBox = document.createElement("div");
+  chipsBox.className = "style-chips";
+  const desc = document.createElement("details");
+  desc.className = "style-desc";
+  const descSummary = document.createElement("summary");
+  descSummary.textContent = "описание выбранных стилей";
+  const descBody = document.createElement("div");
+  descBody.className = "style-desc-body muted";
+  desc.append(descSummary, descBody);
+
+  const sync = (fireChange) => {
+    $$(".style-chip", chipsBox).forEach((el) => {
+      const on = order.includes(el.dataset.label);
+      el.classList.toggle("on", on);
+      el.classList.toggle("base", order[0] === el.dataset.label);
+      el.querySelector("input").checked = on;
+    });
+    const chosen = order
+      .map((l) => STYLE_PRESETS.find((p) => p.label === l))
+      .filter(Boolean);
+    descBody.textContent = chosen.length
+      ? chosen.map((p, i) => `${i ? "＋" : "★"} ${p.label} — ${p.desc}`).join("\n")
+      : "стиль не выбран";
+    desc.classList.toggle("hidden", !chosen.length);
+    if (fireChange) onChange(buildFusionStyle(order));
+  };
+
   for (const p of STYLE_PRESETS) {
     const label = document.createElement("label");
-    label.className = "style-chip" + (p.label === active ? " on" : "");
-    const rb = document.createElement("input");
-    rb.type = "radio";
-    rb.name = group;
-    rb.value = p.label;
-    rb.checked = p.label === active;
-    rb.addEventListener("change", () => {
-      if (!rb.checked) return;
-      $$(".style-chip", container).forEach((el) => el.classList.toggle("on", el === label));
-      onChange(buildFusionStyle([p.label]));
+    label.className = "style-chip";
+    label.dataset.label = p.label;
+    label.title = p.desc;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        if (order.length >= 3) { cb.checked = false; return; } // максимум 3
+        order.push(p.label);
+      } else {
+        const i = order.indexOf(p.label);
+        if (i >= 0) order.splice(i, 1);
+      }
+      sync(true);
     });
-    label.appendChild(rb);
+    label.appendChild(cb);
     label.appendChild(document.createTextNode(p.label));
-    container.appendChild(label);
+    chipsBox.appendChild(label);
   }
-  if (matched.length > 1) {
-    const note = document.createElement("div");
-    note.className = "muted";
-    note.textContent = "(у трека сохранён старый микс стилей — выбор одного пресета заменит его)";
-    container.appendChild(note);
-  } else if (current && !matched.length) {
-    // Кастомный стиль старого трека, не совпавший с пресетами
+  container.appendChild(chipsBox);
+  container.appendChild(desc);
+  if (current && !order.length) {
     const note = document.createElement("div");
     note.className = "muted";
     note.textContent = "(у трека свой кастомный стиль — выбор пресета заменит его)";
     container.appendChild(note);
   }
+  // Первичная отрисовка БЕЗ onChange: кастомный стиль не затираем пустотой.
+  sync(false);
 }
 
 // Стили клипов: выбор ТОЛЬКО из пресетов — каждый промпт полностью
@@ -59,30 +98,37 @@ function buildStylePicker(container, current, onChange) {
 const STYLE_PRESETS = [
   {
     label: "Хаяо Миядзаки (ламповое аниме)",
+    desc: "Тёплое рисованное аниме с акварельными фонами и уютным светом — как кадр из Гибли.",
     value: "Hand-painted Studio Ghibli style anime inspired by Hayao Miyazaki films, vertical 9:16. Soft watercolor backgrounds with visible brush texture, lush painterly clouds and greenery, warm golden-hour sunlight or cozy lamp glow through windows. Gentle pleasant palette: warm cream, soft sky blue, grass green, sunset amber — nothing acidic, everything nostalgic and comforting. Characters drawn in classic 2D anime cel style with simple expressive faces, natural relaxed poses, wind gently moving hair and clothes. Quiet magical realism mood: dust motes in sunbeams, steam from food, fireflies, rustling leaves. Every frame feels like a warm memory — calm, humane, a little wistful. No harsh shadows, no neon, no 3D render look, no text."
   },
   {
     label: "3D мультяшный (Pixar-style)",
+    desc: "Глянцевый 3D-мультфильм: выразительные герои, сочный кинематографичный свет.",
     value: "High-end 3D animated feature film style like Pixar and DreamWorks, vertical 9:16, ultra HD render. Rounded appealing character design with large expressive eyes, soft subsurface scattering skin, detailed hair and fabric simulation. Rich cinematic lighting: warm key light, colorful bounce light, gentle rim light separating character from background. Vibrant but tasteful saturated palette, shallow depth of field with creamy bokeh, subtle film grain. Polished storytelling composition, emotional facial expressions. No text, no watermark."
   },
   {
     label: "Кинематографичное аниме (Синкай)",
+    desc: "Современное аниме с гиперкрасивыми небесами, бликами и эмоциональными градиентами.",
     value: "Modern cinematic anime film style inspired by Makoto Shinkai, vertical 9:16. Breathtaking hyper-detailed backgrounds: glowing skies with layered clouds, lens flares, glittering city lights, rain droplets catching light. Emotional color grading with luminous gradients — deep blues into warm oranges and pinks. Crisp 2D character animation with delicate lighting on hair and eyes. Dramatic sense of scale: vast skies over small human figures. Melancholic-hopeful atmosphere. No text, no watermark."
   },
   {
     label: "Реализм (кино)",
+    desc: "Фотореалистичное кино на плёнке: честный свет, фактура кожи, лёгкое зерно.",
     value: "Photorealistic cinematic film still, vertical 9:16, shot on ARRI Alexa with anamorphic lenses. Natural skin texture and imperfections, real physical lighting: practical sources, soft window light or hard sun with true shadows. Film color grading with gentle teal-orange balance, subtle 35mm grain, shallow depth of field. Documentary-authentic staging: real locations, lived-in details, honest emotion on faces. No CGI look, no oversharpening, no text."
   },
   {
     label: "2D плоская анимация",
+    desc: "Яркая плоская векторная анимация: простые формы, смелые контуры, постерные композиции.",
     value: "Bold flat 2D vector animation style, vertical 9:16. Clean geometric shapes, thick confident outlines, limited harmonious palette of 4-6 colors per scene, flat color fills with simple two-tone shading. Playful exaggerated proportions and snappy poses, minimal but expressive faces. Mid-century modern and contemporary motion-design influence: textured paper grain overlay, simple patterned backgrounds. Cheerful, graphic, poster-like compositions. No gradients overload, no 3D, no text."
   },
   {
     label: "Нуарный комикс",
+    desc: "Чёрно-белый нуар с одним цветовым акцентом: глубокие тени, дождь, неон.",
     value: "Gritty noir graphic novel style like Sin City and Batman animated classics, vertical 9:16. High-contrast chiaroscuro: deep ink-black shadows swallowing half of every frame, stark white or single warm accent color (red neon, amber streetlight) cutting through darkness. Heavy dramatic hatching and ink texture, rain-slick streets reflecting light, cigarette smoke curling through venetian-blind shadows. Hard-boiled atmosphere: trench coats, brooding silhouettes, low camera angles. Monochrome with one accent color per scene. No text, no captions."
   },
   {
     label: "Длинные бошки (аналоговый сюр 90-х)",
+    desc: "Аналоговая плёнка 90-х: сюрреалистичные длинноголовые персонажи в обычной уличной жизни.",
     value: "1990s analog film street photography, scanned 35mm frame with heavy grain and slightly faded Kodak colors, candid documentary framing. Surreal characters with elongated non-human heads on long necks (ostrich-like, greyhound, pale alien with almond eyes, porcelain mannequin mask) on completely ordinary human bodies in baggy 90s streetwear: oversized denim jackets, loose white shirts, wide pants, chunky chains, plastic grocery bags, coffee cups. Deadpan poses, mundane everyday activities, nobody reacts to the surrealism. Locations: laundromats, convenience stores, crosswalks, chain-link fences, boxy 80s sedans, night streets with neon signage and wet asphalt reflections. Muted denim-blue palette with warm cream skin tones and red/neon accents, harsh daylight or direct flash by day, deep black sky and neon glow by night. Vertical 9:16, no text."
   },
   {
@@ -91,15 +137,33 @@ const STYLE_PRESETS = [
   },
   {
     label: "СПАЙК (русский кино-сюр, камео)",
+    desc: "Ночной русский кино-сюр: хрущёвки, Лады, дым и мультяшные камео на серьёзных щах.",
     value: "Cinematic photorealistic night scene shot on vintage anamorphic lenses, warm tungsten and smoky haze, heavy 35mm film grain with teal-and-amber grade. Post-Soviet Russian setting reimagined with subtle Atomic Heart retrofuturism: khrushchyovka courtyards, cramped old Lada interiors, kiosks, snow-dusted parking lots, delivery couriers in Ozon blue jackets and yellow Yandex thermo-bag backpacks. Photorealistic larger-than-life characters and deadpan cartoon-headed cameos ride together in old cars filled with smoke, count worn banknotes in shabby ornate bedrooms, stare into the lens with calm swagger. Golden chains, tracksuit textures, cigarette smoke curling in headlight beams, wet asphalt reflections. Everyday grit filmed like an epic music video, nobody reacts to the surreal cameos. Vertical 9:16, no text."
   },
   {
     label: "МУНИР (залив, вспышка, фиш-ай)",
+    desc: "Уличная съёмка Залива со вспышкой и фиш-аем: кольца в объектив, G63, доберманы.",
     value: "Gulf street documentary photography with direct on-camera flash at night and harsh daylight, ultra-wide fisheye lens distortion, saturated 35mm film colors with crushed shadows. Middle Eastern everyday swagger played deadpan: elderly men in red-checkered ghutra headdress and white thobes grinning as they push a fist with a chunky custom name-ring straight into the lens, women in black abayas fueling a black G63 at a midnight gas station, a Doberman with a heavy chain collar lunging toward the camera, corner grocery shops with Arabic signage and packed shelves, plastic chairs, dates and spice jars. Objects thrust toward the ultra-wide lens so they loom huge in the foreground, faces close and warped at the edges, flash bleaching the foreground against deep black night. Humor and quiet confidence, mundane life shot like a rap video. Vertical 9:16, no text."
   },
   {
     label: "ФАНУЕЛ (кино-сюрреализм, огонь)",
+    desc: "Сюрреалистичный fashion-фильм: одинокая фигура в костюме среди невозможных пейзажей и огня.",
     value: "Hyperreal cinematic surreal fashion film, epic single-frame worldbuilding. One elegant figure in a sharply tailored suit of a single bold color (burnt orange, saffron yellow, deep crimson) stands or walks calmly inside an impossible landscape: on the open sea at dusk, along the rings of a giant planet, across endless dunes, under colossal celestial bodies. Recurring fire motif — burning umbrellas, floating flames, embers, fire reflected in water. Deadpan composed poses, quiet confidence, no reaction to the impossible. Painterly dusk palettes: violet-pink-orange gradient skies, deep ocean blues, warm firelight against cool darkness; volumetric cinematic lighting, anamorphic depth, ultra-detailed photorealistic rendering with epic scale contrast between the small figure and the vast world. Vertical 9:16, no text."
+  },
+  {
+    label: "Клеймация (пластилин)",
+    desc: "Пластилиновая стоп-моушен анимация: отпечатки пальцев, миниатюрные декорации, тёплый свет.",
+    value: "Handcrafted claymation stop-motion style (Aardman/Laika vibe): visible fingerprints in plasticine, slightly imperfect frame-to-frame jitter, miniature set with real fabric and cardboard props, warm practical lighting, shallow depth of field macro look, expressive oversized eyes, vertical 9:16, no text."
+  },
+  {
+    label: "ДРИМКЛАД (hood-кино 90-х)",
+    desc: "Плёночное hood-кино 90-х: зерно, белые майки и банданы, деньги, голуби и кресты, иконописные фронтальные композиции.",
+    value: "1990s American hood-cinema still, shot on grainy 35mm film: faded low-contrast color grade with warm orange-brown skin tones and dusty teal shadows (or deep-grain black-and-white), heavy film grain, soft halation, subtle gate weave and VHS-era imperfections. Brick-block New York / LA streets of the 90s — bodegas with graffiti, chain-link fences, stone staircases, boxy sedans and vintage Cadillacs — or night-time mansion gates and museum halls lit by warm tungsten windows and headlights. Young men in white tank tops, bandana masks, hoodies and baggy denim; crowds dressed identically like a uniform; recurring icons of money stacks, doves, crosses, candles and classical statues — sacred mixed with street. Frontal, symmetric, almost ceremonial compositions, subjects staring straight into the lens, or candid through-the-windshield documentary angles; overexposed hazy daylight or moody night backlight. Cinematic, nostalgic, quietly menacing, music-video energy. No clean digital look, no HDR, no modern cars or clothing, no neon cyberpunk, no glossy skin, no watermarks. Vertical 9:16, no text."
+  },
+  {
+    label: "КАТСУМИ (найденная плёнка, сюр)",
+    desc: "Гиперреалистичная «найденная плёнка»: крысы, монахи и алиены на полном серьёзе живут бытовухой под камкордер со вспышкой из 90-х.",
+    value: "Hyperrealistic absurdist found-footage aesthetic: a deadpan surreal protagonist (animal or costumed figure) doing mundane human things with total seriousness, shot like accidental amateur documentary footage from the 1990s–2000s — handheld camcorder or disposable-camera look with harsh direct on-camera flash at night, or flat overcast daylight; heavy analog film grain, VHS noise, slight chromatic aberration, motion blur, fisheye or wide-angle distortion, tilted imperfect framing with the subject too close to the lens, often staring straight into the camera. Muted dirty palette of swampy olive, tobacco brown, dusty grey and desaturated flesh tones, background falling into deep black shadow, with one rare accent color (neon sign, police lights, orange robe, gold chain). Gritty tactile textures: wet fur, greasy pavement, cigarette smoke, scuffed metal, cheap floral motel interiors, cluttered convenience-store shelves. Cinematic realism, not cartoon — everything must look physically shot, grimy street-punk mood, crime-scene-snapshot lighting, deadpan comedy with zero wink. Avoid: clean digital sharpness, glossy studio light, saturated candy colors, cartoon or 3D-render look, symmetry, beauty-filter smoothness. Vertical 9:16, no text."
   },
 ];
 
@@ -412,8 +476,25 @@ $("#project-cover-input").addEventListener("change", async (e) => {
   await loadProject();
 });
 
+// Ожидание промежуточных кадров: у них нет статуса в БД (прогресс — рост
+// midframes_json), поэтому «занятость» отслеживаем на клиенте по ожидаемому
+// количеству; протухает через 10 минут, чтобы упавшая генерация не крутила поллер.
+const midframesExpect = new Map(); // scene.id → {n, ts}
+
+function midframesBusy(s) {
+  const exp = midframesExpect.get(s.id);
+  if (!exp) return false;
+  if ((s.midframes || []).length >= exp.n || Date.now() - exp.ts > 600000) {
+    midframesExpect.delete(s.id);
+    return false;
+  }
+  return true;
+}
+
 function sceneBusy(s) {
-  return ["queued", "running"].includes(s.image_status) || ["queued", "running"].includes(s.video_status);
+  return ["queued", "running"].includes(s.image_status) ||
+    ["queued", "running"].includes(s.video_status) ||
+    midframesBusy(s);
 }
 
 function schedulePoll() {
@@ -462,6 +543,62 @@ function render() {
   project.tracks.forEach((t) => container.appendChild(renderTrack(t)));
 }
 
+// ────────── степпер трека: 5 этапов, никакой автогенерации при переключении ──────────
+const STAGES = [
+  ["setup", "Настройка"],
+  ["plot", "Сюжет"],
+  ["board", "Раскадровка"],
+  ["anim", "Анимация"],
+  ["final", "Готовое"],
+];
+// Активный этап на трек — переживает пере-рендеры поллинга.
+const trackStages = new Map();
+
+function stageStates(t) {
+  const scenes = t.scenes || [];
+  const busy = (st) => ["queued", "running"].includes(st);
+  const anyImgBusy = scenes.some((s) => busy(s.image_status) || midframesBusy(s));
+  const anyVidBusy = scenes.some((s) => busy(s.video_status));
+  const framesDone = scenes.length > 0 && scenes.every((s) => s.image_url && s.image_last_url);
+  const videosDone = scenes.length > 0 && scenes.every((s) => s.video_url);
+  return {
+    setup: t.style && t.audio_duration_sec ? "done"
+      : (t.title || t.style || t.audio_duration_sec || t.lyrics || t.comment) ? "part" : "empty",
+    plot: project.story_status === "error" ? "error"
+      : busy(project.story_status) ? "busy"
+      : (project.story || "").trim() ? "done" : "empty",
+    board: (t.scenes_status === "error" || t.storyboard_status === "error" ||
+        scenes.some((s) => s.image_status === "error")) ? "error"
+      : (busy(t.scenes_status) || busy(t.storyboard_status) || anyImgBusy) ? "busy"
+      : framesDone ? "done" : scenes.length ? "part" : "empty",
+    anim: scenes.some((s) => s.video_status === "error") ? "error"
+      : anyVidBusy ? "busy"
+      : videosDone ? "done" : scenes.some((s) => s.video_url) ? "part" : "empty",
+    final: t.clip_status === "error" ? "error"
+      : busy(t.clip_status) ? "busy"
+      : t.clip_url ? "done" : "empty",
+  };
+}
+
+function defaultStage(t) {
+  if (t.clip_url) return "final";
+  if (t.scenes_count) return "board";
+  return "setup";
+}
+
+function setStage(card, key) {
+  $$(".stage-tab", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
+  $$(".stage-pane", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
+}
+
+// Стрелки ‹ › у горизонтальной ленты сцен.
+function bindStrip(wrap) {
+  const box = $(".scenes", wrap);
+  const step = () => Math.max(280, Math.round(box.clientWidth * 0.8));
+  $(".strip-prev", wrap).addEventListener("click", () => box.scrollBy({ left: -step(), behavior: "smooth" }));
+  $(".strip-next", wrap).addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
+}
+
 function renderTrack(t) {
   const tpl = $("#track-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".track-card");
@@ -482,23 +619,64 @@ function renderTrack(t) {
     await loadProject();
   });
   $(".t-title", card).value = t.title;
+
+  // ── табы-этапы с точками-статусами
+  const states = stageStates(t);
+  const active = trackStages.get(t.id) || defaultStage(t);
+  const tabsBox = $(".stage-tabs", card);
+  STAGES.forEach(([key, name], i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "stage-tab" + (key === active ? " on" : "");
+    b.dataset.stage = key;
+    const num = document.createElement("span");
+    num.className = "st-num";
+    num.textContent = String(i + 1);
+    const dot = document.createElement("span");
+    dot.className = "stage-dot " + states[key];
+    b.append(num, document.createTextNode(name), dot);
+    b.addEventListener("click", () => {
+      trackStages.set(t.id, key);
+      setStage(card, key);
+    });
+    tabsBox.appendChild(b);
+  });
+  setStage(card, active);
+
+  // Свайп влево/вправо по контенту = соседний этап (ленты сцен и поля не трогаем).
+  const panes = $(".stage-panes", card);
+  let touchX = null, touchY = null;
+  panes.addEventListener("touchstart", (e) => {
+    if (e.target.closest(".scenes, audio, video, input, textarea, select, details")) { touchX = null; return; }
+    touchX = e.touches[0].clientX;
+    touchY = e.touches[0].clientY;
+  }, { passive: true });
+  panes.addEventListener("touchend", (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    const dy = e.changedTouches[0].clientY - touchY;
+    touchX = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+    const cur = trackStages.get(t.id) || defaultStage(t);
+    const idx = STAGES.findIndex(([k]) => k === cur);
+    const next = STAGES[idx + (dx < 0 ? 1 : -1)];
+    if (next) {
+      trackStages.set(t.id, next[0]);
+      setStage(card, next[0]);
+    }
+  }, { passive: true });
+
+  // ── этап 1: настройка
   $(".t-style", card).value = t.style;
   buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
   $(".t-comment", card).value = t.comment;
-  // Режиссёрская заметка и профиль звука — служебные, отдельно от комментария.
-  if (t.director_note || t.audio_profile) {
-    const aux = document.createElement("div");
-    aux.className = "muted";
-    aux.style.cssText = "font-size:11px;margin:4px 0 0;line-height:1.45";
-    if (t.director_note) aux.appendChild(Object.assign(document.createElement("div"), { textContent: "🎬 Заметка режиссёра: " + t.director_note }));
-    if (t.audio_profile) aux.appendChild(Object.assign(document.createElement("div"), { textContent: "🎧 Прослушано: " + t.audio_profile }));
-    $(".t-comment", card).after(aux);
-  }
   $(".t-lyrics", card).value = t.lyrics;
   const audioEl = $(".t-audio", card);
   if (t.audio_filename) audioEl.src = `/api/tracks/${t.id}/audio`;
   else audioEl.style.display = "none";
-  $(".t-duration", card).textContent = t.audio_duration_sec ? fmtTime(t.audio_duration_sec) : "";
+  const durEl = $(".t-duration", card);
+  durEl.textContent = t.audio_duration_sec ? fmtTime(t.audio_duration_sec) : "";
+  if (t.audio_profile) durEl.title = "🎧 " + t.audio_profile; // простыня — в подсказку
 
   // Плеер трека сам подсвечивает кадр, который сейчас звучит — и наоборот,
   // клик по кадру перематывает трек на его начало и проигрывает.
@@ -509,15 +687,41 @@ function renderTrack(t) {
   $(".del", card).addEventListener("click", () => deleteTrack(t.id));
   $(".save-track", card).addEventListener("click", () => saveTrack(t.id, card));
 
+  // ── этап 2: сюжет (read-only цитата + заметка режиссёра + генерация, если пуст)
+  const quote = $(".t-story-quote", card);
+  quote.textContent = (project.story || "").trim() || "Сквозного сюжета ещё нет — сгенерируй его или впиши в блоке «Герой и сюжет».";
+  quote.classList.toggle("empty", !(project.story || "").trim());
+  if (t.director_note) {
+    $(".t-note-view", card).classList.remove("hidden");
+    $(".t-note-text", card).textContent = t.director_note;
+  }
+  const storyBtn = $(".gen-story-t", card);
+  const storyBusy = ["queued", "running"].includes(project.story_status);
+  storyBtn.classList.toggle("hidden", Boolean((project.story || "").trim()) && !storyBusy);
+  storyBtn.disabled = storyBusy;
+  storyBtn.addEventListener("click", async () => {
+    await saveProject();
+    try {
+      await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
+    } catch (e) {
+      alert(e.message);
+    }
+    await loadProject();
+  });
+  const tStoryStatus = statusLabel(project.story_status);
+  const tStoryEl = $(".t-story-status", card);
+  tStoryEl.textContent = tStoryStatus.text;
+  tStoryEl.className = "status " + tStoryStatus.cls;
+
+  // ── этап 3: раскадровка
   $(".add-scene", card).addEventListener("click", () => addManualScene(t.id));
   const allBtn = $(".gen-all-frames", card);
   const framesBusy = (t.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
   const framesTodo = (t.scenes || []).filter((s) => !(s.image_url && s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
   allBtn.disabled = framesBusy || !framesTodo;
-  allBtn.textContent = framesBusy ? "генерирую кадры…" : `Сгенерировать кадры всех сцен (${framesTodo})`;
-  $(".all-frames-note", card).textContent = framesBusy
-    ? "очередь идёт по одной сцене — можно закрыть вкладку, прогресс не потеряется"
-    : "";
+  allBtn.textContent = framesBusy ? "генерирую кадры…" : `Кадры всех сцен (${framesTodo})`;
+  allBtn.title = "очередь идёт по одной сцене — вкладку можно закрыть, прогресс не теряется";
+  $(".all-frames-note", card).textContent = framesBusy ? "очередь идёт по одной сцене" : "";
   allBtn.addEventListener("click", async () => {
     try {
       await api(`/api/tracks/${t.id}/generate-all-frames`, { method: "POST" });
@@ -529,10 +733,10 @@ function renderTrack(t) {
   const genBtn = $(".gen-scenes", card);
   const busy = t.scenes_status === "queued" || t.scenes_status === "running";
   genBtn.disabled = busy || !project.story;
-  genBtn.title = project.story ? "" : "сначала сгенерируй общий сюжет";
+  genBtn.title = project.story ? "" : "сначала сгенерируй общий сюжет (этап «Сюжет»)";
   genBtn.addEventListener("click", () => genScenes(t.id));
 
-  // ⚡ Супергенерация: весь конвейер одним нажатием.
+  // ⚡ Супергенерация: весь конвейер одним нажатием (кнопка живёт в шапке).
   const superBtn = $(".s-supergen", card);
   const superBusy = ["queued", "running"].includes(t.supergen_status);
   superBtn.disabled = superBusy || !t.audio_duration_sec;
@@ -540,7 +744,7 @@ function renderTrack(t) {
   superBtn.addEventListener("click", () => openSupergenModal(t));
   const superNote = $(".supergen-note", card);
   superNote.textContent = t.supergen_note || "";
-  superNote.className = "status " +
+  superNote.className = "status supergen-note " +
     (t.supergen_status === "error" ? "error" : t.supergen_status === "done" ? "done" : "");
   if (superBusy && !window.__supergenPoll) {
     window.__supergenPoll = setInterval(async () => {
@@ -571,19 +775,25 @@ function renderTrack(t) {
   const sbBtn = $(".gen-storyboard", card);
   const sbBusy = ["queued", "running"].includes(t.storyboard_status);
   sbBtn.disabled = sbBusy || !t.scenes_count;
-  sbBtn.textContent = sbBusy ? "рисую лист…" : t.storyboard_url ? "Перерисовать лист" : "Сгенерировать лист раскадровки";
+  sbBtn.textContent = sbBusy ? "рисую лист…" : t.storyboard_url ? "Перерисовать лист" : "Сгенерировать лист";
   sbBtn.addEventListener("click", () => genStoryboard(t.id));
 
-  const scenesBox = $(".scenes", card);
-  (t.scenes || []).forEach((s) => scenesBox.appendChild(renderScene(s, audioEl)));
+  // Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
+  const boardBox = $(".scenes-board", card);
+  const animBox = $(".scenes-anim", card);
+  (t.scenes || []).forEach((s) => {
+    boardBox.appendChild(renderScene(s, audioEl, "board"));
+    animBox.appendChild(renderScene(s, audioEl, "anim"));
+  });
+  $$(".strip-wrap", card).forEach(bindStrip);
 
-  // Сборка готового клипа из утверждённых сцен.
+  // ── этап 5: готовое — финальный клип + все видео сцен в одном месте
   const clipStatus = statusLabel(t.clip_status, "клип готов");
   const clipStatusEl = $(".clip-status", card);
   clipStatusEl.textContent = clipStatus.text;
   clipStatusEl.className = "status " + clipStatus.cls;
   $(".clip-title", card).textContent =
-    `Готовый клип трека — утверждено сцен: ${t.approved_count}/${t.scenes_count}`;
+    `Готовый клип — утверждено сцен: ${t.approved_count}/${t.scenes_count}`;
   if (t.clip_url) {
     const v = $(".clip-preview", card);
     v.src = t.clip_url;
@@ -595,9 +805,32 @@ function renderTrack(t) {
   const asmBtn = $(".assemble", card);
   const asmBusy = ["queued", "running"].includes(t.clip_status);
   asmBtn.disabled = asmBusy || !t.approved_count;
-  asmBtn.title = t.approved_count ? "" : "утверди хотя бы одну сцену";
-  asmBtn.textContent = asmBusy ? "собираю клип…" : "Собрать клип из утверждённых сцен";
+  asmBtn.title = t.approved_count ? "" : "утверди хотя бы одну сцену (этап «Анимация»)";
+  asmBtn.textContent = asmBusy ? "собираю клип…" : "Собрать клип";
   asmBtn.addEventListener("click", () => assembleClip(t.id));
+
+  const grid = $(".final-grid", card);
+  const withVideo = (t.scenes || []).filter((s) => s.video_url);
+  if (!withVideo.length) {
+    const empty = document.createElement("span");
+    empty.className = "muted";
+    empty.textContent = "видео сцен ещё нет — они появятся здесь после этапа «Анимация»";
+    grid.appendChild(empty);
+  }
+  withVideo.forEach((s) => {
+    const cell = document.createElement("div");
+    cell.className = "final-cell";
+    const v = document.createElement("video");
+    v.src = s.video_url;
+    v.controls = true;
+    v.loop = true;
+    v.preload = "metadata";
+    const cap = document.createElement("span");
+    cap.className = "muted";
+    cap.textContent = `Сцена ${s.position} · ${fmtTime(s.start_sec)}` + (s.approved ? " ✅" : "");
+    cell.append(v, cap);
+    grid.appendChild(cell);
+  });
 
   return card;
 }
@@ -619,9 +852,12 @@ function highlightActiveScene(trackCard, currentTime) {
   }
 }
 
-function renderScene(s, audioEl) {
+// mode: "board" — компактная карточка кадров (лента этапа «Раскадровка»),
+// "anim" — карточка видео (лента этапа «Анимация»). Один шаблон, CSS решает.
+function renderScene(s, audioEl, mode = "board") {
   const tpl = $("#scene-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".scene-card");
+  card.classList.add("mode-" + mode);
   card.dataset.id = s.id;
   card.dataset.start = s.start_sec;
   card.dataset.duration = s.duration_sec;
@@ -632,21 +868,64 @@ function renderScene(s, audioEl) {
   $(".s-camera", card).value = s.camera_move || "";
   card.classList.add("shot-" + (s.shot_size || "").replace(/\s+/g, "-"));
   $(".s-chars", card).value = s.characters || "";
+
+  // Персонажи сцены — чипами: клик включает/выключает имя в s.characters
+  // (скрытый input .s-chars остаётся источником правды для saveScene).
+  const charsInput = $(".s-chars", card);
+  const chipsBox = $(".s-chars-chips", card);
+  const projCharNames = (project.characters || [])
+    .map((c) => (c.name || "").trim()).filter(Boolean);
+  const selectedChars = () =>
+    charsInput.value.split(",").map((n) => n.trim()).filter(Boolean);
+  if (projCharNames.length) {
+    projCharNames.forEach((name) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "style-chip char-chip";
+      chip.textContent = name;
+      const isOn = () =>
+        selectedChars().some((n) => n.toLowerCase() === name.toLowerCase());
+      chip.classList.toggle("on", isOn());
+      chip.addEventListener("click", async () => {
+        const cur = selectedChars();
+        const next = isOn()
+          ? cur.filter((n) => n.toLowerCase() !== name.toLowerCase())
+          : [...cur, name];
+        charsInput.value = next.join(", ");
+        chip.classList.toggle("on");
+        chip.disabled = true;
+        try {
+          await api(`/api/scenes/${s.id}`, {
+            method: "PATCH", body: { characters: charsInput.value },
+          });
+        } catch (e) {
+          alert(e.message);
+        }
+        await loadProject();
+      });
+      chipsBox.appendChild(chip);
+    });
+  } else {
+    chipsBox.classList.add("hidden");
+  }
+
   $(".s-lyric", card).value = s.lyric_line;
   $(".s-note", card).value = s.shot_note;
   $(".s-image", card).value = s.image_prompt;
   $(".s-motion", card).value = s.motion_prompt;
+  $(".s-motion-last", card).value = s.image_prompt_last || "";
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
   $(".s-save", card).addEventListener("click", () => saveScene(s.id, card));
-  // Клик по кадру — трек перематывается на его начало и играет: удобно
+  // ✎ раскрывает остальные поля кадра (крупность, камера, лирика, анимация).
+  $(".s-edit-toggle", card).addEventListener("click", () =>
+    $(".s-edit", card).classList.toggle("hidden"));
+  // Клик по ▶ — трек перематывается на начало кадра и играет: удобно
   // сверять текст/промпт кадра с тем, что реально звучит в этот момент.
   $(".s-play", card).addEventListener("click", () => {
     if (!audioEl.src) return;
     audioEl.currentTime = s.start_sec;
     audioEl.play();
   });
-
-  $(".s-motion-last", card).value = s.image_prompt_last || "";
 
   // Кадры сцены: первый и последний (Seedance интерполирует между ними).
   const imgStatus = statusLabel(s.image_status, "готово");
@@ -671,8 +950,40 @@ function renderScene(s, audioEl) {
   const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
   framesBtn.disabled = imgBusy;
-  framesBtn.textContent = imgBusy ? "рисую кадры…" : s.image_url ? "Перегенерировать кадры" : "Сгенерировать кадры (4К)";
+  framesBtn.textContent = imgBusy ? "рисую кадры…" : s.image_url ? "Перегенерировать кадры" : "Сгенерировать кадры";
   framesBtn.addEventListener("click", () => genSceneFrames(s.id));
+
+  // Промежуточные кадры: ряд мини-превью + кнопка с числом по длительности.
+  const midBox = $(".s-midframes", card);
+  (s.midframes || []).forEach((m, i) => {
+    const img = document.createElement("img");
+    img.src = m.thumb_url || m.url;
+    img.alt = "";
+    img.title = `промежуточный кадр ${i + 1}`;
+    img.addEventListener("click", () => window.open(m.url, "_blank"));
+    midBox.appendChild(img);
+  });
+  const midBtn = $(".s-gen-mid", card);
+  const midN = s.midframes_expected != null
+    ? s.midframes_expected
+    : Math.max(0, Math.min(4, Math.round(s.duration_sec / 2) - 1));
+  const midBusy = midframesBusy(s);
+  midBtn.textContent = midBusy
+    ? `промежуточные ${(s.midframes || []).length}/${(midframesExpect.get(s.id) || { n: midN }).n}…`
+    : `+ промежуточные кадры (${midN})`;
+  midBtn.disabled = !midN || !s.image_url || midBusy || imgBusy;
+  midBtn.title = !midN ? "сцена короткая — промежуточные не нужны"
+    : !s.image_url ? "сначала сгенерируй кадры сцены"
+    : "по одному кадру между первым и последним, 1 очко за кадр";
+  midBtn.addEventListener("click", async () => {
+    try {
+      const r = await api(`/api/scenes/${s.id}/generate-midframes`, { method: "POST" });
+      midframesExpect.set(s.id, { n: r.count, ts: Date.now() });
+    } catch (e) {
+      alert(e.message);
+    }
+    await loadProject();
+  });
 
   // Видео сцены + отрезок трека под неё.
   const vidStatus = statusLabel(s.video_status, "готово");
@@ -696,7 +1007,8 @@ function renderScene(s, audioEl) {
   const vidBtn = $(".s-gen-video", card);
   const vidBusy = ["queued", "running"].includes(s.video_status);
   vidBtn.disabled = vidBusy || !s.image_url;
-  vidBtn.textContent = vidBusy ? "генерирую видео…" : s.video_url ? "Перегенерировать видео" : "Сгенерировать видео сцены";
+  vidBtn.title = s.image_url ? "" : "сначала сгенерируй кадры сцены (этап «Раскадровка»)";
+  vidBtn.textContent = vidBusy ? "генерирую…" : s.video_url ? "Перегенерировать видео" : "Видео сцены";
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value));
 
   if (s.audio_url) {
@@ -708,7 +1020,7 @@ function renderScene(s, audioEl) {
   const approveBox = $(".s-approve", card);
   approveBox.checked = s.approved;
   approveBox.disabled = !s.video_url;
-  approveBox.title = s.video_url ? "" : "сначала сгенерируй видео сцены";
+  if (!s.video_url) approveBox.title = "сначала сгенерируй видео сцены";
   approveBox.addEventListener("change", () => approveScene(s.id, approveBox.checked));
 
   return card;

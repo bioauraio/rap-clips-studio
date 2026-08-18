@@ -223,6 +223,11 @@ class Scene(Base):
     # Промпт последнего кадра — пишется Claude'ом вместе со сценарием.
     image_prompt_last = Column(Text, nullable=False, default="")
 
+    # Промежуточные кадры сцены: JSON-список [{"filename":…, "prompt":…}].
+    # Промпты строятся интерполяцией первый→последний без Claude; файлы
+    # дописываются в список по одному по мере готовности (см. _run_midframes).
+    midframes_json = Column(Text, nullable=False, default="")
+
     # Отрезок трека под эту сцену (ffmpeg-нарезка при генерации видео).
     audio_filename = Column(String, nullable=False, default="")
 
