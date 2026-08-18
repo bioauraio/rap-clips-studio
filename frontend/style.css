@@ -74,8 +74,8 @@ body {
 .panel {
   position: relative;
   background: var(--panel); backdrop-filter: blur(16px);
-  border: 2.5px solid #2d211a; border-radius: 26px;
-  padding: 22px; margin-bottom: 24px;
+  border: 2.5px solid #2d211a; border-radius: 22px;
+  padding: 16px; margin-bottom: 16px;
   /* «картонный 3D»: жёсткая офсетная тень как второй слой картона */
   box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px #2d211a, 0 20px 40px rgba(212,118,40,.14);
 }
@@ -89,9 +89,9 @@ body {
   text-transform: uppercase; color: var(--accent-2); margin: 0 0 14px;
 }
 
-label { display: block; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 5px; }
+label { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
 textarea, input[type=text], input[type=number], input:not([type]), select {
-  width: 100%; padding: 10px 12px; border-radius: 13px; border: 2px solid rgba(45,33,26,.35);
+  width: 100%; padding: 8px 10px; border-radius: 11px; border: 1.5px solid rgba(45,33,26,.35);
   background: var(--inset); color: var(--text); font-family: inherit; font-size: 13.5px;
   transition: border-color .15s, box-shadow .15s;
 }
@@ -100,9 +100,9 @@ textarea:focus, input:focus, select:focus {
 }
 textarea { resize: vertical; }
 
-.row { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 button {
-  padding: 10px 18px; border-radius: 14px; cursor: pointer; font-size: 13px; font-weight: 700;
+  padding: 8px 14px; border-radius: 12px; cursor: pointer; font-size: 12.5px; font-weight: 700;
   color: var(--text); background: var(--card); border: 2px solid #2d211a;
   box-shadow: 0 4px 0 #2d211a;
   transition: transform .08s, box-shadow .08s, border-color .15s;
@@ -128,8 +128,8 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 /* ────────── треки ────────── */
 .track-card {
   position: relative;
-  background: var(--card); border: 2.5px solid #2d211a; border-radius: 22px;
-  padding: 18px; margin-bottom: 20px;
+  background: var(--card); border: 2.5px solid #2d211a; border-radius: 18px;
+  padding: 14px; margin-bottom: 14px;
   box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px #2d211a;
 }
 .track-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -220,7 +220,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .char-head { display: flex; align-items: center; gap: 10px; }
 .c-name { flex: 1; font-weight: 700; }
 .c-main-label { padding: 6px 10px; font-size: 11.5px; white-space: nowrap; }
-.char-photos { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.char-photos { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .char-photo { position: relative; width: 76px; height: 76px; border-radius: 14px; overflow: hidden; border: 2px solid #2d211a; box-shadow: 0 3px 0 #e8d8c4, 0 3px 0 2px #2d211a; }
 .char-photo img { width: 100%; height: 100%; object-fit: cover; }
 .char-photo-del {
@@ -234,6 +234,47 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 .c-upload-btn:hover { box-shadow: 0 4px 16px rgba(255,122,41,.22); }
 
+/* ────────── атрибуты персонажа (фирменные вещи) ────────── */
+.char-attrs-block { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.attrs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.attrs-title {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.attr-add { padding: 3px 9px; font-size: 11px; border-radius: 999px; box-shadow: 0 2px 0 #2d211a; flex: none; }
+.attr-add:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.char-attrs { display: flex; flex-wrap: wrap; gap: 6px; }
+.attr-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 12px;
+  background: var(--inset); border: 1.5px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
+}
+.attr-name {
+  padding: 3px 7px; font-size: 11.5px; font-weight: 700; border-radius: 8px;
+  border: none; background: transparent; box-shadow: none; color: var(--text);
+}
+.attr-name:hover:not(:disabled) { background: rgba(255,122,41,.12); }
+.attr-name:active:not(:disabled) { transform: none; box-shadow: none; }
+.attr-photos { display: flex; gap: 4px; align-items: center; }
+.attr-thumb {
+  position: relative; width: 40px; height: 40px; border-radius: 8px; overflow: hidden;
+  border: 1.5px solid #2d211a; flex: none;
+}
+.attr-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attr-photo-del {
+  position: absolute; top: 0; right: 0; padding: 0 3px; font-size: 10px; line-height: 14px;
+  background: rgba(255,255,255,.85); border-radius: 0 0 0 6px;
+}
+.attr-upload {
+  cursor: pointer; margin: 0; display: inline-flex; flex: none;
+  font-family: inherit; text-transform: none; letter-spacing: normal;
+}
+.attr-upload-btn {
+  display: inline-block; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 700;
+  border: 1px dashed var(--border-bright); color: var(--accent-2); white-space: nowrap;
+}
+.attr-upload-btn:hover { box-shadow: 0 3px 12px rgba(255,122,41,.22); }
+.attr-del { padding: 2px 5px; font-size: 11px; flex: none; }
+
 /* ────────── проекты ────────── */
 .project-select { width: auto; max-width: 260px; font-weight: 700; }
 .kind-badge {
@@ -244,16 +285,110 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 
 /* ────────── выбор/микс стилей ────────── */
-.style-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.style-picker { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
 .style-chip {
-  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
-  font-size: 12.5px; font-weight: 700; padding: 8px 12px; border-radius: 999px;
-  border: 2px solid #2d211a; background: var(--inset); box-shadow: 0 3px 0 #2d211a;
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-family: inherit; text-transform: none; letter-spacing: normal;
+  font-size: 11.5px; font-weight: 700; padding: 5px 10px; border-radius: 999px;
+  border: 1.5px solid #2d211a; background: var(--inset); box-shadow: 0 2px 0 #2d211a;
   transition: transform .08s, box-shadow .08s, background .12s;
-  user-select: none;
+  user-select: none; margin: 0;
 }
 .style-chip input { accent-color: var(--accent); width: auto; }
 .style-chip.on {
   color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
 }
 .style-chip:active { transform: translateY(3px); box-shadow: 0 0 0 #2d211a; }
+
+/* ────────── общая модалка ────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 50; padding: 20px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(45, 33, 26, .45); backdrop-filter: blur(6px);
+}
+.modal-card {
+  position: relative; width: 100%; max-width: 540px;
+  max-height: calc(100vh - 40px); overflow-y: auto;
+  background: var(--card); border: 2.5px solid #2d211a; border-radius: 22px; padding: 20px;
+  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px #2d211a, 0 24px 60px rgba(45, 33, 26, .35);
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.modal-title {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 800;
+  letter-spacing: .2em; text-transform: uppercase; color: var(--accent-2);
+}
+.modal-close { font-size: 15px; }
+
+.modal-tabs { display: flex; gap: 8px; margin-top: 12px; }
+.modal-tab {
+  flex: 1; padding: 9px 12px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  background: var(--inset); border: 2px solid #2d211a; box-shadow: 0 3px 0 #2d211a;
+}
+.modal-tab.on { color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent)); }
+
+/* карточки-кнопки выбора типа проекта */
+.kind-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.kind-card {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 16px 10px; border-radius: 18px; text-align: center; font-size: 13.5px;
+  background: var(--inset); border: 2px solid #2d211a; box-shadow: 0 4px 0 #2d211a;
+}
+.kind-card .kind-emoji { font-size: 26px; }
+.kind-card.on {
+  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  box-shadow: 0 4px 0 #2d211a, 0 10px 26px rgba(255, 90, 40, .35);
+}
+.kind-card.on .muted { color: rgba(255, 255, 255, .85); }
+
+/* зона выбора обложки в модалке создания */
+.cover-drop {
+  display: flex; align-items: center; gap: 12px; margin: 0; cursor: pointer;
+  padding: 10px; border: 2px dashed rgba(45, 33, 26, .4); border-radius: 16px;
+  background: var(--inset);
+  font-family: inherit; font-size: 13px; text-transform: none; letter-spacing: normal;
+  color: var(--accent-2);
+}
+.cover-drop:hover { border-color: var(--border-bright); }
+.np-cover-preview { width: 84px; height: 84px; object-fit: cover; border-radius: 12px; border: 2px solid #2d211a; flex: none; }
+
+/* ────────── обложки проекта и треков ────────── */
+.cover-slot {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  margin: 0; overflow: hidden; cursor: pointer; flex: none;
+  border: 2px solid #2d211a; box-shadow: 0 3px 0 #e8d8c4, 0 3px 0 2px #2d211a;
+  background: linear-gradient(135deg, var(--gold), var(--accent-2), var(--accent));
+  transition: box-shadow .15s;
+}
+.cover-slot:hover { box-shadow: 0 3px 0 #e8d8c4, 0 3px 0 2px #2d211a, 0 8px 22px rgba(255, 122, 41, .3); }
+.cover-slot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cover-ph { color: #fff; font-weight: 800; text-shadow: 0 2px 10px rgba(45, 33, 26, .35); user-select: none; }
+.project-cover { width: 64px; height: 64px; border-radius: 14px; }
+.project-cover .cover-ph { font-size: 24px; }
+.track-cover { width: 120px; height: 120px; border-radius: 16px; }
+.track-cover .cover-ph { font-size: 40px; }
+@media (max-width: 700px) {
+  .track-cover { width: 84px; height: 84px; }
+  .track-cover .cover-ph { font-size: 30px; }
+}
+
+/* ────────── база персонажей (вкладка «Из базы») ────────── */
+.lib-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px; margin-top: 12px;
+}
+.lib-card {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px; border-radius: 16px; text-align: center; font-size: 12.5px; font-weight: 400;
+  background: var(--inset); border: 2px solid #2d211a; box-shadow: 0 3px 0 #2d211a;
+}
+.lib-card b { font-size: 12.5px; overflow-wrap: anywhere; }
+.lib-card .muted { font-size: 11px; }
+.lib-card.here { cursor: default; }
+.lib-thumb {
+  width: 72px; height: 72px; border-radius: 12px; overflow: hidden; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--gold), var(--accent-2), var(--accent));
+  color: #fff; font-weight: 800; font-size: 24px; border: 2px solid #2d211a;
+}
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; }

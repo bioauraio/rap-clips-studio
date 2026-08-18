@@ -1,58 +1,54 @@
-// Микс стилей: 1-3 пресета склеиваются в один согласованный промпт.
-// Первый выбранный — ОСНОВА (структура, свет, техника исполнения), остальные
-// подмешивают палитру, фактуру и реквизит. Правила слияния прописаны явно,
-// чтобы генераторы не выдавали кашу из конфликтующих эстетик.
+// Один стиль на клип: выбранный пресет уходит в промпты чистым, без смесей.
+// Старые треки со «смесями» стилей хранят прежнюю строку как есть — она
+// продолжает работать, пока пользователь не выберет один пресет заново.
 function buildFusionStyle(labels) {
-  const chosen = STYLE_PRESETS.filter((p) => labels.includes(p.label));
-  if (!chosen.length) return "";
-  if (chosen.length === 1) return chosen[0].value;
-  const parts = chosen.map((p, i) =>
-    `STYLE ${i + 1}${i === 0 ? " (PRIMARY — defines rendering technique, lighting logic and composition)" : " (FLAVOR — contributes palette, textures, props and mood)"}: ${p.value}`
-  );
-  return (
-    "COHERENT STYLE FUSION of " + chosen.length + " aesthetics blended into ONE " +
-    "consistent look for the whole video. " + parts.join(" ") +
-    " FUSION RULES: single unified color palette per scene derived from all styles; " +
-    "rendering technique and level of realism come from STYLE 1 only (no style " +
-    "switching between shots); flavor styles influence wardrobe, props, set dressing, " +
-    "color accents and atmosphere; the result must look like one intentional art " +
-    "direction, not a collage. Vertical 9:16, no text, no watermarks."
-  );
+  const chosen = STYLE_PRESETS.find((p) => labels.includes(p.label));
+  return chosen ? chosen.value : "";
 }
 
 function styleLabelsFromValue(value) {
-  // Восстановление выбора из сохранённого промпта: и одиночного, и фьюжна.
+  // Восстановление выбора из сохранённого промпта: и одиночного, и старого фьюжна.
   if (!value) return [];
   const found = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.label);
   return found;
 }
 
+let stylePickerSeq = 0;
+
 function buildStylePicker(container, current, onChange) {
   container.innerHTML = "";
-  const active = styleLabelsFromValue(current);
+  const matched = styleLabelsFromValue(current);
+  // Одиночный выбор: активен ровно один пресет; старый микс не подсвечиваем,
+  // чтобы не врать, будто стиль равен одному из пресетов.
+  const active = matched.length === 1 ? matched[0] : null;
+  const group = `style-group-${++stylePickerSeq}`;
   for (const p of STYLE_PRESETS) {
     const label = document.createElement("label");
-    label.className = "style-chip" + (active.includes(p.label) ? " on" : "");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.value = p.label;
-    cb.checked = active.includes(p.label);
-    cb.addEventListener("change", () => {
-      const checked = [...container.querySelectorAll("input:checked")].map((x) => x.value);
-      // максимум 3 стиля: лишний снимаем сразу
-      if (checked.length > 3) { cb.checked = false; return; }
-      label.classList.toggle("on", cb.checked);
-      onChange(buildFusionStyle([...container.querySelectorAll("input:checked")].map((x) => x.value)));
+    label.className = "style-chip" + (p.label === active ? " on" : "");
+    const rb = document.createElement("input");
+    rb.type = "radio";
+    rb.name = group;
+    rb.value = p.label;
+    rb.checked = p.label === active;
+    rb.addEventListener("change", () => {
+      if (!rb.checked) return;
+      $$(".style-chip", container).forEach((el) => el.classList.toggle("on", el === label));
+      onChange(buildFusionStyle([p.label]));
     });
-    label.appendChild(cb);
+    label.appendChild(rb);
     label.appendChild(document.createTextNode(p.label));
     container.appendChild(label);
   }
-  // Кастомный стиль старого трека, не совпавший с пресетами
-  if (current && !active.length) {
+  if (matched.length > 1) {
     const note = document.createElement("div");
     note.className = "muted";
-    note.textContent = "(у трека свой кастомный стиль — выбор пресетов заменит его)";
+    note.textContent = "(у трека сохранён старый микс стилей — выбор одного пресета заменит его)";
+    container.appendChild(note);
+  } else if (current && !matched.length) {
+    // Кастомный стиль старого трека, не совпавший с пресетами
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.textContent = "(у трека свой кастомный стиль — выбор пресета заменит его)";
     container.appendChild(note);
   }
 }
@@ -88,6 +84,18 @@ const STYLE_PRESETS = [
   {
     label: "Длинные бошки (аналоговый сюр 90-х)",
     value: "1990s analog film street photography, scanned 35mm frame with heavy grain and slightly faded Kodak colors, candid documentary framing. Surreal characters with elongated non-human heads on long necks (ostrich-like, greyhound, pale alien with almond eyes, porcelain mannequin mask) on completely ordinary human bodies in baggy 90s streetwear: oversized denim jackets, loose white shirts, wide pants, chunky chains, plastic grocery bags, coffee cups. Deadpan poses, mundane everyday activities, nobody reacts to the surrealism. Locations: laundromats, convenience stores, crosswalks, chain-link fences, boxy 80s sedans, night streets with neon signage and wet asphalt reflections. Muted denim-blue palette with warm cream skin tones and red/neon accents, harsh daylight or direct flash by day, deep black sky and neon glow by night. Vertical 9:16, no text."
+  },
+  {
+    label: "СПАЙК (русский кино-сюр, камео)",
+    value: "Cinematic photorealistic night scene shot on vintage anamorphic lenses, warm tungsten and smoky haze, heavy 35mm film grain with teal-and-amber grade. Post-Soviet Russian setting reimagined with subtle Atomic Heart retrofuturism: khrushchyovka courtyards, cramped old Lada interiors, kiosks, snow-dusted parking lots, delivery couriers in Ozon blue jackets and yellow Yandex thermo-bag backpacks. Photorealistic larger-than-life characters and deadpan cartoon-headed cameos ride together in old cars filled with smoke, count worn banknotes in shabby ornate bedrooms, stare into the lens with calm swagger. Golden chains, tracksuit textures, cigarette smoke curling in headlight beams, wet asphalt reflections. Everyday grit filmed like an epic music video, nobody reacts to the surreal cameos. Vertical 9:16, no text."
+  },
+  {
+    label: "МУНИР (залив, вспышка, фиш-ай)",
+    value: "Gulf street documentary photography with direct on-camera flash at night and harsh daylight, ultra-wide fisheye lens distortion, saturated 35mm film colors with crushed shadows. Middle Eastern everyday swagger played deadpan: elderly men in red-checkered ghutra headdress and white thobes grinning as they push a fist with a chunky custom name-ring straight into the lens, women in black abayas fueling a black G63 at a midnight gas station, a Doberman with a heavy chain collar lunging toward the camera, corner grocery shops with Arabic signage and packed shelves, plastic chairs, dates and spice jars. Objects thrust toward the ultra-wide lens so they loom huge in the foreground, faces close and warped at the edges, flash bleaching the foreground against deep black night. Humor and quiet confidence, mundane life shot like a rap video. Vertical 9:16, no text."
+  },
+  {
+    label: "ФАНУЕЛ (кино-сюрреализм, огонь)",
+    value: "Hyperreal cinematic surreal fashion film, epic single-frame worldbuilding. One elegant figure in a sharply tailored suit of a single bold color (burnt orange, saffron yellow, deep crimson) stands or walks calmly inside an impossible landscape: on the open sea at dusk, along the rings of a giant planet, across endless dunes, under colossal celestial bodies. Recurring fire motif — burning umbrellas, floating flames, embers, fire reflected in water. Deadpan composed poses, quiet confidence, no reaction to the impossible. Painterly dusk palettes: violet-pink-orange gradient skies, deep ocean blues, warm firelight against cool darkness; volumetric cinematic lighting, anamorphic depth, ultra-detailed photorealistic rendering with epic scale contrast between the small figure and the vast world. Vertical 9:16, no text."
   },
 ];
 
@@ -156,6 +164,28 @@ $("#logout-btn").addEventListener("click", async () => {
   showLogin();
 });
 
+// ────────── общая модалка: оверлей + карточка, закрытие по ✕ / фону / Esc ──────────
+function openModal(title, buildBody) {
+  $("#modal-title").textContent = title;
+  const body = $("#modal-body");
+  body.innerHTML = "";
+  buildBody(body);
+  $("#modal-overlay").classList.remove("hidden");
+}
+
+function closeModal() {
+  $("#modal-overlay").classList.add("hidden");
+  $("#modal-body").innerHTML = "";
+}
+
+$("#modal-close").addEventListener("click", closeModal);
+$("#modal-overlay").addEventListener("click", (e) => {
+  if (e.target === $("#modal-overlay")) closeModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#modal-overlay").classList.contains("hidden")) closeModal();
+});
+
 let project = null;
 let projects = [];
 let activeProjectId = Number(localStorage.getItem("rc_project") || 0) || null;
@@ -188,6 +218,14 @@ function renderProjectBar() {
     sel.appendChild(o);
   }
   $("#project-kind").textContent = project.kind === "single" ? "сингл" : "альбом";
+  const coverImg = $("#project-cover-img");
+  if (project.cover_url) {
+    coverImg.src = project.cover_url;
+    coverImg.classList.remove("hidden");
+  } else {
+    coverImg.removeAttribute("src");
+    coverImg.classList.add("hidden");
+  }
 }
 
 $("#project-select").addEventListener("change", (e) => {
@@ -196,13 +234,93 @@ $("#project-select").addEventListener("change", (e) => {
   loadProject();
 });
 
-$("#new-project-btn").addEventListener("click", async () => {
-  const name = prompt("Название проекта:");
-  if (!name) return;
-  const kind = confirm("Это АЛЬБОМ (несколько треков)?\nОК — альбом · Отмена — сингл (один трек)") ? "album" : "single";
-  const created = await api("/api/projects", { method: "POST", body: { name, kind } });
-  activeProjectId = created.id;
-  localStorage.setItem("rc_project", activeProjectId);
+$("#new-project-btn").addEventListener("click", () => {
+  openModal("Новый проект", (body) => {
+    body.innerHTML = `
+      <label>Название</label>
+      <input class="np-name" placeholder="Название проекта" />
+      <label>Тип проекта</label>
+      <div class="kind-cards">
+        <button type="button" class="kind-card on" data-kind="album">
+          <span class="kind-emoji">💿</span><b>Альбом</b><span class="muted">несколько треков</span>
+        </button>
+        <button type="button" class="kind-card" data-kind="single">
+          <span class="kind-emoji">🎵</span><b>Сингл</b><span class="muted">один трек</span>
+        </button>
+      </div>
+      <label>Обложка (необязательно)</label>
+      <label class="cover-drop">
+        <input type="file" class="np-cover hidden" accept="image/jpeg,image/png,image/webp" />
+        <img class="np-cover-preview hidden" alt="" />
+        <span class="np-cover-hint">＋ выбрать файл (jpg / png / webp)</span>
+      </label>
+      <div class="row">
+        <button type="button" class="primary np-create">Создать</button>
+        <span class="np-error error hidden"></span>
+      </div>`;
+
+    let kind = "album";
+    $$(".kind-card", body).forEach((cardBtn) => {
+      cardBtn.addEventListener("click", () => {
+        kind = cardBtn.dataset.kind;
+        $$(".kind-card", body).forEach((el) => el.classList.toggle("on", el === cardBtn));
+      });
+    });
+
+    const coverInput = $(".np-cover", body);
+    coverInput.addEventListener("change", () => {
+      const file = coverInput.files[0];
+      const preview = $(".np-cover-preview", body);
+      if (file) {
+        preview.src = URL.createObjectURL(file);
+        preview.classList.remove("hidden");
+        $(".np-cover-hint", body).textContent = file.name;
+      }
+    });
+
+    const nameInput = $(".np-name", body);
+    const errEl = $(".np-error", body);
+    const createBtn = $(".np-create", body);
+    const create = async () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        errEl.textContent = "введи название";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      createBtn.disabled = true;
+      try {
+        const created = await api("/api/projects", { method: "POST", body: { name, kind } });
+        const file = coverInput.files[0];
+        if (file) {
+          const fd = new FormData();
+          fd.append("cover", file);
+          await api(`/api/projects/${created.id}/cover`, { method: "POST", body: fd });
+        }
+        activeProjectId = created.id;
+        localStorage.setItem("rc_project", activeProjectId);
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+        createBtn.disabled = false;
+      }
+    };
+    createBtn.addEventListener("click", create);
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
+    nameInput.focus();
+  });
+});
+
+// Обложка активного проекта: клик по миниатюре в топбаре = заменить.
+$("#project-cover-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("cover", file);
+  await api(`/api/projects/${activeProjectId}/cover`, { method: "POST", body: fd });
+  e.target.value = "";
   await loadProject();
 });
 
@@ -261,6 +379,20 @@ function renderTrack(t) {
   const card = tpl.querySelector(".track-card");
   card.dataset.id = t.id;
   $(".pos", card).textContent = `#${t.position}`;
+  // Обложка трека: клик по квадрату = заменить (скрытый file input в label).
+  if (t.cover_url) {
+    const cImg = $(".t-cover-img", card);
+    cImg.src = t.cover_url;
+    cImg.classList.remove("hidden");
+  }
+  $(".t-cover-input", card).addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("cover", file);
+    await api(`/api/tracks/${t.id}/cover`, { method: "POST", body: fd });
+    await loadProject();
+  });
   $(".t-title", card).value = t.title;
   $(".t-style", card).value = t.style;
   buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
@@ -298,6 +430,28 @@ function renderTrack(t) {
   genBtn.disabled = busy || !project.story;
   genBtn.title = project.story ? "" : "сначала сгенерируй общий сюжет";
   genBtn.addEventListener("click", () => genScenes(t.id));
+
+  // ⚡ Супергенерация: весь конвейер одним нажатием.
+  const superBtn = $(".s-supergen", card);
+  const superBusy = ["queued", "running"].includes(t.supergen_status);
+  superBtn.disabled = superBusy || !t.audio_duration_sec;
+  superBtn.textContent = superBusy ? "⚡ генерирую всё…" : "⚡ Супергенерация";
+  superBtn.addEventListener("click", () => openSupergenModal(t));
+  const superNote = $(".supergen-note", card);
+  superNote.textContent = t.supergen_note || "";
+  superNote.className = "status " +
+    (t.supergen_status === "error" ? "error" : t.supergen_status === "done" ? "done" : "");
+  if (superBusy && !window.__supergenPoll) {
+    window.__supergenPoll = setInterval(async () => {
+      const p = await api(`/api/project?project_id=${activeProjectId}`).catch(() => null);
+      const tr = p && (p.tracks || []).find((x) => ["queued", "running"].includes(x.supergen_status));
+      if (!tr) {
+        clearInterval(window.__supergenPoll);
+        window.__supergenPoll = null;
+      }
+      await loadProject();
+    }, 15000);
+  }
   const st = statusLabel(t.scenes_status, `готово, кадров: ${t.scenes_count}`);
   const stEl = $(".scenes-status", card);
   stEl.textContent = st.text || (t.scenes_count ? `кадров: ${t.scenes_count}` : "");
@@ -400,11 +554,18 @@ function renderScene(s, audioEl) {
   imgStatusEl.className = "status " + imgStatus.cls;
   if (s.image_url) {
     const p = $(".s-image-preview", card);
-    p.src = s.image_url; p.classList.remove("hidden");
+    // 4К-оригиналы по 15МБ сетка не тянет — превью с миниатюры, клик = оригинал.
+    p.src = s.image_thumb_url || s.image_url;
+    p.classList.remove("hidden");
+    p.style.cursor = "zoom-in";
+    p.onclick = () => window.open(s.image_url, "_blank");
   }
   if (s.image_last_url) {
     const p = $(".s-image-last-preview", card);
-    p.src = s.image_last_url; p.classList.remove("hidden");
+    p.src = s.image_last_thumb_url || s.image_last_url;
+    p.classList.remove("hidden");
+    p.style.cursor = "zoom-in";
+    p.onclick = () => window.open(s.image_last_url, "_blank");
   }
   const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
@@ -507,6 +668,61 @@ async function assembleClip(id) {
     alert(e.message);
   }
   await loadProject();
+}
+
+function openSupergenModal(t) {
+  openModal("⚡ Супергенерация", (body) => {
+    // Чек-лист готовности: без стиля и персонажей генератор выдумывает своё.
+    const chars = (project.characters || []).filter((c) => (c.name || "").trim());
+    const checks = [
+      [Boolean((t.style || "").trim()), "Стиль клипа выбран", "Стиль клипа НЕ выбран — выбери пресет на карточке трека"],
+      [chars.length > 0, `Персонажи: ${chars.map((c) => c.name).join(", ")}`, "В проекте НЕТ персонажей — добавь нового или клонируй из базы"],
+      [Boolean((t.comment || "").trim() || (t.lyrics || "").trim()), "Идея есть (текст или комментарий)", "Нет ни текста, ни комментария — впиши идею клипа в комментарий"],
+    ];
+    const list = document.createElement("div");
+    list.style.margin = "0 0 12px";
+    let ready = true;
+    checks.forEach(([ok, okText, badText]) => {
+      const row = document.createElement("p");
+      row.style.margin = "4px 0";
+      row.textContent = (ok ? "✅ " : "⛔ ") + (ok ? okText : badText);
+      if (!ok) { row.style.color = "var(--danger)"; ready = false; }
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+    const info = document.createElement("p");
+    info.className = "muted";
+    info.style.margin = "0 0 12px";
+    info.textContent = "Сквозной сюжет — по желанию: впиши свой в блоке «Герой и сюжет» или оставь " +
+      "пустым, напишу сам. Дальше всё автоматом: сюжет → раскадровка → кадры → видео каждой " +
+      "сцены → сборка клипа с треком. Прогресс будет виден на карточке трека. Если сцены уже " +
+      "были сгенерены с другим стилем — сначала нажми «Сгенерировать раскадровку» заново.";
+    body.appendChild(info);
+    const row = document.createElement("div");
+    row.className = "row";
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = "Погнали";
+    go.disabled = !ready;
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        await api(`/api/tracks/${t.id}/supergen`, { method: "POST" });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        go.disabled = false;
+        alert(e.message);
+      }
+    });
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.textContent = "отмена";
+    cancel.addEventListener("click", closeModal);
+    row.appendChild(go);
+    row.appendChild(cancel);
+    body.appendChild(row);
+  });
 }
 
 async function genScenes(id) {
@@ -618,14 +834,289 @@ function renderCharacter(c) {
     }
     await loadProject();
   });
+
+  // Атрибуты — фирменные вещи персонажа: чипы с миниатюрами ракурсов.
+  const attrsBox = $(".char-attrs", card);
+  (c.attributes || []).forEach((a) => attrsBox.appendChild(renderAttribute(a)));
+  $(".attr-add", card).addEventListener("click", () => openAttributeModal(c.id));
+
   return card;
 }
 
-$("#add-character-btn").addEventListener("click", async () => {
-  const name = prompt("Имя персонажа:");
-  if (!name) return;
-  await api(`/api/characters?project_id=${activeProjectId}`, { method: "POST", body: { name } });
-  await loadProject();
+// Чип атрибута: имя (клик = редактирование), миниатюры фото с ✕, «+ фото», ✕ атрибута.
+function renderAttribute(a) {
+  const chip = document.createElement("div");
+  chip.className = "attr-chip";
+  chip.dataset.id = a.id;
+
+  const name = document.createElement("button");
+  name.type = "button";
+  name.className = "attr-name";
+  name.textContent = a.name;
+  name.title = (a.description ? a.description + " — " : "") + "клик: редактировать";
+  name.addEventListener("click", () => openAttributeModal(null, a));
+  chip.appendChild(name);
+
+  const photos = document.createElement("div");
+  photos.className = "attr-photos";
+  (a.photos || []).forEach((ph) => {
+    const wrap = document.createElement("div");
+    wrap.className = "attr-thumb";
+    const img = document.createElement("img");
+    img.src = ph.url + `?t=${ph.id}`;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "ghost danger attr-photo-del";
+    del.textContent = "✕";
+    del.title = "удалить фото";
+    del.addEventListener("click", async () => {
+      await api(`/api/attributes/photos/${ph.id}`, { method: "DELETE" });
+      await loadProject();
+    });
+    wrap.append(img, del);
+    photos.appendChild(wrap);
+  });
+  chip.appendChild(photos);
+
+  const upload = document.createElement("label");
+  upload.className = "attr-upload";
+  const input = document.createElement("input");
+  input.type = "file";
+  input.className = "hidden";
+  input.accept = "image/jpeg,image/png,image/webp";
+  input.multiple = true;
+  input.addEventListener("change", async () => {
+    for (const file of input.files) {
+      const fd = new FormData();
+      fd.append("photo", file);
+      await api(`/api/attributes/${a.id}/photos`, { method: "POST", body: fd });
+    }
+    await loadProject();
+  });
+  const uploadBtn = document.createElement("span");
+  uploadBtn.className = "attr-upload-btn";
+  uploadBtn.textContent = "+ фото";
+  upload.append(input, uploadBtn);
+  chip.appendChild(upload);
+
+  const delAttr = document.createElement("button");
+  delAttr.type = "button";
+  delAttr.className = "ghost danger attr-del";
+  delAttr.textContent = "✕";
+  delAttr.title = "удалить атрибут";
+  delAttr.addEventListener("click", () => confirmDeleteAttribute(a));
+  chip.appendChild(delAttr);
+
+  return chip;
+}
+
+// Одна модалка на создание (charId) и редактирование (attr) атрибута.
+function openAttributeModal(charId, attr = null) {
+  openModal(attr ? "Атрибут персонажа" : "Новый атрибут", (body) => {
+    body.innerHTML = `
+      <label>Название (напр. красная кепка)</label>
+      <input class="at-name" placeholder="как зовётся вещь" />
+      <label>Описание (необязательно — пойдёт в промпты)</label>
+      <textarea class="at-desc" rows="2"></textarea>
+      <div class="row">
+        <button type="button" class="primary at-save">${attr ? "Сохранить" : "Создать"}</button>
+        <span class="at-error error hidden"></span>
+      </div>`;
+    const nameInput = $(".at-name", body);
+    const descInput = $(".at-desc", body);
+    if (attr) { nameInput.value = attr.name; descInput.value = attr.description || ""; }
+    const errEl = $(".at-error", body);
+    const saveBtn = $(".at-save", body);
+    const save = async () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        errEl.textContent = "введи название";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        const payload = { name, description: descInput.value.trim() };
+        if (attr) await api(`/api/attributes/${attr.id}`, { method: "PATCH", body: payload });
+        else await api(`/api/characters/${charId}/attributes`, { method: "POST", body: payload });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+        saveBtn.disabled = false;
+      }
+    };
+    saveBtn.addEventListener("click", save);
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    nameInput.focus();
+  });
+}
+
+function confirmDeleteAttribute(a) {
+  openModal("Удалить атрибут?", (body) => {
+    body.innerHTML = `
+      <p class="muted attr-del-text" style="margin:10px 0 0"></p>
+      <div class="row">
+        <button type="button" class="primary ad-yes">Удалить</button>
+        <button type="button" class="ad-no">Отмена</button>
+        <span class="ad-error error hidden"></span>
+      </div>`;
+    $(".attr-del-text", body).textContent = `Атрибут «${a.name}» и все его фото будут удалены.`;
+    $(".ad-no", body).addEventListener("click", closeModal);
+    const yesBtn = $(".ad-yes", body);
+    yesBtn.addEventListener("click", async () => {
+      yesBtn.disabled = true;
+      try {
+        await api(`/api/attributes/${a.id}`, { method: "DELETE" });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        const errEl = $(".ad-error", body);
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+        yesBtn.disabled = false;
+      }
+    });
+  });
+}
+
+$("#add-character-btn").addEventListener("click", () => {
+  openModal("Добавить персонажа", (body) => {
+    body.innerHTML = `
+      <div class="modal-tabs">
+        <button type="button" class="modal-tab on" data-tab="new">Новый</button>
+        <button type="button" class="modal-tab" data-tab="library">Из базы</button>
+      </div>
+      <div class="tab-pane" data-pane="new">
+        <label>Имя персонажа</label>
+        <input class="ch-name" placeholder="напр. Артём" />
+        <div class="row">
+          <button type="button" class="primary ch-create">Создать</button>
+          <span class="ch-error error hidden"></span>
+        </div>
+      </div>
+      <div class="tab-pane hidden" data-pane="library">
+        <p class="muted" style="margin:10px 0 0">Персонаж из любого проекта: имя, описание и
+          фото-модельки скопируются в текущий.</p>
+        <div class="lib-grid"><span class="muted">загружаю…</span></div>
+        <span class="lib-error error hidden"></span>
+      </div>`;
+
+    // Переключение вкладок
+    let libLoaded = false;
+    $$(".modal-tab", body).forEach((tab) => {
+      tab.addEventListener("click", () => {
+        $$(".modal-tab", body).forEach((el) => el.classList.toggle("on", el === tab));
+        $$(".tab-pane", body).forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== tab.dataset.tab));
+        if (tab.dataset.tab === "library" && !libLoaded) { libLoaded = true; loadLibrary(); }
+      });
+    });
+
+    // Вкладка «Новый»
+    const nameInput = $(".ch-name", body);
+    const errEl = $(".ch-error", body);
+    const createBtn = $(".ch-create", body);
+    const create = async () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        errEl.textContent = "введи имя";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      createBtn.disabled = true;
+      try {
+        await api(`/api/characters?project_id=${activeProjectId}`, { method: "POST", body: { name } });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+        createBtn.disabled = false;
+      }
+    };
+    createBtn.addEventListener("click", create);
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
+    nameInput.focus();
+
+    // Вкладка «Из базы»: все персонажи всех проектов, клик = клон в текущий
+    async function loadLibrary() {
+      const grid = $(".lib-grid", body);
+      const libErr = $(".lib-error", body);
+      try {
+        const raw = await api("/api/characters/library");
+        // Клоны по проектам — это один и тот же герой: схлопываем по имени,
+        // источником клона берём копию с максимумом фото-моделек.
+        const byName = new Map();
+        for (const c of raw) {
+          const key = (c.name || "").trim().toLowerCase();
+          const here = c.project_id === activeProjectId;
+          const prev = byName.get(key);
+          if (!prev) {
+            byName.set(key, { ...c, here });
+            continue;
+          }
+          prev.here = prev.here || here;
+          if ((c.photos?.length || 0) > (prev.photos?.length || 0)) {
+            byName.set(key, { ...c, here: prev.here });
+          }
+        }
+        const chars = [...byName.values()];
+        grid.innerHTML = "";
+        if (!chars.length) {
+          grid.innerHTML = '<span class="muted">в базе пока никого нет</span>';
+          return;
+        }
+        for (const c of chars) {
+          const el = document.createElement("button");
+          el.type = "button";
+          const here = c.here;
+          el.className = "lib-card" + (here ? " here" : "");
+          const thumb = document.createElement("span");
+          thumb.className = "lib-thumb";
+          if (c.photos && c.photos.length) {
+            const im = document.createElement("img");
+            im.src = c.photos[0].url;
+            im.alt = "";
+            thumb.appendChild(im);
+          } else {
+            thumb.textContent = (c.name || "?").trim().charAt(0).toUpperCase() || "?";
+          }
+          const nm = document.createElement("b");
+          nm.textContent = c.name;
+          const from = document.createElement("span");
+          from.className = "muted";
+          from.textContent = here ? "уже здесь" : c.project_name;
+          el.append(thumb, nm, from);
+          if (here) {
+            el.disabled = true;
+          } else {
+            el.addEventListener("click", async () => {
+              el.disabled = true;
+              libErr.classList.add("hidden");
+              try {
+                await api(`/api/characters/clone?project_id=${activeProjectId}`, {
+                  method: "POST",
+                  body: { source_id: c.id },
+                });
+                closeModal();
+                await loadProject();
+              } catch (e) {
+                libErr.textContent = e.message;
+                libErr.classList.remove("hidden");
+                el.disabled = false;
+              }
+            });
+          }
+          grid.appendChild(el);
+        }
+      } catch (e) {
+        grid.innerHTML = "";
+        libErr.textContent = e.message;
+        libErr.classList.remove("hidden");
+      }
+    }
+  });
 });
 
 async function addManualScene(trackId) {

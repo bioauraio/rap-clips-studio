@@ -38,6 +38,9 @@ class Project(Base):
     story = Column(Text, nullable=False, default="")
     story_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     story_error = Column(Text, nullable=False, default="")
+    # Обложка проекта (файл в UPLOAD_DIR): визуальный якорь альбома —
+    # заливается владельцем, при замене старый файл удаляется.
+    cover_filename = Column(String, nullable=False, default="")
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -67,6 +70,9 @@ class Character(Base):
     project = relationship("Project", backref="characters")
     photos = relationship("CharacterPhoto", back_populates="character",
                           cascade="all, delete-orphan", order_by="CharacterPhoto.position")
+    attributes = relationship("CharacterAttribute", back_populates="character",
+                              cascade="all, delete-orphan",
+                              order_by="CharacterAttribute.position")
 
 
 class CharacterPhoto(Base):
@@ -78,6 +84,38 @@ class CharacterPhoto(Base):
     created_at = Column(DateTime, default=now)
 
     character = relationship("Character", back_populates="photos")
+
+
+class CharacterAttribute(Base):
+    """Атрибут персонажа: его фирменная вещь (шляпа, очки, квадрик, тачка).
+
+    У атрибута свой набор фото-моделек — ракурсы ПРЕДМЕТА, а не лица. Когда
+    кадр строится вокруг вещи (её имя встречается в тексте сцены), референсом
+    генерации идёт фото атрибута вместо фото персонажа — так предмет остаётся
+    узнаваемым от кадра к кадру, как и сам герой."""
+    __tablename__ = "character_attributes"
+    id = Column(Integer, primary_key=True)
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    name = Column(String, nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=now)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+    character = relationship("Character", back_populates="attributes")
+    photos = relationship("AttributePhoto", back_populates="attribute",
+                          cascade="all, delete-orphan", order_by="AttributePhoto.position")
+
+
+class AttributePhoto(Base):
+    __tablename__ = "attribute_photos"
+    id = Column(Integer, primary_key=True)
+    attribute_id = Column(Integer, ForeignKey("character_attributes.id"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    filename = Column(String, nullable=False)
+    created_at = Column(DateTime, default=now)
+
+    attribute = relationship("CharacterAttribute", back_populates="photos")
 
 
 class Track(Base):
@@ -92,6 +130,9 @@ class Track(Base):
     style = Column(String, nullable=False, default="")
     audio_filename = Column(String, nullable=False, default="")
     audio_duration_sec = Column(Integer, nullable=False, default=0)
+    # Обложка трека (файл в UPLOAD_DIR): у каждого трека своя картинка,
+    # независимая от обложки проекта.
+    cover_filename = Column(String, nullable=False, default="")
     scenes_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     scenes_error = Column(Text, nullable=False, default="")
 
@@ -106,6 +147,11 @@ class Track(Base):
     clip_filename = Column(String, nullable=False, default="")
     clip_status = Column(String, nullable=False, default="")
     clip_error = Column(Text, nullable=False, default="")
+
+    # «Супергенерация»: конвейер сюжет→сцены→кадры→видео→сборка одним нажатием.
+    # note — живой прогресс для строки статуса на карточке трека.
+    supergen_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error
+    supergen_note = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 

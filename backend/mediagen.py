@@ -35,10 +35,16 @@ UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 
-# Seedance — по ПОДПИСКЕ через host-шлюз с живым веб-UI Dreamina
-# (infra/seedance_gateway.py), как Grok: ключей не покупаем, ходим сессией
-# владельца. Шлюз читает картинки с диска хоста и туда же кладёт mp4.
-SEEDANCE_GATEWAY_URL = os.environ.get("SEEDANCE_GATEWAY_URL", "http://172.18.0.1:8768")
+# Seedance — оплаченный аккаунт владельца на seevio.ai: настоящий REST API
+# (Seedance 2.5, image-to-video по первому+последнему кадру). Кадры seevio
+# скачивает сам по image_urls — на время задачи кладём копии в публичный
+# outbox под uuid-именами и подчищаем после.
+SEEVIO_API_KEY = os.environ.get("SEEVIO_API_KEY", "")
+SEEVIO_API = os.environ.get("SEEVIO_API", "https://api.seevio.ai")
+SEEVIO_MODEL = os.environ.get("SEEVIO_MODEL", "seedance-2-5")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://clips.resetaura.io")
+OUTBOX_DIR = os.environ.get("OUTBOX_DIR", "/data/outbox")
+os.makedirs(OUTBOX_DIR, exist_ok=True)
 SEEDANCE_TIMEOUT_S = float(os.environ.get("SEEDANCE_TIMEOUT_S", "900"))
 
 IMAGE_TIMEOUT = httpx.Timeout(200.0, connect=15.0)
@@ -57,12 +63,8 @@ class MediaError(RuntimeError):
 
 
 def seedance_available() -> bool:
-    """Провайдер доступен, только если шлюз поднят И в нём живая сессия."""
-    try:
-        r = httpx.get(f"{SEEDANCE_GATEWAY_URL}/health", timeout=4.0)
-        return r.status_code == 200 and bool((r.json() or {}).get("cookies"))
-    except Exception:  # noqa: BLE001
-        return False
+    """Провайдер доступен, когда задан API-ключ seevio."""
+    return bool(SEEVIO_API_KEY)
 
 
 def video_providers() -> list[str]:
@@ -162,31 +164,102 @@ def _data_url(path: str) -> str:
         return f"data:{mime};base64," + base64.b64encode(f.read()).decode("ascii")
 
 
+def _outbox_publish(path: str) -> tuple[str, str]:
+    """Копия кадра под uuid-именем в outbox -> (публичный URL, имя копии)."""
+    name = f"ob_{uuid.uuid4().hex}{os.path.splitext(path)[1] or '.png'}"
+    shutil.copyfile(path, os.path.join(OUTBOX_DIR, name))
+    return f"{PUBLIC_BASE_URL}/api/outbox/{name}", name
+
+
 async def _animate_seedance(
     prompt: str, first_path: str, last_path: str | None, duration_sec: int,
 ) -> str:
-    """Шлюз драйвит UI Dreamina: первый кадр + последний кадр -> ролик."""
-    payload = {
-        "prompt": prompt,
-        "first_image_path": _host_path(first_path),
-        "duration_sec": duration_sec,
-    }
-    if last_path and os.path.exists(last_path):
-        payload["last_image_path"] = _host_path(last_path)
+    """seevio.ai (Seedance 2.5): image-to-video по первому и последнему кадру.
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(SEEDANCE_TIMEOUT_S, connect=15.0)) as client:
-        r = await client.post(f"{SEEDANCE_GATEWAY_URL}/animate", json=payload)
-    if r.status_code != 200:
-        raise MediaError(f"Seedance {r.status_code}: {r.text[:250]}")
-    data = r.json() or {}
-    fname = data.get("filename") or ""
-    if not fname:
-        raise MediaError(f"Seedance: пустой ответ шлюза ({str(data)[:200]})")
-    # Шлюз пишет прямо в наш каталог загрузок (SEEDANCE_OUT_DIR), копировать
-    # ничего не нужно — файл уже на месте.
-    if not os.path.exists(os.path.join(UPLOAD_DIR, fname)):
-        raise MediaError(f"Seedance отчитался об успехе, но файла нет: {fname}")
-    return fname
+    Задача асинхронная: submit -> poll /v1/tasks/{id}. Звук не генерим —
+    поверх ляжет дорожка трека. Ролик длиннее сцены подрезаем ffmpeg'ом."""
+    if not SEEVIO_API_KEY:
+        raise MediaError("нет SEEVIO_API_KEY — добавь ключ seevio в infra/.env")
+    headers = {"Authorization": f"Bearer {SEEVIO_API_KEY}"}
+    outbox: list[str] = []
+    try:
+        first_url, name1 = _outbox_publish(first_path)
+        outbox.append(name1)
+        image_urls = [first_url]
+        if last_path and os.path.exists(last_path):
+            last_url, name2 = _outbox_publish(last_path)
+            outbox.append(name2)
+            image_urls.append(last_url)
+        payload = {
+            "model": SEEVIO_MODEL,
+            "input": {
+                "prompt": prompt,
+                "generation_type": "image-to-video",
+                "image_urls": image_urls,
+                "duration": max(4, min(30, int(round(duration_sec)))),
+                "resolution": "720p",
+                "generate_audio": False,
+                "watermark": False,
+            },
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            r = await client.post(f"{SEEVIO_API}/v1/videos/generations", json=payload, headers=headers)
+        if r.status_code not in (200, 201, 202):
+            raise MediaError(f"seevio submit {r.status_code}: {r.text[:250]}")
+        data = r.json() or {}
+        inner = data.get("data") or {}
+        task_id = (data.get("taskId") or data.get("task_id") or data.get("id")
+                   or inner.get("taskId") or inner.get("task_id") or inner.get("id"))
+        if not task_id:
+            raise MediaError(f"seevio: нет task_id в ответе ({str(data)[:200]})")
+
+        deadline = time.time() + SEEDANCE_TIMEOUT_S
+        video_url = ""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            while time.time() < deadline:
+                await asyncio.sleep(10)
+                tr = await client.get(f"{SEEVIO_API}/v1/tasks/{task_id}", headers=headers)
+                if tr.status_code != 200:
+                    continue
+                td = tr.json() or {}
+                status = td.get("status") or (td.get("data") or {}).get("status") or ""
+                if status == "failed":
+                    reason = ((td.get("data") or {}).get("failed_reason")
+                              or td.get("failed_reason") or "без причины")
+                    raise MediaError(f"seevio: задача упала — {str(reason)[:200]}")
+                results = ((td.get("data") or {}).get("results") or td.get("results") or [])
+                if status == "completed" and results:
+                    video_url = str(results[0])
+                    break
+        if not video_url:
+            raise MediaError("seevio: таймаут ожидания видео")
+
+        dst_name = f"scene_{uuid.uuid4().hex}.mp4"
+        dst = os.path.join(UPLOAD_DIR, dst_name)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0), follow_redirects=True) as client:
+            vr = await client.get(video_url)
+            if vr.status_code != 200 or len(vr.content) < 50_000:
+                raise MediaError(f"seevio: не скачалось видео ({vr.status_code}, {len(vr.content)} байт)")
+            with open(dst, "wb") as f:
+                f.write(vr.content)
+        # seevio отдаёт минимум 4с — сцену короче подрезаем к её длительности.
+        if duration_sec and duration_sec >= 2:
+            trimmed = dst + ".trim.mp4"
+            r2 = subprocess.run(
+                [FFMPEG, "-y", "-i", dst, "-t", str(duration_sec),
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                 "-an", "-pix_fmt", "yuv420p", trimmed],
+                capture_output=True, timeout=300,
+            )
+            if r2.returncode == 0 and os.path.exists(trimmed):
+                os.replace(trimmed, dst)
+        return dst_name
+    finally:
+        for name in outbox:
+            try:
+                os.remove(os.path.join(OUTBOX_DIR, name))
+            except OSError:
+                pass
 
 
 def _host_path(container_path: str) -> str:
@@ -232,8 +305,8 @@ async def animate_scene(
     if provider == "seedance":
         if not seedance_available():
             raise MediaError(
-                "Seedance недоступен: шлюз не поднят или нет сессии "
-                "(запусти infra/seedance_login_local.py и войди в Dreamina)")
+                "Seedance недоступен: нет SEEVIO_API_KEY — создай ключ в "
+                "дашборде seevio.ai и добавь его в infra/.env")
         return await _animate_seedance(prompt, first_path, last_path, duration_sec)
     if provider == "grok":
         return await _animate_grok(prompt, first_path)

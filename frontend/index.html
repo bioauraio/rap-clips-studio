@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>RAP CLIPS STUDIO</title>
-<link rel="stylesheet" href="/style.css?v=10" />
+<link rel="stylesheet" href="/style.css?v=18" />
 </head>
 <body>
 <div id="login" class="login-screen hidden">
@@ -20,6 +20,11 @@
 <div id="app" class="app hidden">
   <header class="topbar">
     <select id="project-select" class="project-select"></select>
+    <label id="project-cover" class="cover-slot project-cover" title="обложка проекта — клик, чтобы заменить">
+      <input id="project-cover-input" type="file" class="hidden" accept="image/jpeg,image/png,image/webp" />
+      <img id="project-cover-img" class="hidden" alt="" />
+      <span class="cover-ph">♪</span>
+    </label>
     <input id="project-name" class="project-name" placeholder="название клипа" />
     <span id="project-kind" class="kind-badge"></span>
     <button id="new-project-btn">+ проект</button>
@@ -58,10 +63,10 @@
       <summary>+ добавить трек</summary>
       <form id="add-track-form" class="track-form">
         <input name="title" placeholder="Название трека" required />
-        <label>Стили (1–3, первый выбранный — основа)</label>
+        <label>Стиль клипа</label>
         <div class="style-picker"></div>
         <input type="hidden" name="style" />
-        <textarea name="lyrics" placeholder="Текст песни" rows="6"></textarea>
+        <textarea name="lyrics" placeholder="Текст песни (необязательно — можно без текста, чисто бит: тогда идею закладывают комментарий и персонажи)" rows="6"></textarea>
         <textarea name="comment" placeholder="Комментарий: что имел в виду, контекст" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
         <button type="submit" class="primary">Добавить трек</button>
@@ -73,6 +78,11 @@
 <template id="track-tpl">
   <div class="track-card">
     <div class="track-head">
+      <label class="cover-slot track-cover" title="обложка трека — клик, чтобы заменить">
+        <input type="file" class="t-cover-input hidden" accept="image/jpeg,image/png,image/webp" />
+        <img class="t-cover-img hidden" alt="" />
+        <span class="cover-ph">♪</span>
+      </label>
       <span class="pos"></span>
       <input class="t-title" placeholder="Название" />
       <div class="order-btns">
@@ -83,7 +93,7 @@
     </div>
     <div class="track-body">
       <div class="track-left">
-        <label>Стиль ролика</label>
+        <label>Стиль клипа</label>
         <div class="t-style-picker style-picker"></div>
         <input type="hidden" class="t-style" />
         <label>Аудио</label>
@@ -93,14 +103,18 @@
         <textarea class="t-comment" rows="3"></textarea>
       </div>
       <div class="track-right">
-        <label>Текст песни</label>
-        <textarea class="t-lyrics" rows="8"></textarea>
+        <label>Текст песни (необязательно — можно чисто бит)</label>
+        <textarea class="t-lyrics" rows="8" placeholder="Пусто = чисто бит: идею раскадровки закладывают комментарий и персонажи"></textarea>
       </div>
     </div>
     <div class="row">
       <button class="save-track">Сохранить трек</button>
       <button class="gen-scenes primary">Сгенерировать раскадровку</button>
       <span class="scenes-status status"></span>
+    </div>
+    <div class="row supergen-row">
+      <button class="s-supergen primary">⚡ Супергенерация</button>
+      <span class="supergen-note status"></span>
     </div>
 
     <div class="storyboard-block">
@@ -148,13 +162,20 @@
     </div>
     <label>Характер и внешность (пойдёт в промпты дословно)</label>
     <textarea class="c-desc" rows="3"></textarea>
-    <div class="char-photos"></div>
     <div class="row">
       <button class="c-save">Сохранить</button>
       <label class="c-upload-label">
         <input type="file" class="c-photo-input hidden" accept="image/*" multiple />
         <span class="c-upload-btn">+ фото-моделька</span>
       </label>
+      <div class="char-photos"></div>
+    </div>
+    <div class="char-attrs-block">
+      <div class="attrs-head">
+        <span class="attrs-title">Атрибуты — фирменные вещи (шляпа, очки, квадрик…)</span>
+        <button type="button" class="attr-add">+ атрибут</button>
+      </div>
+      <div class="char-attrs"></div>
     </div>
   </div>
 </template>
@@ -237,6 +258,16 @@
   </div>
 </template>
 
-<script src="/app.js?v=10"></script>
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <span id="modal-title" class="modal-title"></span>
+      <button id="modal-close" class="ghost modal-close" title="закрыть">✕</button>
+    </div>
+    <div id="modal-body" class="modal-body"></div>
+  </div>
+</div>
+
+<script src="/app.js?v=18"></script>
 </body>
 </html>

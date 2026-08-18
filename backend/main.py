@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -19,7 +20,10 @@ from sqlalchemy.orm import Session
 
 import claude
 import mediagen
-from db import Character, CharacterPhoto, Project, Scene, SessionLocal, Track, init_db, now
+from db import (
+    AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Project,
+    Scene, SessionLocal, Track, init_db, now,
+)
 
 log = logging.getLogger("rapclips")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rapclips] %(message)s")
@@ -110,6 +114,15 @@ async def me(request: Request):
 
 # ──────────────────────────── сериализация ───────────────────────────
 
+def attribute_dict(a: CharacterAttribute) -> dict:
+    return {
+        "id": a.id, "name": a.name, "description": a.description,
+        "photos": [
+            {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in a.photos
+        ],
+    }
+
+
 def character_dict(c: Character) -> dict:
     return {
         "id": c.id, "position": c.position, "name": c.name,
@@ -117,6 +130,7 @@ def character_dict(c: Character) -> dict:
         "photos": [
             {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in c.photos
         ],
+        "attributes": [attribute_dict(a) for a in c.attributes],
     }
 
 
@@ -124,7 +138,13 @@ def characters_payload(project: Project) -> list[dict]:
     """Роспись персонажей для промптов Claude."""
     return [
         {"name": c.name, "description": c.description,
-         "is_main": c.is_main, "photos": len(c.photos)}
+         "is_main": c.is_main, "photos": len(c.photos),
+         # Фирменные вещи персонажа — чтобы Claude знал их по именам
+         # и вписывал в кадры (см. _characters_block в claude.py).
+         "attributes": [
+             {"name": a.name, "description": a.description}
+             for a in c.attributes if a.name.strip()
+         ]}
         for c in sorted(project.characters, key=lambda x: x.position)
         if c.name.strip()
     ]
@@ -141,6 +161,9 @@ def scene_dict(s: Scene) -> dict:
         "image_prompt_last": s.image_prompt_last,
         "image_url": f"/api/media/{s.image_filename}" if s.image_filename else "",
         "image_last_url": f"/api/media/{s.image_last_filename}" if s.image_last_filename else "",
+        # Превью: 4К-кадры по 15МБ браузер в сетке не тянет — в карточках миниатюры.
+        "image_thumb_url": f"/api/thumb/{s.image_filename}" if s.image_filename else "",
+        "image_last_thumb_url": f"/api/thumb/{s.image_last_filename}" if s.image_last_filename else "",
         "image_status": s.image_status, "image_error": s.image_error,
         "audio_url": f"/api/media/{s.audio_filename}" if s.audio_filename else "",
         "approved": s.approved,
@@ -162,6 +185,8 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "storyboard_status": t.storyboard_status, "storyboard_error": t.storyboard_error,
         "clip_url": f"/api/media/{t.clip_filename}" if t.clip_filename else "",
         "clip_status": t.clip_status, "clip_error": t.clip_error,
+        "cover_url": f"/api/media/{t.cover_filename}" if t.cover_filename else "",
+        "supergen_status": t.supergen_status, "supergen_note": t.supergen_note,
     }
     if with_scenes:
         d["scenes"] = [scene_dict(s) for s in t.scenes]
@@ -173,6 +198,7 @@ def project_dict(p: Project, with_scenes: bool = False) -> dict:
         "id": p.id, "name": p.name, "kind": p.kind, "character_bible": p.character_bible,
         "characters": [character_dict(c) for c in sorted(p.characters, key=lambda x: x.position)],
         "story": p.story, "story_status": p.story_status, "story_error": p.story_error,
+        "cover_url": f"/api/media/{p.cover_filename}" if p.cover_filename else "",
         "tracks": [track_dict(t, with_scenes) for t in p.tracks],
     }
 
@@ -215,9 +241,14 @@ def delete_project(project_id: int, _=Depends(require_auth), db: Session = Depen
                 _remove_media(f)
         _remove_media(t.storyboard_filename)
         _remove_media(t.clip_filename)
+        _remove_media(t.cover_filename)
     for c in project.characters:
         for ph in c.photos:
             _remove_media(ph.filename)
+        for attr in c.attributes:
+            for ph in attr.photos:
+                _remove_media(ph.filename)
+    _remove_media(project.cover_filename)
     db.delete(project)
     db.commit()
     return {"ok": True}
@@ -360,6 +391,7 @@ def delete_track(track_id: int, _=Depends(require_auth), db: Session = Depends(d
     for s in track.scenes:
         _remove_media(s.image_filename)
         _remove_media(s.video_filename)
+    _remove_media(track.cover_filename)
     db.delete(track)
     db.commit()
     return {"ok": True}
@@ -386,6 +418,48 @@ def get_audio(track_id: int, _=Depends(require_auth), db: Session = Depends(db_s
     if not os.path.exists(path):
         raise HTTPException(404, "файл отсутствует на диске")
     return FileResponse(path)
+
+
+# ─────────────────────────── обложки проекта и трека ───────────────────────────
+
+async def _save_cover_file(cover: UploadFile) -> str:
+    """Обложка хранится как обычный медиа-файл под uuid-именем: при замене
+    URL меняется вместе с файлом, поэтому браузерный кэш не показывает старую."""
+    ext = os.path.splitext(cover.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"cover_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(await cover.read())
+    return fname
+
+
+@app.post("/api/projects/{project_id}/cover")
+async def upload_project_cover(project_id: int, cover: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "проект не найден")
+    old = project.cover_filename
+    project.cover_filename = await _save_cover_file(cover)
+    db.commit()
+    db.refresh(project)
+    # Старый файл убираем только ПОСЛЕ commit: если запись не прошла,
+    # прежняя обложка остаётся живой.
+    _remove_media(old)
+    return {"ok": True, "cover_url": f"/api/media/{project.cover_filename}"}
+
+
+@app.post("/api/tracks/{track_id}/cover")
+async def upload_track_cover(track_id: int, cover: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
+    track = db.get(Track, track_id)
+    if not track:
+        raise HTTPException(404, "трек не найден")
+    old = track.cover_filename
+    track.cover_filename = await _save_cover_file(cover)
+    db.commit()
+    db.refresh(track)
+    _remove_media(old)
+    return {"ok": True, "cover_url": f"/api/media/{track.cover_filename}"}
 
 
 # ─────────────────────────────── сцены ───────────────────────────────
@@ -588,10 +662,37 @@ def _scene_characters(scene: Scene, project: Project) -> list[Character]:
     return [by_name[n] for n in names if n in by_name]
 
 
+def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
+    """Референс-АТРИБУТ: если текст сцены упоминает фирменную вещь персонажа
+    (шляпу, квадрик, тачку) — кадр строится вокруг предмета, и референсом
+    должно идти фото самой вещи, а не лицо героя. Проверяем только персонажей
+    ЭТОЙ сцены; совпадение — регистронезависимое вхождение имени атрибута."""
+    haystack = f"{scene.image_prompt or ''}\n{scene.shot_note or ''}".lower()
+    if not haystack.strip():
+        return None
+    for c in chars:
+        for a in c.attributes:
+            name = a.name.strip().lower()
+            if not name or name not in haystack:
+                continue
+            # Первое фото атрибута — каноническая моделька предмета.
+            for ph in a.photos:
+                path = os.path.join(UPLOAD_DIR, ph.filename)
+                if os.path.exists(path):
+                    return path
+                break  # контракт: именно ПЕРВОЕ фото; пропал файл — атрибут без референса
+    return None
+
+
 def _scene_reference_photo(scene: Scene, project: Project) -> str | None:
     """Фото-моделька для генерации кадра: первый персонаж кадра, у которого
-    загружены фото (или главный герой, если персонажи кадра не указаны)."""
+    загружены фото (или главный герой, если персонажи кадра не указаны).
+    Если в тексте сцены упомянут атрибут персонажа сцены — референсом идёт
+    первое фото атрибута (кадр про вещь, а не про лицо)."""
     chars = _scene_characters(scene, project)
+    attr_path = _scene_attribute_photo(scene, chars)
+    if attr_path:
+        return attr_path
     if not chars:
         chars = [c for c in project.characters if c.is_main]
     for c in chars:
@@ -825,9 +926,157 @@ def assemble_track_clip(track_id: int, _=Depends(require_auth), db: Session = De
     return {"ok": True, "scenes": len(approved)}
 
 
+# ──────────────────────────── супергенерация ────────────────────────────
+
+def _run_supergen(track_id: int) -> None:
+    """Весь конвейер одним нажатием: сюжет (если пуст) → раскадровка (если нет)
+    → кадры всех сцен → видео всех сцен → авто-утверждение → сборка клипа.
+
+    Шаги выполняются ПОСЛЕДОВАТЕЛЬНО в одном треде: генераторы за шлюзами всё
+    равно однопоточные, а так прогресс честный и падение любого шага видно."""
+    db = SessionLocal()
+
+    def note(txt: str, status: str = "running") -> None:
+        t = db.get(Track, track_id)
+        if t:
+            t.supergen_status = status
+            t.supergen_note = txt
+            db.commit()
+
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        project = track.project
+
+        if not (project.story or "").strip():
+            note("пишу сквозной сюжет…")
+            _run_story_generation(project.id)
+            db.expire_all()
+            if db.get(Project, project.id).story_status == "error":
+                note("сюжет не сгенерился — смотри ошибку в блоке сюжета", "error")
+                return
+
+        db.expire_all()
+        track = db.get(Track, track_id)
+        if not track.scenes:
+            note("режу раскадровку…")
+            _run_scene_generation(track_id)
+            db.expire_all()
+            track = db.get(Track, track_id)
+            if track.scenes_status == "error" or not track.scenes:
+                note("раскадровка не сгенерилась — смотри ошибку у трека", "error")
+                return
+
+        scene_ids = [s.id for s in sorted(track.scenes, key=lambda x: x.position)]
+        total = len(scene_ids)
+        for i, sid in enumerate(scene_ids, 1):
+            db.expire_all()
+            s = db.get(Scene, sid)
+            if not (s and s.image_filename and s.image_last_filename):
+                note(f"кадры: сцена {i}/{total}…")
+                _run_scene_frames(sid)
+                db.expire_all()
+                s = db.get(Scene, sid)
+                if not s or s.image_status == "error":
+                    note(f"кадры сцены {i} упали: {(s.image_error if s else '')[:150]}", "error")
+                    return
+
+        provider = "seedance" if mediagen.seedance_available() else "grok"
+        for i, sid in enumerate(scene_ids, 1):
+            db.expire_all()
+            s = db.get(Scene, sid)
+            if not s:
+                continue
+            if not s.video_filename:
+                note(f"видео: сцена {i}/{total} через {provider}…")
+                s.video_provider = provider
+                db.commit()
+                _run_scene_video(sid)
+                db.expire_all()
+                s = db.get(Scene, sid)
+                if not s or s.video_status == "error":
+                    note(f"видео сцены {i} упало: {(s.video_error if s else '')[:150]}", "error")
+                    return
+            if not s.approved:
+                s.approved = True
+                db.commit()
+
+        note("собираю клип из всех сцен…")
+        _run_assemble(track_id)
+        db.expire_all()
+        track = db.get(Track, track_id)
+        if track.clip_status == "error":
+            note(f"сборка упала: {track.clip_error[:150]}", "error")
+            return
+        note(f"готово: клип собран из {total} сцен", "done")
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        note(f"супергенерация упала: {str(e)[:200]}", "error")
+        log.warning("супергенерация трека %s упала: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/supergen")
+def supergen(track_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    from threading import Thread
+    track = db.get(Track, track_id)
+    if not track:
+        raise HTTPException(404, "трек не найден")
+    if not track.audio_filename:
+        raise HTTPException(400, "у трека нет аудио — загрузи дорожку")
+    # Без стиля и персонажей Claude выдумывает свои: стиль обязателен, герои тоже.
+    if not (track.style or "").strip():
+        raise HTTPException(400, "не выбран стиль клипа — выбери пресет на карточке трека")
+    if not any(c.name.strip() for c in track.project.characters):
+        raise HTTPException(400, "в проекте нет персонажей — добавь нового или клонируй из базы")
+    if track.supergen_status in ("queued", "running"):
+        raise HTTPException(400, "супергенерация уже идёт")
+    track.supergen_status = "queued"
+    track.supergen_note = "старт…"
+    db.commit()
+    Thread(target=_run_supergen, args=(track_id,), daemon=True).start()
+    return {"ok": True}
+
+
 @app.get("/api/media/{filename}")
 def get_media(filename: str, _=Depends(require_auth)):
     path = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+    if not os.path.exists(path):
+        raise HTTPException(404, "файл не найден")
+    return FileResponse(path)
+
+
+THUMB_DIR = os.environ.get("THUMB_DIR", "/data/thumbs")
+os.makedirs(THUMB_DIR, exist_ok=True)
+
+
+@app.get("/api/thumb/{filename}")
+def get_thumb(filename: str, _=Depends(require_auth)):
+    """Миниатюра кадра ~640px: полноразмерные 4К PNG в сетке карточек браузер
+    не прогружает. Рендерится лениво, кэшируется рядом с данными."""
+    src = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+    if not os.path.exists(src):
+        raise HTTPException(404, "файл не найден")
+    dst = os.path.join(THUMB_DIR, os.path.basename(filename) + ".jpg")
+    if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-vf", "scale=640:-2", "-q:v", "5", dst],
+            capture_output=True, timeout=60,
+        )
+        if r.returncode != 0 or not os.path.exists(dst):
+            return FileResponse(src)  # не вышло — отдаём оригинал, хуже не станет
+    return FileResponse(dst)
+
+
+@app.get("/api/outbox/{filename}")
+def get_outbox(filename: str):
+    """Отдача кадра внешнему видеогенератору (seevio тянет image_urls сам,
+    куки приложения у него нет). В outbox лежат ТОЛЬКО временные копии кадров
+    текущих задач под uuid-именами; mediagen кладёт их туда на время генерации
+    и удаляет по завершении задачи."""
+    path = os.path.join(mediagen.OUTBOX_DIR, os.path.basename(filename))
     if not os.path.exists(path):
         raise HTTPException(404, "файл не найден")
     return FileResponse(path)
@@ -840,6 +1089,77 @@ def providers(_=Depends(require_auth)):
 
 
 # ─────────────────────────── персонажи альбома ───────────────────────────
+
+@app.get("/api/characters/library")
+def characters_library(_=Depends(require_auth), db: Session = Depends(db_session)):
+    """Сквозная библиотека: персонажи ВСЕХ проектов разом — чтобы переносить
+    героя из альбома в альбом клонированием, а не заводить его заново."""
+    out = []
+    for p in db.query(Project).order_by(Project.id).all():
+        for c in sorted(p.characters, key=lambda x: x.position):
+            out.append({
+                "id": c.id, "name": c.name, "description": c.description,
+                "is_main": c.is_main,
+                "project_id": p.id, "project_name": p.name,
+                "photos": [
+                    {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in c.photos
+                ],
+            })
+    return out
+
+
+@app.post("/api/characters/clone")
+async def clone_character(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
+    """Клонирование персонажа из библиотеки в проект. Копия полностью
+    самостоятельная: удаление оригинала (или его фото) не ломает клона."""
+    body = await request.json()
+    source = db.get(Character, int(body.get("source_id") or 0))
+    if not source:
+        raise HTTPException(404, "исходный персонаж не найден")
+    project = get_or_create_project(db, project_id)
+    max_pos = max((c.position for c in project.characters), default=0)
+    # Главный герой в проекте один (см. update_character): статус переносится
+    # только если место главного в целевом проекте ещё свободно.
+    has_main = any(c.is_main for c in project.characters)
+    clone = Character(
+        project_id=project.id, position=max_pos + 1,
+        name=source.name, description=source.description,
+        is_main=bool(source.is_main and not has_main),
+    )
+    db.add(clone)
+    db.flush()
+    # Фото копируем БАЙТАМИ под новыми именами, а не ссылкой на тот же файл:
+    # иначе удаление фото у оригинала снесло бы файл и у клона.
+    for i, ph in enumerate(source.photos, start=1):
+        src_path = os.path.join(UPLOAD_DIR, ph.filename)
+        if not os.path.exists(src_path):
+            continue  # битую ссылку на пропавший файл не тиражируем
+        ext = os.path.splitext(ph.filename)[1] or ".jpg"
+        fname = f"char_{uuid.uuid4().hex}{ext}"
+        shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
+        db.add(CharacterPhoto(character_id=clone.id, position=i, filename=fname))
+    # Атрибуты — часть образа персонажа: клон получает их вместе с фото
+    # (тоже байтами под новыми именами — по той же причине, что и лица).
+    for attr in source.attributes:
+        attr_clone = CharacterAttribute(
+            character_id=clone.id, position=attr.position,
+            name=attr.name, description=attr.description,
+        )
+        db.add(attr_clone)
+        db.flush()
+        for i, ph in enumerate(attr.photos, start=1):
+            src_path = os.path.join(UPLOAD_DIR, ph.filename)
+            if not os.path.exists(src_path):
+                continue
+            ext = os.path.splitext(ph.filename)[1] or ".jpg"
+            fname = f"attr_{uuid.uuid4().hex}{ext}"
+            shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
+            db.add(AttributePhoto(attribute_id=attr_clone.id, position=i, filename=fname))
+    db.commit()
+    # clone.photos закэширован ДО вставки фото — без refresh ответ уйдёт пустым.
+    db.refresh(clone)
+    return character_dict(clone)
+
 
 @app.post("/api/characters")
 async def create_character(request: Request, project_id: int | None = None, _=Depends(require_auth), db: Session = Depends(db_session)):
@@ -885,6 +1205,10 @@ def delete_character(char_id: int, _=Depends(require_auth), db: Session = Depend
         raise HTTPException(404, "персонаж не найден")
     for ph in ch.photos:
         _remove_media(ph.filename)
+    # Файлы фото атрибутов каскад БД не удалит — чистим их сами.
+    for attr in ch.attributes:
+        for ph in attr.photos:
+            _remove_media(ph.filename)
     db.delete(ch)
     db.commit()
     return {"ok": True}
@@ -905,12 +1229,91 @@ async def add_character_photo(char_id: int, photo: UploadFile, _=Depends(require
     ph = CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname)
     db.add(ph)
     db.commit()
+    # ch.photos загружен ДО вставки — без refresh ответ отстаёт на одно фото.
+    db.refresh(ch)
     return character_dict(ch)
 
 
 @app.delete("/api/characters/photos/{photo_id}")
 def delete_character_photo(photo_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
     ph = db.get(CharacterPhoto, photo_id)
+    if not ph:
+        raise HTTPException(404, "фото не найдено")
+    _remove_media(ph.filename)
+    db.delete(ph)
+    db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────── атрибуты персонажей ───────────────────────────
+
+@app.post("/api/characters/{char_id}/attributes")
+async def create_attribute(char_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    ch = db.get(Character, char_id)
+    if not ch:
+        raise HTTPException(404, "персонаж не найден")
+    body = await request.json()
+    max_pos = max((a.position for a in ch.attributes), default=0)
+    attr = CharacterAttribute(
+        character_id=ch.id, position=max_pos + 1,
+        name=str(body.get("name") or "Без имени"),
+        description=str(body.get("description") or ""),
+    )
+    db.add(attr)
+    db.commit()
+    db.refresh(attr)
+    return attribute_dict(attr)
+
+
+@app.patch("/api/attributes/{attr_id}")
+async def update_attribute(attr_id: int, request: Request, _=Depends(require_auth), db: Session = Depends(db_session)):
+    attr = db.get(CharacterAttribute, attr_id)
+    if not attr:
+        raise HTTPException(404, "атрибут не найден")
+    body = await request.json()
+    if "name" in body:
+        attr.name = str(body["name"])
+    if "description" in body:
+        attr.description = str(body["description"])
+    db.commit()
+    return attribute_dict(attr)
+
+
+@app.delete("/api/attributes/{attr_id}")
+def delete_attribute(attr_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    attr = db.get(CharacterAttribute, attr_id)
+    if not attr:
+        raise HTTPException(404, "атрибут не найден")
+    for ph in attr.photos:
+        _remove_media(ph.filename)
+    db.delete(attr)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/attributes/{attr_id}/photos")
+async def add_attribute_photo(attr_id: int, photo: UploadFile, _=Depends(require_auth), db: Session = Depends(db_session)):
+    attr = db.get(CharacterAttribute, attr_id)
+    if not attr:
+        raise HTTPException(404, "атрибут не найден")
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"attr_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(await photo.read())
+    max_pos = max((p.position for p in attr.photos), default=0)
+    ph = AttributePhoto(attribute_id=attr.id, position=max_pos + 1, filename=fname)
+    db.add(ph)
+    db.commit()
+    # attr.photos загружен ДО вставки — без refresh ответ отстаёт на одно фото.
+    db.refresh(attr)
+    return attribute_dict(attr)
+
+
+@app.delete("/api/attributes/photos/{photo_id}")
+def delete_attribute_photo(photo_id: int, _=Depends(require_auth), db: Session = Depends(db_session)):
+    ph = db.get(AttributePhoto, photo_id)
     if not ph:
         raise HTTPException(404, "фото не найдено")
     _remove_media(ph.filename)

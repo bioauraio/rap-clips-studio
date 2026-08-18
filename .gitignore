@@ -1,5 +1,24 @@
+# данные и секреты — никогда в репозиторий
+data/
+backups/
 infra/.env
 infra/.env.generated
+*.env
+!*.env.example
+
+# локальные рабочие файлы логина/сессий — живут только на машине владельца
+.login-venv/
+.seevio_login_local.py
+.seevio_key_step*.py
+.seevio_login.log
+*.log
+*_cookies.json
+
+# python
 __pycache__/
 *.pyc
+.venv/
+venv/
+
+# macOS
 .DS_Store
