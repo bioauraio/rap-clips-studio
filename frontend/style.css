@@ -63,7 +63,7 @@ body {
 .error { color: var(--danger); font-size: 13px; }
 
 /* ────────── каркас ────────── */
-.app { max-width: 1020px; margin: 0 auto; padding: 24px 20px 80px; }
+.app { max-width: 1020px; margin: 0 auto; padding: 18px 16px 64px; }
 .topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
 .project-name {
   flex: 1; font-family: var(--font-head); font-size: 22px; font-weight: 800;
@@ -392,3 +392,26 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   color: #fff; font-weight: 800; font-size: 24px; border: 2px solid #2d211a;
 }
 .lib-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+
+/* ────────── мобильная вёрстка ────────── */
+@media (max-width: 700px) {
+  .app { padding: 10px 8px 56px; }
+  .panel { padding: 12px 10px; border-radius: 16px; margin-bottom: 12px; }
+  .topbar { flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .project-select { max-width: 46vw; }
+  .project-name { flex: 1 1 100%; order: 5; font-size: 18px; padding: 4px 2px; }
+  .track-card { padding: 12px 10px; border-radius: 16px; }
+  .track-head { flex-wrap: wrap; }
+  .t-title { min-width: 55%; font-size: 14px; }
+  .scene-card { padding: 10px 8px; }
+  .row button { flex: 1 1 auto; min-width: 0; }
+  .row .status { flex-basis: 100%; }
+  .t-audio { width: 100%; }
+  textarea { font-size: 13px; }
+  .modal-card { width: 94vw; max-height: 88vh; overflow-y: auto; }
+  .char-photo { width: 60px; height: 60px; }
+  .style-picker { gap: 5px; }
+  .style-chip { font-size: 10.5px; padding: 4px 8px; }
+  .kind-cards { flex-direction: column; }
+}

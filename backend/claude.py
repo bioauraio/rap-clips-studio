@@ -123,6 +123,7 @@ async def generate_story(character_bible: str, tracks: list[dict], characters: l
             f"### Трек {t['position']}: {t['title']}\n"
             f"Стиль ролика: {t['style'] or '(не задан)'}\n"
             f"Комментарий автора: {t['comment'] or '(нет)'}\n"
+            f"Профиль звука (замер реальной дорожки): {t.get('audio_profile') or '(нет)'}\n"
             f"Текст песни:\n{lyrics_line}\n"
         )
     chars = _characters_block(characters or [])
@@ -265,7 +266,7 @@ async def generate_storyboard_sheet_prompt(
 async def generate_scenes(
     *, story: str, character_bible: str, track_note: str, title: str,
     lyrics: str, comment: str, style: str, duration_sec: int,
-    characters: list[dict] | None = None,
+    characters: list[dict] | None = None, audio_profile: str = "",
 ) -> dict:
     system = SCENES_SYSTEM.replace("{STYLE}", style or "стиль на твой выбор, подходящий треку")
     chars = _characters_block(characters or [])
@@ -286,6 +287,9 @@ async def generate_scenes(
         f"Роль этого трека в сюжете:\n{track_note or '(нет заметки — определи сам по тексту песни и комментарию)'}\n\n"
         f"Трек: {title}\nСтиль ролика: {style or '(на твой выбор)'}\n"
         f"Длительность аудио: {duration_sec} секунд\n"
+        f"Профиль звука (замер реальной дорожки — сажай ритм сцен на эту динамику: "
+        f"тихие сегменты = спокойные планы, врывы = экшен и резкие склейки): "
+        f"{audio_profile or '(нет замера)'}\n"
         f"Комментарий автора: {comment or '(нет)'}\n\n"
         + lyrics_block
     )

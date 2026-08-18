@@ -177,6 +177,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
     d = {
         "id": t.id, "position": t.position, "title": t.title, "lyrics": t.lyrics,
         "comment": t.comment, "style": t.style, "audio_filename": t.audio_filename,
+        "director_note": t.director_note, "audio_profile": t.audio_profile,
         "audio_duration_sec": t.audio_duration_sec,
         "scenes_status": t.scenes_status, "scenes_error": t.scenes_error,
         "scenes_count": len(t.scenes),
@@ -282,7 +283,8 @@ def _run_story_generation(project_id: int) -> None:
         db.commit()
         tracks = [
             {"position": t.position, "title": t.title, "lyrics": t.lyrics,
-             "comment": t.comment, "style": t.style}
+             "comment": t.comment, "style": t.style,
+             "audio_profile": t.audio_profile}
             for t in project.tracks
         ]
         import asyncio
@@ -293,7 +295,8 @@ def _run_story_generation(project_id: int) -> None:
         for t in project.tracks:
             note = notes.get(t.position)
             if note:
-                t.comment = (t.comment + f"\n\n[режиссёрская заметка] {note}").strip()
+                # Заметка живёт отдельным полем — комментарий владельца не трогаем.
+                t.director_note = note
         project.story_status = "done"
         db.commit()
         log.info("сюжет сгенерирован для проекта %s", project_id)
@@ -322,6 +325,39 @@ def generate_story(project_id: int | None = None, _=Depends(require_auth), db: S
 
 
 # ─────────────────────────────── треки ───────────────────────────────
+
+def _audio_profile(path: str, duration_sec: int) -> str:
+    """«Прослушивание» трека: ffmpeg меряет громкость по сегментам — сюжет и
+    раскадровка получают реальную динамику дорожки (тихо/врыв/спад), а не
+    выдумывают её. Без нейросетей: RMS-профиль честнее галлюцинаций."""
+    if not duration_sec or duration_sec < 4:
+        return ""
+    n = min(10, max(4, duration_sec // 15))
+    seg = duration_sec / n
+    levels: list[float] = []
+    for i in range(n):
+        r = subprocess.run(
+            ["ffmpeg", "-ss", str(round(i * seg, 1)), "-t", str(round(seg, 1)),
+             "-i", path, "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+        m = re.search(r"mean_volume:\s*(-?[\d.]+) dB", r.stderr)
+        levels.append(float(m.group(1)) if m else -91.0)
+    if not any(v > -90 for v in levels):
+        return ""
+    lo, hi = min(levels), max(levels)
+    span = max(hi - lo, 1.0)
+    words = []
+    for i, v in enumerate(levels):
+        t0 = int(i * seg)
+        rel = (v - lo) / span
+        label = "тихо" if rel < 0.25 else "спокойно" if rel < 0.5 else "плотно" if rel < 0.75 else "врыв"
+        if i and abs(levels[i] - levels[i - 1]) >= 4:
+            label += " (подъём)" if levels[i] > levels[i - 1] else " (спад)"
+        words.append(f"{t0 // 60}:{t0 % 60:02d} {label}")
+    return (f"длительность {duration_sec // 60}:{duration_sec % 60:02d}; "
+            f"динамика громкости по сегментам: " + ", ".join(words))
+
 
 def _ffprobe_duration(path: str) -> int:
     try:
@@ -360,6 +396,10 @@ async def create_track(
             f.write(data)
         track.audio_filename = fname
         track.audio_duration_sec = _ffprobe_duration(path)
+        try:
+            track.audio_profile = _audio_profile(path, track.audio_duration_sec)
+        except Exception as e:  # noqa: BLE001
+            log.warning("профиль звука не посчитался: %s", e)
     db.add(track)
     db.commit()
     db.refresh(track)
@@ -474,15 +514,20 @@ def _run_scene_generation(track_id: int) -> None:
         track.scenes_error = ""
         db.commit()
         project = track.project
-        note_match = re.search(r"\[режиссёрская заметка\]\s*(.+)$", track.comment, re.DOTALL)
-        track_note = note_match.group(1).strip() if note_match else ""
+        # Заметка из отдельного поля; старые треки могли хранить её в комментарии.
+        track_note = track.director_note
+        if not track_note:
+            note_match = re.search(r"\[режиссёрская заметка\]\s*(.+)$", track.comment, re.DOTALL)
+            track_note = note_match.group(1).strip() if note_match else ""
+        clean_comment = re.sub(r"\n*\[режиссёрская заметка\].*$", "", track.comment, flags=re.DOTALL).strip()
         import asyncio
         result = asyncio.run(claude.generate_scenes(
             story=project.story, character_bible=project.character_bible,
             track_note=track_note, title=track.title, lyrics=track.lyrics,
-            comment=track.comment, style=track.style,
+            comment=clean_comment, style=track.style,
             duration_sec=track.audio_duration_sec or 180,
             characters=characters_payload(project),
+            audio_profile=track.audio_profile,
         ))
         for s in list(track.scenes):
             _remove_media(s.image_filename)

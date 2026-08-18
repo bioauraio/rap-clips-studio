@@ -128,6 +128,12 @@ class Track(Base):
     comment = Column(Text, nullable=False, default="")
     # Визуальный стиль ЭТОГО трека: "3D мультяшный", "аниме", "реализм", своя формулировка.
     style = Column(String, nullable=False, default="")
+    # Режиссёрская заметка от генерации сюжета — ОТДЕЛЬНО от комментария
+    # владельца: раньше дописывалась прямо в comment и пачкала его.
+    director_note = Column(Text, nullable=False, default="")
+    # Профиль звука: энергия/динамика по сегментам, считается ffmpeg'ом при
+    # загрузке аудио — чтобы сюжет и раскадровка опирались на реальный трек.
+    audio_profile = Column(Text, nullable=False, default="")
     audio_filename = Column(String, nullable=False, default="")
     audio_duration_sec = Column(Integer, nullable=False, default=0)
     # Обложка трека (файл в UPLOAD_DIR): у каждого трека своя картинка,

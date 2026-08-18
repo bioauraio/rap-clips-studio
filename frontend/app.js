@@ -397,6 +397,15 @@ function renderTrack(t) {
   $(".t-style", card).value = t.style;
   buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
   $(".t-comment", card).value = t.comment;
+  // Режиссёрская заметка и профиль звука — служебные, отдельно от комментария.
+  if (t.director_note || t.audio_profile) {
+    const aux = document.createElement("div");
+    aux.className = "muted";
+    aux.style.cssText = "font-size:11px;margin:4px 0 0;line-height:1.45";
+    if (t.director_note) aux.appendChild(Object.assign(document.createElement("div"), { textContent: "🎬 Заметка режиссёра: " + t.director_note }));
+    if (t.audio_profile) aux.appendChild(Object.assign(document.createElement("div"), { textContent: "🎧 Прослушано: " + t.audio_profile }));
+    $(".t-comment", card).after(aux);
+  }
   $(".t-lyrics", card).value = t.lyrics;
   const audioEl = $(".t-audio", card);
   if (t.audio_filename) audioEl.src = `/api/tracks/${t.id}/audio`;
