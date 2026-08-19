@@ -695,8 +695,6 @@ function renderTrack(t) {
   $(".save-track", card).addEventListener("click", () => saveTrack(t.id, card));
 
   // ── этап 2: сюжет (read-only цитата + заметка режиссёра + генерация, если пуст)
-  quote.textContent = (project.story || "").trim() || "Сквозного сюжета ещё нет — сгенерируй его или впиши в блоке «Герой и сюжет».";
-  quote.classList.toggle("empty", !(project.story || "").trim());
   if (t.director_note) {
     $(".t-note-view", card).classList.remove("hidden");
     $(".t-note-text", card).textContent = t.director_note;
