@@ -156,6 +156,11 @@ const STYLE_PRESETS = [
     value: "Handcrafted claymation stop-motion style (Aardman/Laika vibe): visible fingerprints in plasticine, slightly imperfect frame-to-frame jitter, miniature set with real fabric and cardboard props, warm practical lighting, shallow depth of field macro look, expressive oversized eyes, vertical 9:16, no text."
   },
   {
+    label: "ПАНКРФ (найденное видео, дичь РФ)",
+    desc: "Гиперреалистичное «случайное видео» ночной России: регистраторы и VHS, красный неон, абсурд среди пробок и панелек.",
+    value: "Hyperreal Russian street found-footage: night dashcam, GoPro, phone or CCTV camera look with heavy VHS grain, analog noise and motion blur; harsh headlights, red neon gas-station canopies, wet asphalt, dense traffic with glowing tail lights, grey soviet panel blocks, ruined brick factories, dusty supercars in wastelands. One absurd event unfolds in the middle of mundane Russian reality — animals rearing between cars, flying couriers, delivery drones, aliens in queues — filmed like an accidental viral video: documentary believability, realistic physics, nobody poses, aggressive dynamic framing, violent handheld shake, strobing flash by night. Muted cold palette with red neon accents. Vertical 9:16, no text."
+  },
+  {
     label: "ДРИМКЛАД (hood-кино 90-х)",
     desc: "Плёночное hood-кино 90-х: зерно, белые майки и банданы, деньги, голуби и кресты, иконописные фронтальные композиции.",
     value: "1990s American hood-cinema still, shot on grainy 35mm film: faded low-contrast color grade with warm orange-brown skin tones and dusty teal shadows (or deep-grain black-and-white), heavy film grain, soft halation, subtle gate weave and VHS-era imperfections. Brick-block New York / LA streets of the 90s — bodegas with graffiti, chain-link fences, stone staircases, boxy sedans and vintage Cadillacs — or night-time mansion gates and museum halls lit by warm tungsten windows and headlights. Young men in white tank tops, bandana masks, hoodies and baggy denim; crowds dressed identically like a uniform; recurring icons of money stacks, doves, crosses, candles and classical statues — sacred mixed with street. Frontal, symmetric, almost ceremonial compositions, subjects staring straight into the lens, or candid through-the-windshield documentary angles; overexposed hazy daylight or moody night backlight. Cinematic, nostalgic, quietly menacing, music-video energy. No clean digital look, no HDR, no modern cars or clothing, no neon cyberpunk, no glossy skin, no watermarks. Vertical 9:16, no text."
@@ -670,6 +675,7 @@ function renderTrack(t) {
   $(".t-style", card).value = t.style;
   buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
   $(".t-comment", card).value = t.comment;
+  $(".t-grain", card).checked = Boolean(t.film_grain);
   $(".t-lyrics", card).value = t.lyrics;
   const audioEl = $(".t-audio", card);
   if (t.audio_filename) audioEl.src = `/api/tracks/${t.id}/audio`;
@@ -1067,6 +1073,7 @@ async function saveTrack(id, card) {
       title: $(".t-title", card).value,
       style: $(".t-style", card).value,
       comment: $(".t-comment", card).value,
+      film_grain: $(".t-grain", card).checked,
       lyrics: $(".t-lyrics", card).value,
     },
   });

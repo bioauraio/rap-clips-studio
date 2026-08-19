@@ -323,7 +323,8 @@ async def animate_scene(
 
 # ──────────────────────────── сборка клипа ────────────────────────────
 
-def assemble_clip(scene_videos: list[str], track_audio_path: str | None) -> str:
+def assemble_clip(scene_videos: list[str], track_audio_path: str | None,
+                  film_grain: bool = False) -> str:
     """Склеивает видео утверждённых сцен подряд и кладёт поверх дорожку трека.
 
     Каждая сцена приводится к единому размеру/фпс — иначе concat рассыпается
@@ -340,7 +341,9 @@ def assemble_clip(scene_videos: list[str], track_audio_path: str | None) -> str:
             cmd = [
                 FFMPEG, "-y", "-i", src,
                 "-vf", f"scale={CLIP_W}:{CLIP_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                       f"pad={CLIP_W}:{CLIP_H}:(ow-iw)/2:(oh-ih)/2:color=black,fps=30",
+                       f"pad={CLIP_W}:{CLIP_H}:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+                       # Плёнка: живое зерно + лёгкий прижим контраста, как 16мм скан.
+                       + (",noise=alls=11:allf=t+u,eq=contrast=1.04:saturation=0.93" if film_grain else ""),
                 "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-pix_fmt", "yuv420p", dst,
             ]

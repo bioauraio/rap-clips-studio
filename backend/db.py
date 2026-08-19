@@ -181,6 +181,9 @@ class Track(Base):
     clip_status = Column(String, nullable=False, default="")
     clip_error = Column(Text, nullable=False, default="")
 
+    # Плёночное зерно на весь собранный клип (ffmpeg-фильтр при склейке).
+    film_grain = Column(Boolean, nullable=False, default=False)
+
     # «Супергенерация»: конвейер сюжет→сцены→кадры→видео→сборка одним нажатием.
     # note — живой прогресс для строки статуса на карточке трека.
     supergen_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error

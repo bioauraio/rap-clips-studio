@@ -443,6 +443,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "clip_status": t.clip_status, "clip_error": t.clip_error,
         "cover_url": f"/api/media/{t.cover_filename}" if t.cover_filename else "",
         "supergen_status": t.supergen_status, "supergen_note": t.supergen_note,
+        "film_grain": t.film_grain,
     }
     if with_scenes:
         d["scenes"] = [scene_dict(s) for s in t.scenes]
@@ -673,6 +674,8 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     for field in ("title", "lyrics", "comment", "style"):
         if field in body:
             setattr(track, field, str(body[field]))
+    if "film_grain" in body:
+        track.film_grain = bool(body["film_grain"])
     db.commit()
     return track_dict(track)
 
@@ -1270,7 +1273,8 @@ def _run_assemble(track_id: int) -> None:
         db.commit()
         videos = [s.video_filename for s in track.scenes if s.approved and s.video_filename]
         old = track.clip_filename
-        track.clip_filename = mediagen.assemble_clip(videos, _track_audio_path(track))
+        track.clip_filename = mediagen.assemble_clip(
+            videos, _track_audio_path(track), film_grain=track.film_grain)
         _reg_file(db, track.clip_filename, track.project.owner_id)
         track.clip_status = "done"
         db.commit()
