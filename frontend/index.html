@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=30" />
+<link rel="stylesheet" href="/style.css?v=32" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
@@ -125,24 +125,24 @@
     <div class="stage-panes">
       <!-- 1. Настройка -->
       <section class="stage-pane" data-stage="setup">
+        <label title="1–3 пресета чекбоксами: первый выбранный — основа микса">Стиль клипа</label>
+        <div class="t-style-picker style-picker style-picker-wide"></div>
+        <input type="hidden" class="t-style" />
         <div class="track-body">
           <div class="track-left">
-            <label title="1–3 пресета чекбоксами: первый выбранный — основа микса">Стиль клипа</label>
-            <div class="t-style-picker style-picker"></div>
-            <input type="hidden" class="t-style" />
             <label>Аудио</label>
             <audio class="t-audio" controls></audio>
             <span class="t-duration"></span>
-            <label>Комментарий</label>
-            <textarea class="t-comment" rows="3" placeholder="что имел в виду, контекст"></textarea>
             <label class="approve-check grain-check" title="ffmpeg-зерно 16мм поверх всего собранного клипа"><input type="checkbox" class="t-grain" /> 🎞 плёночное зерно на весь клип</label>
             <label class="approve-check grain-check" title="раскадровка = независимые рандомные панч-кадры по комментарию, сквозной сюжет не нужен"><input type="checkbox" class="t-nostory" /> 🎲 без сюжета (рандомные кадры)</label>
           </div>
           <div class="track-right">
-            <label>Текст песни</label>
-            <textarea class="t-lyrics" rows="8" placeholder="Пусто = чисто бит: идею закладывают комментарий и персонажи"></textarea>
+            <label>Комментарий</label>
+            <textarea class="t-comment" rows="4" placeholder="что имел в виду, контекст"></textarea>
           </div>
         </div>
+        <label>Текст песни</label>
+        <textarea class="t-lyrics" rows="5" placeholder="Пусто = чисто бит: идею закладывают комментарий и персонажи"></textarea>
         <div class="row">
           <button class="save-track">Сохранить трек</button>
         </div>
@@ -303,17 +303,18 @@
         <button class="s-gen-frames">Перегенерировать кадры</button>
         <button class="s-gen-mid">+ промежуточные кадры</button>
       </div>
+      <div class="row">
+        <select class="s-provider" title="провайдер видео"></select>
+        <button class="s-gen-video primary">🎬 Видео сцены</button>
+        <span class="s-video-status status"></span>
+      </div>
     </div>
 
     <div class="anim-only">
       <div class="media-box s-video-box">
         <video class="s-video-preview hidden" controls loop></video>
       </div>
-      <span class="s-video-status status"></span>
-      <div class="row">
-        <select class="s-provider" title="провайдер видео"></select>
-        <button class="s-gen-video primary">Видео сцены</button>
-      </div>
+      <span class="s-anim-status status"></span>
       <label class="approve-check" title="утверждённые сцены идут в общий клип">
         <input type="checkbox" class="s-approve" />
         в клип
@@ -335,6 +336,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=30"></script>
+<script src="/app.js?v=32"></script>
 </body>
 </html>

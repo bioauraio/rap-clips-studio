@@ -796,8 +796,18 @@ function renderTrack(t) {
   const animBox = $(".scenes-anim", card);
   (t.scenes || []).forEach((s) => {
     boardBox.appendChild(renderScene(s, audioEl, "board"));
-    animBox.appendChild(renderScene(s, audioEl, "anim"));
+    // В «Анимацию» карточка попадает только когда видео есть или генерится.
+    if (s.video_url || ["queued", "running", "error"].includes(s.video_status)) {
+      animBox.appendChild(renderScene(s, audioEl, "anim"));
+    }
   });
+  if (!animBox.children.length) {
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.style.padding = "8px 4px";
+    hint.textContent = "Видео ещё нет — сгенерируй их из «Раскадровки»: кнопка 🎬 на карточке кадра.";
+    animBox.appendChild(hint);
+  }
   $$(".strip-wrap", card).forEach(bindStrip);
 
   // ── этап 5: готовое — финальный клип + все видео сцен в одном месте
@@ -1000,9 +1010,11 @@ function renderScene(s, audioEl, mode = "board") {
 
   // Видео сцены + отрезок трека под неё.
   const vidStatus = statusLabel(s.video_status, "готово");
-  const vidStatusEl = $(".s-video-status", card);
-  vidStatusEl.textContent = vidStatus.text;
-  vidStatusEl.className = "status " + vidStatus.cls;
+  const vidStatusEl = $(".s-video-status", card) || $(".s-anim-status", card);
+  if (vidStatusEl) {
+    vidStatusEl.textContent = vidStatus.text;
+    vidStatusEl.className = vidStatusEl.className.split(" ")[0] + " status " + vidStatus.cls;
+  }
   if (s.video_url) {
     const v = $(".s-video-preview", card);
     v.src = s.video_url; v.classList.remove("hidden");
@@ -1013,6 +1025,7 @@ function renderScene(s, audioEl, mode = "board") {
     if (ph) { ph.src = s.image_thumb_url || s.image_url; ph.classList.remove("hidden"); }
   }
   const provSel = $(".s-provider", card);
+  if (provSel) {
   provSel.innerHTML = "";
   (providers.video || ["grok"]).forEach((p) => {
     const opt = document.createElement("option");
@@ -1021,13 +1034,16 @@ function renderScene(s, audioEl, mode = "board") {
     provSel.appendChild(opt);
   });
   provSel.value = s.video_provider;
+  }
 
   const vidBtn = $(".s-gen-video", card);
+  if (vidBtn) {
   const vidBusy = ["queued", "running"].includes(s.video_status);
   vidBtn.disabled = vidBusy || !s.image_url;
   vidBtn.title = s.image_url ? "" : "сначала сгенерируй кадры сцены (этап «Раскадровка»)";
   vidBtn.textContent = vidBusy ? "генерирую…" : s.video_url ? "Перегенерировать видео" : "Видео сцены";
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value));
+  }
 
   if (s.audio_url) {
     const row = $(".scene-audio-row", card);

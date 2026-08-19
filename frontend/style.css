@@ -601,3 +601,9 @@ textarea { transition: min-height .15s; }
   background: linear-gradient(180deg, var(--accent-2), var(--accent));
   border: 1.5px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
 }
+
+/* компактные этап-табы и плотный стиль-пикер на всю ширину */
+.stage-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 10px; }
+.stage-tab { padding: 5px 10px !important; font-size: 11px !important; border-radius: 10px !important; }
+.style-picker-wide { display: flex; flex-wrap: wrap; gap: 5px; }
+.style-picker-wide .style-chip { font-size: 10.5px; padding: 4px 9px; box-shadow: 0 2px 0 #2d211a; }
