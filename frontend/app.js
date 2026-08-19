@@ -676,6 +676,7 @@ function renderTrack(t) {
   buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
   $(".t-comment", card).value = t.comment;
   $(".t-grain", card).checked = Boolean(t.film_grain);
+  $(".t-nostory", card).checked = Boolean(t.no_story);
   $(".t-lyrics", card).value = t.lyrics;
   const audioEl = $(".t-audio", card);
   if (t.audio_filename) audioEl.src = `/api/tracks/${t.id}/audio`;
@@ -694,7 +695,6 @@ function renderTrack(t) {
   $(".save-track", card).addEventListener("click", () => saveTrack(t.id, card));
 
   // ── этап 2: сюжет (read-only цитата + заметка режиссёра + генерация, если пуст)
-  const quote = $(".t-story-quote", card);
   quote.textContent = (project.story || "").trim() || "Сквозного сюжета ещё нет — сгенерируй его или впиши в блоке «Герой и сюжет».";
   quote.classList.toggle("empty", !(project.story || "").trim());
   if (t.director_note) {
@@ -783,6 +783,15 @@ function renderTrack(t) {
   sbBtn.disabled = sbBusy || !t.scenes_count;
   sbBtn.textContent = sbBusy ? "рисую лист…" : t.storyboard_url ? "Перерисовать лист" : "Сгенерировать лист";
   sbBtn.addEventListener("click", () => genStoryboard(t.id));
+  const sliceBtn = $(".slice-storyboard", card);
+  sliceBtn.disabled = !t.storyboard_url;
+  sliceBtn.addEventListener("click", async () => {
+    try {
+      const r = await api(`/api/tracks/${t.id}/slice-storyboard`, { method: "POST" });
+      alert(`Лист нарезан: ${r.sliced} кадров (сетка ${r.grid})`);
+    } catch (e) { alert(e.message); }
+    await loadProject();
+  });
 
   // Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
   const boardBox = $(".scenes-board", card);
@@ -999,6 +1008,11 @@ function renderScene(s, audioEl, mode = "board") {
   if (s.video_url) {
     const v = $(".s-video-preview", card);
     v.src = s.video_url; v.classList.remove("hidden");
+    v.poster = s.image_thumb_url || "";
+  } else if (s.image_url) {
+    // Видео ещё нет — в «Анимации» показываем первый кадр как постер сцены.
+    const ph = $(".s-image-preview", card);
+    if (ph) { ph.src = s.image_thumb_url || s.image_url; ph.classList.remove("hidden"); }
   }
   const provSel = $(".s-provider", card);
   provSel.innerHTML = "";
@@ -1074,6 +1088,7 @@ async function saveTrack(id, card) {
       style: $(".t-style", card).value,
       comment: $(".t-comment", card).value,
       film_grain: $(".t-grain", card).checked,
+      no_story: $(".t-nostory", card).checked,
       lyrics: $(".t-lyrics", card).value,
     },
   });

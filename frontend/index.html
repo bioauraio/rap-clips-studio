@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=26" />
+<link rel="stylesheet" href="/style.css?v=29" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
@@ -136,6 +136,7 @@
             <label>Комментарий</label>
             <textarea class="t-comment" rows="3" placeholder="что имел в виду, контекст"></textarea>
             <label class="approve-check grain-check" title="ffmpeg-зерно 16мм поверх всего собранного клипа"><input type="checkbox" class="t-grain" /> 🎞 плёночное зерно на весь клип</label>
+            <label class="approve-check grain-check" title="раскадровка = независимые рандомные панч-кадры по комментарию, сквозной сюжет не нужен"><input type="checkbox" class="t-nostory" /> 🎲 без сюжета (рандомные кадры)</label>
           </div>
           <div class="track-right">
             <label>Текст песни</label>
@@ -149,8 +150,6 @@
 
       <!-- 2. Сюжет -->
       <section class="stage-pane" data-stage="plot">
-        <label>Сквозной сюжет проекта</label>
-        <blockquote class="t-story-quote"></blockquote>
         <div class="t-note-view hidden">
           <label>🎬 Режиссёрская заметка трека</label>
           <p class="t-note-text muted"></p>
@@ -177,6 +176,7 @@
           </div>
           <div class="row">
             <button class="gen-storyboard">Сгенерировать лист</button>
+            <button class="slice-storyboard" title="нарезать лист-сетку: каждая ячейка станет первым кадром своей сцены">Разложить лист по кадрам</button>
           </div>
         </div>
         <div class="strip-wrap">
@@ -335,6 +335,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=26"></script>
+<script src="/app.js?v=29"></script>
 </body>
 </html>

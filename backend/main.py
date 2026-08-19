@@ -443,7 +443,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "clip_status": t.clip_status, "clip_error": t.clip_error,
         "cover_url": f"/api/media/{t.cover_filename}" if t.cover_filename else "",
         "supergen_status": t.supergen_status, "supergen_note": t.supergen_note,
-        "film_grain": t.film_grain,
+        "film_grain": t.film_grain, "no_story": t.no_story,
     }
     if with_scenes:
         d["scenes"] = [scene_dict(s) for s in t.scenes]
@@ -676,6 +676,8 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
             setattr(track, field, str(body[field]))
     if "film_grain" in body:
         track.film_grain = bool(body["film_grain"])
+    if "no_story" in body:
+        track.no_story = bool(body["no_story"])
     db.commit()
     return track_dict(track)
 
@@ -782,7 +784,8 @@ def _run_scene_generation(track_id: int) -> None:
         clean_comment = re.sub(r"\n*\[режиссёрская заметка\].*$", "", track.comment, flags=re.DOTALL).strip()
         import asyncio
         result = asyncio.run(claude.generate_scenes(
-            story=project.story, character_bible=project.character_bible,
+            story="" if track.no_story else project.story,
+            character_bible=project.character_bible,
             track_note=track_note, title=track.title, lyrics=track.lyrics,
             comment=clean_comment, style=track.style,
             duration_sec=track.audio_duration_sec or 180,
@@ -829,8 +832,8 @@ def _run_scene_generation(track_id: int) -> None:
 def generate_scenes(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
     track = _own_track(db, user, track_id)
-    if not track.project.story:
-        raise HTTPException(400, "сначала сгенерируй общий сюжет проекта")
+    if not track.project.story and not track.no_story:
+        raise HTTPException(400, "сначала сгенерируй общий сюжет проекта (или включи «без сюжета»)")
     _charge(db, user, 1, f"раскадровка трека {track.id}")
     track.scenes_status = "queued"
     db.commit()
@@ -925,16 +928,9 @@ def _run_storyboard(track_id: int) -> None:
         prompt = built.get("prompt") or ""
         if not prompt:
             raise RuntimeError("Claude не вернул промпт листа раскадровки")
-        # Референс главного героя — чтобы на листе был НАШ персонаж, а не выдуманный.
-        ref = None
-        main_char = next(
-            (c for c in track.project.characters if c.is_main and c.photos), None,
-        ) or next((c for c in track.project.characters if c.photos), None)
-        if main_char:
-            cand = os.path.join(UPLOAD_DIR, main_char.photos[0].filename)
-            if os.path.exists(cand):
-                ref = cand
-        data, mime = asyncio.run(mediagen.generate_image(prompt, ref))
+        # Лист рисуем БЕЗ фото-референса: референс одной модельки заставляет
+        # генератор копировать её вместо сетки сцен. Персонажи держатся текстом.
+        data, mime = asyncio.run(mediagen.generate_image(prompt))
         old = track.storyboard_filename
         # Лист смотрят целиком, апскейл до 4К ему не нужен.
         track.storyboard_filename = _save_image(data, mime, upscale=False)
@@ -953,6 +949,47 @@ def _run_storyboard(track_id: int) -> None:
         log.warning("лист раскадровки трека %s упал: %s", track_id, e)
     finally:
         db.close()
+
+
+@app.post("/api/tracks/{track_id}/slice-storyboard")
+def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Нарезка листа-сетки на ячейки: каждая становится ПЕРВЫМ кадром своей
+    сцены по порядку. Черновые кадры из листа — дальше можно перегенерировать
+    точечно или анимировать как есть."""
+    track = _own_track(db, user, track_id)
+    if not track.storyboard_filename:
+        raise HTTPException(400, "сначала сгенерируй лист раскадровки")
+    scenes = sorted(track.scenes, key=lambda x: x.position)
+    if not scenes:
+        raise HTTPException(400, "у трека нет сцен")
+    src = os.path.join(UPLOAD_DIR, track.storyboard_filename)
+    if not os.path.exists(src):
+        raise HTTPException(404, "файл листа не найден")
+    n = len(scenes)
+    cols = 3 if n > 4 else 2
+    rows = -(-n // cols)
+    done = 0
+    for i, sc in enumerate(scenes):
+        cx, cy = i % cols, i // cols
+        fname = f"slice_{uuid.uuid4().hex}.png"
+        dst = os.path.join(UPLOAD_DIR, fname)
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-vf",
+             f"crop=iw/{cols}:ih/{rows}:{cx}*iw/{cols}:{cy}*ih/{rows}",
+             dst],
+            capture_output=True, timeout=120,
+        )
+        if r.returncode != 0 or not os.path.exists(dst):
+            continue
+        old = sc.image_filename
+        sc.image_filename = fname
+        sc.image_status = "done"
+        sc.image_error = ""
+        _reg_file(db, fname, track.project.owner_id)
+        db.commit()
+        _remove_media(old)
+        done += 1
+    return {"ok": True, "sliced": done, "grid": f"{cols}x{rows}"}
 
 
 @app.post("/api/tracks/{track_id}/generate-storyboard")
@@ -1010,12 +1047,34 @@ def _scene_reference_photo(scene: Scene, project: Project) -> str | None:
         return attr_path
     if not chars:
         chars = [c for c in project.characters if c.is_main]
+    paths = []
     for c in chars:
         if c.photos:
             path = os.path.join(UPLOAD_DIR, c.photos[0].filename)
             if os.path.exists(path):
-                return path
-    return None
+                paths.append(path)
+        if len(paths) >= 3:
+            break
+    if not paths:
+        return None
+    if len(paths) == 1:
+        return paths[0]
+    # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
+    # бок, иначе генератор видит только первого и рисует остальных от балды.
+    out = os.path.join(UPLOAD_DIR, f"refjoin_{scene.id}.png")
+    inputs = []
+    for pth in paths:
+        inputs += ["-i", pth]
+    scale = ";".join(f"[{i}:v]scale=-2:768[v{i}]" for i in range(len(paths)))
+    stack = "".join(f"[v{i}]" for i in range(len(paths))) + f"hstack=inputs={len(paths)}[out]"
+    r = subprocess.run(
+        ["ffmpeg", "-y", *inputs, "-filter_complex", f"{scale};{stack}",
+         "-map", "[out]", out],
+        capture_output=True, timeout=120,
+    )
+    if r.returncode == 0 and os.path.exists(out):
+        return out
+    return paths[0]
 
 
 # ───────────────────── первый и последний кадр сцены ─────────────────────
@@ -1328,7 +1387,9 @@ def _run_supergen(track_id: int) -> None:
             return
         project = track.project
 
-        if not (project.story or "").strip():
+        if track.no_story:
+            pass  # рандомные панчи: сюжет не нужен
+        elif not (project.story or "").strip():
             note("пишу сквозной сюжет…")
             _run_story_generation(project.id)
             db.expire_all()
