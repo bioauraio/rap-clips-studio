@@ -40,6 +40,13 @@ class User(Base):
     # Очки генераций: защита кошелька владельца — генерации идут через его
     # подписки. Гость стартует с 60, админ получает практически бесконечность.
     gen_points = Column(Integer, nullable=False, default=60)
+    # Внешние входы: аккаунт создаётся и опознаётся по Telegram-ID или Яндекс-ID,
+    # пароль при этом не нужен. Уникальность проверяется кодом (мягкие миграции
+    # не умеют добавлять UNIQUE к существующей таблице).
+    tg_id = Column(String, nullable=False, default="")
+    tg_username = Column(String, nullable=False, default="")
+    yandex_id = Column(String, nullable=False, default="")
+    avatar_url = Column(String, nullable=False, default="")
 
 
 class FileOwner(Base):
@@ -210,6 +217,9 @@ class Scene(Base):
     # Имена персонажей в кадре (через запятую) — по ним подтягиваются
     # описания и фото-модельки при генерации картинки.
     characters = Column(Text, nullable=False, default="")
+    # Атрибуты (вещи) персонажей, ЯВНО выбранные для этого кадра: id через
+    # запятую. Пусто = старое поведение (ищем упоминание вещи в тексте сцены).
+    attribute_ids = Column(Text, nullable=False, default="")
     # Монтажная грамматика: крупность плана и движение камеры — управляют
     # ритмом раскадровки (чередование крупных/дальних, см. claude.py).
     shot_size = Column(String, nullable=False, default="")

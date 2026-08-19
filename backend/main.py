@@ -339,6 +339,155 @@ async def register(request: Request, user: User = Depends(current_user), db: Ses
     return {"ok": True, "user": _user_dict(user)}
 
 
+# ─────────────────── вход через Telegram и Яндекс ID ───────────────────
+# Креды задаются в infra/.env; пока пусты — кнопки на лендинге скрыты, вход
+# по паролю продолжает работать как раньше.
+TG_BOT_TOKEN = os.environ.get("TG_LOGIN_BOT_TOKEN", "")
+TG_BOT_USERNAME = os.environ.get("TG_LOGIN_BOT_USERNAME", "")
+YANDEX_CLIENT_ID = os.environ.get("YANDEX_CLIENT_ID", "")
+YANDEX_CLIENT_SECRET = os.environ.get("YANDEX_CLIENT_SECRET", "")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://qlolapp.art")
+
+
+def _auth_response(user: "User") -> JSONResponse:
+    """Ставит сессионную куку внешнего входа — как обычный логин."""
+    token = signer.dumps({"uid": user.id})
+    resp = JSONResponse({"ok": True, "name": user.name})
+    resp.set_cookie(QV_COOKIE, token, max_age=COOKIE_MAX_AGE, httponly=True,
+                    samesite="lax", secure=True)
+    return resp
+
+
+def _adopt_guest(db: Session, guest: "User | None", found: "User") -> "User":
+    """Гость нажал «войти через TG/Яндекс»: его проекты переезжают в найденный
+    постоянный аккаунт, чтобы работа, начатая до входа, не потерялась."""
+    if guest and guest.id != found.id and not guest.login and not guest.tg_id and not guest.yandex_id:
+        for pr in db.query(Project).filter(Project.owner_id == guest.id).all():
+            pr.owner_id = found.id
+        db.commit()
+    return found
+
+
+@app.get("/api/auth/config")
+def auth_config():
+    """Что показывать на экране входа: кнопки появляются только при кредах."""
+    return {
+        "telegram": bool(TG_BOT_TOKEN and TG_BOT_USERNAME),
+        "telegram_bot": TG_BOT_USERNAME,
+        "yandex": bool(YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET),
+    }
+
+
+@app.post("/api/auth/telegram")
+async def auth_telegram(request: Request, db: Session = Depends(db_session)):
+    """Telegram Login Widget: сверяем подпись данных токеном бота (HMAC-SHA256),
+    по tg_id находим или заводим аккаунт."""
+    if not TG_BOT_TOKEN:
+        raise HTTPException(400, "вход через Telegram не настроен")
+    data = await request.json()
+    received_hash = str(data.pop("hash", ""))
+    check = "\n".join(f"{k}={data[k]}" for k in sorted(data) if data[k] is not None)
+    secret = hashlib.sha256(TG_BOT_TOKEN.encode()).digest()
+    calc = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calc, received_hash):
+        raise HTTPException(403, "подпись Telegram не сошлась")
+    if time.time() - int(data.get("auth_date") or 0) > 86400:
+        raise HTTPException(403, "данные входа устарели, попробуй ещё раз")
+
+    tg_id = str(data.get("id") or "")
+    if not tg_id:
+        raise HTTPException(400, "нет telegram id")
+    user = db.query(User).filter(User.tg_id == tg_id).first()
+    guest = None
+    token = request.cookies.get(QV_COOKIE)
+    if token:
+        try:
+            guest = db.get(User, int(signer.loads(token, max_age=COOKIE_MAX_AGE).get("uid") or 0))
+        except Exception:  # noqa: BLE001
+            guest = None
+    name = " ".join(x for x in [data.get("first_name"), data.get("last_name")] if x) or "гость"
+    if not user:
+        # Гость без внешних привязок просто «становится» этим аккаунтом.
+        if guest and not guest.login and not guest.tg_id and not guest.yandex_id:
+            user = guest
+        else:
+            user = User(name=name)
+            db.add(user)
+        user.tg_id = tg_id
+        user.name = name
+        user.tg_username = str(data.get("username") or "")
+        user.avatar_url = str(data.get("photo_url") or "")
+        db.commit()
+        db.refresh(user)
+    else:
+        user = _adopt_guest(db, guest, user)
+    return _auth_response(user)
+
+
+@app.get("/api/auth/yandex/start")
+def auth_yandex_start():
+    if not YANDEX_CLIENT_ID:
+        raise HTTPException(400, "вход через Яндекс не настроен")
+    from fastapi.responses import RedirectResponse
+    redirect = f"{PUBLIC_BASE_URL}/api/auth/yandex/callback"
+    url = ("https://oauth.yandex.ru/authorize?response_type=code"
+           f"&client_id={YANDEX_CLIENT_ID}&redirect_uri={redirect}")
+    return RedirectResponse(url)
+
+
+@app.get("/api/auth/yandex/callback")
+async def auth_yandex_callback(code: str = "", request: Request = None,
+                               db: Session = Depends(db_session)):
+    if not (YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET):
+        raise HTTPException(400, "вход через Яндекс не настроен")
+    if not code:
+        raise HTTPException(400, "Яндекс не вернул код")
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=30) as client:
+        tok = await client.post("https://oauth.yandex.ru/token", data={
+            "grant_type": "authorization_code", "code": code,
+            "client_id": YANDEX_CLIENT_ID, "client_secret": YANDEX_CLIENT_SECRET,
+        })
+        if tok.status_code != 200:
+            raise HTTPException(403, f"Яндекс отказал: {tok.text[:150]}")
+        access = (tok.json() or {}).get("access_token", "")
+        info = await client.get("https://login.yandex.ru/info?format=json",
+                                headers={"Authorization": f"OAuth {access}"})
+        if info.status_code != 200:
+            raise HTTPException(403, "не удалось получить профиль Яндекса")
+        prof = info.json() or {}
+
+    yid = str(prof.get("id") or "")
+    if not yid:
+        raise HTTPException(403, "Яндекс не вернул id")
+    user = db.query(User).filter(User.yandex_id == yid).first()
+    guest = None
+    token = request.cookies.get(QV_COOKIE) if request else None
+    if token:
+        try:
+            guest = db.get(User, int(signer.loads(token, max_age=COOKIE_MAX_AGE).get("uid") or 0))
+        except Exception:  # noqa: BLE001
+            guest = None
+    name = prof.get("real_name") or prof.get("display_name") or prof.get("login") or "гость"
+    if not user:
+        if guest and not guest.login and not guest.tg_id and not guest.yandex_id:
+            user = guest
+        else:
+            user = User(name=name)
+            db.add(user)
+        user.yandex_id = yid
+        user.name = name
+        db.commit()
+        db.refresh(user)
+    else:
+        user = _adopt_guest(db, guest, user)
+    from fastapi.responses import RedirectResponse
+    resp = RedirectResponse("/")
+    resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=COOKIE_MAX_AGE,
+                    httponly=True, samesite="lax", secure=True)
+    return resp
+
+
 @app.post("/api/logout")
 async def logout():
     response = JSONResponse({"ok": True})
@@ -413,6 +562,7 @@ def scene_dict(s: Scene) -> dict:
         "id": s.id, "position": s.position, "start_sec": s.start_sec,
         "duration_sec": s.duration_sec, "lyric_line": s.lyric_line,
         "characters": s.characters,
+        "attribute_ids": [int(x) for x in (s.attribute_ids or "").split(",") if x.strip().isdigit()],
         "shot_size": s.shot_size, "camera_move": s.camera_move,
         "image_prompt": s.image_prompt, "motion_prompt": s.motion_prompt,
         "shot_note": s.shot_note,
@@ -872,6 +1022,9 @@ async def update_scene(scene_id: int, request: Request, user: User = Depends(cur
                   "image_prompt", "motion_prompt", "shot_note", "image_prompt_last"):
         if field in body:
             setattr(scene, field, str(body[field]) if field != "duration_sec" else body[field])
+    if "attribute_ids" in body:
+        ids = body["attribute_ids"] or []
+        scene.attribute_ids = ",".join(str(int(i)) for i in ids if str(i).isdigit())
     db.commit()
     return scene_dict(scene)
 
@@ -1161,11 +1314,29 @@ def _scene_characters(scene: Scene, project: Project) -> list[Character]:
     return [by_name[n] for n in names if n in by_name]
 
 
+def _scene_selected_attributes(scene: Scene, chars: list[Character]) -> list[CharacterAttribute]:
+    """Атрибуты, ЯВНО отмеченные для кадра. Явный выбор исключает смешивание:
+    когда у героя несколько вещей, генератор больше не тащит в кадр всё сразу."""
+    ids = {int(x) for x in (scene.attribute_ids or "").split(",") if x.strip().isdigit()}
+    if not ids:
+        return []
+    return [a for c in chars for a in c.attributes if a.id in ids]
+
+
 def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
     """Референс-АТРИБУТ: если текст сцены упоминает фирменную вещь персонажа
     (шляпу, квадрик, тачку) — кадр строится вокруг предмета, и референсом
     должно идти фото самой вещи, а не лицо героя. Проверяем только персонажей
     ЭТОЙ сцены; совпадение — регистронезависимое вхождение имени атрибута."""
+    # Явно выбранные вещи имеют приоритет над поиском имени в тексте.
+    for a in _scene_selected_attributes(scene, chars):
+        for ph in a.photos:
+            path = os.path.join(UPLOAD_DIR, ph.filename)
+            if os.path.exists(path):
+                return path
+            break
+    if (scene.attribute_ids or "").strip():
+        return None  # выбор сделан осознанно — из текста ничего не подхватываем
     haystack = f"{scene.image_prompt or ''}\n{scene.shot_note or ''}".lower()
     if not haystack.strip():
         return None

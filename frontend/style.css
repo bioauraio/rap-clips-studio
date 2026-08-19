@@ -63,7 +63,10 @@ body {
 .error { color: var(--danger); font-size: 13px; }
 
 /* ────────── лендинг qlolvideo ────────── */
-.welcome-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.welcome-screen {
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px; padding: 24px 16px 40px;
+}
 .welcome-box {
   display: flex; flex-direction: column; gap: 14px; max-width: 480px; width: 100%;
   background: var(--panel); backdrop-filter: blur(16px);
@@ -89,6 +92,53 @@ body {
 .welcome-cta { font-size: 17px; padding: 13px 18px; }
 .welcome-have { align-self: center; }
 .welcome-privacy { margin: 4px 0 0; font-size: 11.5px; }
+
+/* ── «Как это работает»: тот же картон, но шире — внутри живые скриншоты ── */
+.welcome-guide {
+  width: 100%; max-width: 780px;
+  background: var(--panel); backdrop-filter: blur(16px);
+  border: 2.5px solid #2d211a; border-radius: 22px; padding: 18px 22px 20px;
+  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px #2d211a, 0 20px 40px rgba(212,118,40,.14);
+  text-align: left;
+}
+.welcome-guide > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11.5px; font-weight: 800;
+  letter-spacing: .22em; text-transform: uppercase; color: var(--accent-2);
+}
+.welcome-guide > summary::-webkit-details-marker { display: none; }
+.welcome-guide > summary::after {
+  content: "▾"; margin-left: auto; font-size: 13px; line-height: 1;
+  color: var(--accent); transition: transform .18s;
+}
+.welcome-guide[open] > summary::after { transform: rotate(180deg); }
+
+.guide-list {
+  list-style: none; counter-reset: gstep; margin: 14px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.guide-step { counter-increment: gstep; padding-top: 16px; border-top: 1px dashed var(--border); }
+.guide-step:first-child { padding-top: 2px; border-top: none; }
+.guide-title {
+  margin: 0; font-size: 15px; font-weight: 800; letter-spacing: .01em;
+  display: flex; gap: 9px; align-items: center;
+}
+.guide-title::before {
+  content: counter(gstep); flex: none; width: 22px; height: 22px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 800; color: #fff;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  border: 1.5px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
+}
+.guide-desc { margin: 7px 0 0 31px; font-size: 13.5px; line-height: 1.5; }
+.guide-shot {
+  display: block; margin: 11px 0 0 31px; max-width: 100%;
+  border: 2px solid #2d211a; border-radius: 14px; overflow: hidden;
+  background: var(--inset); box-shadow: 0 4px 0 #e8d8c4, 0 4px 0 2px #2d211a;
+  transition: transform .14s, box-shadow .14s;
+}
+.guide-shot:hover { transform: translateY(-2px); box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2px #2d211a; }
+.guide-shot img { display: block; width: 100%; height: auto; }
 
 /* ────────── каркас ────────── */
 .app { max-width: 1020px; margin: 0 auto; padding: 18px 16px 64px; }
@@ -591,6 +641,14 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   .style-picker { gap: 5px; }
   .style-chip { font-size: 10.5px; padding: 4px 8px; }
   .kind-cards { flex-direction: column; }
+  /* лендинг: одна колонка, скриншоты во всю ширину карточки */
+  .welcome-screen { padding: 16px 10px 32px; gap: 14px; }
+  .welcome-box { padding: 22px 16px 18px; border-radius: 18px; }
+  .welcome-guide { padding: 14px 14px 16px; border-radius: 18px; }
+  .guide-list { gap: 16px; }
+  .guide-title { font-size: 14px; }
+  .guide-desc, .guide-shot { margin-left: 0; }
+  .guide-desc { font-size: 13px; }
 }
 
 /* ────────── подпись автора: «сделано :333» = сделано с любовью ────────── */
