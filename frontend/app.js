@@ -783,13 +783,7 @@ function renderTrack(t) {
   sbBtn.addEventListener("click", () => genStoryboard(t.id));
   const sliceBtn = $(".slice-storyboard", card);
   sliceBtn.disabled = !t.storyboard_url;
-  sliceBtn.addEventListener("click", async () => {
-    try {
-      const r = await api(`/api/tracks/${t.id}/slice-storyboard`, { method: "POST" });
-      alert(`Лист нарезан: ${r.sliced} кадров (сетка ${r.grid})`);
-    } catch (e) { alert(e.message); }
-    await loadProject();
-  });
+  sliceBtn.addEventListener("click", () => openCellsModal(t));
 
   // Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
   const boardBox = $(".scenes-board", card);
@@ -975,6 +969,16 @@ function renderScene(s, audioEl, mode = "board") {
   framesBtn.disabled = imgBusy;
   framesBtn.textContent = imgBusy ? "рисую кадры…" : s.image_url ? "Перегенерировать кадры" : "Сгенерировать кадры";
   framesBtn.addEventListener("click", () => genSceneFrames(s.id));
+  const firstBtn = $(".s-gen-first", card);
+  const lastBtn = $(".s-gen-last", card);
+  if (firstBtn) {
+    firstBtn.disabled = imgBusy;
+    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "first"));
+  }
+  if (lastBtn) {
+    lastBtn.disabled = imgBusy;
+    lastBtn.addEventListener("click", () => genSceneFrames(s.id, "last"));
+  }
 
   // Промежуточные кадры: ряд мини-превью + кнопка с числом по длительности.
   const midBox = $(".s-midframes", card);
@@ -986,6 +990,63 @@ function renderScene(s, audioEl, mode = "board") {
     img.addEventListener("click", () => window.open(m.url, "_blank"));
     midBox.appendChild(img);
   });
+  // Референсы кадра: композиция, свет, вайб. Модельки персонажей остаются
+  // только ради узнаваемости лиц — стилистику диктуют реф и стиль трека.
+  const refsBox = $(".s-refs", card);
+  if (refsBox) {
+    (s.refs || []).forEach((r) => {
+      const wrap = document.createElement("div");
+      wrap.className = "s-ref";
+      const img = document.createElement("img");
+      img.src = r.thumb_url || r.url;
+      img.alt = "";
+      img.title = "референс кадра — клик: открыть оригинал";
+      img.addEventListener("click", () => window.open(r.url, "_blank"));
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ghost danger s-ref-del";
+      del.textContent = "✕";
+      del.title = "убрать референс";
+      del.addEventListener("click", async () => {
+        try {
+          await api(`/api/scenes/refs/${r.id}`, { method: "DELETE" });
+        } catch (e) {
+          alert(e.message);
+        }
+        await loadProject();
+      });
+      wrap.append(img, del);
+      refsBox.appendChild(wrap);
+    });
+    const upload = document.createElement("label");
+    upload.className = "s-ref-upload";
+    upload.title = "картинка-образец: композиция, свет, вайб кадра";
+    const refInput = document.createElement("input");
+    refInput.type = "file";
+    refInput.className = "hidden";
+    refInput.accept = "image/*";
+    refInput.multiple = true;
+    // Бэк принимает по одному файлу — шлём каждый своим POST'ом.
+    refInput.addEventListener("change", async () => {
+      for (const file of refInput.files) {
+        const fd = new FormData();
+        fd.append("photo", file);
+        try {
+          await api(`/api/scenes/${s.id}/refs`, { method: "POST", body: fd });
+        } catch (e) {
+          alert(e.message);
+          break;
+        }
+      }
+      await loadProject();
+    });
+    const refBtn = document.createElement("span");
+    refBtn.className = "s-ref-btn";
+    refBtn.textContent = "+ реф";
+    upload.append(refInput, refBtn);
+    refsBox.appendChild(upload);
+  }
+
   const midBtn = $(".s-gen-mid", card);
   const midN = s.midframes_expected != null
     ? s.midframes_expected
@@ -1041,7 +1102,12 @@ function renderScene(s, audioEl, mode = "board") {
   const vidBusy = ["queued", "running"].includes(s.video_status);
   vidBtn.disabled = vidBusy || !s.image_url;
   vidBtn.title = s.image_url ? "" : "сначала сгенерируй кадры сцены (этап «Раскадровка»)";
-  vidBtn.textContent = vidBusy ? "генерирую…" : s.video_url ? "Перегенерировать видео" : "Видео сцены";
+  vidBtn.textContent = vidBusy ? "генерирую…"
+    : !s.image_url ? "сначала кадр"
+    : s.video_url ? "🎬 Перегенерировать" : "🎬 Видео сцены";
+  vidBtn.title = !s.image_url
+    ? "Сначала сгенерируй кадры этой сцены — видео делается из первого и последнего кадра"
+    : "Оживить сцену: первый + последний кадр → видео";
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value));
   }
 
@@ -1215,9 +1281,9 @@ async function deleteScene(id) {
   await loadProject();
 }
 
-async function genSceneFrames(id) {
+async function genSceneFrames(id, which = "both") {
   try {
-    await api(`/api/scenes/${id}/generate-frames`, { method: "POST" });
+    await api(`/api/scenes/${id}/generate-frames?which=${which}`, { method: "POST" });
   } catch (e) {
     alert(e.message);
   }
@@ -1294,6 +1360,8 @@ function renderCharacter(c) {
     await api(`/api/characters/${c.id}`, { method: "DELETE" });
     await loadProject();
   });
+  const genModelBtn = $(".c-gen-model", card);
+  if (genModelBtn) genModelBtn.addEventListener("click", () => openModelModal(c));
   const input = $(".c-photo-input", card);
   input.addEventListener("change", async () => {
     for (const file of input.files) {
@@ -1603,3 +1671,134 @@ async function addManualScene(trackId) {
   // Без сессии гость видит лендинг, а не форму пароля.
   if (me.authed) showApp(); else showWelcome();
 })();
+
+// Разбор листа раскадровки: ячейки сеткой, владелец сам решает, какие взять
+// и в какие сцены их положить. Не выбранные сцены остаются как есть.
+async function openCellsModal(t) {
+  let data;
+  try {
+    data = await api(`/api/tracks/${t.id}/storyboard-cells`, { method: "POST" });
+  } catch (e) { alert(e.message); return; }
+  const scenes = t.scenes || [];
+  openModal("Разложить лист по кадрам", (body) => {
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.style.margin = "0 0 10px";
+    hint.textContent = "Отметь ячейки, которые берём, и выбери сцену для каждой. " +
+      "Остальные сцены не тронутся — их можно перегенерировать отдельно.";
+    body.appendChild(hint);
+    const grid = document.createElement("div");
+    grid.className = "cells-grid";
+    const rows = [];
+    data.cells.forEach((c, i) => {
+      const box = document.createElement("div");
+      box.className = "cell-card";
+      const img = document.createElement("img");
+      img.src = c.thumb_url || c.url;
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = true;
+      const sel = document.createElement("select");
+      scenes.forEach((sc) => {
+        const o = document.createElement("option");
+        o.value = sc.id;
+        o.textContent = `в кадр ${sc.position}`;
+        sel.appendChild(o);
+      });
+      if (scenes[i]) sel.value = scenes[i].id;
+      const foot = document.createElement("div");
+      foot.className = "cell-foot";
+      foot.appendChild(cb);
+      foot.appendChild(sel);
+      box.appendChild(img);
+      box.appendChild(foot);
+      grid.appendChild(box);
+      rows.push({ cb, sel, filename: c.filename });
+    });
+    body.appendChild(grid);
+    const row = document.createElement("div");
+    row.className = "row";
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = "Применить выбранные";
+    go.addEventListener("click", async () => {
+      const pairs = rows.filter((r) => r.cb.checked)
+        .map((r) => ({ filename: r.filename, scene_id: Number(r.sel.value) }));
+      if (!pairs.length) { alert("не выбрано ни одной ячейки"); return; }
+      go.disabled = true;
+      try {
+        const res = await api(`/api/tracks/${t.id}/apply-cells`, { method: "POST", body: { pairs } });
+        closeModal();
+        alert(`Разложено кадров: ${res.applied}`);
+        await loadProject();
+      } catch (e) { go.disabled = false; alert(e.message); }
+    });
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.textContent = "отмена";
+    cancel.addEventListener("click", closeModal);
+    row.appendChild(go);
+    row.appendChild(cancel);
+    body.appendChild(row);
+  });
+}
+
+// Генерация модельки персонажа: разворот в 4 ракурсах по описанию + фото-рефам.
+function openModelModal(c) {
+  openModal(`Моделька: ${c.name || "персонаж"}`, (body) => {
+    const info = document.createElement("p");
+    info.className = "muted";
+    info.style.margin = "0 0 10px";
+    info.textContent = (c.photos || []).length
+      ? `Референсом уйдут первые ${Math.min(3, c.photos.length)} фото персонажа — лицо и одежда сохранятся.`
+      : "Фото не загружены — моделька будет собрана только по описанию.";
+    body.appendChild(info);
+
+    const lab = document.createElement("label");
+    lab.textContent = "Описание для модельки";
+    body.appendChild(lab);
+    const ta = document.createElement("textarea");
+    ta.rows = 5;
+    ta.value = c.description || "";
+    ta.placeholder = "внешность, одежда, атрибуты — чем подробнее, тем точнее";
+    body.appendChild(ta);
+
+    const lab2 = document.createElement("label");
+    lab2.textContent = "Вид модельки";
+    body.appendChild(lab2);
+    const sel = document.createElement("select");
+    [["3d", "3D-модель (CG-рендер)"], ["real", "Фотореализм (студия)"],
+     ["anime", "Аниме (лист сеттеи)"]].forEach(([v, t]) => {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = t; sel.appendChild(o);
+    });
+    body.appendChild(sel);
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = "Сгенерировать";
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      go.textContent = "генерирую… (до 2 минут)";
+      try {
+        await api(`/api/characters/${c.id}/generate-model`, {
+          method: "POST", body: { description: ta.value, kind: sel.value },
+        });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        go.disabled = false;
+        go.textContent = "Сгенерировать";
+        alert(e.message);
+      }
+    });
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.textContent = "отмена";
+    cancel.addEventListener("click", closeModal);
+    row.appendChild(go); row.appendChild(cancel);
+    body.appendChild(row);
+  });
+}

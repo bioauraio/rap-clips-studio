@@ -249,6 +249,28 @@ class Scene(Base):
     updated_at = Column(DateTime, default=now, onupdate=now)
 
     track = relationship("Track", back_populates="scenes")
+    refs = relationship("SceneRef", back_populates="scene", cascade="all, delete-orphan",
+                        order_by="SceneRef.position")
+
+
+class SceneRef(Base):
+    """Картинка-референс КАДРА: композиция, свет, вайб, энергия плана.
+
+    Зачем отдельно от моделек персонажей: моделька отвечает только за
+    узнаваемость лица/предмета, а «как это снято» владелец показывает
+    картинкой. Стилистику при этом диктует стиль трека: реф уходит в генерацию
+    первым в коллаже, но промпт прямо запрещает копировать его свет и палитру
+    (см. _frame_prompt в main.py)."""
+    __tablename__ = "scene_refs"
+    id = Column(Integer, primary_key=True)
+    scene_id = Column(Integer, ForeignKey("scenes.id"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    filename = Column(String, nullable=False)
+    # vibe — композиция/свет/настроение (пока единственный вид референса).
+    kind = Column(String, nullable=False, default="vibe")
+    created_at = Column(DateTime, default=now)
+
+    scene = relationship("Scene", back_populates="refs")
 
 
 def init_db() -> None:

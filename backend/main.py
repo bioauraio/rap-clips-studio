@@ -26,7 +26,7 @@ import claude
 import mediagen
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, FileOwner,
-    Project, Scene, SessionLocal, Track, User, init_db, now,
+    Project, Scene, SceneRef, SessionLocal, Track, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -216,6 +216,14 @@ def _own_scene(db: Session, user: User, scene_id: int) -> Scene:
     if not scene or not _owned(user, scene.track.project):
         raise HTTPException(404, "кадр не найден")
     return scene
+
+
+def _own_scene_ref(db: Session, user: User, ref_id: int) -> SceneRef:
+    """Владение референсом кадра — по цепочке сцена → трек → проект."""
+    ref = db.get(SceneRef, ref_id)
+    if not ref or not _owned(user, ref.scene.track.project):
+        raise HTTPException(404, "референс не найден")
+    return ref
 
 
 def _own_character(db: Session, user: User, char_id: int) -> Character:
@@ -420,6 +428,12 @@ def scene_dict(s: Scene) -> dict:
             for m in _midframes(s) if m.get("filename")
         ],
         "midframes_expected": _midframe_count(s.duration_sec),
+        # Референсы кадра: композиция/свет/вайб, которые владелец прикрепил сам.
+        "refs": [
+            {"id": r.id, "url": f"/api/media/{r.filename}",
+             "thumb_url": f"/api/thumb/{r.filename}"}
+            for r in s.refs
+        ],
         "audio_url": f"/api/media/{s.audio_filename}" if s.audio_filename else "",
         "approved": s.approved,
         "video_url": f"/api/media/{s.video_filename}" if s.video_filename else "",
@@ -499,6 +513,8 @@ def delete_project(project_id: int, user: User = Depends(current_user), db: Sess
                 _remove_media(f)
             for m in _midframes(sc):
                 _remove_media(m.get("filename", ""))
+            for r in sc.refs:
+                _remove_media(r.filename)
         _remove_media(t.storyboard_filename)
         _remove_media(t.clip_filename)
         _remove_media(t.cover_filename)
@@ -694,6 +710,8 @@ def delete_track(track_id: int, user: User = Depends(current_user), db: Session 
             _remove_media(f)
         for m in _midframes(s):
             _remove_media(m.get("filename", ""))
+        for r in s.refs:
+            _remove_media(r.filename)
     _remove_media(track.cover_filename)
     db.delete(track)
     db.commit()
@@ -795,6 +813,9 @@ def _run_scene_generation(track_id: int) -> None:
         for s in list(track.scenes):
             _remove_media(s.image_filename)
             _remove_media(s.video_filename)
+            # Сцены пересобираются с нуля — файлы их рефов иначе осиротеют.
+            for r in s.refs:
+                _remove_media(r.filename)
             db.delete(s)
         db.flush()
         cursor = 0
@@ -863,12 +884,48 @@ def delete_scene(scene_id: int, user: User = Depends(current_user), db: Session 
         _remove_media(f)
     for m in _midframes(scene):
         _remove_media(m.get("filename", ""))
+    # Строки рефов уносит каскад ORM, а файлы на диске — только мы.
+    for r in scene.refs:
+        _remove_media(r.filename)
     track = scene.track
     db.delete(scene)
     db.flush()
     _renumber_scenes(track)
     db.commit()
     return {"ok": True}
+
+
+# ───────────────────── референсы кадра (композиция/вайб) ─────────────────────
+
+@app.post("/api/scenes/{scene_id}/refs")
+async def add_scene_ref(scene_id: int, photo: UploadFile, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Картинка-референс кадра: чем показывать словами «как снято», проще
+    приложить кадр-образец. В генерацию он уходит ПЕРВЫМ (см.
+    _scene_reference_photo), но стилистику задаёт стиль трека, а не реф."""
+    scene = _own_scene(db, user, scene_id)
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"sref_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(await photo.read())
+    max_pos = max((r.position for r in scene.refs), default=0)
+    db.add(SceneRef(scene_id=scene.id, position=max_pos + 1, filename=fname))
+    _reg_file(db, fname, scene.track.project.owner_id)
+    db.commit()
+    # scene.refs загружен ДО вставки — без refresh ответ отстаёт на один реф.
+    db.refresh(scene)
+    return scene_dict(scene)
+
+
+@app.delete("/api/scenes/refs/{ref_id}")
+def delete_scene_ref(ref_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    ref = _own_scene_ref(db, user, ref_id)
+    _remove_media(ref.filename)
+    db.delete(ref)
+    db.commit()
+    return {"ok": True}
+
 
 # ───────── лист раскадровки → кадры сцены → видео → сборка клипа ─────────
 
@@ -928,9 +985,27 @@ def _run_storyboard(track_id: int) -> None:
         prompt = built.get("prompt") or ""
         if not prompt:
             raise RuntimeError("Claude не вернул промпт листа раскадровки")
-        # Лист рисуем БЕЗ фото-референса: референс одной модельки заставляет
-        # генератор копировать её вместо сетки сцен. Персонажи держатся текстом.
-        data, mime = asyncio.run(mediagen.generate_image(prompt))
+        # Лист: референсом идёт КОЛЛАЖ моделек всех героев трека (до 3) — так
+        # лица узнаваемы. Одна моделька референсом копировалась целиком вместо
+        # сетки кадров, поэтому именно коллаж, а не одно фото.
+        board_ref = None
+        board_collage = ""
+        paths = []
+        for c in sorted(track.project.characters, key=lambda x: (not x.is_main, x.position)):
+            if not c.photos:
+                continue
+            cand = os.path.join(UPLOAD_DIR, c.photos[0].filename)
+            if os.path.exists(cand):
+                paths.append(cand)
+            if len(paths) >= 3:
+                break
+        if len(paths) == 1:
+            board_ref = paths[0]
+        elif paths:
+            board_ref = _ref_collage(db, paths, track.project.owner_id)
+            if board_ref:
+                board_collage = os.path.basename(board_ref)
+        data, mime = asyncio.run(mediagen.generate_image(prompt, board_ref))
         old = track.storyboard_filename
         # Лист смотрят целиком, апскейл до 4К ему не нужен.
         track.storyboard_filename = _save_image(data, mime, upscale=False)
@@ -938,6 +1013,8 @@ def _run_storyboard(track_id: int) -> None:
         track.storyboard_status = "done"
         db.commit()
         _remove_media(old)
+        if board_collage:
+            _remove_media(board_collage)
         log.info("лист раскадровки трека %s готов", track_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -949,6 +1026,76 @@ def _run_storyboard(track_id: int) -> None:
         log.warning("лист раскадровки трека %s упал: %s", track_id, e)
     finally:
         db.close()
+
+
+@app.post("/api/tracks/{track_id}/storyboard-cells")
+def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Режет лист на ячейки и отдаёт их превью — БЕЗ записи в сцены.
+    Владелец сам решает в модалке, какие ячейки взять и в какие сцены их
+    положить (см. apply-cells)."""
+    track = _own_track(db, user, track_id)
+    if not track.storyboard_filename:
+        raise HTTPException(400, "сначала сгенерируй лист раскадровки")
+    src = os.path.join(UPLOAD_DIR, track.storyboard_filename)
+    if not os.path.exists(src):
+        raise HTTPException(404, "файл листа не найден")
+    n = max(1, len(track.scenes))
+    cols = 3 if n > 4 else 2
+    rows = -(-n // cols)
+    cells = []
+    for i in range(n):
+        cx, cy = i % cols, i // cols
+        fname = f"cell_{uuid.uuid4().hex}.png"
+        dst = os.path.join(UPLOAD_DIR, fname)
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-vf",
+             f"crop=iw/{cols}:ih/{rows}:{cx}*iw/{cols}:{cy}*ih/{rows}", dst],
+            capture_output=True, timeout=120,
+        )
+        if r.returncode != 0 or not os.path.exists(dst):
+            continue
+        _reg_file(db, fname, track.project.owner_id)
+        cells.append({"index": i + 1, "filename": fname,
+                      "url": f"/api/media/{fname}", "thumb_url": f"/api/thumb/{fname}"})
+    db.commit()
+    return {"ok": True, "grid": f"{cols}x{rows}", "cells": cells}
+
+
+@app.post("/api/tracks/{track_id}/apply-cells")
+async def apply_cells(track_id: int, request: Request, user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Кладёт выбранные ячейки листа первыми кадрами выбранных сцен.
+
+    body: {"pairs": [{"filename": "cell_xxx.png", "scene_id": 45}, ...]}
+    Копируем файл под новым именем: одна ячейка может уйти в несколько сцен,
+    а исходные cell_* подчищаются позже вместе с медиа проекта."""
+    track = _own_track(db, user, track_id)
+    body = await request.json()
+    pairs = body.get("pairs") or []
+    scene_ids = {s.id for s in track.scenes}
+    applied = 0
+    for pair in pairs:
+        fname = os.path.basename(str(pair.get("filename") or ""))
+        sid = int(pair.get("scene_id") or 0)
+        if not fname or sid not in scene_ids:
+            continue
+        src = os.path.join(UPLOAD_DIR, fname)
+        if not os.path.exists(src):
+            continue
+        scene = db.get(Scene, sid)
+        if not scene:
+            continue
+        new_name = f"slice_{uuid.uuid4().hex}.png"
+        shutil.copyfile(src, os.path.join(UPLOAD_DIR, new_name))
+        old = scene.image_filename
+        scene.image_filename = new_name
+        scene.image_status = "done"
+        scene.image_error = ""
+        _reg_file(db, new_name, track.project.owner_id)
+        db.commit()
+        _remove_media(old)
+        applied += 1
+    return {"ok": True, "applied": applied}
 
 
 @app.post("/api/tracks/{track_id}/slice-storyboard")
@@ -1036,45 +1183,94 @@ def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
     return None
 
 
-def _scene_reference_photo(scene: Scene, project: Project) -> str | None:
-    """Фото-моделька для генерации кадра: первый персонаж кадра, у которого
-    загружены фото (или главный герой, если персонажи кадра не указаны).
-    Если в тексте сцены упомянут атрибут персонажа сцены — референсом идёт
-    первое фото атрибута (кадр про вещь, а не про лицо)."""
-    chars = _scene_characters(scene, project)
-    attr_path = _scene_attribute_photo(scene, chars)
-    if attr_path:
-        return attr_path
-    if not chars:
-        chars = [c for c in project.characters if c.is_main]
-    paths = []
-    for c in chars:
-        if c.photos:
-            path = os.path.join(UPLOAD_DIR, c.photos[0].filename)
-            if os.path.exists(path):
-                paths.append(path)
-        if len(paths) >= 3:
-            break
-    if not paths:
-        return None
-    if len(paths) == 1:
-        return paths[0]
-    # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
-    # бок, иначе генератор видит только первого и рисует остальных от балды.
-    out = os.path.join(UPLOAD_DIR, f"refjoin_{scene.id}.png")
+def _ref_collage(db: Session, paths: list[str], owner_id: int | None) -> str | None:
+    """Несколько входных картинок одним листом (hstack): генератор видит их
+    разом, а не только первую. Имя уникальное (uuid), а не по id сцены —
+    параллельные генерации соседних кадров больше не перетирают файл друг
+    друга прямо во время отправки в шлюз."""
+    if len(paths) < 2:
+        return paths[0] if paths else None
+    fname = f"refjoin_{uuid.uuid4().hex}.png"
+    out = os.path.join(UPLOAD_DIR, fname)
     inputs = []
     for pth in paths:
         inputs += ["-i", pth]
     scale = ";".join(f"[{i}:v]scale=-2:768[v{i}]" for i in range(len(paths)))
     stack = "".join(f"[v{i}]" for i in range(len(paths))) + f"hstack=inputs={len(paths)}[out]"
-    r = subprocess.run(
-        ["ffmpeg", "-y", *inputs, "-filter_complex", f"{scale};{stack}",
-         "-map", "[out]", out],
-        capture_output=True, timeout=120,
-    )
-    if r.returncode == 0 and os.path.exists(out):
-        return out
-    return paths[0]
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", *inputs, "-filter_complex", f"{scale};{stack}",
+             "-map", "[out]", out],
+            capture_output=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        # Склейка — удобство, а не условие генерации: упавший ffmpeg не должен
+        # ронять весь кадр, вызывающий откатится на первую картинку.
+        log.warning("коллаж-референс не собрался: %s", e)
+        return None
+    if r.returncode != 0 or not os.path.exists(out):
+        return None
+    # Как и любой файл в UPLOAD_DIR — с владельцем, иначе /api/media его прячет.
+    _reg_file(db, fname, owner_id)
+    db.commit()
+    return out
+
+
+def _scene_ref_paths(scene: Scene) -> list[str]:
+    """Живые файлы референсов кадра по порядку (битые ссылки пропускаем)."""
+    out = []
+    for r in sorted(scene.refs, key=lambda x: (x.position, x.id)):
+        path = os.path.join(UPLOAD_DIR, r.filename)
+        if os.path.exists(path):
+            out.append(path)
+    return out
+
+
+def _character_model_paths(chars: list[Character], limit: int) -> list[str]:
+    """Первые фото-модельки персонажей (по одной на героя) — они отвечают
+    только за узнаваемость лица, не за стилистику кадра."""
+    paths: list[str] = []
+    for c in chars:
+        if len(paths) >= limit:
+            break
+        if not c.photos:
+            continue
+        path = os.path.join(UPLOAD_DIR, c.photos[0].filename)
+        if os.path.exists(path):
+            paths.append(path)
+    return paths
+
+
+def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str | None:
+    """Референс генерации кадра.
+
+    Приоритет — референс КАДРА: если владелец приложил свои картинки
+    (композиция/свет/вайб), в шлюз уходит коллаж «реф + до двух моделек
+    персонажей сцены», причём реф стоит ПЕРВЫМ. Так генератор перестаёт
+    просто копировать фото-модельку, а лица при этом остаются узнаваемыми.
+
+    Рефов нет — прежнее поведение: фото атрибута, если текст сцены крутится
+    вокруг фирменной вещи, иначе модельки персонажей кадра (или главного
+    героя, когда персонажи кадра не указаны)."""
+    chars = _scene_characters(scene, project)
+    scene_refs = _scene_ref_paths(scene)
+    if scene_refs:
+        models = _character_model_paths(
+            chars or [c for c in project.characters if c.is_main], 2)
+        # Реф первым: первая картинка коллажа для генератора — главная.
+        return _ref_collage(db, [scene_refs[0], *models], project.owner_id) or scene_refs[0]
+
+    attr_path = _scene_attribute_photo(scene, chars)
+    if attr_path:
+        return attr_path
+    if not chars:
+        chars = [c for c in project.characters if c.is_main]
+    paths = _character_model_paths(chars, 3)
+    if not paths:
+        return None
+    # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
+    # бок, иначе генератор видит только первого и рисует остальных от балды.
+    return _ref_collage(db, paths, project.owner_id) or paths[0]
 
 
 # ───────────────────── первый и последний кадр сцены ─────────────────────
@@ -1088,9 +1284,19 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         if abs(s.position - scene.position) <= 1 and s.id != scene.id:
             neighbours.append(f"{s.position}. {s.shot_note}")
     base = scene.image_prompt if which == "first" else (scene.image_prompt_last or scene.image_prompt)
+    style = (track.style or "").strip() or "cinematic music video still"
     parts = [
+        # 1. Стиль — ПЕРВЫМ и безусловным законом кадра. Раньше он стоял после
+        # промпта сцены, и генератор тянул свет с фото-модельки: кадры выходили
+        # тёмными студийными портретами вместо клипа в заданной стилистике.
+        f"VISUAL STYLE (mandatory, overrides everything): {style}. "
+        f"Render the whole frame in this style — lighting, palette, texture, grain and mood "
+        f"come from the STYLE, never from the reference images.",
+        # 2. Что происходит в кадре.
         base,
-        f"Consistent single continuous music video, unified visual style: {track.style}.",
+        # 3. Роль референсов: узнаваемость и композиция, но не картинка целиком.
+        "Reference images define composition, framing energy and character identity ONLY — "
+        "do not copy their color grade, lighting or background.",
     ]
     # Персонажи кадра: их канонические описания обязаны попасть в промпт
     # (внешность НЕ переизобретается, меняется только стилистика подачи).
@@ -1105,14 +1311,30 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         parts.append(
             f"Main character reference (must stay identical across every shot): {project.character_bible}"
         )
+    # 4. Анти-требования: ровно те грабли, из-за которых кадры выходили
+    # одинаковыми тёмными портретами на сером фоне.
+    parts.append(
+        "Do not copy the reference photo as-is. Do not output a studio portrait or a plain grey "
+        "backdrop unless the style says so. Expose for a bright readable image: avoid crushed "
+        "blacks and muddy dark frames unless the style explicitly asks for night noir."
+    )
+    # 5. Динамика: кадр клипа — момент действия, а не позирование в камеру.
+    parts.append(
+        "The shot must be caught in motion: the character is acting, moving and interacting with "
+        "the environment, camera and body in a dynamic pose. No posed portrait staring into the "
+        "lens unless the shot description above explicitly asks for exactly that."
+    )
+    parts.append(f"Consistent single continuous music video, unified visual style: {style}.")
     if neighbours:
         parts.append("Adjacent shots for continuity: " + " | ".join(neighbours))
     parts.append("Vertical 9:16 composition, no text, no captions, no watermarks, no logos.")
     return "\n".join(p for p in parts if p.strip())
 
 
-def _run_scene_frames(scene_id: int) -> None:
+def _run_scene_frames(scene_id: int, which: str = "both") -> None:
+    """which: both | first | last — что именно пересобираем."""
     db = SessionLocal()
+    collage = ""  # временный склеенный референс — убираем в finally, чтобы не копился
     try:
         scene = db.get(Scene, scene_id)
         if not scene:
@@ -1122,19 +1344,31 @@ def _run_scene_frames(scene_id: int) -> None:
         db.commit()
         track = scene.track
         import asyncio
-        reference = _scene_reference_photo(scene, track.project)
-        first_data, first_mime = asyncio.run(
-            mediagen.generate_image(_frame_prompt(scene, track, "first"), reference_path=reference))
-        last_data, last_mime = asyncio.run(
-            mediagen.generate_image(_frame_prompt(scene, track, "last"), reference_path=reference))
+        reference = _scene_reference_photo(db, scene, track.project)
+        if reference and os.path.basename(reference).startswith("refjoin_"):
+            collage = os.path.basename(reference)
+        first_data = last_data = None
+        first_mime = last_mime = ""
+        if which in ("both", "first"):
+            first_data, first_mime = asyncio.run(
+                mediagen.generate_image(_frame_prompt(scene, track, "first"), reference_path=reference))
+        if which in ("both", "last"):
+            last_data, last_mime = asyncio.run(
+                mediagen.generate_image(_frame_prompt(scene, track, "last"), reference_path=reference))
 
         old_first, old_last = scene.image_filename, scene.image_last_filename
         old_video, old_audio = scene.video_filename, scene.audio_filename
         old_mids = [m.get("filename", "") for m in _midframes(scene)]
-        scene.image_filename = _save_image(first_data, first_mime)
-        scene.image_last_filename = _save_image(last_data, last_mime)
-        _reg_file(db, scene.image_filename, track.project.owner_id)
-        _reg_file(db, scene.image_last_filename, track.project.owner_id)
+        if first_data is not None:
+            scene.image_filename = _save_image(first_data, first_mime)
+            _reg_file(db, scene.image_filename, track.project.owner_id)
+        else:
+            old_first = ""  # первый кадр не пересобирали — оставляем как есть
+        if last_data is not None:
+            scene.image_last_filename = _save_image(last_data, last_mime)
+            _reg_file(db, scene.image_last_filename, track.project.owner_id)
+        else:
+            old_last = ""
         scene.image_status = "done"
         # Кадры переснялись — старое видео, утверждение и промежуточные
         # кадры (интерполяция СТАРОЙ пары) к ним не относятся.
@@ -1157,19 +1391,24 @@ def _run_scene_frames(scene_id: int) -> None:
             db.commit()
         log.warning("генерация кадров сцены %s упала: %s", scene_id, e)
     finally:
+        _remove_media(collage)
         db.close()
 
 
 @app.post("/api/scenes/{scene_id}/generate-frames")
-def generate_scene_frames(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+def generate_scene_frames(scene_id: int, which: str = "both", user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
     from threading import Thread
     scene = _own_scene(db, user, scene_id)
     if not scene.image_prompt.strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
-    _charge(db, user, 2, f"кадры сцены {scene.id}")
+    if which not in ("both", "first", "last"):
+        which = "both"
+    # Один кадр — половина работы, половина и цены.
+    _charge(db, user, 2 if which == "both" else 1, f"кадры сцены {scene.id} ({which})")
     scene.image_status = "queued"
     db.commit()
-    Thread(target=_run_scene_frames, args=(scene_id,), daemon=True).start()
+    Thread(target=_run_scene_frames, args=(scene_id, which), daemon=True).start()
     return {"ok": True}
 
 
@@ -1490,14 +1729,59 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
     return {"ok": True}
 
 
+def _media_response(path: str, request: Request) -> Response:
+    """Отдача файла с поддержкой Range: <video> в браузере всегда просит
+    диапазон и ждёт 206 Partial Content. FileResponse отвечал 200 и целым
+    файлом — плеер такое не проигрывает и не перематывает."""
+    file_size = os.path.getsize(path)
+    mime = "video/mp4" if path.lower().endswith(".mp4") else None
+    range_header = request.headers.get("range") or request.headers.get("Range")
+    if not range_header or not range_header.startswith("bytes="):
+        resp = FileResponse(path, media_type=mime) if mime else FileResponse(path)
+        resp.headers["Accept-Ranges"] = "bytes"
+        return resp
+    try:
+        raw = range_header.split("=", 1)[1].split(",")[0].strip()
+        start_s, _, end_s = raw.partition("-")
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else file_size - 1
+    except ValueError:
+        start, end = 0, file_size - 1
+    start = max(0, min(start, file_size - 1))
+    end = max(start, min(end, file_size - 1))
+    length = end - start + 1
+
+    def _chunks():
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = length
+            while left > 0:
+                data = f.read(min(64 * 1024, left))
+                if not data:
+                    break
+                left -= len(data)
+                yield data
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        _chunks(), status_code=206,
+        media_type=mime or "application/octet-stream",
+        headers={
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(length),
+        },
+    )
+
+
 @app.get("/api/media/{filename}")
-def get_media(filename: str, user: User = Depends(current_user), db: Session = Depends(db_session)):
+def get_media(filename: str, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     fname = os.path.basename(filename)
     path = os.path.join(UPLOAD_DIR, fname)
     if not os.path.exists(path):
         raise HTTPException(404, "файл не найден")
     _check_file_owner(db, user, fname)
-    return FileResponse(path)
+    return _media_response(path, request)
 
 
 THUMB_DIR = os.environ.get("THUMB_DIR", "/data/thumbs")
@@ -1679,6 +1963,75 @@ async def add_character_photo(char_id: int, photo: UploadFile, user: User = Depe
     db.add(ph)
     db.commit()
     # ch.photos загружен ДО вставки — без refresh ответ отстаёт на одно фото.
+    db.refresh(ch)
+    return character_dict(ch)
+
+
+MODEL_SHEET_STYLES = {
+    "3d": (
+        "Professional 3D character model turnaround sheet, high-end CG render (Unreal Engine / Blender cycles look): the SAME character shown in four views side by side — front, three-quarter, side profile, back — standing in a relaxed A-pose, full body head to toe, consistent proportions across all four views. Clean neutral light-grey studio background, soft even three-point lighting, subtle contact shadow, no dramatic shadows. Detailed materials: fabric weave, skin subsurface scattering, hair cards."
+    ),
+    "real": (
+        "Photorealistic character reference sheet: the SAME person photographed in four views side by side — front, three-quarter, side profile, back — standing relaxed, full body head to toe, identical clothing and proportions in every view. Neutral light-grey seamless studio backdrop, soft even softbox lighting, sharp focus, natural skin texture."
+    ),
+    "anime": (
+        "Anime character model sheet (settei): the SAME character drawn in four views side by side — front, three-quarter, side profile, back — standing in a relaxed pose, full body head to toe, consistent design and proportions. Clean cel-shaded line art with flat colors, neutral light background, production reference sheet style."
+    ),
+}
+
+
+@app.post("/api/characters/{char_id}/generate-model")
+async def generate_character_model(char_id: int, request: Request,
+                                   user: User = Depends(current_user),
+                                   db: Session = Depends(db_session)):
+    """Генерация модельки персонажа: разворот в четырёх ракурсах одним листом.
+
+    Описание берём из тела запроса (или из карточки персонажа), референсом идут
+    уже загруженные фото — коллажем, чтобы генератор держал лицо и одежду.
+    Результат становится очередной фото-моделькой персонажа."""
+    ch = _own_character(db, user, char_id)
+    body = await request.json() if await request.body() else {}
+    desc = (str(body.get("description") or "").strip() or ch.description).strip()
+    if not desc:
+        raise HTTPException(400, "нужно описание персонажа")
+    kind = str(body.get("kind") or "3d")
+    base = MODEL_SHEET_STYLES.get(kind, MODEL_SHEET_STYLES["3d"])
+    _charge(db, user, 2, f"моделька персонажа {ch.id}")
+
+    paths = []
+    for ph in ch.photos[:3]:
+        cand = os.path.join(UPLOAD_DIR, ph.filename)
+        if os.path.exists(cand):
+            paths.append(cand)
+    owner_id = ch.project.owner_id
+    reference = None
+    collage = ""
+    if len(paths) == 1:
+        reference = paths[0]
+    elif paths:
+        reference = _ref_collage(db, paths, owner_id)
+        if reference:
+            collage = os.path.basename(reference)
+
+    prompt = (
+        f"{base}\n\nCHARACTER (follow this description exactly): {desc}\n\n"
+        "The four views must be the SAME character — same face, hair, outfit and "
+        "accessories in every view. Keep the identity from the reference photos. "
+        "Horizontal sheet, plain background, no text, no labels, no watermark."
+    )
+    try:
+        data, mime = await mediagen.generate_image(prompt, reference)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"генератор не отдал модельку: {str(e)[:200]}")
+    finally:
+        if collage:
+            _remove_media(collage)
+
+    fname = _save_image(data, mime, upscale=False)
+    _reg_file(db, fname, owner_id)
+    max_pos = max((p.position for p in ch.photos), default=0)
+    db.add(CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname))
+    db.commit()
     db.refresh(ch)
     return character_dict(ch)
 

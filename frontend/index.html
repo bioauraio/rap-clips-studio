@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=32" />
+<link rel="stylesheet" href="/style.css?v=36" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
@@ -239,6 +239,7 @@
         <input type="file" class="c-photo-input hidden" accept="image/*" multiple />
         <span class="c-upload-btn">+ фото-моделька</span>
       </label>
+      <button class="c-gen-model" title="сгенерировать разворот персонажа в 4 ракурсах по описанию и приложенным фото">🧍 Сгенерировать модельку</button>
       <div class="char-photos"></div>
     </div>
     <div class="char-attrs-block">
@@ -273,6 +274,9 @@
         </div>
       </div>
       <div class="s-midframes"></div>
+      <!-- Референсы кадра: чем объяснять словами «как снято», проще приложить
+           картинку-образец. Стилистику всё равно диктует стиль трека. -->
+      <div class="s-refs" title="референсы кадра: композиция, свет, вайб"></div>
       <span class="s-image-status status"></span>
       <div class="s-chars-chips" title="персонажи в кадре — клик включает/выключает"></div>
       <input type="hidden" class="s-chars" />
@@ -301,6 +305,8 @@
       </div>
       <div class="row s-board-actions">
         <button class="s-gen-frames">Перегенерировать кадры</button>
+        <button class="s-gen-first" title="пересобрать только первый кадр — последний останется">⟳ перв.</button>
+        <button class="s-gen-last" title="пересобрать только последний кадр — первый останется">⟳ посл.</button>
         <button class="s-gen-mid">+ промежуточные кадры</button>
       </div>
       <div class="row">
@@ -336,6 +342,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=32"></script>
+<script src="/app.js?v=36"></script>
 </body>
 </html>
