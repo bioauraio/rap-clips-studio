@@ -2204,6 +2204,46 @@ def generate_all_frames(track_id: int, user: User = Depends(current_user), db: S
     return {"ok": True, "queued": len(todo)}
 
 
+def _run_all_videos(track_id: int) -> None:
+    """Очередь видео по всем сценам трека: генераторы всё равно однопоточные,
+    поэтому идём последовательно и не роняем всю пачку из-за одной ошибки."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        ids = [s.id for s in sorted(track.scenes, key=lambda x: x.position)] if track else []
+    finally:
+        db.close()
+    for sid in ids:
+        db = SessionLocal()
+        try:
+            sc = db.get(Scene, sid)
+            skip = not sc or sc.video_status not in ("queued",)
+        finally:
+            db.close()
+        if skip:
+            continue
+        _run_scene_video(sid)
+
+
+@app.post("/api/tracks/{track_id}/generate-all-videos")
+def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    from threading import Thread
+    track = _own_track(db, user, track_id)
+    todo = [s for s in track.scenes if s.image_filename and not s.video_filename]
+    if not todo:
+        raise HTTPException(400, "нет сцен с кадрами без видео")
+    _charge(db, user, 10 * len(todo), f"видео всех сцен трека {track.id}")
+    prov = provider or ("seedance" if mediagen.seedance_available() else "grok")
+    for s in todo:
+        s.video_provider = prov
+        s.video_status = "queued"
+        s.video_error = ""
+    db.commit()
+    Thread(target=_run_all_videos, args=(track_id,), daemon=True).start()
+    return {"ok": True, "queued": len(todo), "provider": prov}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "ts": int(time.time())}

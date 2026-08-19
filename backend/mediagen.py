@@ -42,6 +42,9 @@ FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 SEEVIO_API_KEY = os.environ.get("SEEVIO_API_KEY", "")
 SEEVIO_API = os.environ.get("SEEVIO_API", "https://api.seevio.ai")
 SEEVIO_MODEL = os.environ.get("SEEVIO_MODEL", "seedance-2-5")
+# 480p вдвое дешевле 720p по кредитам — экономный режим переключается в .env
+# без пересборки: SEEVIO_RESOLUTION=480p.
+SEEVIO_RESOLUTION = os.environ.get("SEEVIO_RESOLUTION", "720p")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://clips.resetaura.io")
 OUTBOX_DIR = os.environ.get("OUTBOX_DIR", "/data/outbox")
 os.makedirs(OUTBOX_DIR, exist_ok=True)
@@ -205,7 +208,7 @@ async def _animate_seedance(
                 "generation_type": "image-to-video",
                 "image_urls": image_urls,
                 "duration": max(4, min(30, int(round(duration_sec)))),
-                "resolution": "720p",
+                "resolution": SEEVIO_RESOLUTION,
                 "generate_audio": False,
                 "watermark": False,
             },

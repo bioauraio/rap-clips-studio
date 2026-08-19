@@ -734,6 +734,20 @@ function renderTrack(t) {
     }
     await loadProject();
   });
+  const allVidBtn = $(".gen-all-videos", card);
+  if (allVidBtn) {
+    const vidBusy = (t.scenes || []).some((s) => ["queued", "running"].includes(s.video_status));
+    const vidTodo = (t.scenes || []).filter((s) => s.image_url && !s.video_url).length;
+    allVidBtn.disabled = vidBusy || !vidTodo;
+    allVidBtn.textContent = vidBusy ? "генерирую видео…" : `🎬 Видео всех сцен (${vidTodo})`;
+    allVidBtn.addEventListener("click", async () => {
+      if (!confirm(`Поставить в очередь видео для ${vidTodo} сцен? Это спишет кредиты видеогенератора.`)) return;
+      try {
+        await api(`/api/tracks/${t.id}/generate-all-videos`, { method: "POST" });
+      } catch (e) { alert(e.message); }
+      await loadProject();
+    });
+  }
   const genBtn = $(".gen-scenes", card);
   const busy = t.scenes_status === "queued" || t.scenes_status === "running";
   genBtn.disabled = busy || !project.story;
