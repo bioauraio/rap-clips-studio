@@ -3295,16 +3295,22 @@ def _providers_state() -> dict:
 
 
 @app.get("/api/billing/plans")
-def billing_plans(user: User = Depends(current_user)):
+def billing_plans(request: Request, db: Session = Depends(db_session)):
     """Всё, что нужно витрине: тарифы обоих периодов, пакеты очков, флаги
-    платёжек, цена работы в очках и текущее состояние человека."""
+    платёжек, цена работы в очках и текущее состояние человека.
+
+    Роут ПУБЛИЧНЫЙ: цены — первое, что смотрит человек с лендинга, и требовать
+    ради них аккаунт значит терять его на входе. Гостю отдаём витрину без
+    личного блока, авторизованному — с текущим тарифом и остатком."""
     providers = _providers_state()
+    user = _resolve_user(request, db)
     return {
-        "current": _plan_of(user),
-        "current_period": user.plan_period or "month",
-        "plan_until": user.plan_until.isoformat() if user.plan_until else "",
-        "autopay": bool(user.autopay and (user.pay_method_id or user.stripe_subscription_id)),
-        "points": int(user.gen_points or 0),
+        "current": _plan_of(user) if user else "free",
+        "current_period": (user.plan_period or "month") if user else "month",
+        "plan_until": user.plan_until.isoformat() if (user and user.plan_until) else "",
+        "autopay": bool(user and user.autopay and (user.pay_method_id or user.stripe_subscription_id)),
+        "points": int(user.gen_points or 0) if user else 0,
+        "authorized": bool(user),
         # enabled — легаси-флаг старого фронта: хоть одна платёжка жива.
         "enabled": any(providers.values()),
         "providers": providers,
@@ -3329,13 +3335,16 @@ def billing_plans(user: User = Depends(current_user)):
 
 
 @app.get("/api/billing/packs")
-def billing_packs(user: User = Depends(current_user)):
-    """Пакеты очков отдельно от тарифов: докупка не трогает подписку."""
+def billing_packs(request: Request, db: Session = Depends(db_session)):
+    """Пакеты очков отдельно от тарифов: докупка не трогает подписку.
+    Публичный по той же причине, что и витрина тарифов."""
+    user = _resolve_user(request, db)
     return {
         "packs": [_pack_card(kid) for kid in TOPUP_PACKS],
         "providers": _providers_state(),
         "currency_default": "usd" if _stripe_enabled() else "rub",
-        "points": int(user.gen_points or 0),
+        "points": int(user.gen_points or 0) if user else 0,
+        "authorized": bool(user),
     }
 
 
