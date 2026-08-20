@@ -5,3 +5,8 @@ aiosqlite==0.20.0
 python-multipart==0.0.9
 httpx==0.27.2
 itsdangerous==2.2.0
+# Разбор дорожки в разделе «Аудио» (BPM, доли, секции) — backend/audio_analysis.py.
+# ~18 МБ колесо, без numba и scikit-learn: librosa дала бы +400 МБ к образу.
+# Модуль переживает отсутствие numpy сам (analysis честно выключается),
+# так что откат этой строки сервис не роняет.
+numpy==2.1.3
