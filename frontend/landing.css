@@ -581,3 +581,21 @@ body:has(#welcome:not(.hidden)) {
 .landing .ld-plan-pay, .landing .ld-plan-start, .landing .ld-pack-buy {
   white-space: normal; line-height: 1.2; padding: var(--s-2) var(--s-3);
 }
+
+/* ────────── мобильная шапка: было переполнение на 65px ──────────
+   На 375px в строку не влезали марка + язык + «Войти» + CTA, и страница
+   уезжала вбок (scrollWidth 440 при вьюпорте 375). CTA из шапки убираем:
+   ровно та же кнопка стоит в первом экране на два пальца ниже, дублировать
+   её на телефоне незачем. Остальное ужимаем. */
+@media (max-width: 700px) {
+  .ld-bar { gap: var(--s-2); padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3); }
+  .ld-brand img { width: 26px; height: 26px; }
+  .ld-brand-word { font-size: var(--fs-base); }
+  .ld-bar-actions { gap: var(--s-1); margin-left: auto; min-width: 0; }
+  #ld-nav-start { display: none; }
+  #ld-nav-login { padding: 8px 12px; font-size: var(--fs-sm); white-space: nowrap; }
+  .lang-switch button { padding: 5px 9px; font-size: var(--fs-meta); }
+}
+/* Ни одна секция не имеет права раздвигать страницу вбок: горизонтальный
+   скролл на телефоне читается как сломанная вёрстка. */
+.landing { overflow-x: clip; }
