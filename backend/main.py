@@ -20,13 +20,16 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import claude
 import mediagen
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, FileOwner,
-    Project, Scene, SceneRef, SessionLocal, Track, User, init_db, now,
+    Payout, ProcessedPayment, Project, RefEvent, Scene, SceneRef, SessionLocal,
+    Track, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -224,6 +227,143 @@ def _charge(db: Session, user: User, points: int, what: str) -> None:
     log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
 
 
+# ─────────── партнёрка: промокоды, рефералы, вознаграждения ───────────
+# Проценты и минималку правим в infra/.env, а не в коде: их крутят под акции.
+# REF_DISCOUNT_PCT — скидка приглашённому на ПЕРВУЮ оплату, REF_REWARD_PCT —
+# доля амбассадора с КАЖДОГО платежа его реферала (включая автопродления).
+REF_DISCOUNT_PCT = max(0, min(90, int(os.environ.get("REF_DISCOUNT_PCT", "10"))))
+REF_REWARD_PCT = max(0, min(100, int(os.environ.get("REF_REWARD_PCT", "30"))))
+REF_MIN_PAYOUT_KOPEKS = max(0, int(float(os.environ.get("REF_MIN_PAYOUT", "1000")) * 100))
+# Без похожих символов (O/0 и I/1): код диктуют голосом и переписывают от руки.
+REF_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _norm_code(code: str) -> str:
+    """Код приезжает и из поля ввода, и из вставленной целиком ссылки —
+    приводим к одному виду, чтобы «qlolapp.art/?ref=k7m2xt » тоже сработало."""
+    raw = str(code or "").strip().upper()
+    if "REF=" in raw:
+        raw = raw.split("REF=", 1)[1]
+    return "".join(c for c in raw if c in REF_ALPHABET)[:12]
+
+
+def _ref_link(code: str) -> str:
+    return f"{PUBLIC_BASE_URL}/?ref={code}" if code else ""
+
+
+def _new_ref_code(db: Session) -> str:
+    """Уникальный промокод. Коллизия увела бы чужих рефералов, поэтому каждый
+    кандидат проверяется по базе, а не «вероятность мала — и ладно»."""
+    for _ in range(50):
+        code = "".join(secrets.choice(REF_ALPHABET) for _ in range(6))
+        if not db.query(User).filter(User.ref_code == code).first():
+            return code
+    raise HTTPException(500, "не удалось выдать промокод, попробуй ещё раз")
+
+
+def _find_ambassador(db: Session, code: str) -> "User | None":
+    """Владелец кода. Пустой код не ищем: у всех обычных юзеров ref_code = ''
+    и поиск по пустой строке вернул бы случайного человека."""
+    code = _norm_code(code)
+    if not code:
+        return None
+    return db.query(User).filter(User.ref_code == code,
+                                 User.is_ambassador.is_(True)).first()
+
+
+def _attach_ref(db: Session, user: "User | None", code: str) -> "User | None":
+    """Закрепить пользователя за амбассадором — навсегда.
+
+    Первое касание побеждает: уже закреплённого не переклеиваем, иначе
+    реферала уводил бы тот, кто последним подсунул ссылку. Своим же кодом
+    закрепиться нельзя — это была бы вечная скидка самому себе."""
+    if not user or user.referred_by:
+        return None
+    amb = _find_ambassador(db, code)
+    if not amb or amb.id == user.id:
+        return None
+    user.referred_by = amb.id
+    db.add(RefEvent(ambassador_id=amb.id, referral_id=user.id, kind="signup"))
+    db.commit()
+    log.info("партнёрка: юзер %s закреплён за амбассадором %s (код %s)",
+             user.id, amb.id, amb.ref_code)
+    return amb
+
+
+def _ref_stats(db: Session, user: User) -> dict:
+    """Единственное место, где считаются деньги партнёрки.
+
+    Начислено — счётчик на юзере, выплачено и «в заявке» — суммы по таблице
+    заявок. Поэтому одни и те же деньги нельзя заказать дважды (сумма заявки
+    в new сразу выпадает из доступного), а отклонение заявки возвращает их
+    само собой, без обратных проводок."""
+    rows = (db.query(Payout.status, func.coalesce(func.sum(Payout.amount_kopeks), 0))
+            .filter(Payout.ambassador_id == user.id)
+            .group_by(Payout.status).all())
+    by_status = {str(s): int(v or 0) for s, v in rows}
+    accrued = int(user.ref_balance_kopeks or 0)
+    reserved = by_status.get("new", 0)
+    paid = by_status.get("paid", 0)
+    invited = db.query(func.count(User.id)).filter(User.referred_by == user.id).scalar()
+    buyers = (db.query(func.count(func.distinct(RefEvent.referral_id)))
+              .filter(RefEvent.ambassador_id == user.id,
+                      RefEvent.kind == "payment").scalar())
+    turnover = (db.query(func.coalesce(func.sum(RefEvent.amount_kopeks), 0))
+                .filter(RefEvent.ambassador_id == user.id,
+                        RefEvent.kind == "payment").scalar())
+    return {
+        "invited": int(invited or 0),
+        "buyers": int(buyers or 0),
+        "turnover_kopeks": int(turnover or 0),
+        "accrued_kopeks": accrued,
+        "paid_kopeks": paid,
+        "reserved_kopeks": reserved,
+        "available_kopeks": max(0, accrued - paid - reserved),
+    }
+
+
+def _ref_first_payment(db: Session, user: User) -> bool:
+    """Первая ли это оплата приглашённого. Считаем по ленте событий, а не по
+    флагу на юзере: иначе появилось бы второе место с правдой о платежах."""
+    return not db.query(RefEvent).filter(RefEvent.referral_id == user.id,
+                                         RefEvent.kind == "payment").first()
+
+
+def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str) -> None:
+    """Начислить амбассадору долю с платежа его реферала.
+
+    Вебхук ЮKassa штатно приходит по нескольку раз на один платёж, поэтому
+    начисляем строго один раз: сначала ищем событие по payment_id, а гонку
+    двух одновременных вебхуков ловит UNIQUE на колонке.
+
+    Событие пишем даже при нулевой доле (REF_REWARD_PCT=0): по нему считается
+    «первая ли это оплата», и без записи скидка приглашённому давалась бы
+    заново на каждом платеже."""
+    if not buyer.referred_by or amount_kopeks <= 0:
+        return
+    pay_id = str(payment_id or "").strip()
+    if not pay_id:
+        return
+    amb = db.get(User, buyer.referred_by)
+    if not amb or amb.id == buyer.id:
+        return
+    if db.query(RefEvent).filter(RefEvent.payment_id == pay_id).first():
+        return
+    reward = amount_kopeks * REF_REWARD_PCT // 100
+    db.add(RefEvent(ambassador_id=amb.id, referral_id=buyer.id, kind="payment",
+                    amount_kopeks=amount_kopeks, reward_kopeks=reward,
+                    payment_id=pay_id))
+    amb.ref_balance_kopeks = int(amb.ref_balance_kopeks or 0) + reward
+    try:
+        db.commit()
+    except IntegrityError:
+        # Дубль вебхука успел вставить событие первым — второй раз не платим.
+        db.rollback()
+        return
+    log.info("партнёрка: +%s коп. амбассадору %s с платежа %s реферала %s",
+             reward, amb.id, pay_id, buyer.id)
+
+
 # ─────────── владение: каждая сущность прослеживается до владельца ───────────
 
 def _owned(user: User, project: Project | None) -> bool:
@@ -318,13 +458,17 @@ def _session_response(user: User) -> JSONResponse:
 
 
 @app.post("/api/start")
-def start(db: Session = Depends(db_session)):
+def start(ref: str = "", db: Session = Depends(db_session)):
     """Кнопка «Старт» лендинга: гостевой аккаунт сразу, без регистрации —
-    логин с паролем гость сможет добавить потом через /api/register."""
+    логин с паролем гость сможет добавить потом через /api/register.
+
+    ?ref=КОД с реферальной ссылки закрепляет гостя за амбассадором прямо
+    здесь: до оплаты человек может месяцами ходить гостем."""
     guest = User(name="гость")
     db.add(guest)
     db.commit()
     db.refresh(guest)
+    _attach_ref(db, guest, ref)
     return _session_response(guest)
 
 
@@ -398,6 +542,14 @@ def _adopt_guest(db: Session, guest: "User | None", found: "User") -> "User":
     if guest and guest.id != found.id and not guest.login and not guest.tg_id and not guest.yandex_id:
         for pr in db.query(Project).filter(Project.owner_id == guest.id).all():
             pr.owner_id = found.id
+        # Человек пришёл по реферальной ссылке гостем и только потом вошёл в
+        # свой аккаунт — закрепление переезжает вместе с проектами, иначе
+        # амбассадор терял приведённого на первом же входе. Уже закреплённого
+        # не переклеиваем и своим же кодом закрепиться не даём.
+        if not found.referred_by and guest.referred_by and guest.referred_by != found.id:
+            found.referred_by = guest.referred_by
+            db.add(RefEvent(ambassador_id=guest.referred_by, referral_id=found.id,
+                            kind="signup"))
         db.commit()
     return found
 
@@ -414,7 +566,7 @@ def auth_config():
 
 
 @app.post("/api/auth/telegram")
-async def auth_telegram(request: Request, db: Session = Depends(db_session)):
+async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(db_session)):
     """Telegram Login Widget: сверяем подпись данных токеном бота (HMAC-SHA256),
     по tg_id находим или заводим аккаунт."""
     if not TG_BOT_TOKEN:
@@ -456,6 +608,7 @@ async def auth_telegram(request: Request, db: Session = Depends(db_session)):
         db.refresh(user)
     else:
         user = _adopt_guest(db, guest, user)
+    _attach_ref(db, user, ref)
     return _auth_response(user)
 
 
@@ -464,7 +617,8 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
 
 def _external_login(db: Session, request: Request, field: str, ext_id: str,
-                    name: str, email: str = "", avatar: str = "") -> "User":
+                    name: str, email: str = "", avatar: str = "",
+                    ref: str = "") -> "User":
     """Общий вход по внешнему id: находим аккаунт, иначе «повышаем» гостя,
     иначе заводим нового. Проекты гостя не теряются."""
     user = db.query(User).filter(getattr(User, field) == ext_id).first()
@@ -491,11 +645,14 @@ def _external_login(db: Session, request: Request, field: str, ext_id: str,
         db.refresh(user)
     else:
         _adopt_guest(db, guest, user)
+    _attach_ref(db, user, ref)
     return user
 
 
 @app.get("/api/auth/google/start")
-def auth_google_start():
+def auth_google_start(ref: str = ""):
+    """ref едет в state: после редиректа на Google наши query-параметры
+    теряются, а state Google возвращает обратно как есть."""
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(400, "вход через Google не настроен")
     from fastapi.responses import RedirectResponse
@@ -503,11 +660,14 @@ def auth_google_start():
     url = ("https://accounts.google.com/o/oauth2/v2/auth?response_type=code"
            f"&client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect}"
            "&scope=openid%20email%20profile&access_type=online&prompt=select_account")
+    code = _norm_code(ref)
+    if code:
+        url += f"&state={code}"
     return RedirectResponse(url)
 
 
 @app.get("/api/auth/google/callback")
-async def auth_google_callback(code: str = "", request: Request = None,
+async def auth_google_callback(code: str = "", state: str = "", request: Request = None,
                                db: Session = Depends(db_session)):
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
         raise HTTPException(400, "вход через Google не настроен")
@@ -534,7 +694,8 @@ async def auth_google_callback(code: str = "", request: Request = None,
         raise HTTPException(403, "Google не вернул id")
     user = _external_login(db, request, "google_id", gid,
                            prof.get("name") or prof.get("email") or "гость",
-                           prof.get("email") or "", prof.get("picture") or "")
+                           prof.get("email") or "", prof.get("picture") or "",
+                           ref=state)
     from fastapi.responses import RedirectResponse
     resp = RedirectResponse("/")
     resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=COOKIE_MAX_AGE,
@@ -543,18 +704,22 @@ async def auth_google_callback(code: str = "", request: Request = None,
 
 
 @app.get("/api/auth/yandex/start")
-def auth_yandex_start():
+def auth_yandex_start(ref: str = ""):
+    """ref едет в state — обратно с Яндекса вернётся тот же код (см. Google)."""
     if not YANDEX_CLIENT_ID:
         raise HTTPException(400, "вход через Яндекс не настроен")
     from fastapi.responses import RedirectResponse
     redirect = f"{PUBLIC_BASE_URL}/api/auth/yandex/callback"
     url = ("https://oauth.yandex.ru/authorize?response_type=code"
            f"&client_id={YANDEX_CLIENT_ID}&redirect_uri={redirect}")
+    ref_code = _norm_code(ref)
+    if ref_code:
+        url += f"&state={ref_code}"
     return RedirectResponse(url)
 
 
 @app.get("/api/auth/yandex/callback")
-async def auth_yandex_callback(code: str = "", request: Request = None,
+async def auth_yandex_callback(code: str = "", state: str = "", request: Request = None,
                                db: Session = Depends(db_session)):
     if not (YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET):
         raise HTTPException(400, "вход через Яндекс не настроен")
@@ -599,6 +764,7 @@ async def auth_yandex_callback(code: str = "", request: Request = None,
         db.refresh(user)
     else:
         user = _adopt_guest(db, guest, user)
+    _attach_ref(db, user, state)
     from fastapi.responses import RedirectResponse
     resp = RedirectResponse("/")
     resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=COOKIE_MAX_AGE,
@@ -2553,6 +2719,39 @@ YOOKASSA_SECRET = os.environ.get("YOOKASSA_SECRET_KEY", "")
 PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
 
 
+def _as_utc(dt):
+    """SQLite отдаёт datetime без таймзоны, а now() — с UTC, и сравнение их
+    падает TypeError'ом. Ловилось это только у тех, у кого plan_until уже был:
+    вебхук на продлении отваливался 500-й, тариф не продлевался."""
+    if dt is None:
+        return None
+    from datetime import timezone as _tz
+    return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
+
+
+def _claim_payment(db: Session, payment_id: str, user_id: int = 0,
+                   plan: str = "", amount_kopeks: int = 0) -> bool:
+    """Занять платёж под выдачу тарифа. False — его уже обрабатывали.
+
+    ЮKassa шлёт payment.succeeded повторно, пока не получит 200, и тот же
+    платёж приезжает вебхуком после автосписания. Без этой отметки каждый
+    дубль добавлял ещё месяц подписки. Занимаем ДО изменения пользователя,
+    чтобы гонка двух вебхуков разошлась на UNIQUE, а не на двух выдачах."""
+    pay_id = str(payment_id or "").strip()
+    if not pay_id:
+        return False
+    if db.query(ProcessedPayment).filter(ProcessedPayment.payment_id == pay_id).first():
+        return False
+    db.add(ProcessedPayment(payment_id=pay_id, user_id=int(user_id or 0),
+                            plan=str(plan or ""), amount_kopeks=int(amount_kopeks or 0)))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return False
+    return True
+
+
 @app.get("/api/billing/plans")
 def billing_plans(user: User = Depends(current_user)):
     return {
@@ -2578,16 +2777,34 @@ async def billing_create(request: Request, user: User = Depends(current_user),
     if not plan or plan["price"] <= 0:
         raise HTTPException(400, "неизвестный тариф")
 
+    # Промокод: если человек ещё ни за кем не закреплён — закрепляем прямо
+    # здесь (то же первое касание, что и по ссылке ?ref=). Скидку даём один
+    # раз, на первую оплату; продления идут по полной цене тарифа.
+    promo = _norm_code(body.get("promo") or "")
+    if promo:
+        _attach_ref(db, user, promo)
+    amb = db.get(User, user.referred_by) if user.referred_by else None
+    amount_kopeks = int(plan["price"]) * 100
+    discount_kopeks = 0
+    if amb and REF_DISCOUNT_PCT > 0 and _ref_first_payment(db, user):
+        discount_kopeks = amount_kopeks * REF_DISCOUNT_PCT // 100
+        amount_kopeks -= discount_kopeks
+
     import httpx as _httpx
     idem = uuid.uuid4().hex
     payload = {
-        "amount": {"value": f"{plan['price']}.00", "currency": "RUB"},
+        "amount": {"value": f"{amount_kopeks // 100}.{amount_kopeks % 100:02d}",
+                   "currency": "RUB"},
         "capture": True,
         # Сохранённый способ оплаты = подписка: дальше списываем сами раз в месяц.
         "save_payment_method": True,
         "confirmation": {"type": "redirect", "return_url": f"{PUBLIC_BASE_URL}/?paid={plan_id}"},
         "description": f"QLOLVIDEO {plan['title']} — {PLAN_DAYS} дней",
-        "metadata": {"user_id": str(user.id), "plan": plan_id},
+        # promo и ambassador_id — след для разбора спорных начислений: по
+        # платежу в кабинете ЮKassa видно, чей это был реферал.
+        "metadata": {"user_id": str(user.id), "plan": plan_id,
+                     "promo": amb.ref_code if amb else "",
+                     "ambassador_id": str(amb.id) if amb else ""},
     }
     async with _httpx.AsyncClient(timeout=30) as client:
         r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
@@ -2599,7 +2816,9 @@ async def billing_create(request: Request, user: User = Depends(current_user),
     url = ((data.get("confirmation") or {}).get("confirmation_url") or "")
     if not url:
         raise HTTPException(502, "ЮKassa не вернула ссылку оплаты")
-    return {"ok": True, "url": url, "payment_id": data.get("id", "")}
+    return {"ok": True, "url": url, "payment_id": data.get("id", ""),
+            "amount_kopeks": amount_kopeks, "discount_kopeks": discount_kopeks,
+            "promo": amb.ref_code if amb else ""}
 
 
 @app.post("/api/billing/webhook")
@@ -2631,16 +2850,29 @@ async def billing_webhook(request: Request, db: Session = Depends(db_session)):
     user = db.get(User, uid)
     if not user or plan_id not in PLANS:
         return {"ok": True}
+    # Долю амбассадору считаем от ФАКТИЧЕСКИ оплаченной суммы — со скидкой по
+    # промокоду, а не от прайса тарифа.
+    try:
+        paid_value = float(((real.get("amount") or {}).get("value")) or 0)
+    except (TypeError, ValueError):
+        paid_value = 0.0
+    paid_kopeks = int(round(paid_value * 100))
+    # Дубль вебхука не должен выдавать месяц второй раз.
+    if not _claim_payment(db, pay_id, user.id, plan_id, paid_kopeks):
+        log.info("вебхук ЮKassa: платёж %s уже обработан — пропускаем", pay_id)
+        return {"ok": True}
     user.plan = plan_id
     user.gen_points = max(user.gen_points, PLANS[plan_id]["points"])
     from datetime import timedelta
-    base = user.plan_until if (user.plan_until and user.plan_until > now()) else now()
+    until = _as_utc(user.plan_until)
+    base = until if (until and until > now()) else now()
     user.plan_until = base + timedelta(days=PLAN_DAYS)
     pm = (real.get("payment_method") or {})
     if pm.get("saved") and pm.get("id"):
         user.pay_method_id = str(pm["id"])
     db.commit()
     log.info("оплачен тариф %s для юзера %s (платёж %s)", plan_id, uid, pay_id)
+    _ref_reward(db, user, paid_kopeks, pay_id)
     return {"ok": True}
 
 
@@ -2661,13 +2893,24 @@ async def _charge_subscription(db: Session, user: "User") -> bool:
         r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
                               auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
                               headers={"Idempotence-Key": uuid.uuid4().hex})
-    ok = r.status_code in (200, 201) and (r.json() or {}).get("status") == "succeeded"
+    data = (r.json() or {}) if r.status_code in (200, 201) else {}
+    ok = bool(data.get("status") == "succeeded")
     if ok:
+        pay_id = str(data.get("id") or "")
+        amount_kopeks = int(plan["price"]) * 100
+        # Этот же платёж приедет ещё и вебхуком: занимаем его здесь, иначе
+        # месяц начислялся бы дважды — тут и там.
+        if not _claim_payment(db, pay_id, user.id, user.plan, amount_kopeks):
+            log.info("подписка юзера %s: платёж %s уже учтён", user.id, pay_id)
+            return True
         from datetime import timedelta
         user.plan_until = now() + timedelta(days=PLAN_DAYS)
         user.gen_points = max(user.gen_points, plan["points"])
         db.commit()
         log.info("подписка продлена: юзер %s, тариф %s", user.id, user.plan)
+        # Доля амбассадора идёт с КАЖДОГО платежа реферала, включая продления.
+        # Начисляем здесь: вебхук по этому платежу мы уже заняли выше.
+        _ref_reward(db, user, amount_kopeks, pay_id)
     else:
         log.warning("не продлилась подписка юзера %s: %s", user.id, r.text[:200])
     return ok
@@ -2710,11 +2953,203 @@ def billing_cancel(user: User = Depends(current_user), db: Session = Depends(db_
     return {"ok": True, "until": user.plan_until.isoformat() if user.plan_until else ""}
 
 
+# ─────────────────────── кабинет амбассадора ───────────────────────
+
+def _payout_dict(p: Payout) -> dict:
+    return {
+        "id": p.id, "amount_kopeks": p.amount_kopeks,
+        "amount": round(p.amount_kopeks / 100, 2),
+        "details": p.details, "status": p.status, "comment": p.comment,
+        "created_at": p.created_at.isoformat() if p.created_at else "",
+        "updated_at": p.updated_at.isoformat() if p.updated_at else "",
+    }
+
+
+def _ref_event_dict(e: RefEvent, who: str) -> dict:
+    return {
+        "id": e.id, "kind": e.kind, "who": who,
+        "amount_kopeks": e.amount_kopeks, "reward_kopeks": e.reward_kopeks,
+        "created_at": e.created_at.isoformat() if e.created_at else "",
+    }
+
+
+@app.post("/api/ambassador/join")
+def ambassador_join(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Подключить партнёрку. Повторный вызов безопасен и возвращает ТОТ ЖЕ код:
+    выданный код перевыпускать нельзя — ссылки на него уже разошлись по чатам."""
+    if not user.ref_code:
+        user.ref_code = _new_ref_code(db)
+    user.is_ambassador = True
+    db.commit()
+    return {"ok": True, "code": user.ref_code, "link": _ref_link(user.ref_code),
+            "discount_pct": REF_DISCOUNT_PCT, "reward_pct": REF_REWARD_PCT}
+
+
+@app.get("/api/ambassador")
+def ambassador_cabinet(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Кабинет: код со ссылкой, деньги, лента событий и заявки на выплату.
+
+    Не 403 для неподключённых — фронту нужно на что-то рисовать кнопку
+    «стать амбассадором», поэтому отвечаем нулями и is_ambassador=false."""
+    stats = _ref_stats(db, user) if user.is_ambassador else {
+        "invited": 0, "buyers": 0, "turnover_kopeks": 0, "accrued_kopeks": 0,
+        "paid_kopeks": 0, "reserved_kopeks": 0, "available_kopeks": 0,
+    }
+    events = (db.query(RefEvent).filter(RefEvent.ambassador_id == user.id)
+              .order_by(RefEvent.id.desc()).limit(20).all())
+    # Имена рефералов достаём одним запросом: 20 отдельных get'ов на каждый
+    # показ кабинета — лишняя работа на ровном месте.
+    names = {}
+    ids = {e.referral_id for e in events}
+    if ids:
+        names = {u.id: (u.name or "") for u in
+                 db.query(User).filter(User.id.in_(ids)).all()}
+    payouts = (db.query(Payout).filter(Payout.ambassador_id == user.id)
+               .order_by(Payout.id.desc()).limit(50).all())
+    return {
+        "is_ambassador": bool(user.is_ambassador),
+        "code": user.ref_code or "",
+        "link": _ref_link(user.ref_code),
+        "discount_pct": REF_DISCOUNT_PCT,
+        "reward_pct": REF_REWARD_PCT,
+        "min_payout_kopeks": REF_MIN_PAYOUT_KOPEKS,
+        "payout_details": user.payout_details or "",
+        "stats": stats,
+        "events": [_ref_event_dict(e, names.get(e.referral_id) or f"гость #{e.referral_id}")
+                   for e in events],
+        "payouts": [_payout_dict(p) for p in payouts],
+    }
+
+
+@app.post("/api/ambassador/details")
+async def ambassador_details(request: Request, user: User = Depends(current_user),
+                             db: Session = Depends(db_session)):
+    """Реквизиты выплаты (карта, СБП, что угодно текстом) — их читает глазами
+    владелец, когда переводит деньги руками."""
+    body = await request.json()
+    details = str(body.get("details") or "").strip()[:500]
+    if not details:
+        raise HTTPException(400, "укажи реквизиты для выплаты")
+    user.payout_details = details
+    db.commit()
+    return {"ok": True, "details": details}
+
+
+@app.post("/api/ambassador/payout")
+async def ambassador_payout(request: Request, user: User = Depends(current_user),
+                            db: Session = Depends(db_session)):
+    """Заявка на выплату. Сумма сразу уходит в резерв (заявка в статусе new),
+    поэтому заказать одни и те же деньги второй заявкой не выйдет."""
+    if not user.is_ambassador:
+        raise HTTPException(403, "сначала подключи партнёрку")
+    body = await request.json()
+    details = str(body.get("details") or "").strip()[:500] or (user.payout_details or "")
+    if not details:
+        raise HTTPException(400, "укажи реквизиты для выплаты")
+    try:
+        amount = int(body.get("amount_kopeks") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "сумма не похожа на число")
+    available = _ref_stats(db, user)["available_kopeks"]
+    if available <= 0:
+        # Отдельным сообщением, иначе человек видит «минимальная выплата» и
+        # думает, что дело в сумме, а не в том, что деньги уже заказаны.
+        raise HTTPException(400, "доступных к выплате начислений пока нет")
+    if amount <= 0:
+        amount = available  # без суммы забирают всё доступное
+    if amount > available:
+        raise HTTPException(400, f"доступно только {available // 100} ₽")
+    if amount < REF_MIN_PAYOUT_KOPEKS:
+        raise HTTPException(400, f"минимальная выплата — {REF_MIN_PAYOUT_KOPEKS // 100} ₽")
+    user.payout_details = details
+    payout = Payout(ambassador_id=user.id, amount_kopeks=amount, details=details,
+                    status="new")
+    db.add(payout)
+    db.commit()
+    db.refresh(payout)
+    # Двойной клик или вторая вкладка могли завести две заявки на одни деньги:
+    # пересчитываем уже ПОСЛЕ коммита и свою заявку отзываем, если ушли в минус.
+    fresh = _ref_stats(db, user)
+    if fresh["accrued_kopeks"] - fresh["paid_kopeks"] - fresh["reserved_kopeks"] < 0:
+        db.delete(payout)
+        db.commit()
+        raise HTTPException(409, "заявка на эти деньги уже создана — обнови страницу")
+    log.info("партнёрка: заявка на выплату %s коп. от амбассадора %s", amount, user.id)
+    return {"ok": True, "payout": _payout_dict(payout), "stats": fresh}
+
+
+@app.get("/api/admin/payouts")
+def admin_payouts(status: str = "", user: User = Depends(current_user),
+                  db: Session = Depends(db_session)):
+    """Очередь выплат для владельца: кому и сколько перевести руками."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    q = db.query(Payout).order_by(Payout.id.desc())
+    if status:
+        q = q.filter(Payout.status == status)
+    rows = q.limit(200).all()
+    amb_ids = {p.ambassador_id for p in rows}
+    ambs = {u.id: u for u in db.query(User).filter(User.id.in_(amb_ids)).all()} if amb_ids else {}
+    out = []
+    for p in rows:
+        amb = ambs.get(p.ambassador_id)
+        item = _payout_dict(p)
+        item["ambassador"] = {
+            "id": p.ambassador_id,
+            "name": (amb.name if amb else "") or f"#{p.ambassador_id}",
+            "code": amb.ref_code if amb else "",
+            "email": amb.email if amb else "",
+            "tg": amb.tg_username if amb else "",
+        }
+        out.append(item)
+    return {"payouts": out}
+
+
+@app.post("/api/admin/payouts/{payout_id}")
+async def admin_payout_update(payout_id: int, request: Request,
+                              user: User = Depends(current_user),
+                              db: Session = Depends(db_session)):
+    """Пометить заявку выплаченной или отклонить.
+
+    Двигать можно только заявку из new — иначе повторный клик по «выплачено»
+    удвоил бы счётчик выплат. Отклонение денег не возвращает специально:
+    сумма перестаёт быть зарезервированной и сама попадает в доступные."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    body = await request.json()
+    status = str(body.get("status") or "").strip()
+    if status not in ("paid", "rejected"):
+        raise HTTPException(400, "статус: paid или rejected")
+    payout = db.get(Payout, payout_id)
+    if not payout:
+        raise HTTPException(404, "заявка не найдена")
+    if payout.status != "new":
+        raise HTTPException(400, f"заявка уже обработана: {payout.status}")
+    payout.status = status
+    payout.comment = str(body.get("comment") or "").strip()[:500]
+    payout.updated_at = now()
+    db.flush()  # autoflush выключен: сумму считаем уже с новым статусом
+    amb = db.get(User, payout.ambassador_id)
+    if amb:
+        # Счётчик «выплачено» на юзере — зеркало таблицы заявок, а не отдельная
+        # правда: пересчитываем его от оплаченных заявок.
+        amb.ref_paid_kopeks = int(
+            db.query(func.coalesce(func.sum(Payout.amount_kopeks), 0))
+            .filter(Payout.ambassador_id == amb.id, Payout.status == "paid").scalar() or 0)
+    db.commit()
+    log.info("партнёрка: заявка %s → %s (амбассадор %s)", payout.id, status,
+             payout.ambassador_id)
+    return {"ok": True, "payout": _payout_dict(payout)}
+
+
 @app.get("/api/account")
 def account(user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Личный кабинет: тариф, срок, очки, привязки входа, проекты."""
     plan = _plan_of(user)
     projects = db.query(Project).filter(Project.owner_id == user.id).count()
+    # Партнёрка коротко — на карточку кабинета; подробности в /api/ambassador.
+    # Для неподключённых считать нечего, поэтому лишних запросов не делаем.
+    ref_stats = _ref_stats(db, user) if user.is_ambassador else None
     return {
         "name": user.name, "email": user.email, "login": user.login,
         "avatar_url": user.avatar_url,
@@ -2725,6 +3160,15 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
         "points": user.gen_points, "projects": projects,
         "linked": {"telegram": bool(user.tg_id), "yandex": bool(user.yandex_id),
                    "google": bool(user.google_id), "password": bool(user.login)},
+        "ambassador": {
+            "is_ambassador": bool(user.is_ambassador),
+            "ref_code": user.ref_code or "",
+            "link": _ref_link(user.ref_code),
+            # balance — доступное к выплате (начислено минус выплаты и заявки).
+            "balance_kopeks": ref_stats["available_kopeks"] if ref_stats else 0,
+            "balance": round(ref_stats["available_kopeks"] / 100, 2) if ref_stats else 0,
+            "referrals": ref_stats["invited"] if ref_stats else 0,
+        },
     }
 
 

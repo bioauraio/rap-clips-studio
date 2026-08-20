@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=40" />
+<link rel="stylesheet" href="/style.css?v=42" />
 </head>
 <body>
 <div class="made-with" aria-hidden="true">сделано :333</div>
@@ -37,6 +37,9 @@
         <p>+ Kling<br>максимум движения</p>
       </div>
     </div>
+
+    <!-- Плашка приглашения: показывается только когда в адресе был ?ref=КОД. -->
+    <p id="welcome-ref" class="welcome-ref hidden"></p>
 
     <div class="wl-actions">
       <button id="welcome-start" class="primary welcome-cta">Старт — бесплатно</button>
@@ -72,6 +75,7 @@
     <span id="project-kind" class="kind-badge"></span>
     <button id="new-project-btn">+ проект</button>
     <span id="points-badge" class="kind-badge points-badge hidden" title="остаток генераций"></span>
+    <button id="account-btn" class="account-btn hidden" title="тариф, генерации, партнёрка">Кабинет</button>
     <button id="save-account-btn" class="hidden">Сохранить аккаунт</button>
     <button id="logout-btn" class="ghost">выйти</button>
   </header>
@@ -360,7 +364,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=40"></script>
 <div id="guide-modal" class="guide-modal hidden">
   <div class="guide-modal-card">
     <div class="guide-modal-head">
@@ -420,5 +423,6 @@
   </div>
 </div>
 
+<script src="/app.js?v=42"></script>
 </body>
 </html>

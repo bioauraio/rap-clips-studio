@@ -56,6 +56,70 @@ class User(Base):
     plan_until = Column(DateTime, nullable=True)
     autopay = Column(Boolean, nullable=False, default=True)
     avatar_url = Column(String, nullable=False, default="")
+    # Партнёрка «амбассадор». ref_code пустой, пока человек не подключился:
+    # так поиск владельца кода не цепляет обычных пользователей.
+    ref_code = Column(String, nullable=False, default="")
+    # Кто привёл. Ставится ОДИН раз (первое касание) и больше не меняется —
+    # иначе последний, кто дал ссылку, забирал бы чужого реферала.
+    referred_by = Column(Integer, nullable=True)
+    is_ambassador = Column(Boolean, nullable=False, default=False)
+    # Деньги партнёрки в копейках: начислено за всё время и выплачено руками.
+    # Доступное к выплате НЕ храним — оно считается как начислено − выплачено −
+    # суммы заявок в работе, чтобы одни и те же деньги нельзя было заказать дважды.
+    ref_balance_kopeks = Column(Integer, nullable=False, default=0)
+    ref_paid_kopeks = Column(Integer, nullable=False, default=0)
+    payout_details = Column(Text, nullable=False, default="")
+
+
+class RefEvent(Base):
+    """Событие партнёрки: приход реферала и каждый его платёж.
+
+    Это одновременно лента для кабинета амбассадора и защита от повторного
+    начисления: ЮKassa штатно дублирует вебхуки, а UNIQUE на payment_id делает
+    второе начисление по тому же платежу физически невозможным. У signup-событий
+    payment_id = NULL — в SQLite несколько NULL уникальности не нарушают."""
+    __tablename__ = "ref_events"
+    id = Column(Integer, primary_key=True)
+    ambassador_id = Column(Integer, nullable=False, index=True)
+    referral_id = Column(Integer, nullable=False, index=True)
+    kind = Column(String, nullable=False, default="signup")  # signup | payment
+    amount_kopeks = Column(Integer, nullable=False, default=0)   # сколько заплатил реферал
+    reward_kopeks = Column(Integer, nullable=False, default=0)   # сколько начислено амбассадору
+    payment_id = Column(String, nullable=True, unique=True, default=None)
+    created_at = Column(DateTime, default=now)
+
+
+class Payout(Base):
+    """Заявка амбассадора на выплату. Деньги владелец переводит руками —
+    автоматических выплат нет, статус двигается админским эндпоинтом.
+
+    Пока заявка в new, её сумма считается зарезервированной и в доступный
+    баланс не входит; rejected сам возвращает деньги в доступные."""
+    __tablename__ = "payouts"
+    id = Column(Integer, primary_key=True)
+    ambassador_id = Column(Integer, nullable=False, index=True)
+    amount_kopeks = Column(Integer, nullable=False, default=0)
+    details = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="new")  # new | paid | rejected
+    comment = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=now)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+
+class ProcessedPayment(Base):
+    """Платежи ЮKassa, по которым тариф уже выдан.
+
+    ЮKassa повторяет payment.succeeded, пока не получит 200, и дублирует его
+    сама на ретраях сети. Без этой таблицы каждый дубль двигал plan_until ещё
+    на месяц: человек платил один раз, а подписка росла на глазах. UNIQUE на
+    payment_id закрывает и гонку двух одновременно приехавших вебхуков."""
+    __tablename__ = "processed_payments"
+    id = Column(Integer, primary_key=True)
+    payment_id = Column(String, nullable=False, unique=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    plan = Column(String, nullable=False, default="")
+    amount_kopeks = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=now)
 
 
 class FileOwner(Base):

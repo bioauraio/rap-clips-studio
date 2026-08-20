@@ -213,7 +213,49 @@ async function api(path, opts = {}) {
 // me — текущий пользователь: бейдж очков и кнопка «Сохранить аккаунт» живут от него.
 let me = { authed: false, user: null };
 
+// ────────── реферальная метка ?ref=КОД ──────────
+// По ссылке амбассадора человек попадает на лендинг и жмёт «Старт» уже без
+// параметра в адресе, поэтому код сразу кладём в sessionStorage: иначе привязка
+// к амбассадору терялась бы на первом же клике.
+const REF_KEY = "qv_ref";
+
+function stripQueryParam(name) {
+  try {
+    const url = new URL(location.href);
+    if (!url.searchParams.has(name)) return;
+    url.searchParams.delete(name);
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  } catch (e) { /* старый браузер — адрес останется как есть */ }
+}
+
+function pickRefCode() {
+  try {
+    const fromUrl = (new URLSearchParams(location.search).get("ref") || "").trim();
+    if (fromUrl) {
+      sessionStorage.setItem(REF_KEY, fromUrl.slice(0, 32));
+      // Адрес чистим: код уже сохранён, светить его в строке незачем.
+      stripQueryParam("ref");
+    }
+    return sessionStorage.getItem(REF_KEY) || "";
+  } catch (e) {
+    return "";  // приватный режим без sessionStorage — просто работаем без реферала
+  }
+}
+
+const refCode = pickRefCode();
+
+// Плашка на лендинге: пришедший по приглашению должен видеть, что скидка его ждёт.
+function renderRefBanner() {
+  const el = $("#welcome-ref");
+  if (!el) return;
+  el.classList.toggle("hidden", !refCode);
+  if (refCode) {
+    el.innerHTML = `🎟 ты пришёл по приглашению <b>${escHtml(refCode)}</b> — скидка на первую оплату`;
+  }
+}
+
 function showWelcome() {
+  renderRefBanner();
   $("#welcome").classList.remove("hidden");
   $("#login").classList.add("hidden");
   $("#app").classList.add("hidden");
@@ -231,16 +273,20 @@ function showApp() {
   loadProject();
 }
 
-// Бейдж «⚡ N» (не-админу) и «Сохранить аккаунт» (гостю без логина) в топбаре.
+// Бейдж «⚡ N» (не-админу), «Кабинет» и «Сохранить аккаунт» (гостю без логина) в топбаре.
 function renderUserBar() {
   const u = me && me.user;
   const badge = $("#points-badge");
   const saveBtn = $("#save-account-btn");
+  const accBtn = $("#account-btn");
   if (!u) {
     badge.classList.add("hidden");
     saveBtn.classList.add("hidden");
+    if (accBtn) accBtn.classList.add("hidden");
     return;
   }
+  // Кабинет открыт всем, включая гостя: тариф и партнёрка живут на его id.
+  if (accBtn) accBtn.classList.remove("hidden");
   badge.classList.toggle("hidden", Boolean(u.is_admin));
   badge.textContent = `⚡ ${u.gen_points}`;
   // Тариф видно сразу: на free видео рисует Grok, Seedance открыт на pro.
@@ -251,8 +297,8 @@ function renderUserBar() {
     planBadge.className = "kind-badge";
     badge.after(planBadge);
   }
-  const pro = Boolean(u.is_admin) || u.plan === "pro";
-  planBadge.textContent = pro ? "PRO · Seedance" : "FREE · Grok";
+  const pro = Boolean(u.is_admin) || u.plan === "pro" || u.plan === "pro_max";
+  planBadge.textContent = pro ? `${u.plan_title || "PRO"} · Seedance` : "FREE · Grok";
   planBadge.title = pro
     ? "Seedance доступен: монтаж по первому и последнему кадру"
     : "бесплатный тариф: видео через Grok; Seedance откроется на платном";
@@ -277,7 +323,9 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 $("#welcome-start").addEventListener("click", async () => {
   // «Старт» = гостевой аккаунт сразу: без формы, регистрация — потом, по желанию.
-  await api("/api/start", { method: "POST" });
+  // ?ref= с реферальной ссылки уезжает тем же запросом — гость закрепляется
+  // за амбассадором ещё до первой оплаты.
+  await api("/api/start" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""), { method: "POST" });
   me = await api("/api/me");
   showApp();
 });
@@ -289,6 +337,8 @@ $("#logout-btn").addEventListener("click", async () => {
   me = { authed: false, user: null };
   showWelcome();
 });
+
+$("#account-btn").addEventListener("click", () => openAccountModal("account"));
 
 // Гость превращается в постоянный аккаунт: тот же user id, проекты остаются.
 $("#save-account-btn").addEventListener("click", () => {
@@ -353,6 +403,450 @@ $("#modal-overlay").addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("#modal-overlay").classList.contains("hidden")) closeModal();
 });
+
+// ═══════════ личный кабинет: «Аккаунт», «Тариф», «Амбассадор», «Выплаты» ═══════════
+// Кабинет живёт вкладками внутри общей модалки, а не отдельной страницей:
+// открытый проект, поллинг статусов и несохранённые поля остаются на месте.
+
+function escHtml(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+// Деньги на бэке везде в копейках — рубли собираем в одном месте,
+// чтобы округления не разъезжались по разным экранам.
+function fmtRub(kopeks) {
+  const total = Math.round(Number(kopeks) || 0);
+  const abs = Math.abs(total);
+  const head = String(Math.trunc(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  const cop = abs % 100;
+  return `${total < 0 ? "−" : ""}${head}${cop ? "," + String(cop).padStart(2, "0") : ""} ₽`;
+}
+
+function fmtDate(iso, withTime = false) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const p = (n) => String(n).padStart(2, "0");
+  const base = `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+  return withTime ? `${base} ${p(d.getHours())}:${p(d.getMinutes())}` : base;
+}
+
+// navigator.clipboard есть только на https/localhost. Реферальную ссылку копируют
+// в первую очередь с телефона, поэтому запасной путь обязателен.
+async function copyToClipboard(text, btn) {
+  const ok = () => {
+    const was = btn.textContent;
+    btn.textContent = "скопировано";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = was; btn.disabled = false; }, 1400);
+  };
+  try {
+    await navigator.clipboard.writeText(text);
+    ok();
+    return;
+  } catch (e) { /* ниже запасной путь */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); ok(); } catch (e) { window.prompt("скопируй вручную", text); }
+  ta.remove();
+}
+
+function accFail(pane, e) {
+  pane.innerHTML = `<p class="error">${escHtml((e && e.message) || "не вышло загрузить")}</p>`;
+}
+
+function accMsg(pane, text, kind = "") {
+  const el = $(".acc-msg", pane);
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "acc-msg status" + (kind ? " " + kind : "");
+}
+
+// Кнопка «скопировать» рядом с кодом и ссылкой — одна на оба места.
+function bindCopy(pane) {
+  $$(".acc-copy", pane).forEach((btn) => {
+    btn.addEventListener("click", () => copyToClipboard(btn.dataset.copy || "", btn));
+  });
+}
+
+const ACC_TABS = [
+  { key: "account", title: "Аккаунт" },
+  { key: "plan", title: "Тариф" },
+  { key: "ref", title: "Амбассадор" },
+  { key: "payouts", title: "Выплаты", admin: true },
+];
+
+const PAYOUT_STATUS = {
+  new: { label: "в работе", cls: "new" },
+  paid: { label: "выплачено", cls: "paid" },
+  rejected: { label: "отклонена", cls: "rejected" },
+};
+
+function openAccountModal(initial = "account") {
+  const isAdmin = Boolean(me && me.user && me.user.is_admin);
+  const tabs = ACC_TABS.filter((t) => !t.admin || isAdmin);
+  const start = tabs.some((t) => t.key === initial) ? initial : "account";
+  openModal("Кабинет", (body) => {
+    body.innerHTML = `
+      <div class="modal-tabs acc-tabs">
+        ${tabs.map((t) => `<button type="button" class="modal-tab" data-tab="${t.key}">${t.title}</button>`).join("")}
+      </div>
+      ${tabs.map((t) => `<div class="acc-pane hidden" data-pane="${t.key}">
+        <div class="muted acc-loading">загружаю…</div></div>`).join("")}`;
+
+    const loaders = {
+      account: renderAccountPane, plan: renderPlanPane,
+      ref: renderRefPane, payouts: renderPayoutsPane,
+    };
+    // Вкладка грузится один раз при первом открытии: лишних запросов нет,
+    // а перерисовку после действий делают сами обработчики.
+    const loaded = new Set();
+    const open = (key) => {
+      $$(".modal-tab", body).forEach((el) => el.classList.toggle("on", el.dataset.tab === key));
+      $$(".acc-pane", body).forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== key));
+      if (loaded.has(key)) return;
+      loaded.add(key);
+      const pane = $(`.acc-pane[data-pane="${key}"]`, body);
+      if (pane && loaders[key]) loaders[key](pane);
+    };
+    $$(".modal-tab", body).forEach((t) => t.addEventListener("click", () => open(t.dataset.tab)));
+    open(start);
+  });
+}
+
+// ────────── вкладка «Аккаунт» ──────────
+async function renderAccountPane(pane) {
+  let a;
+  try { a = await api("/api/account"); } catch (e) { return accFail(pane, e); }
+  const linked = a.linked || {};
+  const chips = [["telegram", "Telegram"], ["google", "Google"], ["yandex", "Яндекс"], ["password", "Пароль"]];
+  const initial = (a.name || "?").trim().charAt(0).toUpperCase() || "?";
+  pane.innerHTML = `
+    <div class="acc-head">
+      ${a.avatar_url
+        ? `<img class="acc-avatar" src="${escHtml(a.avatar_url)}" alt="" />`
+        : `<span class="acc-avatar acc-avatar-ph">${escHtml(initial)}</span>`}
+      <div class="acc-who">
+        <b>${escHtml(a.name || "гость")}</b>
+        <span class="muted">${escHtml(a.email || a.login || "аккаунт без почты и логина")}</span>
+      </div>
+    </div>
+    <div class="acc-stats">
+      <div class="acc-stat"><b>${escHtml(a.plan_title || "FREE")}</b><span>тариф</span></div>
+      <div class="acc-stat"><b>${a.plan_until ? fmtDate(a.plan_until) : "—"}</b><span>активен до</span></div>
+      <div class="acc-stat"><b>⚡ ${Number(a.points) || 0}</b><span>генераций</span></div>
+      <div class="acc-stat"><b>${Number(a.projects) || 0}</b><span>проектов</span></div>
+    </div>
+    ${a.plan_note ? `<p class="muted acc-note">${escHtml(a.plan_note)}</p>` : ""}
+    <label>Входы в аккаунт</label>
+    <div class="acc-chips">
+      ${chips.map(([k, t]) => `<span class="acc-chip${linked[k] ? " on" : ""}">${linked[k] ? "✓" : "○"} ${t}</span>`).join("")}
+    </div>
+    <div class="row acc-actions"></div>
+    <span class="acc-msg status"></span>`;
+
+  const actions = $(".acc-actions", pane);
+  if (a.autopay) {
+    // Автопродление выключается только когда оно есть — иначе кнопка врала бы.
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "danger";
+    btn.textContent = "Отключить автопродление";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      accMsg(pane, "отключаю…");
+      try {
+        await api("/api/billing/cancel", { method: "POST" });
+        await renderAccountPane(pane);
+        accMsg(pane, "автопродление отключено", "done");
+      } catch (e) {
+        btn.disabled = false;
+        accMsg(pane, e.message, "error");
+      }
+    });
+    const note = document.createElement("span");
+    note.className = "muted";
+    note.textContent = "тариф доработает до конца оплаченного срока";
+    actions.append(btn, note);
+  } else {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = a.plan === "free" ? "Выбрать тариф" : "Продлить тариф";
+    btn.addEventListener("click", () => openAccountModal("plan"));
+    actions.appendChild(btn);
+    if (a.plan !== "free") {
+      const note = document.createElement("span");
+      note.className = "muted";
+      note.textContent = "автопродление выключено";
+      actions.appendChild(note);
+    }
+  }
+}
+
+// ────────── вкладка «Тариф» ──────────
+async function renderPlanPane(pane) {
+  let data;
+  try { data = await api("/api/billing/plans"); } catch (e) { return accFail(pane, e); }
+  const enabled = Boolean(data.enabled);
+  const current = data.current || "free";
+  pane.innerHTML = `
+    <div class="acc-plans">
+      ${(data.plans || []).map((p) => {
+        const isCur = p.id === current;
+        return `<div class="acc-plan${isCur ? " on" : ""}">
+          <div class="acc-plan-top"><b>${escHtml(p.title)}</b><span>${fmtRub((Number(p.price) || 0) * 100)}</span></div>
+          <p class="acc-plan-note">${escHtml(p.note || "")}</p>
+          <p class="acc-plan-points">⚡ ${Number(p.points) || 0} генераций</p>
+          ${isCur
+            ? `<span class="acc-plan-cur">текущий</span>`
+            : (Number(p.price) > 0
+              ? `<button type="button" class="primary acc-pay" data-plan="${escHtml(p.id)}">Оплатить</button>`
+              : `<span class="acc-plan-cur muted">базовый</span>`)}
+        </div>`;
+      }).join("")}
+    </div>
+    <label>Промокод</label>
+    <input class="acc-promo" placeholder="код амбассадора — скидка на первую оплату" />
+    <span class="acc-msg status"></span>`;
+
+  // Промокод из реферальной ссылки подставляем сам: человек уже пришёл по нему.
+  const promo = $(".acc-promo", pane);
+  if (refCode) promo.value = refCode;
+
+  $$(".acc-pay", pane).forEach((btn) => {
+    if (!enabled) {
+      // Честно: касса не подключена, а не «что-то пошло не так».
+      btn.disabled = true;
+      btn.textContent = "оплата пока не подключена";
+      btn.title = "приём платежей ещё не настроен — напиши владельцу";
+      return;
+    }
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      accMsg(pane, "создаю платёж…");
+      try {
+        const r = await api("/api/billing/create", {
+          method: "POST", body: { plan: btn.dataset.plan, promo: promo.value.trim() },
+        });
+        if (r && r.url) { window.location.href = r.url; return; }
+        throw new Error("касса не вернула ссылку оплаты");
+      } catch (e) {
+        btn.disabled = false;
+        accMsg(pane, e.message, "error");
+      }
+    });
+  });
+  if (!enabled) {
+    const note = document.createElement("p");
+    note.className = "muted acc-note";
+    note.textContent = "Приём платежей ещё не подключён — тарифы показаны, оплатить нельзя.";
+    pane.insertBefore(note, $(".acc-msg", pane));
+  }
+}
+
+// ────────── вкладка «Амбассадор» ──────────
+async function renderRefPane(pane) {
+  let d;
+  try { d = await api("/api/ambassador"); } catch (e) { return accFail(pane, e); }
+  if (d.is_ambassador) renderRefCabinet(pane, d); else renderRefJoin(pane, d);
+}
+
+function renderRefJoin(pane, d) {
+  pane.innerHTML = `
+    <p class="acc-lead">Приводи людей по своей ссылке — и забирай долю с их оплат.</p>
+    <ul class="acc-list">
+      <li>другу — скидка <b>${Number(d.discount_pct) || 0}%</b> на первую оплату</li>
+      <li>тебе — <b>${Number(d.reward_pct) || 0}%</b> с каждого его платежа, не только с первого</li>
+      <li>выплата по твоим реквизитам от ${fmtRub(d.min_payout_kopeks)}</li>
+    </ul>
+    <div class="row">
+      <button type="button" class="primary acc-join">Стать амбассадором</button>
+      <span class="acc-msg status"></span>
+    </div>`;
+  const btn = $(".acc-join", pane);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    accMsg(pane, "подключаю…");
+    try {
+      await api("/api/ambassador/join", { method: "POST" });
+      await renderRefPane(pane);
+    } catch (e) {
+      btn.disabled = false;
+      accMsg(pane, e.message, "error");
+    }
+  });
+}
+
+function renderRefCabinet(pane, d) {
+  const s = d.stats || {};
+  const link = d.link || "";
+  const events = d.events || [];
+  const payouts = d.payouts || [];
+  pane.innerHTML = `
+    <label>Твой промокод</label>
+    <div class="acc-copy-row">
+      <span class="acc-code">${escHtml(d.code)}</span>
+      <button type="button" class="acc-copy" data-copy="${escHtml(d.code)}">скопировать</button>
+    </div>
+    <label>Реферальная ссылка</label>
+    <div class="acc-copy-row">
+      <input class="acc-link" readonly value="${escHtml(link)}" />
+      <button type="button" class="acc-copy" data-copy="${escHtml(link)}">скопировать</button>
+    </div>
+    <p class="muted acc-note">Другу — скидка ${Number(d.discount_pct) || 0}% на первую оплату,
+      тебе — ${Number(d.reward_pct) || 0}% с каждой его оплаты.</p>
+
+    <div class="acc-stats acc-stats-5">
+      <div class="acc-stat"><b>${Number(s.invited) || 0}</b><span>приглашено</span></div>
+      <div class="acc-stat"><b>${Number(s.buyers) || 0}</b><span>оплатили</span></div>
+      <div class="acc-stat"><b>${fmtRub(s.accrued_kopeks)}</b><span>начислено</span></div>
+      <div class="acc-stat"><b>${fmtRub(s.paid_kopeks)}</b><span>выплачено</span></div>
+      <div class="acc-stat acc-stat-hi"><b>${fmtRub(s.available_kopeks)}</b><span>доступно</span></div>
+    </div>
+    <p class="muted acc-note">оборот приглашённых — ${fmtRub(s.turnover_kopeks)}${
+      Number(s.reserved_kopeks) ? `, в заявках — ${fmtRub(s.reserved_kopeks)}` : ""}</p>
+
+    <label>Последние события</label>
+    ${events.length ? `<div class="acc-table-wrap"><table class="acc-table"><tbody>
+      ${events.map((e) => `<tr>
+        <td class="acc-td-date">${escHtml(fmtDate(e.created_at))}</td>
+        <td class="acc-td-who">${escHtml(e.who || "")}</td>
+        <td>${e.kind === "payment" ? "оплата " + escHtml(fmtRub(e.amount_kopeks)) : "пришёл по ссылке"}</td>
+        <td class="acc-td-sum">${e.reward_kopeks ? "+" + escHtml(fmtRub(e.reward_kopeks)) : "—"}</td>
+      </tr>`).join("")}
+    </tbody></table></div>` : `<p class="muted">пока пусто — поделись ссылкой</p>`}
+
+    <label>Реквизиты для выплаты</label>
+    <textarea class="acc-details" rows="2" placeholder="карта, СБП по номеру телефона, кому переводить">${escHtml(d.payout_details || "")}</textarea>
+    <div class="row">
+      <button type="button" class="acc-save-details">Сохранить реквизиты</button>
+    </div>
+    <label>Заказать выплату</label>
+    <div class="row acc-payout-row">
+      <input class="acc-payout-sum" type="number" min="0" step="1" placeholder="сумма в ₽" />
+      <button type="button" class="primary acc-payout-btn">Заказать выплату</button>
+    </div>
+    <p class="muted acc-note">Пусто в сумме — закажем всё доступное. Минимальная выплата —
+      ${fmtRub(d.min_payout_kopeks)}, деньги по заявке сразу уходят в резерв.</p>
+    <span class="acc-msg status"></span>
+
+    ${payouts.length ? `<label>Мои заявки</label>
+      <div class="acc-payouts">${payouts.map((p) => {
+        const st = PAYOUT_STATUS[p.status] || { label: p.status, cls: "" };
+        return `<div class="acc-payout">
+          <b>${escHtml(fmtRub(p.amount_kopeks))}</b>
+          <span class="acc-badge ${st.cls}">${escHtml(st.label)}</span>
+          <span class="muted">${escHtml(fmtDate(p.created_at))}</span>
+          ${p.comment ? `<span class="muted acc-payout-note">${escHtml(p.comment)}</span>` : ""}
+        </div>`;
+      }).join("")}</div>` : ""}`;
+
+  bindCopy(pane);
+  const linkInput = $(".acc-link", pane);
+  if (linkInput) linkInput.addEventListener("focus", () => linkInput.select());
+
+  const detailsBtn = $(".acc-save-details", pane);
+  detailsBtn.addEventListener("click", async () => {
+    detailsBtn.disabled = true;
+    accMsg(pane, "сохраняю…");
+    try {
+      await api("/api/ambassador/details", {
+        method: "POST", body: { details: $(".acc-details", pane).value.trim() },
+      });
+      accMsg(pane, "реквизиты сохранены", "done");
+    } catch (e) {
+      accMsg(pane, e.message, "error");
+    }
+    detailsBtn.disabled = false;
+  });
+
+  const payBtn = $(".acc-payout-btn", pane);
+  payBtn.addEventListener("click", async () => {
+    payBtn.disabled = true;
+    accMsg(pane, "отправляю заявку…");
+    const rub = Number($(".acc-payout-sum", pane).value || 0);
+    try {
+      await api("/api/ambassador/payout", {
+        method: "POST",
+        body: {
+          // Бэк ждёт копейки; пусто или 0 = «всё доступное».
+          amount_kopeks: rub > 0 ? Math.round(rub * 100) : 0,
+          details: $(".acc-details", pane).value.trim(),
+        },
+      });
+      await renderRefPane(pane);
+      accMsg(pane, "заявка принята — деньги уйдут по реквизитам", "done");
+    } catch (e) {
+      payBtn.disabled = false;
+      accMsg(pane, e.message, "error");
+    }
+  });
+}
+
+// ────────── вкладка «Выплаты» (только админ) ──────────
+async function renderPayoutsPane(pane, status = "new") {
+  pane.innerHTML = `<div class="muted acc-loading">загружаю…</div>`;
+  let d;
+  try {
+    d = await api(`/api/admin/payouts${status ? `?status=${encodeURIComponent(status)}` : ""}`);
+  } catch (e) { return accFail(pane, e); }
+  const rows = d.payouts || [];
+  const opts = [["new", "новые"], ["paid", "выплаченные"], ["rejected", "отклонённые"], ["", "все"]];
+  pane.innerHTML = `
+    <div class="row acc-filter-row">
+      <label class="acc-filter-label">Очередь</label>
+      <select class="acc-filter">
+        ${opts.map(([v, t]) => `<option value="${v}"${v === status ? " selected" : ""}>${t}</option>`).join("")}
+      </select>
+    </div>
+    ${rows.length ? `<div class="acc-payouts">${rows.map((p) => {
+      const st = PAYOUT_STATUS[p.status] || { label: p.status, cls: "" };
+      const a = p.ambassador || {};
+      const contacts = [a.tg ? "@" + a.tg : "", a.email || ""].filter(Boolean).join(" · ");
+      return `<div class="acc-payout acc-payout-admin" data-id="${p.id}">
+        <div class="acc-payout-head">
+          <b>${escHtml(fmtRub(p.amount_kopeks))}</b>
+          <span class="acc-badge ${st.cls}">${escHtml(st.label)}</span>
+          <span class="muted">${escHtml(fmtDate(p.created_at, true))}</span>
+        </div>
+        <div class="acc-payout-who">
+          ${escHtml(a.name || "")}${a.code ? ` <span class="acc-code acc-code-sm">${escHtml(a.code)}</span>` : ""}
+          ${contacts ? `<span class="muted">${escHtml(contacts)}</span>` : ""}
+        </div>
+        <div class="acc-payout-details">${escHtml(p.details || "реквизиты не указаны")}</div>
+        ${p.comment ? `<div class="muted acc-payout-note">${escHtml(p.comment)}</div>` : ""}
+        ${p.status === "new" ? `<div class="row acc-payout-actions">
+          <button type="button" class="primary acc-mark" data-status="paid">Выплачено</button>
+          <button type="button" class="danger acc-mark" data-status="rejected">Отклонить</button>
+        </div>` : ""}
+      </div>`;
+    }).join("")}</div>` : `<p class="muted">заявок в этой очереди нет</p>`}
+    <span class="acc-msg status"></span>`;
+
+  $(".acc-filter", pane).addEventListener("change", (e) => renderPayoutsPane(pane, e.target.value));
+
+  $$(".acc-mark", pane).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const card = btn.closest(".acc-payout");
+      $$(".acc-mark", card).forEach((b) => { b.disabled = true; });
+      accMsg(pane, "сохраняю…");
+      try {
+        await api(`/api/admin/payouts/${card.dataset.id}`, {
+          method: "POST", body: { status: btn.dataset.status },
+        });
+        await renderPayoutsPane(pane, status);
+      } catch (e) {
+        $$(".acc-mark", card).forEach((b) => { b.disabled = false; });
+        accMsg(pane, e.message, "error");
+      }
+    });
+  });
+}
 
 let project = null;
 let projects = [];
@@ -1698,6 +2192,13 @@ async function addManualScene(trackId) {
   me = await api("/api/me");
   // Без сессии гость видит лендинг, а не форму пароля.
   if (me.authed) showApp(); else showWelcome();
+  // Возврат из кассы: ЮKassa приводит на /?paid=<тариф>. Открываем кабинет на
+  // вкладке тарифа, чтобы человек своими глазами увидел, что тариф встал.
+  const paid = new URLSearchParams(location.search).get("paid");
+  if (paid) {
+    stripQueryParam("paid");
+    if (me.authed) openAccountModal("plan");
+  }
 })();
 
 // Разбор листа раскадровки: ячейки сеткой, владелец сам решает, какие взять
