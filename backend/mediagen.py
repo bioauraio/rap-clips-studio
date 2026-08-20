@@ -23,6 +23,8 @@ import subprocess
 import time
 import uuid
 
+import logging
+
 import httpx
 
 IMAGE_GATEWAY_URL = os.environ.get("IMAGE_GATEWAY_URL", "http://172.18.0.1:8766") + "/generate"
@@ -59,6 +61,9 @@ FRAME_W = int(os.environ.get("FRAME_W", "2160"))
 FRAME_H = int(os.environ.get("FRAME_H", "3840"))
 CLIP_W = int(os.environ.get("CLIP_W", "1080"))
 CLIP_H = int(os.environ.get("CLIP_H", "1920"))
+
+
+log = logging.getLogger("rapclips.media")
 
 
 class MediaError(RuntimeError):
@@ -318,7 +323,17 @@ async def animate_scene(
             raise MediaError(
                 "Seedance недоступен: нет SEEVIO_API_KEY — создай ключ в "
                 "дашборде seevio.ai и добавь его в infra/.env")
-        return await _animate_seedance(prompt, first_path, last_path, duration_sec)
+        try:
+            return await _animate_seedance(prompt, first_path, last_path, duration_sec)
+        except MediaError as e:
+            # Кончились кредиты seevio — не роняем сцену, а дорисовываем через
+            # Grok (он по подписке и бесплатен). Отличие: оживляет только
+            # первый кадр, последний игнорируется.
+            text = str(e).lower()
+            if "insufficient_credits" not in text and " 402" not in text:
+                raise
+            log.warning("seevio без кредитов, откатываюсь на Grok: %s", str(e)[:200])
+            return await _animate_grok(prompt, first_path)
     if provider == "grok":
         return await _animate_grok(prompt, first_path)
     raise MediaError(f"неизвестный провайдер видео: {provider}")
