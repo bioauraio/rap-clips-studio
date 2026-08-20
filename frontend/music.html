@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="description" data-i18n-content="music.meta.description" content="" />
+<title>qlolmusic</title>
+<link rel="canonical" href="/music" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="apple-touch-icon" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/style.css?v=46" />
+<link rel="stylesheet" href="/landing.css?v=46" />
+<link rel="stylesheet" href="/music.css?v=46" />
+</head>
+<body>
+<!-- ─────────────────────────────────────────────────────────────────────────
+     qlolmusic — музыкальное направление lolq.ai: лейбл, дистрибуция через
+     Zvonko Digital, мастеринг, клип к релизу, договор и выплаты через юрлицо.
+     Страница самостоятельная: общий словарь I18N (i18n.js) + music.js, стили
+     берутся у главной (landing.css) — своего в music.css только то, чего на
+     главной нет. Разметка держит ключи data-i18n="music.…", повторяющиеся
+     блоки рисует music.js из того же словаря.
+
+     ЭТО ВИТРИНА И ПРИЁМ ЗАЯВОК. Интеграции с Zvonko здесь нет и быть не
+     может, пока не подписан договор и не выданы доступы: форма отправляет
+     заявку на POST /api/music/lead, а если роут не поднят — честно говорит,
+     что заявка НЕ ушла.
+     ───────────────────────────────────────────────────────────────────── -->
+<div class="landing mu-page">
+  <a class="ld-skip" href="#mu-main" data-i18n="music.nav.skip"></a>
+
+  <div class="ld-topbar">
+    <header class="ld-bar">
+      <a class="ld-brand" href="#mu-top">
+        <img src="/img/logo-mark.svg" width="30" height="30" alt="" />
+        <span class="mu-brand-col">
+          <span class="mu-word">qlol<span class="brand-dot">music</span></span>
+          <span class="mu-brand-sub" data-i18n="music.nav.sub"></span>
+        </span>
+      </a>
+      <nav class="ld-menu" data-i18n-aria="music.nav.menuAria">
+        <a href="#mu-offer" data-i18n="music.nav.offer"></a>
+        <a href="#mu-flow" data-i18n="music.nav.flow"></a>
+        <a href="#mu-need" data-i18n="music.nav.need"></a>
+        <a href="#mu-faq" data-i18n="music.nav.faq"></a>
+        <a href="/" data-i18n="music.nav.home"></a>
+      </nav>
+      <div class="ld-bar-actions">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+          <button type="button" data-lang="en">EN</button>
+          <button type="button" data-lang="ru">RU</button>
+        </div>
+        <button class="primary" type="button" data-mu-goto="#mu-apply" data-i18n="music.nav.cta"></button>
+      </div>
+    </header>
+  </div>
+
+  <main id="mu-main">
+    <!-- 1. Первый экран: оффер направления и состав релиза -->
+    <section class="mu-hero ld-shell" id="mu-top">
+      <!-- Плашку статуса music.js убирает, когда договор с дистрибьютором
+           подписан (MUSIC_LAUNCH.distributorSigned) — до тех пор она висит. -->
+      <p class="mu-status" id="mu-status" data-i18n="music.hero.status"></p>
+      <div class="mu-hero-grid">
+        <div class="mu-hero-copy">
+          <span class="ld-tag" data-i18n="music.hero.eyebrow"></span>
+          <h1 class="mu-hero-h1" data-i18n="music.hero.title"></h1>
+          <p class="mu-hero-sub" data-i18n="music.hero.sub"></p>
+          <div class="mu-hero-actions">
+            <button class="primary ld-cta" type="button" data-mu-goto="#mu-apply" data-i18n="music.hero.ctaApply"></button>
+            <button class="ld-cta" type="button" data-mu-goto="#mu-flow" data-i18n="music.hero.ctaFlow"></button>
+          </div>
+          <p class="mu-hero-trust" data-i18n="music.hero.trust"></p>
+        </div>
+
+        <figure class="mu-pack">
+          <div class="mu-pack-top">
+            <img src="/img/shots/clip.jpg" width="96" height="128" alt=""
+                 data-i18n-alt="music.hero.packAlt" />
+            <div>
+              <h2 class="mu-pack-title" data-i18n="music.hero.packTitle"></h2>
+              <figcaption class="mu-pack-cap" data-i18n="music.hero.packCap"></figcaption>
+            </div>
+          </div>
+          <ul id="mu-pack-list"></ul>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 2. Площадки -->
+    <section class="ld-sec ld-shell" id="mu-plats">
+      <div class="ld-sec-head">
+        <h2 class="ld-h2" data-i18n="music.platforms.title"></h2>
+      </div>
+      <ul class="mu-plats" id="mu-plats-list"></ul>
+      <p class="mu-plats-note" data-i18n="music.platforms.note"></p>
+    </section>
+
+    <!-- 3. Что даём артисту -->
+    <section class="ld-sec ld-shell" id="mu-offer">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="music.offer.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="music.offer.title"></h2>
+        <p class="ld-lead" data-i18n="music.offer.lead"></p>
+      </div>
+      <div class="mu-offer" id="mu-offer-list"></div>
+    </section>
+
+    <!-- 4. Как проходит релиз -->
+    <section class="ld-sec ld-shell" id="mu-flow">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="music.flow.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="music.flow.title"></h2>
+        <p class="ld-lead" data-i18n="music.flow.lead"></p>
+      </div>
+      <ol class="mu-flow" id="mu-flow-list"></ol>
+    </section>
+
+    <!-- 5. Что нужно от артиста -->
+    <section class="ld-sec ld-shell" id="mu-need">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="music.need.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="music.need.title"></h2>
+        <p class="ld-lead" data-i18n="music.need.lead"></p>
+      </div>
+      <div class="mu-need" id="mu-need-list"></div>
+    </section>
+
+    <!-- 6. Права и деньги -->
+    <section class="ld-sec ld-shell" id="mu-terms">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="music.terms.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="music.terms.title"></h2>
+      </div>
+      <div class="mu-terms">
+        <ul id="mu-terms-list"></ul>
+        <p class="mu-terms-note" data-i18n="music.terms.note"></p>
+      </div>
+    </section>
+
+    <!-- 7. FAQ по правам и роялти -->
+    <section class="ld-sec ld-shell" id="mu-faq">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="music.faq.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="music.faq.title"></h2>
+      </div>
+      <div class="ld-faq" id="mu-faq-list"></div>
+    </section>
+
+    <!-- 8. Форма заявки -->
+    <section class="ld-sec ld-shell" id="mu-apply">
+      <div class="mu-apply-grid">
+        <div class="mu-apply-side">
+          <span class="ld-eyebrow" data-i18n="music.form.eyebrow"></span>
+          <h2 class="ld-h2" data-i18n="music.form.title"></h2>
+          <p class="ld-lead" data-i18n="music.form.lead"></p>
+          <p class="ld-eyebrow mu-side-title" data-i18n="music.form.sideTitle"></p>
+          <ul id="mu-side-list"></ul>
+        </div>
+
+        <div class="mu-form-box">
+          <form class="mu-form" id="mu-form" novalidate>
+            <div class="mu-form-row">
+              <div class="mu-field" data-field="name">
+                <label for="mu-name" data-i18n="music.form.nameLabel"></label>
+                <input id="mu-name" name="name" type="text" maxlength="80"
+                       autocomplete="name" data-i18n-ph="music.form.namePh" />
+                <p class="mu-err hidden" data-err="name"></p>
+              </div>
+              <div class="mu-field" data-field="contact">
+                <label for="mu-contact" data-i18n="music.form.contactLabel"></label>
+                <input id="mu-contact" name="contact" type="text" maxlength="120"
+                       autocomplete="email" data-i18n-ph="music.form.contactPh" />
+                <p class="mu-hint" data-i18n="music.form.contactHint"></p>
+                <p class="mu-err hidden" data-err="contact"></p>
+              </div>
+            </div>
+
+            <div class="mu-field" data-field="demo">
+              <label for="mu-demo" data-i18n="music.form.demoLabel"></label>
+              <input id="mu-demo" name="demo" type="url" maxlength="500"
+                     inputmode="url" data-i18n-ph="music.form.demoPh" />
+              <p class="mu-hint" data-i18n="music.form.demoHint"></p>
+              <p class="mu-err hidden" data-err="demo"></p>
+            </div>
+
+            <fieldset class="mu-field" data-field="need">
+              <legend data-i18n="music.form.needLabel"></legend>
+              <div class="mu-opts" id="mu-need-opts"></div>
+              <p class="mu-err hidden" data-err="need"></p>
+            </fieldset>
+
+            <div class="mu-field" data-field="comment">
+              <label for="mu-comment" data-i18n="music.form.commentLabel"></label>
+              <textarea id="mu-comment" name="comment" maxlength="2000" rows="4"
+                        data-i18n-ph="music.form.commentPh"></textarea>
+            </div>
+
+            <!-- Ловушка для ботов: скрыта от человека и не берётся табом. -->
+            <div class="mu-hp" aria-hidden="true">
+              <label for="mu-company">Company</label>
+              <input id="mu-company" name="company" type="text" tabindex="-1" autocomplete="off" />
+            </div>
+
+            <div class="mu-form-foot">
+              <button class="primary ld-cta" type="submit" id="mu-submit" data-i18n="music.form.submit"></button>
+              <p class="mu-consent" data-i18n="music.form.consent"></p>
+            </div>
+          </form>
+
+          <!-- Итог отправки. Оба блока честные: «ушло» и «НЕ ушло, вот что делать». -->
+          <div class="mu-note hidden" id="mu-note" role="status" aria-live="polite"></div>
+          <div class="mu-ok hidden" id="mu-ok" role="status" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 9. Подвал -->
+  <footer class="ld-foot">
+    <div class="ld-shell">
+      <div class="ld-foot-grid">
+        <div class="ld-foot-about">
+          <a class="ld-brand" href="#mu-top">
+            <img src="/img/logo-mark.svg" width="30" height="30" alt="" />
+            <span class="mu-word">qlol<span class="brand-dot">music</span></span>
+          </a>
+          <p data-i18n="music.footer.about"></p>
+          <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+            <button type="button" data-lang="en">EN</button>
+            <button type="button" data-lang="ru">RU</button>
+          </div>
+        </div>
+        <div class="ld-foot-cols" id="mu-foot-cols"></div>
+      </div>
+      <div class="ld-foot-legal">
+        <span id="mu-foot-legal-text"></span>
+        <div class="made-with" data-i18n="common.madeWith" aria-hidden="true"></div>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script src="/i18n.js?v=46"></script>
+<script src="/music.js?v=46"></script>
+</body>
+</html>

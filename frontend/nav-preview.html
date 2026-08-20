@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="robots" content="noindex, nofollow" />
+<title>qlolvideo — навигация: живой прототип</title>
+<link rel="stylesheet" href="style.css?v=1" />
+<link rel="stylesheet" href="nav.css?v=1" />
+<style>
+  /* Только для демо-страницы: фейковые кадры и мелочи, которых нет в проде. */
+  .dm-strip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: thin; }
+  .dm-scene {
+    flex: none; width: 152px;
+    border: 2px solid #2d211a; border-radius: 12px; overflow: hidden;
+    background: var(--inset); box-shadow: 0 4px 0 #e8d8c4, 0 4px 0 2px #2d211a;
+  }
+  .dm-frame {
+    height: 96px; display: flex; align-items: flex-end; justify-content: space-between;
+    padding: 6px 8px; color: #fff; font-family: var(--font-mono); font-size: 10px; font-weight: 800;
+    text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
+  .dm-scene-body { padding: 7px 8px 9px; font-size: 11.5px; line-height: 1.35; }
+  .dm-scene-body b { display: block; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 3px; }
+  .dm-note { font-size: 12.5px; color: var(--ink-muted); margin: 0 0 10px; }
+  .dm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .dm-char {
+    border: 2px solid #2d211a; border-radius: 14px; padding: 10px;
+    background: var(--card); box-shadow: 0 4px 0 #e8d8c4, 0 4px 0 2px #2d211a;
+  }
+  .dm-face {
+    height: 92px; border-radius: 10px; border: 2px solid #2d211a; margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: center; font-size: 34px;
+  }
+  .dm-clip {
+    width: min(240px, 60vw); aspect-ratio: 9/16; border-radius: 14px; border: 2px solid #2d211a;
+    box-shadow: 0 5px 0 #e8d8c4, 0 5px 0 2px #2d211a;
+    display: flex; align-items: center; justify-content: center; font-size: 40px; color: #fff;
+  }
+  .dm-kv { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+  .dm-kv span {
+    font-family: var(--font-mono); font-size: 10.5px; padding: 5px 9px; border-radius: 999px;
+    border: 1.5px solid rgba(45,33,26,.3); background: var(--inset); color: var(--ink-muted);
+  }
+  .dm-banner {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-muted); padding: 0 20px; max-width: 1180px; margin: 10px auto 0;
+  }
+  .dm-banner b { color: var(--accent-2); }
+  .dm-sheet {
+    height: 132px; border-radius: 12px; border: 2px solid #2d211a;
+    box-shadow: 0 4px 0 #e8d8c4, 0 4px 0 2px #2d211a;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-family: var(--font-mono); font-size: 12px; font-weight: 800;
+    letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 1px 4px rgba(0,0,0,.5);
+  }
+  @media (max-width: 700px) { .dm-banner { padding: 0 10px; } .dm-scene { width: 132px; } .dm-sheet { height: 96px; } }
+</style>
+</head>
+<body data-nav-manual="1">
+
+<div class="made-with" aria-hidden="true">прототип навигации</div>
+
+<div id="app" class="app">
+  <!-- Топбар оставлен НАРОЧНО: nav.js его прячет, как сделает и в проде. -->
+  <header class="topbar">
+    <select id="project-select" class="project-select"><option>Ночной рейс</option></select>
+    <button id="new-project-btn">+ проект</button>
+    <span id="points-badge" class="kind-badge points-badge">⚡ 128</span>
+    <button id="logout-btn" class="ghost">выйти</button>
+  </header>
+
+  <!-- ─── шаг 1: Сюжет ─── -->
+  <section class="panel" data-nav-stage="story">
+    <h2>Герой и сюжет</h2>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+      <span class="cover-slot project-cover" style="display:inline-flex;align-items:center;justify-content:center;font-size:24px">♪</span>
+      <input class="project-name" value="Ночной рейс" aria-label="Название проекта" />
+      <span class="kind-badge">клип</span>
+    </div>
+    <label>Библия героя</label>
+    <textarea rows="3">Курьер Мирон, 24 года. Худой, стрижка ёжиком, красная ветровка с отражателями. Всегда с термосумкой. Молчит, но смотрит прямо.</textarea>
+    <label>Сквозной сюжет</label>
+    <textarea rows="4">Ночь в городе, где доставка — единственный способ увидеть чужую жизнь. Восемь треков — восемь адресов. К финалу Мирон везёт заказ самому себе.</textarea>
+    <div class="row">
+      <button>Сохранить</button>
+      <button class="primary">Сгенерировать сюжет по всем трекам</button>
+      <span class="status done">готово</span>
+    </div>
+    <div class="dm-kv"><span>8 треков</span><span>3 персонажа</span><span>обновлено 12 мин назад</span></div>
+  </section>
+
+  <!-- ─── шаг 2: Персонажи ─── -->
+  <section class="panel" data-nav-stage="chars">
+    <h2>Персонажи альбома</h2>
+    <p class="dm-note">Имя + характер + фото-модельки распространяются на весь альбом.</p>
+    <div class="dm-grid" id="dm-chars"></div>
+    <div class="row"><button>+ добавить персонажа</button></div>
+  </section>
+
+  <!-- ─── шаги 3–6: Треки / Раскадровка / Анимация / Монтаж ─── -->
+  <section class="panel" data-nav-stage="tracks board anim final">
+    <h2 id="dm-tracks-title">Треки</h2>
+    <div id="tracks"></div>
+    <details class="add-track">
+      <summary>+ добавить трек</summary>
+      <form class="track-form">
+        <input placeholder="Название трека" />
+        <textarea rows="3" placeholder="Текст песни"></textarea>
+        <button type="button" class="primary">Добавить трек</button>
+      </form>
+    </details>
+  </section>
+
+  <!-- ─── режимы «скоро» ─── -->
+  <section class="panel" data-nav-stage="idea heroes scenes render brief actor shoot done complaint data verdict sonnet gpt grok">
+    <h2 id="dm-soon-title">Скоро</h2>
+    <div class="wb-empty">
+      <span class="wb-empty-ico" id="dm-soon-ico">🧸</span>
+      <h3 id="dm-soon-head">Режим готовится</h3>
+      <p id="dm-soon-text">Полка шагов уже живая: ярус контекста работает одинаково во всех режимах — сюда просто приедет содержимое.</p>
+      <button class="primary" type="button" onclick="QlolNav.toast('Сообщим, когда откроется')">Сообщить о запуске</button>
+    </div>
+  </section>
+
+  <!-- ─── кабинет ─── -->
+  <section class="panel" data-nav-stage="profile">
+    <h2>Аккаунт</h2>
+    <label>Логин</label><input value="miron" />
+    <label>Почта</label><input value="miron@example.com" />
+    <div class="row"><button class="primary">Сохранить</button></div>
+  </section>
+  <section class="panel" data-nav-stage="plan">
+    <h2>Тариф и генерации</h2>
+    <p class="dm-note">Сейчас <b>PRO</b> · осталось <b>128</b> генераций · продление 14.09</p>
+    <div class="dm-grid">
+      <div class="dm-char"><div class="dm-face" style="background:linear-gradient(160deg,#ffe6cf,#ffd0a8)">🆓</div><b>FREE</b><p class="dm-note">кадры ChatGPT, видео Grok</p></div>
+      <div class="dm-char" style="border-color:var(--accent)"><div class="dm-face" style="background:linear-gradient(160deg,#ff7a29,#ff3d3d)">⚡</div><b>PRO — 990 ₽</b><p class="dm-note">+ Seedance, монтаж по 2 кадрам</p></div>
+      <div class="dm-char"><div class="dm-face" style="background:linear-gradient(160deg,#ffb545,#ff7a29)">👑</div><b>PRO MAX — 2990 ₽</b><p class="dm-note">+ Kling, максимум движения</p></div>
+    </div>
+  </section>
+  <section class="panel" data-nav-stage="ref">
+    <h2>Амбассадор</h2>
+    <p class="dm-note">Промокод <b>MIRON20</b> · 14 переходов · 3 оплаты · начислено 1 480 ₽</p>
+    <div class="row"><button>Скопировать ссылку</button><button class="primary">Запросить выплату</button></div>
+  </section>
+  <section class="panel" data-nav-stage="payouts">
+    <h2>Выплаты · админ</h2>
+    <p class="dm-note">3 заявки в работе на 12 400 ₽</p>
+  </section>
+</div>
+
+<script src="nav.js?v=1"></script>
+<script>
+/* ────────────────────────────────────────────────────────────────
+   Фейковые данные прототипа. Никакого бэкенда: страница открывается
+   двойным кликом через file:// и полностью работает.
+   ──────────────────────────────────────────────────────────────── */
+(function () {
+  "use strict";
+
+  var GRAD = [
+    "linear-gradient(150deg,#2b2038,#7b3f8f)",
+    "linear-gradient(150deg,#0f2f4a,#2f8fb5)",
+    "linear-gradient(150deg,#4a1f1f,#d94b2b)",
+    "linear-gradient(150deg,#1d3326,#5aa86a)",
+    "linear-gradient(150deg,#3a2a12,#d99a2b)",
+    "linear-gradient(150deg,#241a30,#a24bd9)"
+  ];
+
+  var CHARS = [
+    { name: "Мирон", face: "🛵", desc: "курьер, красная ветровка, молчит" },
+    { name: "Аля", face: "🎧", desc: "диспетчер, голос в наушнике" },
+    { name: "Дед Сева", face: "🧓", desc: "заказ №7, живёт на последнем этаже" }
+  ];
+
+  /* 8 треков с разной степенью готовности — чтобы точки состояний
+     и полоски прогресса в капсулах были не декоративными. */
+  var TRACKS = [
+    { id: "1", pos: "1", title: "Интро: гудок",  states: { story:"done", chars:"done", tracks:"done", board:"done", anim:"done",  final:"done"  } },
+    { id: "2", pos: "2", title: "Ночь на связи", states: { story:"done", chars:"done", tracks:"done", board:"done", anim:"done",  final:"done"  } },
+    { id: "3", pos: "3", title: "Рейс",          states: { story:"done", chars:"done", tracks:"done", board:"busy", anim:"part",  final:"empty" } },
+    { id: "4", pos: "4", title: "Седьмой этаж",  states: { story:"done", chars:"done", tracks:"done", board:"part", anim:"empty", final:"empty" } },
+    { id: "5", pos: "5", title: "Дождь по шлему",states: { story:"done", chars:"done", tracks:"done", board:"part", anim:"empty", final:"empty" } },
+    { id: "6", pos: "6", title: "Ошибка адреса", states: { story:"done", chars:"done", tracks:"part", board:"empty",anim:"empty", final:"empty" } },
+    { id: "7", pos: "7", title: "Сдача смены",   states: { story:"done", chars:"done", tracks:"part", board:"error",anim:"empty", final:"empty" } },
+    { id: "8", pos: "8", title: "Заказ себе",    states: { story:"done", chars:"done", tracks:"empty",board:"empty",anim:"empty", final:"empty" } }
+  ];
+
+  var PROJECTS = [
+    { id: "p12", name: "Ночной рейс", kind: "клип", tracks: 8, current: true, dots: ["done","done","done","part","part",""] },
+    { id: "p31", name: "Демо-EP",     kind: "клип", tracks: 3, dots: ["done","done","part","","",""] },
+    { id: "p44", name: "UGC-партия",  kind: "ugc",  tracks: 5, dots: ["done","part","","","",""] }
+  ];
+
+  function el(tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html != null) n.innerHTML = html;
+    return n;
+  }
+
+  /* ── персонажи ── */
+  var charBox = document.getElementById("dm-chars");
+  CHARS.forEach(function (c, i) {
+    var card = el("div", "dm-char");
+    card.appendChild(el("div", "dm-face", c.face)).style.background = GRAD[i % GRAD.length];
+    card.appendChild(el("div", null, "<b>" + c.name + "</b>"));
+    card.appendChild(el("p", "dm-note", c.desc));
+    charBox.appendChild(card);
+  });
+
+  /* ── лента фейковых кадров ── */
+  function strip(trackIdx, count, mode) {
+    var wrap = el("div", "dm-strip");
+    for (var i = 0; i < count; i++) {
+      var s = el("div", "dm-scene");
+      var f = el("div", "dm-frame",
+        "<span>" + String(i + 1).padStart(2, "0") + "</span><span>" + (mode === "anim" ? "▶ 4с" : "0:" + String(12 + i * 7).padStart(2, "0")) + "</span>");
+      f.style.background = GRAD[(trackIdx + i) % GRAD.length];
+      s.appendChild(f);
+      s.appendChild(el("div", "dm-scene-body",
+        "<b>" + (mode === "anim" ? "движение" : "кадр") + "</b>" +
+        (mode === "anim" ? "камера медленно наезжает, фары размываются" : "средний план, неон, мокрый асфальт")));
+      wrap.appendChild(s);
+    }
+    return wrap;
+  }
+
+  /* ── карточки треков: структура один в один как в проде ── */
+  var box = document.getElementById("tracks");
+  TRACKS.forEach(function (t, ti) {
+    var card = el("div", "track-card");
+    card.dataset.id = t.id;
+
+    var head = el("div", "track-head");
+    head.appendChild(el("span", "pos", "#" + t.pos));
+    var title = document.createElement("input");
+    title.className = "t-title";
+    title.value = t.title;
+    head.appendChild(title);
+    head.appendChild(el("button", "s-supergen primary", "⚡ Супергенерация"));
+    card.appendChild(head);
+
+    // скрытые табы — источник состояний для nav.js на живом приложении
+    var tabs = el("div", "stage-tabs");
+    ["setup", "plot", "board", "anim", "final"].forEach(function (k, i) {
+      var b = el("button", "stage-tab");
+      b.dataset.stage = k;
+      var st = k === "setup" ? t.states.tracks : k === "plot" ? t.states.story : t.states[k];
+      b.innerHTML = '<span class="st-num">' + (i + 1) + '</span>' + k + '<span class="stage-dot ' + st + '"></span>';
+      tabs.appendChild(b);
+    });
+    card.appendChild(tabs);
+
+    var panes = el("div", "stage-panes");
+
+    var setup = el("div", "stage-pane");
+    setup.dataset.stage = "setup";
+    setup.innerHTML =
+      '<div class="track-body"><div>' +
+      '<label>Стиль клипа</label><input value="неон-нуар, 35мм, дождь" />' +
+      '<label>Текст песни</label><textarea rows="4">под колесом растекается город,\nя вожу чужие ужины по этажам…</textarea>' +
+      '</div><div>' +
+      '<label>Комментарий</label><textarea rows="3">Хочу, чтобы к финалу стало теплее.</textarea>' +
+      '<label>Аудио</label><div class="dm-kv"><span>3:24</span><span>128 kbps</span><span>bpm 92</span></div>' +
+      '</div></div>';
+    panes.appendChild(setup);
+
+    var plot = el("div", "stage-pane");
+    plot.dataset.stage = "plot";
+    plot.innerHTML = '<p class="dm-note">Сквозной сюжет живёт на шаге 1 — тут только заметка трека.</p>';
+    panes.appendChild(plot);
+
+    var board = el("div", "stage-pane");
+    board.dataset.stage = "board";
+    board.appendChild(el("p", "dm-note", "Раскадровка · " + (6 + ti % 3) + " сцен. Клик по кадру перематывает трек."));
+    board.appendChild(strip(ti, 6 + (ti % 3), "board"));
+    var brow = el("div", "row");
+    brow.appendChild(el("button", "primary", "Сгенерировать все кадры"));
+    brow.appendChild(el("button", null, "+ сцена"));
+    brow.appendChild(el("span", "status", t.states.board === "busy" ? "генерится 4 из 9" : ""));
+    board.appendChild(brow);
+    // склейка раскадровки — как в проде (.storyboard-block / .sb-preview)
+    var sb = el("div", "storyboard-block");
+    sb.style.cssText = "margin-top:14px";
+    sb.appendChild(el("label", null, "Склейка раскадровки"));
+    var sbp = el("div", "dm-sheet");
+    sbp.style.background = GRAD[(ti + 3) % GRAD.length];
+    sbp.textContent = "склейка " + (6 + (ti % 3)) + " кадров";
+    sb.appendChild(sbp);
+    var srow = el("div", "row");
+    srow.appendChild(el("button", null, "Пересобрать склейку"));
+    srow.appendChild(el("button", null, "Нарезать на сцены"));
+    sb.appendChild(srow);
+    board.appendChild(sb);
+    panes.appendChild(board);
+
+    var anim = el("div", "stage-pane");
+    anim.dataset.stage = "anim";
+    anim.appendChild(el("p", "dm-note", "Оживление кадров: первый и последний кадр → видео."));
+    anim.appendChild(strip(ti + 2, 5 + (ti % 3), "anim"));
+    var arow = el("div", "row");
+    arow.appendChild(el("button", "primary", "Оживить все кадры"));
+    arow.appendChild(el("span", "status", ""));
+    anim.appendChild(arow);
+    panes.appendChild(anim);
+
+    var fin = el("div", "stage-pane");
+    fin.dataset.stage = "final";
+    var fwrap = el("div");
+    fwrap.style.cssText = "display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start";
+    var clip = el("div", "dm-clip", t.states.final === "done" ? "▶" : "…");
+    clip.style.background = GRAD[ti % GRAD.length];
+    fwrap.appendChild(clip);
+    var side = el("div");
+    side.style.cssText = "flex:1 1 220px;min-width:200px";
+    side.innerHTML = '<p class="dm-note">' + (t.states.final === "done"
+      ? "Клип собран: 3:24, 1080×1920, h264."
+      : "Клип ещё не собран — сначала закончи анимацию.") + '</p>';
+    var frow = el("div", "row");
+    frow.appendChild(el("button", "primary", "Собрать клип"));
+    frow.appendChild(el("button", null, "Скачать"));
+    side.appendChild(frow);
+    fwrap.appendChild(side);
+    fin.appendChild(fwrap);
+    panes.appendChild(fin);
+
+    card.appendChild(panes);
+    box.appendChild(card);
+  });
+
+  /* ── заголовки контекстных панелей меняем под шаг ── */
+  var TITLES = { tracks: "Треки", board: "Раскадровка", anim: "Анимация", final: "Монтаж" };
+  var SOON = {
+    pixar: { ico: "🧸", head: "3D Pixar", text: "Мультяшный объём, мягкий свет, крупные глаза. Шаги: Идея → Герои → Сцены → Рендер." },
+    ugc:   { ico: "📱", head: "UGC-ролики", text: "Вертикальные ролики «как от руки». Шаги: Бриф → Актёр → Съёмка → Готовое." },
+    doctor:{ ico: "🩺", head: "ИИ-доктор", text: "Разбор анализов и жалоб. Шаги: Жалоба → Данные → Разбор." },
+    chat:  { ico: "💬", head: "Чат с моделью", text: "Второй ярус тут держит не этапы, а СЕЛЕКТОР МОДЕЛИ — это и есть «контекст режима»." }
+  };
+
+  /* ── запуск навигации ── */
+  QlolNav.init({
+    demo: true,
+    getTracks: function () { return TRACKS; },
+    onStage: function (mode, step) {
+      var tt = document.getElementById("dm-tracks-title");
+      if (TITLES[step]) tt.textContent = TITLES[step];
+      var s = SOON[mode];
+      if (s) {
+        document.getElementById("dm-soon-ico").textContent = s.ico;
+        document.getElementById("dm-soon-head").textContent = s.head;
+        document.getElementById("dm-soon-text").textContent = s.text;
+        document.getElementById("dm-soon-title").textContent = s.head;
+      }
+    }
+  });
+
+  QlolNav.setData({
+    project: { name: "Ночной рейс", kind: "клип" },
+    projects: PROJECTS,
+    user: { name: "Мирон Б.", plan: "PRO", points: "⚡ 128", isAdmin: true }
+  });
+
+  /* Подсказка о горячих клавишах — только на десктопе: на телефоне
+     клавиатуры нет, а тост занял бы место над доком. */
+  if (window.innerWidth > 700) {
+    setTimeout(function () {
+      QlolNav.toast("[ ] — шаги · ← → — треки · G — ящик · 1…5 — режимы");
+    }, 900);
+  }
+})();
+</script>
+</body>
+</html>

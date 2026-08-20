@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<meta http-equiv="refresh" content="0; url=/music.html" />
+<link rel="canonical" href="/music.html" />
+<title>qlolmusic</title>
+</head>
+<body>
+<!-- Маршрут /music. Статику отдаёт StaticFiles(html=True): каталог с index.html
+     даёт /music → 307 → /music/ → этот файл. Сама страница живёт в
+     /music.html, поэтому здесь только переброс с сохранением ?query и #hash.
+     Когда бэкенд-агент добавит явный роут (FileResponse на music.html для
+     /music и /qlolmusic), этот каталог можно удалить — см. docs/qlolmusic.md. -->
+<script>location.replace("/music.html" + location.search + location.hash);</script>
+<p><a href="/music.html">qlolmusic →</a></p>
+</body>
+</html>

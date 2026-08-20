@@ -6,9 +6,13 @@ function styleExcerpt(value) {
   return m ? m.slice(0, 2).join("").trim() : value;
 }
 
-function buildFusionStyle(labels) {
-  const chosen = labels
-    .map((l) => STYLE_PRESETS.find((p) => p.label === l))
+// Подписи пресетов живут в словаре (i18n.js), в коде ходит только key.
+function styleLabel(p) { return t(`styles.${p.key}.label`) || p.key; }
+function styleDesc(p) { return t(`styles.${p.key}.desc`); }
+
+function buildFusionStyle(keys) {
+  const chosen = keys
+    .map((k) => STYLE_PRESETS.find((p) => p.key === k))
     .filter(Boolean);
   if (!chosen.length) return "";
   if (chosen.length === 1) return chosen[0].value;
@@ -16,45 +20,45 @@ function buildFusionStyle(labels) {
   return chosen[0].value + "\n\nBlend in elements of: " + extras.join(" ");
 }
 
-function styleLabelsFromValue(value) {
+function styleKeysFromValue(value) {
   // Восстановление выбора из сохранённого промпта: основа хранится полным
   // value (идёт первой), дополнительные — выжимками (идут следом).
   if (!value) return [];
-  const base = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.label);
+  const base = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.key);
   const extras = STYLE_PRESETS
     .filter((p) => !value.includes(p.value) && value.includes(styleExcerpt(p.value)))
-    .map((p) => p.label);
+    .map((p) => p.key);
   return [...base, ...extras];
 }
 
 function buildStylePicker(container, current, onChange) {
   container.innerHTML = "";
   // Порядок выбора важен: order[0] — основа микса.
-  const order = styleLabelsFromValue(current);
+  const order = styleKeysFromValue(current);
 
   const chipsBox = document.createElement("div");
   chipsBox.className = "style-chips";
   const desc = document.createElement("details");
   desc.className = "style-desc";
   const descSummary = document.createElement("summary");
-  descSummary.textContent = "описание выбранных стилей";
+  descSummary.textContent = t("stylePicker.descSummary");
   const descBody = document.createElement("div");
   descBody.className = "style-desc-body muted";
   desc.append(descSummary, descBody);
 
   const sync = (fireChange) => {
     $$(".style-chip", chipsBox).forEach((el) => {
-      const on = order.includes(el.dataset.label);
+      const on = order.includes(el.dataset.key);
       el.classList.toggle("on", on);
-      el.classList.toggle("base", order[0] === el.dataset.label);
+      el.classList.toggle("base", order[0] === el.dataset.key);
       el.querySelector("input").checked = on;
     });
     const chosen = order
-      .map((l) => STYLE_PRESETS.find((p) => p.label === l))
+      .map((k) => STYLE_PRESETS.find((p) => p.key === k))
       .filter(Boolean);
     descBody.textContent = chosen.length
-      ? chosen.map((p, i) => `${i ? "＋" : "★"} ${p.label} — ${p.desc}`).join("\n")
-      : "стиль не выбран";
+      ? chosen.map((p, i) => `${i ? "＋" : "★"} ${styleLabel(p)} — ${styleDesc(p)}`).join("\n")
+      : t("stylePicker.none");
     desc.classList.toggle("hidden", !chosen.length);
     if (fireChange) onChange(buildFusionStyle(order));
   };
@@ -62,22 +66,22 @@ function buildStylePicker(container, current, onChange) {
   for (const p of STYLE_PRESETS) {
     const label = document.createElement("label");
     label.className = "style-chip";
-    label.dataset.label = p.label;
-    label.title = p.desc;
+    label.dataset.key = p.key;
+    label.title = styleDesc(p);
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.addEventListener("change", () => {
       if (cb.checked) {
         if (order.length >= 3) { cb.checked = false; return; } // максимум 3
-        order.push(p.label);
+        order.push(p.key);
       } else {
-        const i = order.indexOf(p.label);
+        const i = order.indexOf(p.key);
         if (i >= 0) order.splice(i, 1);
       }
       sync(true);
     });
     label.appendChild(cb);
-    label.appendChild(document.createTextNode(p.label));
+    label.appendChild(document.createTextNode(styleLabel(p)));
     chipsBox.appendChild(label);
   }
   container.appendChild(chipsBox);
@@ -85,7 +89,7 @@ function buildStylePicker(container, current, onChange) {
   if (current && !order.length) {
     const note = document.createElement("div");
     note.className = "muted";
-    note.textContent = "(у трека свой кастомный стиль — выбор пресета заменит его)";
+    note.textContent = t("stylePicker.custom");
     container.appendChild(note);
   }
   // Первичная отрисовка БЕЗ onChange: кастомный стиль не затираем пустотой.
@@ -97,116 +101,120 @@ function buildStylePicker(container, current, onChange) {
 // трека не разъезжались. value уходит в промпты as-is.
 const STYLE_PRESETS = [
   {
-    label: "Хаяо Миядзаки (ламповое аниме)",
-    desc: "Тёплое рисованное аниме с акварельными фонами и уютным светом — как кадр из Гибли.",
+    key: "ghibli",
     value: "Hand-painted Studio Ghibli style anime inspired by Hayao Miyazaki films, vertical 9:16. Soft watercolor backgrounds with visible brush texture, lush painterly clouds and greenery, warm golden-hour sunlight or cozy lamp glow through windows. Gentle pleasant palette: warm cream, soft sky blue, grass green, sunset amber — nothing acidic, everything nostalgic and comforting. Characters drawn in classic 2D anime cel style with simple expressive faces, natural relaxed poses, wind gently moving hair and clothes. Quiet magical realism mood: dust motes in sunbeams, steam from food, fireflies, rustling leaves. Every frame feels like a warm memory — calm, humane, a little wistful. No harsh shadows, no neon, no 3D render look, no text."
   },
   {
-    label: "3D мультяшный (Pixar-style)",
-    desc: "Глянцевый 3D-мультфильм: выразительные герои, сочный кинематографичный свет.",
+    key: "pixar",
     value: "High-end 3D animated feature film style like Pixar and DreamWorks, vertical 9:16, ultra HD render. Rounded appealing character design with large expressive eyes, soft subsurface scattering skin, detailed hair and fabric simulation. Rich cinematic lighting: warm key light, colorful bounce light, gentle rim light separating character from background. Vibrant but tasteful saturated palette, shallow depth of field with creamy bokeh, subtle film grain. Polished storytelling composition, emotional facial expressions. No text, no watermark."
   },
   {
-    label: "Кинематографичное аниме (Синкай)",
-    desc: "Современное аниме с гиперкрасивыми небесами, бликами и эмоциональными градиентами.",
+    key: "shinkai",
     value: "Modern cinematic anime film style inspired by Makoto Shinkai, vertical 9:16. Breathtaking hyper-detailed backgrounds: glowing skies with layered clouds, lens flares, glittering city lights, rain droplets catching light. Emotional color grading with luminous gradients — deep blues into warm oranges and pinks. Crisp 2D character animation with delicate lighting on hair and eyes. Dramatic sense of scale: vast skies over small human figures. Melancholic-hopeful atmosphere. No text, no watermark."
   },
   {
-    label: "Реализм (кино)",
-    desc: "Фотореалистичное кино на плёнке: честный свет, фактура кожи, лёгкое зерно.",
+    key: "cinema",
     value: "Photorealistic cinematic film still, vertical 9:16, shot on ARRI Alexa with anamorphic lenses. Natural skin texture and imperfections, real physical lighting: practical sources, soft window light or hard sun with true shadows. Film color grading with gentle teal-orange balance, subtle 35mm grain, shallow depth of field. Documentary-authentic staging: real locations, lived-in details, honest emotion on faces. No CGI look, no oversharpening, no text."
   },
   {
-    label: "2D плоская анимация",
-    desc: "Яркая плоская векторная анимация: простые формы, смелые контуры, постерные композиции.",
+    key: "flat2d",
     value: "Bold flat 2D vector animation style, vertical 9:16. Clean geometric shapes, thick confident outlines, limited harmonious palette of 4-6 colors per scene, flat color fills with simple two-tone shading. Playful exaggerated proportions and snappy poses, minimal but expressive faces. Mid-century modern and contemporary motion-design influence: textured paper grain overlay, simple patterned backgrounds. Cheerful, graphic, poster-like compositions. No gradients overload, no 3D, no text."
   },
   {
-    label: "Нуарный комикс",
-    desc: "Чёрно-белый нуар с одним цветовым акцентом: глубокие тени, дождь, неон.",
+    key: "noir",
     value: "Gritty noir graphic novel style like Sin City and Batman animated classics, vertical 9:16. High-contrast chiaroscuro: deep ink-black shadows swallowing half of every frame, stark white or single warm accent color (red neon, amber streetlight) cutting through darkness. Heavy dramatic hatching and ink texture, rain-slick streets reflecting light, cigarette smoke curling through venetian-blind shadows. Hard-boiled atmosphere: trench coats, brooding silhouettes, low camera angles. Monochrome with one accent color per scene. No text, no captions."
   },
   {
-    label: "Длинные бошки (аналоговый сюр 90-х)",
-    desc: "Аналоговая плёнка 90-х: сюрреалистичные длинноголовые персонажи в обычной уличной жизни.",
+    key: "longheads",
     value: "1990s analog film street photography, scanned 35mm frame with heavy grain and slightly faded Kodak colors, candid documentary framing. Surreal characters with elongated non-human heads on long necks (ostrich-like, greyhound, pale alien with almond eyes, porcelain mannequin mask) on completely ordinary human bodies in baggy 90s streetwear: oversized denim jackets, loose white shirts, wide pants, chunky chains, plastic grocery bags, coffee cups. Deadpan poses, mundane everyday activities, nobody reacts to the surrealism. Locations: laundromats, convenience stores, crosswalks, chain-link fences, boxy 80s sedans, night streets with neon signage and wet asphalt reflections. Muted denim-blue palette with warm cream skin tones and red/neon accents, harsh daylight or direct flash by day, deep black sky and neon glow by night. Vertical 9:16, no text."
   },
   {
-    label: "Картон (вышивка нитью)",
+    key: "embroidery",
     value: "Hand-embroidered thread-art illustration: the entire image is stitched in dense chain-stitch and satin-stitch embroidery with clearly visible thread loops and fiber texture, like a lovingly hand-sewn patch. Background of warm cream felt and kraft cardboard with soft fabric grain. Bold simplified shapes with clean dark outlines; characters rendered in colored thread, directional stitching following the forms of faces, hair and clothes; flames, smoke and effects also stitched in swirling orange-red-amber threads. Cozy handcrafted feel, slightly naive proportions, saturated yarn colors against the neutral textile background, tiny loose thread ends visible. Vertical 9:16, no text."
   },
   {
-    label: "СПАЙК (русский кино-сюр, камео)",
-    desc: "Ночной русский кино-сюр: хрущёвки, Лады, дым и мультяшные камео на серьёзных щах.",
+    key: "spike",
     value: "Cinematic photorealistic night scene shot on vintage anamorphic lenses, warm tungsten and smoky haze, heavy 35mm film grain with teal-and-amber grade. Post-Soviet Russian setting reimagined with subtle Atomic Heart retrofuturism: khrushchyovka courtyards, cramped old Lada interiors, kiosks, snow-dusted parking lots, delivery couriers in Ozon blue jackets and yellow Yandex thermo-bag backpacks. Photorealistic larger-than-life characters and deadpan cartoon-headed cameos ride together in old cars filled with smoke, count worn banknotes in shabby ornate bedrooms, stare into the lens with calm swagger. Golden chains, tracksuit textures, cigarette smoke curling in headlight beams, wet asphalt reflections. Everyday grit filmed like an epic music video, nobody reacts to the surreal cameos. Vertical 9:16, no text."
   },
   {
-    label: "МУНИР (залив, вспышка, фиш-ай)",
-    desc: "Уличная съёмка Залива со вспышкой и фиш-аем: кольца в объектив, G63, доберманы.",
+    key: "munir",
     value: "Gulf street documentary photography with direct on-camera flash at night and harsh daylight, ultra-wide fisheye lens distortion, saturated 35mm film colors with crushed shadows. Middle Eastern everyday swagger played deadpan: elderly men in red-checkered ghutra headdress and white thobes grinning as they push a fist with a chunky custom name-ring straight into the lens, women in black abayas fueling a black G63 at a midnight gas station, a Doberman with a heavy chain collar lunging toward the camera, corner grocery shops with Arabic signage and packed shelves, plastic chairs, dates and spice jars. Objects thrust toward the ultra-wide lens so they loom huge in the foreground, faces close and warped at the edges, flash bleaching the foreground against deep black night. Humor and quiet confidence, mundane life shot like a rap video. Vertical 9:16, no text."
   },
   {
-    label: "ФАНУЕЛ (кино-сюрреализм, огонь)",
-    desc: "Сюрреалистичный fashion-фильм: одинокая фигура в костюме среди невозможных пейзажей и огня.",
+    key: "fanuel",
     value: "Hyperreal cinematic surreal fashion film, epic single-frame worldbuilding. One elegant figure in a sharply tailored suit of a single bold color (burnt orange, saffron yellow, deep crimson) stands or walks calmly inside an impossible landscape: on the open sea at dusk, along the rings of a giant planet, across endless dunes, under colossal celestial bodies. Recurring fire motif — burning umbrellas, floating flames, embers, fire reflected in water. Deadpan composed poses, quiet confidence, no reaction to the impossible. Painterly dusk palettes: violet-pink-orange gradient skies, deep ocean blues, warm firelight against cool darkness; volumetric cinematic lighting, anamorphic depth, ultra-detailed photorealistic rendering with epic scale contrast between the small figure and the vast world. Vertical 9:16, no text."
   },
   {
-    label: "Клеймация (пластилин)",
-    desc: "Пластилиновая стоп-моушен анимация: отпечатки пальцев, миниатюрные декорации, тёплый свет.",
+    key: "clay",
     value: "Handcrafted claymation stop-motion style (Aardman/Laika vibe): visible fingerprints in plasticine, slightly imperfect frame-to-frame jitter, miniature set with real fabric and cardboard props, warm practical lighting, shallow depth of field macro look, expressive oversized eyes, vertical 9:16, no text."
   },
   {
-    label: "ПАНКРФ (найденное видео, дичь РФ)",
-    desc: "Гиперреалистичное «случайное видео» ночной России: регистраторы и VHS, красный неон, абсурд среди пробок и панелек.",
+    key: "punkrf",
     value: "Hyperreal Russian street found-footage: night dashcam, GoPro, phone or CCTV camera look with heavy VHS grain, analog noise and motion blur; harsh headlights, red neon gas-station canopies, wet asphalt, dense traffic with glowing tail lights, grey soviet panel blocks, ruined brick factories, dusty supercars in wastelands. One absurd event unfolds in the middle of mundane Russian reality — animals rearing between cars, flying couriers, delivery drones, aliens in queues — filmed like an accidental viral video: documentary believability, realistic physics, nobody poses, aggressive dynamic framing, violent handheld shake, strobing flash by night. Muted cold palette with red neon accents. Vertical 9:16, no text."
   },
   {
-    label: "ДРИМКЛАД (hood-кино 90-х)",
-    desc: "Плёночное hood-кино 90-х: зерно, белые майки и банданы, деньги, голуби и кресты, иконописные фронтальные композиции.",
+    key: "dreamclad",
     value: "1990s American hood-cinema still, shot on grainy 35mm film: faded low-contrast color grade with warm orange-brown skin tones and dusty teal shadows (or deep-grain black-and-white), heavy film grain, soft halation, subtle gate weave and VHS-era imperfections. Brick-block New York / LA streets of the 90s — bodegas with graffiti, chain-link fences, stone staircases, boxy sedans and vintage Cadillacs — or night-time mansion gates and museum halls lit by warm tungsten windows and headlights. Young men in white tank tops, bandana masks, hoodies and baggy denim; crowds dressed identically like a uniform; recurring icons of money stacks, doves, crosses, candles and classical statues — sacred mixed with street. Frontal, symmetric, almost ceremonial compositions, subjects staring straight into the lens, or candid through-the-windshield documentary angles; overexposed hazy daylight or moody night backlight. Cinematic, nostalgic, quietly menacing, music-video energy. No clean digital look, no HDR, no modern cars or clothing, no neon cyberpunk, no glossy skin, no watermarks. Vertical 9:16, no text."
   },
   {
-    label: "КАТСУМИ (найденная плёнка, сюр)",
-    desc: "Гиперреалистичная «найденная плёнка»: крысы, монахи и алиены на полном серьёзе живут бытовухой под камкордер со вспышкой из 90-х.",
+    key: "katsumi",
     value: "Hyperrealistic absurdist found-footage aesthetic: a deadpan surreal protagonist (animal or costumed figure) doing mundane human things with total seriousness, shot like accidental amateur documentary footage from the 1990s–2000s — handheld camcorder or disposable-camera look with harsh direct on-camera flash at night, or flat overcast daylight; heavy analog film grain, VHS noise, slight chromatic aberration, motion blur, fisheye or wide-angle distortion, tilted imperfect framing with the subject too close to the lens, often staring straight into the camera. Muted dirty palette of swampy olive, tobacco brown, dusty grey and desaturated flesh tones, background falling into deep black shadow, with one rare accent color (neon sign, police lights, orange robe, gold chain). Gritty tactile textures: wet fur, greasy pavement, cigarette smoke, scuffed metal, cheap floral motel interiors, cluttered convenience-store shelves. Cinematic realism, not cartoon — everything must look physically shot, grimy street-punk mood, crime-scene-snapshot lighting, deadpan comedy with zero wink. Avoid: clean digital sharpness, glossy studio light, saturated candy colors, cartoon or 3D-render look, symmetry, beauty-filter smoothness. Vertical 9:16, no text."
   },
 ];
 
-function fillStyleSelect(sel, current) {
-  sel.innerHTML = "";
-  const empty = document.createElement("option");
-  empty.value = "";
-  empty.textContent = "— выбери стиль —";
-  sel.appendChild(empty);
-  let matched = false;
-  for (const p of STYLE_PRESETS) {
-    const o = document.createElement("option");
-    o.value = p.value;
-    o.textContent = p.label;
-    if (current && current === p.value) { o.selected = true; matched = true; }
-    sel.appendChild(o);
-  }
-  // Старый/кастомный стиль трека не теряем: показываем его отдельным пунктом.
-  if (current && !matched) {
-    const o = document.createElement("option");
-    o.value = current;
-    o.textContent = "(текущий стиль трека)";
-    o.selected = true;
-    sel.appendChild(o);
-  }
-}
-
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// Ошибка API целиком: структурный код ({"error":"not_enough_points", need, have}),
+// человеческий detail и всё тело ответа — из них errText() собирает сообщение
+// на языке интерфейса.
+class ApiError extends Error {
+  constructor(body, status) {
+    const detail = (body && (body.detail || body.message)) || `HTTP ${status}`;
+    super(String(detail));
+    this.status = status;
+    this.code = (body && body.error) || "";
+    this.data = body || {};
+  }
+}
+
+// Текст ошибки на языке интерфейса. Порядок: известный код бэкенда → карта
+// русских фраз (бэкенд отвечает по-русски) → как пришло. Незнакомый код НЕ
+// превращается в пустоту и не роняет экран.
+function errText(e) {
+  if (!e) return t("errors.generic");
+  const code = e.code || "";
+  if (code && tHas(`errors.codes.${code}`)) {
+    const d = e.data || {};
+    const need = Number(d.need) || 0, have = Number(d.have) || 0;
+    return t(`errors.codes.${code}`, {
+      need: tNum(need), have: tNum(have),
+      short: tNum(d.short != null ? Number(d.short) : Math.max(0, need - have)),
+      plan: d.plan || "",
+    });
+  }
+  const raw = String((e && e.message) || "").trim();
+  if (!raw) return t("errors.generic");
+  if (LANG !== "ru" && ERR_RU_TO_EN[raw]) return ERR_RU_TO_EN[raw];
+  return raw;
+}
+
+// Единая точка «не получилось»: alert с переведённым текстом.
+function fail(e) { alert(errText(e)); }
+
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    method: opts.method || "GET",
-    headers: opts.body && !(opts.body instanceof FormData) ? { "content-type": "application/json" } : undefined,
-    body: opts.body instanceof FormData ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  if (res.status === 401) { showLogin(); throw new Error("unauthorized"); }
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  let res;
+  try {
+    res = await fetch(path, {
+      method: opts.method || "GET",
+      headers: opts.body && !(opts.body instanceof FormData) ? { "content-type": "application/json" } : undefined,
+      body: opts.body instanceof FormData ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+  } catch (e) {
+    throw new ApiError({ error: "network" }, 0);
+  }
+  if (res.status === 401) { showLogin(); throw new ApiError({ error: "unauthorized" }, 401); }
+  if (!res.ok) throw new ApiError(await res.json().catch(() => ({})), res.status);
   return res.status === 204 ? null : res.json();
 }
 
@@ -244,13 +252,15 @@ function pickRefCode() {
 
 const refCode = pickRefCode();
 
-// Плашка на лендинге: пришедший по приглашению должен видеть, что скидка его ждёт.
+// Плашка на главной: пришедший по приглашению должен видеть, что скидка его
+// ждёт. Текст — из словаря (landing.hero.refBanner), код промокода экранируется.
 function renderRefBanner() {
   const el = $("#welcome-ref");
   if (!el) return;
   el.classList.toggle("hidden", !refCode);
   if (refCode) {
-    el.innerHTML = `🎟 ты пришёл по приглашению <b>${escHtml(refCode)}</b> — скидка на первую оплату`;
+    el.innerHTML = LTX("hero.refBanner",
+      { code: `<b>${escHtml(refCode)}</b>`, discount: LD_REF.discount });
   }
 }
 
@@ -259,6 +269,9 @@ function showWelcome() {
   $("#welcome").classList.remove("hidden");
   $("#login").classList.add("hidden");
   $("#app").classList.add("hidden");
+  // Главная — полноценная витрина: тексты, шаги, тарифы и шкала очков
+  // собираются в renderLanding() (низ файла) из словаря I18N (i18n.js).
+  renderLanding();
 }
 function showLogin() {
   $("#welcome").classList.add("hidden");
@@ -288,7 +301,7 @@ function renderUserBar() {
   // Кабинет открыт всем, включая гостя: тариф и партнёрка живут на его id.
   if (accBtn) accBtn.classList.remove("hidden");
   badge.classList.toggle("hidden", Boolean(u.is_admin));
-  badge.textContent = `⚡ ${u.gen_points}`;
+  badge.textContent = `${tNum(u.gen_points)} ${t("top.pointsUnit")}`;
   // Тариф видно сразу: на free видео рисует Grok, Seedance открыт на pro.
   let planBadge = $("#plan-badge");
   if (!planBadge) {
@@ -298,10 +311,8 @@ function renderUserBar() {
     badge.after(planBadge);
   }
   const pro = Boolean(u.is_admin) || u.plan === "pro" || u.plan === "pro_max";
-  planBadge.textContent = pro ? `${u.plan_title || "PRO"} · Seedance` : "FREE · Grok";
-  planBadge.title = pro
-    ? "Seedance доступен: монтаж по первому и последнему кадру"
-    : "бесплатный тариф: видео через Grok; Seedance откроется на платном";
+  planBadge.textContent = pro ? t("top.planPro", { plan: u.plan_title || "PRO" }) : t("top.planFree");
+  planBadge.title = pro ? t("top.planProTitle") : t("top.planFreeTitle");
   planBadge.style.opacity = pro ? "1" : ".7";
   saveBtn.classList.toggle("hidden", Boolean(u.is_admin) || Boolean(u.login));
 }
@@ -316,19 +327,24 @@ $("#login-form").addEventListener("submit", async (e) => {
     me = await api("/api/me");
     showApp();
   } catch (err) {
-    $("#login-error").textContent = "неверный логин или пароль";
+    $("#login-error").textContent = t("auth.fail");
     $("#login-error").classList.remove("hidden");
   }
 });
 
-$("#welcome-start").addEventListener("click", async () => {
-  // «Старт» = гостевой аккаунт сразу: без формы, регистрация — потом, по желанию.
-  // ?ref= с реферальной ссылки уезжает тем же запросом — гость закрепляется
-  // за амбассадором ещё до первой оплаты.
+// «Старт» = гостевой аккаунт сразу: без формы, регистрация — потом, по желанию.
+// ?ref= с реферальной ссылки уезжает тем же запросом — гость закрепляется
+// за амбассадором ещё до первой оплаты.
+// Вернувшемуся с живой сессией новый аккаунт НЕ заводим: /api/start всегда
+// создаёт свежего гостя и перезаписывает cookie — человек потерял бы проекты.
+async function ldStart() {
+  if (me && me.authed) { showApp(); return; }
   await api("/api/start" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""), { method: "POST" });
   me = await api("/api/me");
   showApp();
-});
+}
+
+$("#welcome-start").addEventListener("click", ldStart);
 
 $("#welcome-login").addEventListener("click", showLogin);
 
@@ -342,18 +358,17 @@ $("#account-btn").addEventListener("click", () => openAccountModal("account"));
 
 // Гость превращается в постоянный аккаунт: тот же user id, проекты остаются.
 $("#save-account-btn").addEventListener("click", () => {
-  openModal("Сохранить аккаунт", (body) => {
+  openModal(t("modal.saveAccount.title"), (body) => {
     body.innerHTML = `
-      <p class="muted" style="margin:0 0 10px">Логин и пароль закрепят этот аккаунт:
-        проекты и файлы останутся при тебе на любом устройстве.</p>
-      <label>Логин</label>
-      <input class="ra-login" autocomplete="username" placeholder="логин" />
-      <label>Пароль (от 6 символов)</label>
-      <input class="ra-pass" type="password" autocomplete="new-password" placeholder="пароль" />
-      <label>Имя (необязательно)</label>
-      <input class="ra-name" placeholder="как к тебе обращаться" />
+      <p class="muted" style="margin:0 0 10px">${escHtml(t("modal.saveAccount.lead"))}</p>
+      <label>${escHtml(t("modal.saveAccount.loginLabel"))}</label>
+      <input class="ra-login" autocomplete="username" placeholder="${escHtml(t("modal.saveAccount.loginPh"))}" />
+      <label>${escHtml(t("modal.saveAccount.passLabel"))}</label>
+      <input class="ra-pass" type="password" autocomplete="new-password" placeholder="${escHtml(t("modal.saveAccount.passPh"))}" />
+      <label>${escHtml(t("modal.saveAccount.nameLabel"))}</label>
+      <input class="ra-name" placeholder="${escHtml(t("modal.saveAccount.namePh"))}" />
       <div class="row">
-        <button type="button" class="primary ra-save">Сохранить</button>
+        <button type="button" class="primary ra-save">${escHtml(t("common.save"))}</button>
         <span class="ra-error error hidden"></span>
       </div>`;
     const errEl = $(".ra-error", body);
@@ -371,7 +386,7 @@ $("#save-account-btn").addEventListener("click", () => {
         renderUserBar();
         closeModal();
       } catch (e) {
-        errEl.textContent = e.message;
+        errEl.textContent = errText(e);
         errEl.classList.remove("hidden");
         saveBtn.disabled = false;
       }
@@ -418,9 +433,17 @@ function escHtml(v) {
 // чтобы округления не разъезжались по разным экранам.
 function fmtRub(kopeks) {
   const total = Math.round(Number(kopeks) || 0);
+  const cop = Math.abs(total) % 100;
+  try {
+    // Валюта выплат амбассадора — рубли, поэтому символ остаётся при любом
+    // языке; меняются разделители и позиция знака (₽ 1,200 против 1 200 ₽).
+    return new Intl.NumberFormat(tLocale(), {
+      style: "currency", currency: "RUB",
+      minimumFractionDigits: cop ? 2 : 0, maximumFractionDigits: cop ? 2 : 0,
+    }).format(total / 100);
+  } catch (e) { /* без Intl — ручная сборка ниже */ }
   const abs = Math.abs(total);
   const head = String(Math.trunc(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  const cop = abs % 100;
   return `${total < 0 ? "−" : ""}${head}${cop ? "," + String(cop).padStart(2, "0") : ""} ₽`;
 }
 
@@ -429,6 +452,12 @@ function fmtDate(iso, withTime = false) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
   const p = (n) => String(n).padStart(2, "0");
+  try {
+    const date = new Intl.DateTimeFormat(tLocale(), {
+      day: "2-digit", month: "short", year: "numeric",
+    }).format(d);
+    return withTime ? `${date}, ${p(d.getHours())}:${p(d.getMinutes())}` : date;
+  } catch (e) { /* без Intl — числовой формат ниже */ }
   const base = `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
   return withTime ? `${base} ${p(d.getHours())}:${p(d.getMinutes())}` : base;
 }
@@ -438,7 +467,7 @@ function fmtDate(iso, withTime = false) {
 async function copyToClipboard(text, btn) {
   const ok = () => {
     const was = btn.textContent;
-    btn.textContent = "скопировано";
+    btn.textContent = t("common.copied");
     btn.disabled = true;
     setTimeout(() => { btn.textContent = was; btn.disabled = false; }, 1400);
   };
@@ -452,12 +481,12 @@ async function copyToClipboard(text, btn) {
   ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
   document.body.appendChild(ta);
   ta.select();
-  try { document.execCommand("copy"); ok(); } catch (e) { window.prompt("скопируй вручную", text); }
+  try { document.execCommand("copy"); ok(); } catch (e) { window.prompt(t("common.copyManual"), text); }
   ta.remove();
 }
 
 function accFail(pane, e) {
-  pane.innerHTML = `<p class="error">${escHtml((e && e.message) || "не вышло загрузить")}</p>`;
+  pane.innerHTML = `<p class="error">${escHtml(errText(e) || t("common.loadFail"))}</p>`;
 }
 
 function accMsg(pane, text, kind = "") {
@@ -475,29 +504,36 @@ function bindCopy(pane) {
 }
 
 const ACC_TABS = [
-  { key: "account", title: "Аккаунт" },
-  { key: "plan", title: "Тариф" },
-  { key: "ref", title: "Амбассадор" },
-  { key: "payouts", title: "Выплаты", admin: true },
+  { key: "account" },
+  { key: "plan" },
+  { key: "ref" },
+  { key: "payouts", admin: true },
 ];
 
-const PAYOUT_STATUS = {
-  new: { label: "в работе", cls: "new" },
-  paid: { label: "выплачено", cls: "paid" },
-  rejected: { label: "отклонена", cls: "rejected" },
-};
+const PAYOUT_STATUS = { new: "new", paid: "paid", rejected: "rejected" };
+
+// Статус заявки: подпись из словаря, класс — из ключа. Неизвестный статус
+// показываем как есть, чтобы новый статус с бэка не превращался в пустоту.
+function payoutStatus(status) {
+  const cls = PAYOUT_STATUS[status] || "";
+  return {
+    label: cls ? t("payouts.status" + cls.charAt(0).toUpperCase() + cls.slice(1)) : String(status || ""),
+    cls,
+  };
+}
 
 function openAccountModal(initial = "account") {
   const isAdmin = Boolean(me && me.user && me.user.is_admin);
-  const tabs = ACC_TABS.filter((t) => !t.admin || isAdmin);
-  const start = tabs.some((t) => t.key === initial) ? initial : "account";
-  openModal("Кабинет", (body) => {
+  const tabs = ACC_TABS.filter((tab) => !tab.admin || isAdmin);
+  const start = tabs.some((tab) => tab.key === initial) ? initial : "account";
+  openModal(t("account.title"), (body) => {
     body.innerHTML = `
       <div class="modal-tabs acc-tabs">
-        ${tabs.map((t) => `<button type="button" class="modal-tab" data-tab="${t.key}">${t.title}</button>`).join("")}
+        ${tabs.map((tab) => `<button type="button" class="modal-tab" data-tab="${tab.key}"
+          >${escHtml(t("account.tabs." + tab.key))}</button>`).join("")}
       </div>
-      ${tabs.map((t) => `<div class="acc-pane hidden" data-pane="${t.key}">
-        <div class="muted acc-loading">загружаю…</div></div>`).join("")}`;
+      ${tabs.map((tab) => `<div class="acc-pane hidden" data-pane="${tab.key}">
+        <div class="muted acc-loading">${escHtml(t("common.loading"))}</div></div>`).join("")}`;
 
     const loaders = {
       account: renderAccountPane, plan: renderPlanPane,
@@ -514,7 +550,7 @@ function openAccountModal(initial = "account") {
       const pane = $(`.acc-pane[data-pane="${key}"]`, body);
       if (pane && loaders[key]) loaders[key](pane);
     };
-    $$(".modal-tab", body).forEach((t) => t.addEventListener("click", () => open(t.dataset.tab)));
+    $$(".modal-tab", body).forEach((el) => el.addEventListener("click", () => open(el.dataset.tab)));
     open(start);
   });
 }
@@ -524,7 +560,8 @@ async function renderAccountPane(pane) {
   let a;
   try { a = await api("/api/account"); } catch (e) { return accFail(pane, e); }
   const linked = a.linked || {};
-  const chips = [["telegram", "Telegram"], ["google", "Google"], ["yandex", "Яндекс"], ["password", "Пароль"]];
+  const chips = [["telegram", "Telegram"], ["google", "Google"],
+                 ["yandex", t("account.yandex")], ["password", t("account.password")]];
   const initial = (a.name || "?").trim().charAt(0).toUpperCase() || "?";
   pane.innerHTML = `
     <div class="acc-head">
@@ -532,18 +569,18 @@ async function renderAccountPane(pane) {
         ? `<img class="acc-avatar" src="${escHtml(a.avatar_url)}" alt="" />`
         : `<span class="acc-avatar acc-avatar-ph">${escHtml(initial)}</span>`}
       <div class="acc-who">
-        <b>${escHtml(a.name || "гость")}</b>
-        <span class="muted">${escHtml(a.email || a.login || "аккаунт без почты и логина")}</span>
+        <b>${escHtml(a.name || t("account.guest"))}</b>
+        <span class="muted">${escHtml(a.email || a.login || t("account.noContacts"))}</span>
       </div>
     </div>
     <div class="acc-stats">
-      <div class="acc-stat"><b>${escHtml(a.plan_title || "FREE")}</b><span>тариф</span></div>
-      <div class="acc-stat"><b>${a.plan_until ? fmtDate(a.plan_until) : "—"}</b><span>активен до</span></div>
-      <div class="acc-stat"><b>⚡ ${Number(a.points) || 0}</b><span>генераций</span></div>
-      <div class="acc-stat"><b>${Number(a.projects) || 0}</b><span>проектов</span></div>
+      <div class="acc-stat"><b>${escHtml(a.plan_title || "FREE")}</b><span>${escHtml(t("account.statPlan"))}</span></div>
+      <div class="acc-stat"><b>${a.plan_until ? escHtml(fmtDate(a.plan_until)) : "—"}</b><span>${escHtml(t("account.statUntil"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(tNum(a.points))}</b><span>${escHtml(t("account.statPoints"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(tNum(a.projects))}</b><span>${escHtml(t("account.statProjects"))}</span></div>
     </div>
     ${a.plan_note ? `<p class="muted acc-note">${escHtml(a.plan_note)}</p>` : ""}
-    <label>Входы в аккаунт</label>
+    <label>${escHtml(t("account.logins"))}</label>
     <div class="acc-chips">
       ${chips.map(([k, t]) => `<span class="acc-chip${linked[k] ? " on" : ""}">${linked[k] ? "✓" : "○"} ${t}</span>`).join("")}
     </div>
@@ -556,33 +593,33 @@ async function renderAccountPane(pane) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "danger";
-    btn.textContent = "Отключить автопродление";
+    btn.textContent = t("account.autopayOff");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      accMsg(pane, "отключаю…");
+      accMsg(pane, t("account.autopayOffBusy"));
       try {
         await api("/api/billing/cancel", { method: "POST" });
         await renderAccountPane(pane);
-        accMsg(pane, "автопродление отключено", "done");
+        accMsg(pane, t("account.autopayOffDone"), "done");
       } catch (e) {
         btn.disabled = false;
-        accMsg(pane, e.message, "error");
+        accMsg(pane, errText(e), "error");
       }
     });
     const note = document.createElement("span");
     note.className = "muted";
-    note.textContent = "тариф доработает до конца оплаченного срока";
+    note.textContent = t("account.autopayOffNote");
     actions.append(btn, note);
   } else {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = a.plan === "free" ? "Выбрать тариф" : "Продлить тариф";
+    btn.textContent = a.plan === "free" ? t("account.choosePlan") : t("account.renewPlan");
     btn.addEventListener("click", () => openAccountModal("plan"));
     actions.appendChild(btn);
     if (a.plan !== "free") {
       const note = document.createElement("span");
       note.className = "muted";
-      note.textContent = "автопродление выключено";
+      note.textContent = t("account.autopayNote");
       actions.appendChild(note);
     }
   }
@@ -592,26 +629,36 @@ async function renderAccountPane(pane) {
 async function renderPlanPane(pane) {
   let data;
   try { data = await api("/api/billing/plans"); } catch (e) { return accFail(pane, e); }
-  const enabled = Boolean(data.enabled);
-  const current = data.current || "free";
+  // Контракт витрины: новый (usd + providers) и старый (price в рублях +
+  // enabled) читаются одинаково — вкладка не должна зависеть от того, какой
+  // из них сегодня отдаёт бэкенд.
+  const providers = data.providers && typeof data.providers === "object" ? data.providers : null;
+  const enabled = providers ? Boolean(providers.stripe || providers.yookassa) : Boolean(data.enabled);
+  const current = (data.current && data.current.plan) || data.current || "free";
+  // Описание тарифа берём из своего словаря: у бэкенда оно всегда английское,
+  // а интерфейс обязан говорить на одном языке. Числа — из API.
+  const planNote = (p) => t(`landing.pricing.plans.${p.id}.note`) || p.note || "";
+  const planMoney = (p) => (p.usd != null ? ldMoney(p.usd) : fmtRub((Number(p.price) || 0) * 100));
+  const planPaid = (p) => (p.usd != null ? Number(p.usd) : Number(p.price)) > 0;
   pane.innerHTML = `
     <div class="acc-plans">
       ${(data.plans || []).map((p) => {
         const isCur = p.id === current;
         return `<div class="acc-plan${isCur ? " on" : ""}">
-          <div class="acc-plan-top"><b>${escHtml(p.title)}</b><span>${fmtRub((Number(p.price) || 0) * 100)}</span></div>
-          <p class="acc-plan-note">${escHtml(p.note || "")}</p>
-          <p class="acc-plan-points">⚡ ${Number(p.points) || 0} генераций</p>
+          <div class="acc-plan-top"><b>${escHtml(p.title)}</b><span>${escHtml(planMoney(p))}</span></div>
+          <p class="acc-plan-note">${escHtml(planNote(p))}</p>
+          <p class="acc-plan-points">${escHtml(t("plan.pointsLine", { n: tNum(p.points) }))}</p>
           ${isCur
-            ? `<span class="acc-plan-cur">текущий</span>`
-            : (Number(p.price) > 0
-              ? `<button type="button" class="primary acc-pay" data-plan="${escHtml(p.id)}">Оплатить</button>`
-              : `<span class="acc-plan-cur muted">базовый</span>`)}
+            ? `<span class="acc-plan-cur">${escHtml(t("plan.current"))}</span>`
+            : (planPaid(p)
+              ? `<button type="button" class="primary acc-pay" data-plan="${escHtml(p.id)}"
+                  >${escHtml(t("plan.pay"))}</button>`
+              : `<span class="acc-plan-cur muted">${escHtml(t("plan.basic"))}</span>`)}
         </div>`;
       }).join("")}
     </div>
-    <label>Промокод</label>
-    <input class="acc-promo" placeholder="код амбассадора — скидка на первую оплату" />
+    <label>${escHtml(t("plan.promoLabel"))}</label>
+    <input class="acc-promo" placeholder="${escHtml(t("plan.promoPh"))}" />
     <span class="acc-msg status"></span>`;
 
   // Промокод из реферальной ссылки подставляем сам: человек уже пришёл по нему.
@@ -622,29 +669,30 @@ async function renderPlanPane(pane) {
     if (!enabled) {
       // Честно: касса не подключена, а не «что-то пошло не так».
       btn.disabled = true;
-      btn.textContent = "оплата пока не подключена";
-      btn.title = "приём платежей ещё не настроен — напиши владельцу";
+      btn.textContent = t("plan.payOff");
+      btn.title = t("plan.payOffTitle");
       return;
     }
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      accMsg(pane, "создаю платёж…");
+      accMsg(pane, t("plan.creating"));
       try {
         const r = await api("/api/billing/create", {
-          method: "POST", body: { plan: btn.dataset.plan, promo: promo.value.trim() },
+          method: "POST",
+          body: { kind: "plan", plan: btn.dataset.plan, period: "month", promo: promo.value.trim() },
         });
         if (r && r.url) { window.location.href = r.url; return; }
-        throw new Error("касса не вернула ссылку оплаты");
+        throw new Error(t("plan.noUrl"));
       } catch (e) {
         btn.disabled = false;
-        accMsg(pane, e.message, "error");
+        accMsg(pane, errText(e), "error");
       }
     });
   });
   if (!enabled) {
     const note = document.createElement("p");
     note.className = "muted acc-note";
-    note.textContent = "Приём платежей ещё не подключён — тарифы показаны, оплатить нельзя.";
+    note.textContent = t("plan.payOffNote");
     pane.insertBefore(note, $(".acc-msg", pane));
   }
 }
@@ -657,27 +705,29 @@ async function renderRefPane(pane) {
 }
 
 function renderRefJoin(pane, d) {
+  // <b> в строках словаря — наша собственная разметка, поэтому идёт как есть;
+  // проценты и суммы подставляются числами.
   pane.innerHTML = `
-    <p class="acc-lead">Приводи людей по своей ссылке — и забирай долю с их оплат.</p>
+    <p class="acc-lead">${escHtml(t("ref.joinLead"))}</p>
     <ul class="acc-list">
-      <li>другу — скидка <b>${Number(d.discount_pct) || 0}%</b> на первую оплату</li>
-      <li>тебе — <b>${Number(d.reward_pct) || 0}%</b> с каждого его платежа, не только с первого</li>
-      <li>выплата по твоим реквизитам от ${fmtRub(d.min_payout_kopeks)}</li>
+      <li>${t("ref.joinDiscount", { pct: Number(d.discount_pct) || 0 })}</li>
+      <li>${t("ref.joinReward", { pct: Number(d.reward_pct) || 0 })}</li>
+      <li>${escHtml(t("ref.joinPayout", { sum: fmtRub(d.min_payout_kopeks) }))}</li>
     </ul>
     <div class="row">
-      <button type="button" class="primary acc-join">Стать амбассадором</button>
+      <button type="button" class="primary acc-join">${escHtml(t("ref.join"))}</button>
       <span class="acc-msg status"></span>
     </div>`;
   const btn = $(".acc-join", pane);
   btn.addEventListener("click", async () => {
     btn.disabled = true;
-    accMsg(pane, "подключаю…");
+    accMsg(pane, t("ref.joining"));
     try {
       await api("/api/ambassador/join", { method: "POST" });
       await renderRefPane(pane);
     } catch (e) {
       btn.disabled = false;
-      accMsg(pane, e.message, "error");
+      accMsg(pane, errText(e), "error");
     }
   });
 }
@@ -688,56 +738,57 @@ function renderRefCabinet(pane, d) {
   const events = d.events || [];
   const payouts = d.payouts || [];
   pane.innerHTML = `
-    <label>Твой промокод</label>
+    <label>${escHtml(t("ref.codeLabel"))}</label>
     <div class="acc-copy-row">
       <span class="acc-code">${escHtml(d.code)}</span>
-      <button type="button" class="acc-copy" data-copy="${escHtml(d.code)}">скопировать</button>
+      <button type="button" class="acc-copy" data-copy="${escHtml(d.code)}">${escHtml(t("common.copy"))}</button>
     </div>
-    <label>Реферальная ссылка</label>
+    <label>${escHtml(t("ref.linkLabel"))}</label>
     <div class="acc-copy-row">
       <input class="acc-link" readonly value="${escHtml(link)}" />
-      <button type="button" class="acc-copy" data-copy="${escHtml(link)}">скопировать</button>
+      <button type="button" class="acc-copy" data-copy="${escHtml(link)}">${escHtml(t("common.copy"))}</button>
     </div>
-    <p class="muted acc-note">Другу — скидка ${Number(d.discount_pct) || 0}% на первую оплату,
-      тебе — ${Number(d.reward_pct) || 0}% с каждой его оплаты.</p>
+    <p class="muted acc-note">${escHtml(t("ref.note", {
+      discount: Number(d.discount_pct) || 0, reward: Number(d.reward_pct) || 0 }))}</p>
 
     <div class="acc-stats acc-stats-5">
-      <div class="acc-stat"><b>${Number(s.invited) || 0}</b><span>приглашено</span></div>
-      <div class="acc-stat"><b>${Number(s.buyers) || 0}</b><span>оплатили</span></div>
-      <div class="acc-stat"><b>${fmtRub(s.accrued_kopeks)}</b><span>начислено</span></div>
-      <div class="acc-stat"><b>${fmtRub(s.paid_kopeks)}</b><span>выплачено</span></div>
-      <div class="acc-stat acc-stat-hi"><b>${fmtRub(s.available_kopeks)}</b><span>доступно</span></div>
+      <div class="acc-stat"><b>${escHtml(tNum(s.invited))}</b><span>${escHtml(t("ref.statInvited"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(tNum(s.buyers))}</b><span>${escHtml(t("ref.statBuyers"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(fmtRub(s.accrued_kopeks))}</b><span>${escHtml(t("ref.statAccrued"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(fmtRub(s.paid_kopeks))}</b><span>${escHtml(t("ref.statPaid"))}</span></div>
+      <div class="acc-stat acc-stat-hi"><b>${escHtml(fmtRub(s.available_kopeks))}</b><span>${escHtml(t("ref.statAvailable"))}</span></div>
     </div>
-    <p class="muted acc-note">оборот приглашённых — ${fmtRub(s.turnover_kopeks)}${
-      Number(s.reserved_kopeks) ? `, в заявках — ${fmtRub(s.reserved_kopeks)}` : ""}</p>
+    <p class="muted acc-note">${escHtml(t("ref.turnover", { sum: fmtRub(s.turnover_kopeks) }))}${
+      Number(s.reserved_kopeks) ? escHtml(t("ref.reserved", { sum: fmtRub(s.reserved_kopeks) })) : ""}</p>
 
-    <label>Последние события</label>
+    <label>${escHtml(t("ref.eventsLabel"))}</label>
     ${events.length ? `<div class="acc-table-wrap"><table class="acc-table"><tbody>
       ${events.map((e) => `<tr>
         <td class="acc-td-date">${escHtml(fmtDate(e.created_at))}</td>
         <td class="acc-td-who">${escHtml(e.who || "")}</td>
-        <td>${e.kind === "payment" ? "оплата " + escHtml(fmtRub(e.amount_kopeks)) : "пришёл по ссылке"}</td>
+        <td>${escHtml(e.kind === "payment"
+          ? t("ref.eventPayment", { sum: fmtRub(e.amount_kopeks) })
+          : t("ref.eventVisit"))}</td>
         <td class="acc-td-sum">${e.reward_kopeks ? "+" + escHtml(fmtRub(e.reward_kopeks)) : "—"}</td>
       </tr>`).join("")}
-    </tbody></table></div>` : `<p class="muted">пока пусто — поделись ссылкой</p>`}
+    </tbody></table></div>` : `<p class="muted">${escHtml(t("ref.eventsEmpty"))}</p>`}
 
-    <label>Реквизиты для выплаты</label>
-    <textarea class="acc-details" rows="2" placeholder="карта, СБП по номеру телефона, кому переводить">${escHtml(d.payout_details || "")}</textarea>
+    <label>${escHtml(t("ref.detailsLabel"))}</label>
+    <textarea class="acc-details" rows="2" placeholder="${escHtml(t("ref.detailsPh"))}">${escHtml(d.payout_details || "")}</textarea>
     <div class="row">
-      <button type="button" class="acc-save-details">Сохранить реквизиты</button>
+      <button type="button" class="acc-save-details">${escHtml(t("ref.detailsSave"))}</button>
     </div>
-    <label>Заказать выплату</label>
+    <label>${escHtml(t("ref.payoutLabel"))}</label>
     <div class="row acc-payout-row">
-      <input class="acc-payout-sum" type="number" min="0" step="1" placeholder="сумма в ₽" />
-      <button type="button" class="primary acc-payout-btn">Заказать выплату</button>
+      <input class="acc-payout-sum" type="number" min="0" step="1" placeholder="${escHtml(t("ref.payoutPh"))}" />
+      <button type="button" class="primary acc-payout-btn">${escHtml(t("ref.payoutBtn"))}</button>
     </div>
-    <p class="muted acc-note">Пусто в сумме — закажем всё доступное. Минимальная выплата —
-      ${fmtRub(d.min_payout_kopeks)}, деньги по заявке сразу уходят в резерв.</p>
+    <p class="muted acc-note">${escHtml(t("ref.payoutNote", { sum: fmtRub(d.min_payout_kopeks) }))}</p>
     <span class="acc-msg status"></span>
 
-    ${payouts.length ? `<label>Мои заявки</label>
+    ${payouts.length ? `<label>${escHtml(t("ref.myPayouts"))}</label>
       <div class="acc-payouts">${payouts.map((p) => {
-        const st = PAYOUT_STATUS[p.status] || { label: p.status, cls: "" };
+        const st = payoutStatus(p.status);
         return `<div class="acc-payout">
           <b>${escHtml(fmtRub(p.amount_kopeks))}</b>
           <span class="acc-badge ${st.cls}">${escHtml(st.label)}</span>
@@ -753,14 +804,14 @@ function renderRefCabinet(pane, d) {
   const detailsBtn = $(".acc-save-details", pane);
   detailsBtn.addEventListener("click", async () => {
     detailsBtn.disabled = true;
-    accMsg(pane, "сохраняю…");
+    accMsg(pane, t("common.saving"));
     try {
       await api("/api/ambassador/details", {
         method: "POST", body: { details: $(".acc-details", pane).value.trim() },
       });
-      accMsg(pane, "реквизиты сохранены", "done");
+      accMsg(pane, t("ref.detailsSaved"), "done");
     } catch (e) {
-      accMsg(pane, e.message, "error");
+      accMsg(pane, errText(e), "error");
     }
     detailsBtn.disabled = false;
   });
@@ -768,7 +819,7 @@ function renderRefCabinet(pane, d) {
   const payBtn = $(".acc-payout-btn", pane);
   payBtn.addEventListener("click", async () => {
     payBtn.disabled = true;
-    accMsg(pane, "отправляю заявку…");
+    accMsg(pane, t("ref.payoutBusy"));
     const rub = Number($(".acc-payout-sum", pane).value || 0);
     try {
       await api("/api/ambassador/payout", {
@@ -780,32 +831,33 @@ function renderRefCabinet(pane, d) {
         },
       });
       await renderRefPane(pane);
-      accMsg(pane, "заявка принята — деньги уйдут по реквизитам", "done");
+      accMsg(pane, t("ref.payoutDone"), "done");
     } catch (e) {
       payBtn.disabled = false;
-      accMsg(pane, e.message, "error");
+      accMsg(pane, errText(e), "error");
     }
   });
 }
 
 // ────────── вкладка «Выплаты» (только админ) ──────────
 async function renderPayoutsPane(pane, status = "new") {
-  pane.innerHTML = `<div class="muted acc-loading">загружаю…</div>`;
+  pane.innerHTML = `<div class="muted acc-loading">${escHtml(t("common.loading"))}</div>`;
   let d;
   try {
     d = await api(`/api/admin/payouts${status ? `?status=${encodeURIComponent(status)}` : ""}`);
   } catch (e) { return accFail(pane, e); }
   const rows = d.payouts || [];
-  const opts = [["new", "новые"], ["paid", "выплаченные"], ["rejected", "отклонённые"], ["", "все"]];
+  const opts = [["new", t("payouts.filterNew")], ["paid", t("payouts.filterPaid")],
+                ["rejected", t("payouts.filterRejected")], ["", t("payouts.filterAll")]];
   pane.innerHTML = `
     <div class="row acc-filter-row">
-      <label class="acc-filter-label">Очередь</label>
+      <label class="acc-filter-label">${escHtml(t("payouts.queue"))}</label>
       <select class="acc-filter">
-        ${opts.map(([v, t]) => `<option value="${v}"${v === status ? " selected" : ""}>${t}</option>`).join("")}
+        ${opts.map(([v, label]) => `<option value="${v}"${v === status ? " selected" : ""}>${escHtml(label)}</option>`).join("")}
       </select>
     </div>
     ${rows.length ? `<div class="acc-payouts">${rows.map((p) => {
-      const st = PAYOUT_STATUS[p.status] || { label: p.status, cls: "" };
+      const st = payoutStatus(p.status);
       const a = p.ambassador || {};
       const contacts = [a.tg ? "@" + a.tg : "", a.email || ""].filter(Boolean).join(" · ");
       return `<div class="acc-payout acc-payout-admin" data-id="${p.id}">
@@ -818,14 +870,14 @@ async function renderPayoutsPane(pane, status = "new") {
           ${escHtml(a.name || "")}${a.code ? ` <span class="acc-code acc-code-sm">${escHtml(a.code)}</span>` : ""}
           ${contacts ? `<span class="muted">${escHtml(contacts)}</span>` : ""}
         </div>
-        <div class="acc-payout-details">${escHtml(p.details || "реквизиты не указаны")}</div>
+        <div class="acc-payout-details">${escHtml(p.details || t("payouts.noDetails"))}</div>
         ${p.comment ? `<div class="muted acc-payout-note">${escHtml(p.comment)}</div>` : ""}
         ${p.status === "new" ? `<div class="row acc-payout-actions">
-          <button type="button" class="primary acc-mark" data-status="paid">Выплачено</button>
-          <button type="button" class="danger acc-mark" data-status="rejected">Отклонить</button>
+          <button type="button" class="primary acc-mark" data-status="paid">${escHtml(t("payouts.markPaid"))}</button>
+          <button type="button" class="danger acc-mark" data-status="rejected">${escHtml(t("payouts.markRejected"))}</button>
         </div>` : ""}
       </div>`;
-    }).join("")}</div>` : `<p class="muted">заявок в этой очереди нет</p>`}
+    }).join("")}</div>` : `<p class="muted">${escHtml(t("payouts.empty"))}</p>`}
     <span class="acc-msg status"></span>`;
 
   $(".acc-filter", pane).addEventListener("change", (e) => renderPayoutsPane(pane, e.target.value));
@@ -834,7 +886,7 @@ async function renderPayoutsPane(pane, status = "new") {
     btn.addEventListener("click", async () => {
       const card = btn.closest(".acc-payout");
       $$(".acc-mark", card).forEach((b) => { b.disabled = true; });
-      accMsg(pane, "сохраняю…");
+      accMsg(pane, t("common.saving"));
       try {
         await api(`/api/admin/payouts/${card.dataset.id}`, {
           method: "POST", body: { status: btn.dataset.status },
@@ -842,7 +894,7 @@ async function renderPayoutsPane(pane, status = "new") {
         await renderPayoutsPane(pane, status);
       } catch (e) {
         $$(".acc-mark", card).forEach((b) => { b.disabled = false; });
-        accMsg(pane, e.message, "error");
+        accMsg(pane, errText(e), "error");
       }
     });
   });
@@ -878,11 +930,11 @@ function renderProjectBar() {
   for (const p of projects) {
     const o = document.createElement("option");
     o.value = p.id;
-    o.textContent = `${p.kind === "single" ? "🎵" : "💿"} ${p.name}`;
+    o.textContent = p.name;
     if (p.id === activeProjectId) o.selected = true;
     sel.appendChild(o);
   }
-  $("#project-kind").textContent = project.kind === "single" ? "сингл" : "альбом";
+  $("#project-kind").textContent = t(project.kind === "single" ? "top.kindSingle" : "top.kindAlbum");
   const coverImg = $("#project-cover-img");
   if (project.cover_url) {
     coverImg.src = project.cover_url;
@@ -900,27 +952,27 @@ $("#project-select").addEventListener("change", (e) => {
 });
 
 $("#new-project-btn").addEventListener("click", () => {
-  openModal("Новый проект", (body) => {
+  openModal(t("modal.newProject.title"), (body) => {
     body.innerHTML = `
-      <label>Название</label>
-      <input class="np-name" placeholder="Название проекта" />
-      <label>Тип проекта</label>
+      <label>${escHtml(t("modal.newProject.nameLabel"))}</label>
+      <input class="np-name" placeholder="${escHtml(t("modal.newProject.namePh"))}" />
+      <label>${escHtml(t("modal.newProject.kindLabel"))}</label>
       <div class="kind-cards">
         <button type="button" class="kind-card on" data-kind="album">
-          <span class="kind-emoji">💿</span><b>Альбом</b><span class="muted">несколько треков</span>
+          <b>${escHtml(t("modal.newProject.album"))}</b><span class="muted">${escHtml(t("modal.newProject.albumNote"))}</span>
         </button>
         <button type="button" class="kind-card" data-kind="single">
-          <span class="kind-emoji">🎵</span><b>Сингл</b><span class="muted">один трек</span>
+          <b>${escHtml(t("modal.newProject.single"))}</b><span class="muted">${escHtml(t("modal.newProject.singleNote"))}</span>
         </button>
       </div>
-      <label>Обложка (необязательно)</label>
+      <label>${escHtml(t("modal.newProject.coverLabel"))}</label>
       <label class="cover-drop">
         <input type="file" class="np-cover hidden" accept="image/jpeg,image/png,image/webp" />
         <img class="np-cover-preview hidden" alt="" />
-        <span class="np-cover-hint">＋ выбрать файл (jpg / png / webp)</span>
+        <span class="np-cover-hint">${escHtml(t("modal.newProject.coverHint"))}</span>
       </label>
       <div class="row">
-        <button type="button" class="primary np-create">Создать</button>
+        <button type="button" class="primary np-create">${escHtml(t("common.create"))}</button>
         <span class="np-error error hidden"></span>
       </div>`;
 
@@ -949,7 +1001,7 @@ $("#new-project-btn").addEventListener("click", () => {
     const create = async () => {
       const name = nameInput.value.trim();
       if (!name) {
-        errEl.textContent = "введи название";
+        errEl.textContent = t("modal.newProject.nameRequired");
         errEl.classList.remove("hidden");
         return;
       }
@@ -967,7 +1019,7 @@ $("#new-project-btn").addEventListener("click", () => {
         closeModal();
         await loadProject();
       } catch (e) {
-        errEl.textContent = e.message;
+        errEl.textContent = errText(e);
         errEl.classList.remove("hidden");
         createBtn.disabled = false;
       }
@@ -1028,11 +1080,11 @@ function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function statusLabel(status, doneWord = "готово") {
-  if (status === "queued") return { text: "в очереди…", cls: "" };
-  if (status === "running") return { text: "генерирую…", cls: "" };
-  if (status === "error") return { text: "ошибка", cls: "error" };
-  if (status === "done") return { text: doneWord, cls: "done" };
+function statusLabel(status, doneWord) {
+  if (status === "queued") return { text: t("status.queued"), cls: "" };
+  if (status === "running") return { text: t("status.running"), cls: "" };
+  if (status === "error") return { text: t("status.error"), cls: "error" };
+  if (status === "done") return { text: doneWord || t("status.done"), cls: "done" };
   return { text: "", cls: "" };
 }
 
@@ -1053,49 +1105,44 @@ function render() {
 
   const container = $("#tracks");
   container.innerHTML = "";
-  project.tracks.forEach((t) => container.appendChild(renderTrack(t)));
+  project.tracks.forEach((tr) => container.appendChild(renderTrack(tr)));
 }
 
 // ────────── степпер трека: 5 этапов, никакой автогенерации при переключении ──────────
-const STAGES = [
-  ["setup", "Настройка"],
-  ["plot", "Сюжет"],
-  ["board", "Раскадровка"],
-  ["anim", "Анимация"],
-  ["final", "Готовое"],
-];
+// Ключи этапов; подписи — в словаре (stages.*), чтобы степпер переводился.
+const STAGES = ["setup", "plot", "board", "anim", "final"];
 // Активный этап на трек — переживает пере-рендеры поллинга.
 const trackStages = new Map();
 
-function stageStates(t) {
-  const scenes = t.scenes || [];
+function stageStates(tr) {
+  const scenes = tr.scenes || [];
   const busy = (st) => ["queued", "running"].includes(st);
   const anyImgBusy = scenes.some((s) => busy(s.image_status) || midframesBusy(s));
   const anyVidBusy = scenes.some((s) => busy(s.video_status));
   const framesDone = scenes.length > 0 && scenes.every((s) => s.image_url && s.image_last_url);
   const videosDone = scenes.length > 0 && scenes.every((s) => s.video_url);
   return {
-    setup: t.style && t.audio_duration_sec ? "done"
-      : (t.title || t.style || t.audio_duration_sec || t.lyrics || t.comment) ? "part" : "empty",
+    setup: tr.style && tr.audio_duration_sec ? "done"
+      : (tr.title || tr.style || tr.audio_duration_sec || tr.lyrics || tr.comment) ? "part" : "empty",
     plot: project.story_status === "error" ? "error"
       : busy(project.story_status) ? "busy"
       : (project.story || "").trim() ? "done" : "empty",
-    board: (t.scenes_status === "error" || t.storyboard_status === "error" ||
+    board: (tr.scenes_status === "error" || tr.storyboard_status === "error" ||
         scenes.some((s) => s.image_status === "error")) ? "error"
-      : (busy(t.scenes_status) || busy(t.storyboard_status) || anyImgBusy) ? "busy"
+      : (busy(tr.scenes_status) || busy(tr.storyboard_status) || anyImgBusy) ? "busy"
       : framesDone ? "done" : scenes.length ? "part" : "empty",
     anim: scenes.some((s) => s.video_status === "error") ? "error"
       : anyVidBusy ? "busy"
       : videosDone ? "done" : scenes.some((s) => s.video_url) ? "part" : "empty",
-    final: t.clip_status === "error" ? "error"
-      : busy(t.clip_status) ? "busy"
-      : t.clip_url ? "done" : "empty",
+    final: tr.clip_status === "error" ? "error"
+      : busy(tr.clip_status) ? "busy"
+      : tr.clip_url ? "done" : "empty",
   };
 }
 
-function defaultStage(t) {
-  if (t.clip_url) return "final";
-  if (t.scenes_count) return "board";
+function defaultStage(tr) {
+  if (tr.clip_url) return "final";
+  if (tr.scenes_count) return "board";
   return "setup";
 }
 
@@ -1112,15 +1159,16 @@ function bindStrip(wrap) {
   $(".strip-next", wrap).addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
 }
 
-function renderTrack(t) {
+function renderTrack(tr) {
   const tpl = $("#track-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".track-card");
-  card.dataset.id = t.id;
-  $(".pos", card).textContent = `#${t.position}`;
+  applyI18n(card);   // содержимое <template> обходом документа не задевается
+  card.dataset.id = tr.id;
+  $(".pos", card).textContent = `#${tr.position}`;
   // Обложка трека: клик по квадрату = заменить (скрытый file input в label).
-  if (t.cover_url) {
+  if (tr.cover_url) {
     const cImg = $(".t-cover-img", card);
-    cImg.src = t.cover_url;
+    cImg.src = tr.cover_url;
     cImg.classList.remove("hidden");
   }
   $(".t-cover-input", card).addEventListener("change", async (e) => {
@@ -1128,16 +1176,17 @@ function renderTrack(t) {
     if (!file) return;
     const fd = new FormData();
     fd.append("cover", file);
-    await api(`/api/tracks/${t.id}/cover`, { method: "POST", body: fd });
+    await api(`/api/tracks/${tr.id}/cover`, { method: "POST", body: fd });
     await loadProject();
   });
-  $(".t-title", card).value = t.title;
+  $(".t-title", card).value = tr.title;
 
   // ── табы-этапы с точками-статусами
-  const states = stageStates(t);
-  const active = trackStages.get(t.id) || defaultStage(t);
+  const states = stageStates(tr);
+  const active = trackStages.get(tr.id) || defaultStage(tr);
   const tabsBox = $(".stage-tabs", card);
-  STAGES.forEach(([key, name], i) => {
+  STAGES.forEach((key, i) => {
+    const name = t("stages." + key);
     const b = document.createElement("button");
     b.type = "button";
     b.className = "stage-tab" + (key === active ? " on" : "");
@@ -1149,7 +1198,7 @@ function renderTrack(t) {
     dot.className = "stage-dot " + states[key];
     b.append(num, document.createTextNode(name), dot);
     b.addEventListener("click", () => {
-      trackStages.set(t.id, key);
+      trackStages.set(tr.id, key);
       setStage(card, key);
     });
     tabsBox.appendChild(b);
@@ -1170,42 +1219,42 @@ function renderTrack(t) {
     const dy = e.changedTouches[0].clientY - touchY;
     touchX = null;
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
-    const cur = trackStages.get(t.id) || defaultStage(t);
-    const idx = STAGES.findIndex(([k]) => k === cur);
+    const cur = trackStages.get(tr.id) || defaultStage(tr);
+    const idx = STAGES.indexOf(cur);
     const next = STAGES[idx + (dx < 0 ? 1 : -1)];
     if (next) {
-      trackStages.set(t.id, next[0]);
-      setStage(card, next[0]);
+      trackStages.set(tr.id, next);
+      setStage(card, next);
     }
   }, { passive: true });
 
   // ── этап 1: настройка
-  $(".t-style", card).value = t.style;
-  buildStylePicker($(".t-style-picker", card), t.style, (v) => { $(".t-style", card).value = v; });
-  $(".t-comment", card).value = t.comment;
-  $(".t-grain", card).checked = Boolean(t.film_grain);
-  $(".t-nostory", card).checked = Boolean(t.no_story);
-  $(".t-lyrics", card).value = t.lyrics;
+  $(".t-style", card).value = tr.style;
+  buildStylePicker($(".t-style-picker", card), tr.style, (v) => { $(".t-style", card).value = v; });
+  $(".t-comment", card).value = tr.comment;
+  $(".t-grain", card).checked = Boolean(tr.film_grain);
+  $(".t-nostory", card).checked = Boolean(tr.no_story);
+  $(".t-lyrics", card).value = tr.lyrics;
   const audioEl = $(".t-audio", card);
-  if (t.audio_filename) audioEl.src = `/api/tracks/${t.id}/audio`;
+  if (tr.audio_filename) audioEl.src = `/api/tracks/${tr.id}/audio`;
   else audioEl.style.display = "none";
   const durEl = $(".t-duration", card);
-  durEl.textContent = t.audio_duration_sec ? fmtTime(t.audio_duration_sec) : "";
-  if (t.audio_profile) durEl.title = "🎧 " + t.audio_profile; // простыня — в подсказку
+  durEl.textContent = tr.audio_duration_sec ? fmtTime(tr.audio_duration_sec) : "";
+  if (tr.audio_profile) durEl.title = t("track.audioProfile") + ": " + tr.audio_profile;
 
   // Плеер трека сам подсвечивает кадр, который сейчас звучит — и наоборот,
   // клик по кадру перематывает трек на его начало и проигрывает.
   audioEl.addEventListener("timeupdate", () => highlightActiveScene(card, audioEl.currentTime));
 
-  $(".up", card).addEventListener("click", () => moveTrack(t.id, -1));
-  $(".down", card).addEventListener("click", () => moveTrack(t.id, 1));
-  $(".del", card).addEventListener("click", () => deleteTrack(t.id));
-  $(".save-track", card).addEventListener("click", () => saveTrack(t.id, card));
+  $(".up", card).addEventListener("click", () => moveTrack(tr.id, -1));
+  $(".down", card).addEventListener("click", () => moveTrack(tr.id, 1));
+  $(".del", card).addEventListener("click", () => deleteTrack(tr.id));
+  $(".save-track", card).addEventListener("click", () => saveTrack(tr.id, card));
 
   // ── этап 2: сюжет (read-only цитата + заметка режиссёра + генерация, если пуст)
-  if (t.director_note) {
+  if (tr.director_note) {
     $(".t-note-view", card).classList.remove("hidden");
-    $(".t-note-text", card).textContent = t.director_note;
+    $(".t-note-text", card).textContent = tr.director_note;
   }
   const storyBtn = $(".gen-story-t", card);
   const storyBusy = ["queued", "running"].includes(project.story_status);
@@ -1216,7 +1265,7 @@ function renderTrack(t) {
     try {
       await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
     } catch (e) {
-      alert(e.message);
+      fail(e);
     }
     await loadProject();
   });
@@ -1226,52 +1275,54 @@ function renderTrack(t) {
   tStoryEl.className = "status " + tStoryStatus.cls;
 
   // ── этап 3: раскадровка
-  $(".add-scene", card).addEventListener("click", () => addManualScene(t.id));
+  $(".add-scene", card).addEventListener("click", () => addManualScene(tr.id));
   const allBtn = $(".gen-all-frames", card);
-  const framesBusy = (t.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
-  const framesTodo = (t.scenes || []).filter((s) => !(s.image_url && s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
+  const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
+  // «(готовый кадр» — служебная метка бэкенда в image_prompt (backend/main.py),
+  // не текст для человека: переводить её нельзя, иначе фильтр разъедется.
+  const framesTodo = (tr.scenes || []).filter((s) => !(s.image_url && s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
   allBtn.disabled = framesBusy || !framesTodo;
-  allBtn.textContent = framesBusy ? "генерирую кадры…" : `Кадры всех сцен (${framesTodo})`;
-  allBtn.title = "очередь идёт по одной сцене — вкладку можно закрыть, прогресс не теряется";
-  $(".all-frames-note", card).textContent = framesBusy ? "очередь идёт по одной сцене" : "";
+  allBtn.textContent = framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo });
+  allBtn.title = t("track.allFramesTitle");
+  $(".all-frames-note", card).textContent = framesBusy ? t("track.allFramesNote") : "";
   allBtn.addEventListener("click", async () => {
     try {
-      await api(`/api/tracks/${t.id}/generate-all-frames`, { method: "POST" });
+      await api(`/api/tracks/${tr.id}/generate-all-frames`, { method: "POST" });
     } catch (e) {
-      alert(e.message);
+      fail(e);
     }
     await loadProject();
   });
   const allVidBtn = $(".gen-all-videos", card);
   if (allVidBtn) {
-    const vidBusy = (t.scenes || []).some((s) => ["queued", "running"].includes(s.video_status));
-    const vidTodo = (t.scenes || []).filter((s) => s.image_url && !s.video_url).length;
+    const vidBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.video_status));
+    const vidTodo = (tr.scenes || []).filter((s) => s.image_url && !s.video_url).length;
     allVidBtn.disabled = vidBusy || !vidTodo;
-    allVidBtn.textContent = vidBusy ? "генерирую видео…" : `🎬 Видео всех сцен (${vidTodo})`;
+    allVidBtn.textContent = vidBusy ? t("track.allVideosBusy") : t("track.allVideosN", { n: vidTodo });
     allVidBtn.addEventListener("click", async () => {
-      if (!confirm(`Поставить в очередь видео для ${vidTodo} сцен? Это спишет кредиты видеогенератора.`)) return;
+      if (!confirm(t("track.allVideosConfirm", { n: vidTodo }))) return;
       try {
-        await api(`/api/tracks/${t.id}/generate-all-videos`, { method: "POST" });
-      } catch (e) { alert(e.message); }
+        await api(`/api/tracks/${tr.id}/generate-all-videos`, { method: "POST" });
+      } catch (e) { fail(e); }
       await loadProject();
     });
   }
   const genBtn = $(".gen-scenes", card);
-  const busy = t.scenes_status === "queued" || t.scenes_status === "running";
+  const busy = tr.scenes_status === "queued" || tr.scenes_status === "running";
   genBtn.disabled = busy || !project.story;
-  genBtn.title = project.story ? "" : "сначала сгенерируй общий сюжет (этап «Сюжет»)";
-  genBtn.addEventListener("click", () => genScenes(t.id));
+  genBtn.title = project.story ? "" : t("track.genScenesTitle");
+  genBtn.addEventListener("click", () => genScenes(tr.id));
 
   // ⚡ Супергенерация: весь конвейер одним нажатием (кнопка живёт в шапке).
   const superBtn = $(".s-supergen", card);
-  const superBusy = ["queued", "running"].includes(t.supergen_status);
-  superBtn.disabled = superBusy || !t.audio_duration_sec;
-  superBtn.textContent = superBusy ? "⚡ генерирую всё…" : "⚡ Супергенерация";
-  superBtn.addEventListener("click", () => openSupergenModal(t));
+  const superBusy = ["queued", "running"].includes(tr.supergen_status);
+  superBtn.disabled = superBusy || !tr.audio_duration_sec;
+  superBtn.textContent = superBusy ? t("track.supergenBusy") : t("track.supergen");
+  superBtn.addEventListener("click", () => openSupergenModal(tr));
   const superNote = $(".supergen-note", card);
-  superNote.textContent = t.supergen_note || "";
+  superNote.textContent = tr.supergen_note || "";
   superNote.className = "status supergen-note " +
-    (t.supergen_status === "error" ? "error" : t.supergen_status === "done" ? "done" : "");
+    (tr.supergen_status === "error" ? "error" : tr.supergen_status === "done" ? "done" : "");
   if (superBusy && !window.__supergenPoll) {
     window.__supergenPoll = setInterval(async () => {
       const p = await api(`/api/project?project_id=${activeProjectId}`).catch(() => null);
@@ -1283,34 +1334,35 @@ function renderTrack(t) {
       await loadProject();
     }, 15000);
   }
-  const st = statusLabel(t.scenes_status, `готово, кадров: ${t.scenes_count}`);
+  const st = statusLabel(tr.scenes_status, t("track.scenesDone", { n: tr.scenes_count }));
   const stEl = $(".scenes-status", card);
-  stEl.textContent = st.text || (t.scenes_count ? `кадров: ${t.scenes_count}` : "");
+  stEl.textContent = st.text || (tr.scenes_count ? t("track.scenesCount", { n: tr.scenes_count }) : "");
   stEl.className = "status " + st.cls;
 
   // Лист раскадровки: весь клип одной картинкой — до покадровой отрисовки.
-  const sbStatus = statusLabel(t.storyboard_status, "готово");
+  const sbStatus = statusLabel(tr.storyboard_status);
   const sbStatusEl = $(".sb-status", card);
   sbStatusEl.textContent = sbStatus.text;
   sbStatusEl.className = "status " + sbStatus.cls;
-  if (t.storyboard_url) {
+  if (tr.storyboard_url) {
     const img = $(".sb-preview", card);
-    img.src = t.storyboard_url;
+    img.src = tr.storyboard_url;
     img.classList.remove("hidden");
   }
   const sbBtn = $(".gen-storyboard", card);
-  const sbBusy = ["queued", "running"].includes(t.storyboard_status);
-  sbBtn.disabled = sbBusy || !t.scenes_count;
-  sbBtn.textContent = sbBusy ? "рисую лист…" : t.storyboard_url ? "Перерисовать лист" : "Сгенерировать лист";
-  sbBtn.addEventListener("click", () => genStoryboard(t.id));
+  const sbBusy = ["queued", "running"].includes(tr.storyboard_status);
+  sbBtn.disabled = sbBusy || !tr.scenes_count;
+  sbBtn.textContent = sbBusy ? t("track.sheetBusy")
+    : tr.storyboard_url ? t("track.redrawSheet") : t("track.genSheet");
+  sbBtn.addEventListener("click", () => genStoryboard(tr.id));
   const sliceBtn = $(".slice-storyboard", card);
-  sliceBtn.disabled = !t.storyboard_url;
-  sliceBtn.addEventListener("click", () => openCellsModal(t));
+  sliceBtn.disabled = !tr.storyboard_url;
+  sliceBtn.addEventListener("click", () => openCellsModal(tr));
 
   // Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
   const boardBox = $(".scenes-board", card);
   const animBox = $(".scenes-anim", card);
-  (t.scenes || []).forEach((s) => {
+  (tr.scenes || []).forEach((s) => {
     boardBox.appendChild(renderScene(s, audioEl, "board"));
     // В «Анимацию» карточка попадает только когда видео есть или генерится.
     if (s.video_url || ["queued", "running", "error"].includes(s.video_status)) {
@@ -1321,39 +1373,39 @@ function renderTrack(t) {
     const hint = document.createElement("p");
     hint.className = "muted";
     hint.style.padding = "8px 4px";
-    hint.textContent = "Видео ещё нет — сгенерируй их из «Раскадровки»: кнопка 🎬 на карточке кадра.";
+    hint.textContent = t("track.animEmpty");
     animBox.appendChild(hint);
   }
   $$(".strip-wrap", card).forEach(bindStrip);
 
   // ── этап 5: готовое — финальный клип + все видео сцен в одном месте
-  const clipStatus = statusLabel(t.clip_status, "клип готов");
+  const clipStatus = statusLabel(tr.clip_status, t("track.clipDone"));
   const clipStatusEl = $(".clip-status", card);
   clipStatusEl.textContent = clipStatus.text;
   clipStatusEl.className = "status " + clipStatus.cls;
   $(".clip-title", card).textContent =
-    `Готовый клип — утверждено сцен: ${t.approved_count}/${t.scenes_count}`;
-  if (t.clip_url) {
+    t("track.clipTitle", { a: tr.approved_count, b: tr.scenes_count });
+  if (tr.clip_url) {
     const v = $(".clip-preview", card);
-    v.src = t.clip_url;
+    v.src = tr.clip_url;
     v.classList.remove("hidden");
     const dl = $(".clip-download", card);
-    dl.href = t.clip_url;
+    dl.href = tr.clip_url;
     dl.classList.remove("hidden");
   }
   const asmBtn = $(".assemble", card);
-  const asmBusy = ["queued", "running"].includes(t.clip_status);
-  asmBtn.disabled = asmBusy || !t.approved_count;
-  asmBtn.title = t.approved_count ? "" : "утверди хотя бы одну сцену (этап «Анимация»)";
-  asmBtn.textContent = asmBusy ? "собираю клип…" : "Собрать клип";
-  asmBtn.addEventListener("click", () => assembleClip(t.id));
+  const asmBusy = ["queued", "running"].includes(tr.clip_status);
+  asmBtn.disabled = asmBusy || !tr.approved_count;
+  asmBtn.title = tr.approved_count ? "" : t("track.assembleTitle");
+  asmBtn.textContent = asmBusy ? t("track.assembleBusy") : t("track.assemble");
+  asmBtn.addEventListener("click", () => assembleClip(tr.id));
 
   const grid = $(".final-grid", card);
-  const withVideo = (t.scenes || []).filter((s) => s.video_url);
+  const withVideo = (tr.scenes || []).filter((s) => s.video_url);
   if (!withVideo.length) {
     const empty = document.createElement("span");
     empty.className = "muted";
-    empty.textContent = "видео сцен ещё нет — они появятся здесь после этапа «Анимация»";
+    empty.textContent = t("track.finalEmpty");
     grid.appendChild(empty);
   }
   withVideo.forEach((s) => {
@@ -1366,7 +1418,8 @@ function renderTrack(t) {
     v.preload = "metadata";
     const cap = document.createElement("span");
     cap.className = "muted";
-    cap.textContent = `Сцена ${s.position} · ${fmtTime(s.start_sec)}` + (s.approved ? " ✅" : "");
+    cap.textContent = t("scene.cap", { n: s.position, time: fmtTime(s.start_sec) })
+      + (s.approved ? t("scene.capApproved") : "");
     cell.append(v, cap);
     grid.appendChild(cell);
   });
@@ -1396,11 +1449,12 @@ function highlightActiveScene(trackCard, currentTime) {
 function renderScene(s, audioEl, mode = "board") {
   const tpl = $("#scene-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".scene-card");
+  applyI18n(card);
   card.classList.add("mode-" + mode);
   card.dataset.id = s.id;
   card.dataset.start = s.start_sec;
   card.dataset.duration = s.duration_sec;
-  $(".s-pos", card).textContent = `Кадр ${s.position}`;
+  $(".s-pos", card).textContent = t("scene.pos", { n: s.position });
   $(".s-time", card).textContent = `${fmtTime(s.start_sec)} — ${fmtTime(s.start_sec + s.duration_sec)}`;
   $(".s-duration", card).value = s.duration_sec;
   $(".s-shotsize", card).value = s.shot_size || "";
@@ -1438,7 +1492,7 @@ function renderScene(s, audioEl, mode = "board") {
             method: "PATCH", body: { characters: charsInput.value },
           });
         } catch (e) {
-          alert(e.message);
+          fail(e);
         }
         await loadProject();
       });
@@ -1467,7 +1521,7 @@ function renderScene(s, audioEl, mode = "board") {
   });
 
   // Кадры сцены: первый и последний (Seedance интерполирует между ними).
-  const imgStatus = statusLabel(s.image_status, "готово");
+  const imgStatus = statusLabel(s.image_status);
   const imgStatusEl = $(".s-image-status", card);
   imgStatusEl.textContent = imgStatus.text;
   imgStatusEl.className = "status " + imgStatus.cls;
@@ -1489,7 +1543,8 @@ function renderScene(s, audioEl, mode = "board") {
   const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
   framesBtn.disabled = imgBusy;
-  framesBtn.textContent = imgBusy ? "рисую кадры…" : s.image_url ? "Перегенерировать кадры" : "Сгенерировать кадры";
+  framesBtn.textContent = imgBusy ? t("scene.framesBusy")
+    : s.image_url ? t("scene.regenFrames") : t("scene.genFrames");
   framesBtn.addEventListener("click", () => genSceneFrames(s.id));
   const firstBtn = $(".s-gen-first", card);
   const lastBtn = $(".s-gen-last", card);
@@ -1508,7 +1563,7 @@ function renderScene(s, audioEl, mode = "board") {
     const img = document.createElement("img");
     img.src = m.thumb_url || m.url;
     img.alt = "";
-    img.title = `промежуточный кадр ${i + 1}`;
+    img.title = t("scene.midThumb", { n: i + 1 });
     img.addEventListener("click", () => window.open(m.url, "_blank"));
     midBox.appendChild(img);
   });
@@ -1522,18 +1577,18 @@ function renderScene(s, audioEl, mode = "board") {
       const img = document.createElement("img");
       img.src = r.thumb_url || r.url;
       img.alt = "";
-      img.title = "референс кадра — клик: открыть оригинал";
+      img.title = t("scene.refTitle");
       img.addEventListener("click", () => window.open(r.url, "_blank"));
       const del = document.createElement("button");
       del.type = "button";
       del.className = "ghost danger s-ref-del";
       del.textContent = "✕";
-      del.title = "убрать референс";
+      del.title = t("scene.refDel");
       del.addEventListener("click", async () => {
         try {
           await api(`/api/scenes/refs/${r.id}`, { method: "DELETE" });
         } catch (e) {
-          alert(e.message);
+          fail(e);
         }
         await loadProject();
       });
@@ -1542,7 +1597,7 @@ function renderScene(s, audioEl, mode = "board") {
     });
     const upload = document.createElement("label");
     upload.className = "s-ref-upload";
-    upload.title = "картинка-образец: композиция, свет, вайб кадра";
+    upload.title = t("scene.refUploadTitle");
     const refInput = document.createElement("input");
     refInput.type = "file";
     refInput.className = "hidden";
@@ -1556,7 +1611,7 @@ function renderScene(s, audioEl, mode = "board") {
         try {
           await api(`/api/scenes/${s.id}/refs`, { method: "POST", body: fd });
         } catch (e) {
-          alert(e.message);
+          fail(e);
           break;
         }
       }
@@ -1564,7 +1619,7 @@ function renderScene(s, audioEl, mode = "board") {
     });
     const refBtn = document.createElement("span");
     refBtn.className = "s-ref-btn";
-    refBtn.textContent = "+ реф";
+    refBtn.textContent = t("scene.refAdd");
     upload.append(refInput, refBtn);
     refsBox.appendChild(upload);
   }
@@ -1575,24 +1630,27 @@ function renderScene(s, audioEl, mode = "board") {
     : Math.max(0, Math.min(4, Math.round(s.duration_sec / 2) - 1));
   const midBusy = midframesBusy(s);
   midBtn.textContent = midBusy
-    ? `промежуточные ${(s.midframes || []).length}/${(midframesExpect.get(s.id) || { n: midN }).n}…`
-    : `+ промежуточные кадры (${midN})`;
+    ? t("scene.midBusy", {
+        a: (s.midframes || []).length,
+        b: (midframesExpect.get(s.id) || { n: midN }).n,
+      })
+    : t("scene.midBtn", { n: midN });
   midBtn.disabled = !midN || !s.image_url || midBusy || imgBusy;
-  midBtn.title = !midN ? "сцена короткая — промежуточные не нужны"
-    : !s.image_url ? "сначала сгенерируй кадры сцены"
-    : "по одному кадру между первым и последним, 1 очко за кадр";
+  midBtn.title = !midN ? t("scene.midShort")
+    : !s.image_url ? t("scene.midNoFrame")
+    : t("scene.midTitle");
   midBtn.addEventListener("click", async () => {
     try {
       const r = await api(`/api/scenes/${s.id}/generate-midframes`, { method: "POST" });
       midframesExpect.set(s.id, { n: r.count, ts: Date.now() });
     } catch (e) {
-      alert(e.message);
+      fail(e);
     }
     await loadProject();
   });
 
   // Видео сцены + отрезок трека под неё.
-  const vidStatus = statusLabel(s.video_status, "готово");
+  const vidStatus = statusLabel(s.video_status);
   const vidStatusEl = $(".s-video-status", card) || $(".s-anim-status", card);
   if (vidStatusEl) {
     vidStatusEl.textContent = vidStatus.text;
@@ -1613,7 +1671,7 @@ function renderScene(s, audioEl, mode = "board") {
   (providers.video || ["grok"]).forEach((p) => {
     const opt = document.createElement("option");
     opt.value = p;
-    opt.textContent = p === "seedance" ? "Seedance (2 кадра)" : "Grok (1 кадр)";
+    opt.textContent = t(p === "seedance" ? "scene.providerSeedance" : "scene.providerGrok");
     provSel.appendChild(opt);
   });
   provSel.value = s.video_provider;
@@ -1623,13 +1681,10 @@ function renderScene(s, audioEl, mode = "board") {
   if (vidBtn) {
   const vidBusy = ["queued", "running"].includes(s.video_status);
   vidBtn.disabled = vidBusy || !s.image_url;
-  vidBtn.title = s.image_url ? "" : "сначала сгенерируй кадры сцены (этап «Раскадровка»)";
-  vidBtn.textContent = vidBusy ? "генерирую…"
-    : !s.image_url ? "сначала кадр"
-    : s.video_url ? "🎬 Перегенерировать" : "🎬 Видео сцены";
-  vidBtn.title = !s.image_url
-    ? "Сначала сгенерируй кадры этой сцены — видео делается из первого и последнего кадра"
-    : "Оживить сцену: первый + последний кадр → видео";
+  vidBtn.textContent = vidBusy ? t("scene.videoBusy")
+    : !s.image_url ? t("scene.videoNoFrame")
+    : s.video_url ? t("scene.regenVideo") : t("scene.genVideo");
+  vidBtn.title = !s.image_url ? t("scene.videoTitleNoFrame") : t("scene.videoTitle");
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value));
   }
 
@@ -1642,7 +1697,7 @@ function renderScene(s, audioEl, mode = "board") {
   const approveBox = $(".s-approve", card);
   approveBox.checked = s.approved;
   approveBox.disabled = !s.video_url;
-  if (!s.video_url) approveBox.title = "сначала сгенерируй видео сцены";
+  if (!s.video_url) approveBox.title = t("scene.approveNeedVideo");
   approveBox.addEventListener("change", () => approveScene(s.id, approveBox.checked));
 
   return card;
@@ -1661,13 +1716,13 @@ $("#gen-story-btn").addEventListener("click", async () => {
   try {
     await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
   } catch (e) {
-    alert(e.message);
+    fail(e);
   }
   await loadProject();
 });
 
 async function moveTrack(id, dir) {
-  const ids = project.tracks.map((t) => t.id);
+  const ids = project.tracks.map((tr) => tr.id);
   const idx = ids.indexOf(id);
   const swapWith = idx + dir;
   if (swapWith < 0 || swapWith >= ids.length) return;
@@ -1677,7 +1732,7 @@ async function moveTrack(id, dir) {
 }
 
 async function deleteTrack(id) {
-  if (!confirm("Удалить трек вместе с раскадровкой?")) return;
+  if (!confirm(t("track.delConfirm"))) return;
   await api(`/api/tracks/${id}`, { method: "DELETE" });
   await loadProject();
 }
@@ -1701,7 +1756,7 @@ async function genStoryboard(id) {
   try {
     await api(`/api/tracks/${id}/generate-storyboard`, { method: "POST" });
   } catch (e) {
-    alert(e.message);
+    fail(e);
   }
   await loadProject();
 }
@@ -1710,19 +1765,21 @@ async function assembleClip(id) {
   try {
     await api(`/api/tracks/${id}/assemble`, { method: "POST" });
   } catch (e) {
-    alert(e.message);
+    fail(e);
   }
   await loadProject();
 }
 
-function openSupergenModal(t) {
-  openModal("⚡ Супергенерация", (body) => {
+function openSupergenModal(tr) {
+  openModal(t("modal.supergen.title"), (body) => {
     // Чек-лист готовности: без стиля и персонажей генератор выдумывает своё.
     const chars = (project.characters || []).filter((c) => (c.name || "").trim());
     const checks = [
-      [Boolean((t.style || "").trim()), "Стиль клипа выбран", "Стиль клипа НЕ выбран — выбери пресет на карточке трека"],
-      [chars.length > 0, `Персонажи: ${chars.map((c) => c.name).join(", ")}`, "В проекте НЕТ персонажей — добавь нового или клонируй из базы"],
-      [Boolean((t.comment || "").trim() || (t.lyrics || "").trim()), "Идея есть (текст или комментарий)", "Нет ни текста, ни комментария — впиши идею клипа в комментарий"],
+      [Boolean((tr.style || "").trim()), t("modal.supergen.styleOk"), t("modal.supergen.styleBad")],
+      [chars.length > 0, t("modal.supergen.charsOk", { names: chars.map((c) => c.name).join(", ") }),
+        t("modal.supergen.charsBad")],
+      [Boolean((tr.comment || "").trim() || (tr.lyrics || "").trim()),
+        t("modal.supergen.ideaOk"), t("modal.supergen.ideaBad")],
     ];
     const list = document.createElement("div");
     list.style.margin = "0 0 12px";
@@ -1730,7 +1787,7 @@ function openSupergenModal(t) {
     checks.forEach(([ok, okText, badText]) => {
       const row = document.createElement("p");
       row.style.margin = "4px 0";
-      row.textContent = (ok ? "✅ " : "⛔ ") + (ok ? okText : badText);
+      row.textContent = (ok ? "✓ " : "✕ ") + (ok ? okText : badText);
       if (!ok) { row.style.color = "var(--danger)"; ready = false; }
       list.appendChild(row);
     });
@@ -1738,31 +1795,28 @@ function openSupergenModal(t) {
     const info = document.createElement("p");
     info.className = "muted";
     info.style.margin = "0 0 12px";
-    info.textContent = "Сквозной сюжет — по желанию: впиши свой в блоке «Герой и сюжет» или оставь " +
-      "пустым, напишу сам. Дальше всё автоматом: сюжет → раскадровка → кадры → видео каждой " +
-      "сцены → сборка клипа с треком. Прогресс будет виден на карточке трека. Если сцены уже " +
-      "были сгенерены с другим стилем — сначала нажми «Сгенерировать раскадровку» заново.";
+    info.textContent = t("modal.supergen.info");
     body.appendChild(info);
     const row = document.createElement("div");
     row.className = "row";
     const go = document.createElement("button");
     go.className = "primary";
-    go.textContent = "Погнали";
+    go.textContent = t("modal.supergen.go");
     go.disabled = !ready;
     go.addEventListener("click", async () => {
       go.disabled = true;
       try {
-        await api(`/api/tracks/${t.id}/supergen`, { method: "POST" });
+        await api(`/api/tracks/${tr.id}/supergen`, { method: "POST" });
         closeModal();
         await loadProject();
       } catch (e) {
         go.disabled = false;
-        alert(e.message);
+        fail(e);
       }
     });
     const cancel = document.createElement("button");
     cancel.className = "ghost";
-    cancel.textContent = "отмена";
+    cancel.textContent = t("common.cancel");
     cancel.addEventListener("click", closeModal);
     row.appendChild(go);
     row.appendChild(cancel);
@@ -1774,7 +1828,7 @@ async function genScenes(id) {
   try {
     await api(`/api/tracks/${id}/generate-scenes`, { method: "POST" });
   } catch (e) {
-    alert(e.message); // в т.ч. «лимит генераций исчерпан»
+    fail(e); // в т.ч. «не хватает очков» — текст соберёт errText()
   }
   await loadProject();
 }
@@ -1798,7 +1852,7 @@ async function saveScene(id, card) {
 }
 
 async function deleteScene(id) {
-  if (!confirm("Удалить кадр?")) return;
+  if (!confirm(t("scene.delConfirm"))) return;
   await api(`/api/scenes/${id}`, { method: "DELETE" });
   await loadProject();
 }
@@ -1807,7 +1861,7 @@ async function genSceneFrames(id, which = "both") {
   try {
     await api(`/api/scenes/${id}/generate-frames?which=${which}`, { method: "POST" });
   } catch (e) {
-    alert(e.message);
+    fail(e);
   }
   await loadProject();
 }
@@ -1816,7 +1870,7 @@ async function genSceneVideo(id, provider) {
   try {
     await api(`/api/scenes/${id}/generate-video`, { method: "POST", body: { provider } });
   } catch (e) {
-    alert(e.message);
+    fail(e);
   }
   await loadProject();
 }
@@ -1825,7 +1879,7 @@ async function approveScene(id, approved) {
   try {
     await api(`/api/scenes/${id}/approve`, { method: "POST", body: { approved } });
   } catch (e) {
-    alert(e.message);
+    fail(e);
   }
   await loadProject();
 }
@@ -1847,6 +1901,7 @@ $("#add-track-form").addEventListener("submit", async (e) => {
 function renderCharacter(c) {
   const tpl = $("#char-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".char-card");
+  applyI18n(card);
   card.dataset.id = c.id;
   $(".c-name", card).value = c.name;
   $(".c-desc", card).value = c.description;
@@ -1860,7 +1915,7 @@ function renderCharacter(c) {
     const del = document.createElement("button");
     del.className = "ghost danger char-photo-del";
     del.textContent = "✕";
-    del.title = "удалить фото";
+    del.title = t("character.photoDel");
     del.addEventListener("click", async () => {
       await api(`/api/characters/photos/${ph.id}`, { method: "DELETE" });
       await loadProject();
@@ -1878,7 +1933,7 @@ function renderCharacter(c) {
     await loadProject();
   });
   $(".c-del", card).addEventListener("click", async () => {
-    if (!confirm(`Удалить персонажа «${c.name}» вместе с фото?`)) return;
+    if (!confirm(t("character.delConfirm", { name: c.name }))) return;
     await api(`/api/characters/${c.id}`, { method: "DELETE" });
     await loadProject();
   });
@@ -1912,7 +1967,7 @@ function renderAttribute(a) {
   name.type = "button";
   name.className = "attr-name";
   name.textContent = a.name;
-  name.title = (a.description ? a.description + " — " : "") + "клик: редактировать";
+  name.title = (a.description ? a.description + " — " : "") + t("character.attrEditTitle");
   name.addEventListener("click", () => openAttributeModal(null, a));
   chip.appendChild(name);
 
@@ -1927,7 +1982,7 @@ function renderAttribute(a) {
     del.type = "button";
     del.className = "ghost danger attr-photo-del";
     del.textContent = "✕";
-    del.title = "удалить фото";
+    del.title = t("character.photoDel");
     del.addEventListener("click", async () => {
       await api(`/api/attributes/photos/${ph.id}`, { method: "DELETE" });
       await loadProject();
@@ -1954,7 +2009,7 @@ function renderAttribute(a) {
   });
   const uploadBtn = document.createElement("span");
   uploadBtn.className = "attr-upload-btn";
-  uploadBtn.textContent = "+ фото";
+  uploadBtn.textContent = t("character.attrPhotoAdd");
   upload.append(input, uploadBtn);
   chip.appendChild(upload);
 
@@ -1962,7 +2017,7 @@ function renderAttribute(a) {
   delAttr.type = "button";
   delAttr.className = "ghost danger attr-del";
   delAttr.textContent = "✕";
-  delAttr.title = "удалить атрибут";
+  delAttr.title = t("character.attrDelTitle");
   delAttr.addEventListener("click", () => confirmDeleteAttribute(a));
   chip.appendChild(delAttr);
 
@@ -1971,14 +2026,14 @@ function renderAttribute(a) {
 
 // Одна модалка на создание (charId) и редактирование (attr) атрибута.
 function openAttributeModal(charId, attr = null) {
-  openModal(attr ? "Атрибут персонажа" : "Новый атрибут", (body) => {
+  openModal(t(attr ? "modal.attribute.editTitle" : "modal.attribute.newTitle"), (body) => {
     body.innerHTML = `
-      <label>Название (напр. красная кепка)</label>
-      <input class="at-name" placeholder="как зовётся вещь" />
-      <label>Описание (необязательно — пойдёт в промпты)</label>
+      <label>${escHtml(t("modal.attribute.nameLabel"))}</label>
+      <input class="at-name" placeholder="${escHtml(t("modal.attribute.namePh"))}" />
+      <label>${escHtml(t("modal.attribute.descLabel"))}</label>
       <textarea class="at-desc" rows="2"></textarea>
       <div class="row">
-        <button type="button" class="primary at-save">${attr ? "Сохранить" : "Создать"}</button>
+        <button type="button" class="primary at-save">${escHtml(t(attr ? "common.save" : "common.create"))}</button>
         <span class="at-error error hidden"></span>
       </div>`;
     const nameInput = $(".at-name", body);
@@ -1989,7 +2044,7 @@ function openAttributeModal(charId, attr = null) {
     const save = async () => {
       const name = nameInput.value.trim();
       if (!name) {
-        errEl.textContent = "введи название";
+        errEl.textContent = t("modal.attribute.nameRequired");
         errEl.classList.remove("hidden");
         return;
       }
@@ -2001,7 +2056,7 @@ function openAttributeModal(charId, attr = null) {
         closeModal();
         await loadProject();
       } catch (e) {
-        errEl.textContent = e.message;
+        errEl.textContent = errText(e);
         errEl.classList.remove("hidden");
         saveBtn.disabled = false;
       }
@@ -2013,15 +2068,15 @@ function openAttributeModal(charId, attr = null) {
 }
 
 function confirmDeleteAttribute(a) {
-  openModal("Удалить атрибут?", (body) => {
+  openModal(t("modal.attribute.delTitle"), (body) => {
     body.innerHTML = `
       <p class="muted attr-del-text" style="margin:10px 0 0"></p>
       <div class="row">
-        <button type="button" class="primary ad-yes">Удалить</button>
-        <button type="button" class="ad-no">Отмена</button>
+        <button type="button" class="primary ad-yes">${escHtml(t("common.del"))}</button>
+        <button type="button" class="ad-no">${escHtml(t("common.cancel"))}</button>
         <span class="ad-error error hidden"></span>
       </div>`;
-    $(".attr-del-text", body).textContent = `Атрибут «${a.name}» и все его фото будут удалены.`;
+    $(".attr-del-text", body).textContent = t("modal.attribute.delText", { name: a.name });
     $(".ad-no", body).addEventListener("click", closeModal);
     const yesBtn = $(".ad-yes", body);
     yesBtn.addEventListener("click", async () => {
@@ -2032,7 +2087,7 @@ function confirmDeleteAttribute(a) {
         await loadProject();
       } catch (e) {
         const errEl = $(".ad-error", body);
-        errEl.textContent = e.message;
+        errEl.textContent = errText(e);
         errEl.classList.remove("hidden");
         yesBtn.disabled = false;
       }
@@ -2041,24 +2096,23 @@ function confirmDeleteAttribute(a) {
 }
 
 $("#add-character-btn").addEventListener("click", () => {
-  openModal("Добавить персонажа", (body) => {
+  openModal(t("modal.addChar.title"), (body) => {
     body.innerHTML = `
       <div class="modal-tabs">
-        <button type="button" class="modal-tab on" data-tab="new">Новый</button>
-        <button type="button" class="modal-tab" data-tab="library">Из базы</button>
+        <button type="button" class="modal-tab on" data-tab="new">${escHtml(t("modal.addChar.tabNew"))}</button>
+        <button type="button" class="modal-tab" data-tab="library">${escHtml(t("modal.addChar.tabLibrary"))}</button>
       </div>
       <div class="tab-pane" data-pane="new">
-        <label>Имя персонажа</label>
-        <input class="ch-name" placeholder="напр. Артём" />
+        <label>${escHtml(t("modal.addChar.nameLabel"))}</label>
+        <input class="ch-name" placeholder="${escHtml(t("modal.addChar.namePh"))}" />
         <div class="row">
-          <button type="button" class="primary ch-create">Создать</button>
+          <button type="button" class="primary ch-create">${escHtml(t("common.create"))}</button>
           <span class="ch-error error hidden"></span>
         </div>
       </div>
       <div class="tab-pane hidden" data-pane="library">
-        <p class="muted" style="margin:10px 0 0">Персонаж из любого проекта: имя, описание и
-          фото-модельки скопируются в текущий.</p>
-        <div class="lib-grid"><span class="muted">загружаю…</span></div>
+        <p class="muted" style="margin:10px 0 0">${escHtml(t("modal.addChar.libLead"))}</p>
+        <div class="lib-grid"><span class="muted">${escHtml(t("common.loading"))}</span></div>
         <span class="lib-error error hidden"></span>
       </div>`;
 
@@ -2079,7 +2133,7 @@ $("#add-character-btn").addEventListener("click", () => {
     const create = async () => {
       const name = nameInput.value.trim();
       if (!name) {
-        errEl.textContent = "введи имя";
+        errEl.textContent = t("modal.addChar.nameRequired");
         errEl.classList.remove("hidden");
         return;
       }
@@ -2089,7 +2143,7 @@ $("#add-character-btn").addEventListener("click", () => {
         closeModal();
         await loadProject();
       } catch (e) {
-        errEl.textContent = e.message;
+        errEl.textContent = errText(e);
         errEl.classList.remove("hidden");
         createBtn.disabled = false;
       }
@@ -2123,7 +2177,7 @@ $("#add-character-btn").addEventListener("click", () => {
         const chars = [...byName.values()];
         grid.innerHTML = "";
         if (!chars.length) {
-          grid.innerHTML = '<span class="muted">в базе пока никого нет</span>';
+          grid.innerHTML = `<span class="muted">${escHtml(t("modal.addChar.libEmpty"))}</span>`;
           return;
         }
         for (const c of chars) {
@@ -2145,7 +2199,7 @@ $("#add-character-btn").addEventListener("click", () => {
           nm.textContent = c.name;
           const from = document.createElement("span");
           from.className = "muted";
-          from.textContent = here ? "уже здесь" : c.project_name;
+          from.textContent = here ? t("modal.addChar.libHere") : c.project_name;
           el.append(thumb, nm, from);
           if (here) {
             el.disabled = true;
@@ -2161,7 +2215,7 @@ $("#add-character-btn").addEventListener("click", () => {
                 closeModal();
                 await loadProject();
               } catch (e) {
-                libErr.textContent = e.message;
+                libErr.textContent = errText(e);
                 libErr.classList.remove("hidden");
                 el.disabled = false;
               }
@@ -2171,7 +2225,7 @@ $("#add-character-btn").addEventListener("click", () => {
         }
       } catch (e) {
         grid.innerHTML = "";
-        libErr.textContent = e.message;
+        libErr.textContent = errText(e);
         libErr.classList.remove("hidden");
       }
     }
@@ -2183,15 +2237,22 @@ async function addManualScene(trackId) {
   await loadProject();
 }
 
-{
+// Пикер стилей формы «добавить трек» рисуется вне render(), поэтому его
+// пересобираем отдельно — на старте и при смене языка.
+function rebuildAddTrackPicker() {
   const form = document.querySelector("#add-track-form");
-  buildStylePicker(form.querySelector(".style-picker"), "", (v) => { form.style.value = v; });
+  if (!form) return;
+  const current = form.style.value || "";
+  buildStylePicker(form.querySelector(".style-picker"), current, (v) => { form.style.value = v; });
 }
+rebuildAddTrackPicker();
 
 (async () => {
   me = await api("/api/me");
-  // Без сессии гость видит лендинг, а не форму пароля.
-  if (me.authed) showApp(); else showWelcome();
+  // Без сессии гость видит главную, а не форму пароля. С живой сессией сразу
+  // открывается студия — кроме случая, когда человек пришёл именно на главную
+  // (ссылка с ?home или якорь #ld-…): тогда первый экран зовёт в студию.
+  if (me.authed && !ldWantsLanding()) showApp(); else showWelcome();
   // Возврат из кассы: ЮKassa приводит на /?paid=<тариф>. Открываем кабинет на
   // вкладке тарифа, чтобы человек своими глазами увидел, что тариф встал.
   const paid = new URLSearchParams(location.search).get("paid");
@@ -2203,18 +2264,17 @@ async function addManualScene(trackId) {
 
 // Разбор листа раскадровки: ячейки сеткой, владелец сам решает, какие взять
 // и в какие сцены их положить. Не выбранные сцены остаются как есть.
-async function openCellsModal(t) {
+async function openCellsModal(tr) {
   let data;
   try {
-    data = await api(`/api/tracks/${t.id}/storyboard-cells`, { method: "POST" });
-  } catch (e) { alert(e.message); return; }
-  const scenes = t.scenes || [];
-  openModal("Разложить лист по кадрам", (body) => {
+    data = await api(`/api/tracks/${tr.id}/storyboard-cells`, { method: "POST" });
+  } catch (e) { fail(e); return; }
+  const scenes = tr.scenes || [];
+  openModal(t("modal.cells.title"), (body) => {
     const hint = document.createElement("p");
     hint.className = "muted";
     hint.style.margin = "0 0 10px";
-    hint.textContent = "Отметь ячейки, которые берём, и выбери сцену для каждой. " +
-      "Остальные сцены не тронутся — их можно перегенерировать отдельно.";
+    hint.textContent = t("modal.cells.hint");
     body.appendChild(hint);
     const grid = document.createElement("div");
     grid.className = "cells-grid";
@@ -2231,7 +2291,7 @@ async function openCellsModal(t) {
       scenes.forEach((sc) => {
         const o = document.createElement("option");
         o.value = sc.id;
-        o.textContent = `в кадр ${sc.position}`;
+        o.textContent = t("modal.cells.toScene", { n: sc.position });
         sel.appendChild(o);
       });
       if (scenes[i]) sel.value = scenes[i].id;
@@ -2249,22 +2309,22 @@ async function openCellsModal(t) {
     row.className = "row";
     const go = document.createElement("button");
     go.className = "primary";
-    go.textContent = "Применить выбранные";
+    go.textContent = t("modal.cells.apply");
     go.addEventListener("click", async () => {
       const pairs = rows.filter((r) => r.cb.checked)
         .map((r) => ({ filename: r.filename, scene_id: Number(r.sel.value) }));
-      if (!pairs.length) { alert("не выбрано ни одной ячейки"); return; }
+      if (!pairs.length) { alert(t("modal.cells.nonePicked")); return; }
       go.disabled = true;
       try {
-        const res = await api(`/api/tracks/${t.id}/apply-cells`, { method: "POST", body: { pairs } });
+        const res = await api(`/api/tracks/${tr.id}/apply-cells`, { method: "POST", body: { pairs } });
         closeModal();
-        alert(`Разложено кадров: ${res.applied}`);
+        alert(t("modal.cells.applied", { n: res.applied }));
         await loadProject();
-      } catch (e) { go.disabled = false; alert(e.message); }
+      } catch (e) { go.disabled = false; fail(e); }
     });
     const cancel = document.createElement("button");
     cancel.className = "ghost";
-    cancel.textContent = "отмена";
+    cancel.textContent = t("common.cancel");
     cancel.addEventListener("click", closeModal);
     row.appendChild(go);
     row.appendChild(cancel);
@@ -2274,32 +2334,32 @@ async function openCellsModal(t) {
 
 // Генерация модельки персонажа: разворот в 4 ракурсах по описанию + фото-рефам.
 function openModelModal(c) {
-  openModal(`Моделька: ${c.name || "персонаж"}`, (body) => {
+  openModal(t("modal.model.title", { name: c.name || t("modal.model.someone") }), (body) => {
     const info = document.createElement("p");
     info.className = "muted";
     info.style.margin = "0 0 10px";
     info.textContent = (c.photos || []).length
-      ? `Референсом уйдут первые ${Math.min(3, c.photos.length)} фото персонажа — лицо и одежда сохранятся.`
-      : "Фото не загружены — моделька будет собрана только по описанию.";
+      ? t("modal.model.withPhotos", { n: Math.min(3, c.photos.length) })
+      : t("modal.model.noPhotos");
     body.appendChild(info);
 
     const lab = document.createElement("label");
-    lab.textContent = "Описание для модельки";
+    lab.textContent = t("modal.model.descLabel");
     body.appendChild(lab);
     const ta = document.createElement("textarea");
     ta.rows = 5;
     ta.value = c.description || "";
-    ta.placeholder = "внешность, одежда, атрибуты — чем подробнее, тем точнее";
+    ta.placeholder = t("modal.model.descPh");
     body.appendChild(ta);
 
     const lab2 = document.createElement("label");
-    lab2.textContent = "Вид модельки";
+    lab2.textContent = t("modal.model.kindLabel");
     body.appendChild(lab2);
     const sel = document.createElement("select");
-    [["3d", "3D-модель (CG-рендер)"], ["real", "Фотореализм (студия)"],
-     ["anime", "Аниме (лист сеттеи)"]].forEach(([v, t]) => {
+    [["3d", "modal.model.kind3d"], ["real", "modal.model.kindReal"],
+     ["anime", "modal.model.kindAnime"]].forEach(([v, key]) => {
       const o = document.createElement("option");
-      o.value = v; o.textContent = t; sel.appendChild(o);
+      o.value = v; o.textContent = t(key); sel.appendChild(o);
     });
     body.appendChild(sel);
 
@@ -2307,10 +2367,10 @@ function openModelModal(c) {
     row.className = "row";
     const go = document.createElement("button");
     go.className = "primary";
-    go.textContent = "Сгенерировать";
+    go.textContent = t("common.generate");
     go.addEventListener("click", async () => {
       go.disabled = true;
-      go.textContent = "генерирую… (до 2 минут)";
+      go.textContent = t("modal.model.busy");
       try {
         await api(`/api/characters/${c.id}/generate-model`, {
           method: "POST", body: { description: ta.value, kind: sel.value },
@@ -2319,13 +2379,13 @@ function openModelModal(c) {
         await loadProject();
       } catch (e) {
         go.disabled = false;
-        go.textContent = "Сгенерировать";
-        alert(e.message);
+        go.textContent = t("common.generate");
+        fail(e);
       }
     });
     const cancel = document.createElement("button");
     cancel.className = "ghost";
-    cancel.textContent = "отмена";
+    cancel.textContent = t("common.cancel");
     cancel.addEventListener("click", closeModal);
     row.appendChild(go); row.appendChild(cancel);
     body.appendChild(row);
@@ -2345,3 +2405,546 @@ function openModelModal(c) {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
   }
 }
+
+// ═════════════════════════ ГЛАВНАЯ СТРАНИЦА lolq.ai ═════════════════════════
+// Витрина сервиса и воронка: первый экран → как это работает → что внутри →
+// тарифы → докупка очков → партнёрка → FAQ → подвал.
+//
+// ВСЕ пользовательские строки лежат в словаре I18N (i18n.js), раздел landing.*:
+// перевод = правка одного файла, разметка и логика не трогаются. В index.html
+// текстовые узлы помечены data-i18n="путь.в.словаре" (и data-i18n-alt для alt
+// картинок), повторяющиеся блоки рисуются здесь из тех же данных.
+
+// Цена работы в очках — зеркало SCENE_COST в backend/main.py. Если там
+// поменяются числа, поменяй и здесь: витрина считает «сколько это клипов».
+const LD_SCENE_COST = { grok: 4, seedance: 10, top: 16 };
+const LD_SCENES_PER_CLIP = 30;          // трёхминутный трек ≈ 30 сцен по 6 сек
+const LD_REF = { discount: 10, reward: 30 };  // REF_DISCOUNT_PCT / REF_REWARD_PCT
+
+// Запасная витрина: гость не авторизован, а GET /api/billing/plans требует
+// сессию — лендинг обязан рисоваться и без ответа сервера. Числа держим
+// синхронными с PLANS/TOPUP_PACKS бэкенда; живой ответ их перезаписывает.
+const LD_PLANS_FALLBACK = [
+  { id: "free", points: 120, usd: 0 },
+  { id: "pro", points: 700, usd: 20 },
+  { id: "pro_max", points: 2400, usd: 100 },
+  { id: "studio", points: 6000, usd: 299 },
+];
+const LD_PACKS_FALLBACK = [
+  { id: "p400", points: 400, usd: 9 },
+  { id: "p1000", points: 1000, usd: 19 },
+  { id: "p2500", points: 2500, usd: 39 },
+  { id: "p6000", points: 6000, usd: 79 },
+  { id: "p15000", points: 15000, usd: 169 },
+];
+
+let ldBuilt = false;         // тяжёлую разметку собираем один раз
+let ldPeriod = "month";      // тумблер «помесячно / на год»
+let ldPricing = null;        // нормализованный ответ /api/billing/plans
+let ldPackIndex = 2;         // выбранная ступень шкалы очков
+
+// ────────── доступ к разделу landing словаря ──────────
+// LT — сырое значение (массивы шагов, функций, тарифов), LTX — строка с
+// подстановкой {переменных}. Читаются в момент вызова, поэтому смена языка
+// подхватывается без перезагрузки страницы.
+function LT(path) { return tRaw("landing." + path); }
+function LTX(path, vars) { return t("landing." + path, vars); }
+
+// ────────── сборка статичных секций ──────────
+function ldBuildSteps() {
+  const box = $("#ld-steps");
+  if (!box) return;
+  box.innerHTML = (LT("how.steps") || []).map((s) => `
+    <li class="ld-step">
+      <div class="ld-step-copy">
+        <span class="ld-step-n">${escHtml(s.n)}</span>
+        <h3>${escHtml(s.title)}</h3>
+        <p>${escHtml(s.text)}</p>
+        <p class="ld-step-meta muted">${escHtml(s.meta)}</p>
+      </div>
+      <figure class="ld-shot">
+        <img src="${escHtml(s.img)}" width="${s.w}" height="${s.h}" loading="lazy"
+             alt="${escHtml(s.alt)}" />
+      </figure>
+    </li>`).join("");
+}
+
+function ldBuildFeatures() {
+  const box = $("#ld-feats");
+  if (!box) return;
+  box.innerHTML = (LT("features.items") || []).map((f) => {
+    const tag = f.tag ? `<span class="ld-feat-tag">${escHtml(f.tag)}</span>` : "";
+    if (f.wide) {
+      return `<article class="ld-feat ld-feat-wide">
+        <div class="ld-feat-copy">
+          <h3>${escHtml(f.title)}</h3>
+          <p>${escHtml(f.text)}</p>
+          ${tag}
+        </div>
+        <img src="${escHtml(f.img)}" width="${f.w}" height="${f.h}" loading="lazy"
+             alt="${escHtml(f.alt || "")}" />
+      </article>`;
+    }
+    return `<article class="ld-feat">
+      <h3>${escHtml(f.title)}</h3>
+      <p>${escHtml(f.text)}</p>
+      ${tag}
+    </article>`;
+  }).join("");
+}
+
+function ldBuildFaq() {
+  const box = $("#ld-faq-list");
+  if (!box) return;
+  box.innerHTML = (LT("faq.items") || []).map((it) => `
+    <details class="ld-q">
+      <summary>${escHtml(it.q)}</summary>
+      <p class="ld-a">${escHtml(it.a)}</p>
+    </details>`).join("");
+}
+
+function ldBuildPartner() {
+  const box = $("#ld-partner-list");
+  if (!box) return;
+  // <b> в строках словаря — наша разметка, поэтому идёт как есть.
+  box.innerHTML = (LT("partner.items") || [])
+    .map((line) => `<li>${tFill(line, LD_REF)}</li>`).join("");
+}
+
+function ldBuildFooter() {
+  const cols = $("#ld-foot-cols");
+  if (cols) {
+    cols.innerHTML = (LT("footer.cols") || []).map((c) => `
+      <div class="ld-foot-col">
+        <h4>${escHtml(c.title)}</h4>
+        <ul>${(c.links || []).map((l) => {
+          if (l.action === "guide") {
+            return `<li><button type="button" data-ld-guide>${escHtml(l.label)}</button></li>`;
+          }
+          // Пустой href = ссылки ещё нет: показываем честную метку «скоро»,
+          // а не заглушку, ведущую в никуда. Метка — из словаря, не из CSS.
+          return l.href
+            ? `<li><a href="${escHtml(l.href)}">${escHtml(l.label)}</a></li>`
+            : `<li><span class="ld-link-off">${escHtml(l.label)}<em>${escHtml(LTX("footer.soon"))}</em></span></li>`;
+        }).join("")}</ul>
+      </div>`).join("");
+    $$("[data-ld-guide]", cols).forEach((b) => b.addEventListener("click", ldOpenGuide));
+  }
+  // Правовая строка живёт в своём контейнере: перерисовка идемпотентна, и при
+  // смене языка строки не дублируются, а авторская подпись остаётся на месте.
+  const legal = $("#ld-foot-legal-text");
+  if (legal) {
+    legal.innerHTML = (LT("footer.legal") || [])
+      .map((line) => `<span>${escHtml(line)}</span>`).join("");
+  }
+}
+
+function ldOpenGuide() {
+  const modal = document.querySelector("#guide-modal");
+  if (modal) modal.classList.remove("hidden");
+}
+
+// ────────── тарифы: живые данные с запасным вариантом ──────────
+function ldUsd(src, keyUsd, keyCents) {
+  if (src && typeof src[keyUsd] === "number") return src[keyUsd];
+  if (src && typeof src[keyCents] === "number") return src[keyCents] / 100;
+  return null;
+}
+
+// Витрина не обязана знать, какой контракт вернул сервер: старый (price в
+// рублях + enabled) и новый (usd/usd_year + providers) сводятся к одному виду.
+function ldNormalizePricing(data) {
+  const fallbackPlans = LD_PLANS_FALLBACK.map((p) => ({ ...p }));
+  let plans = fallbackPlans;
+  if (data && Array.isArray(data.plans) && data.plans.length) {
+    const live = data.plans
+      .map((p) => {
+        const usd = ldUsd(p, "usd", "usd_cents");
+        const points = Number(p.points) || 0;
+        if (usd === null || !p.id) return null;
+        return {
+          id: String(p.id),
+          usd,
+          usdYear: ldUsd(p, "usd_year", "usd_year_cents"),
+          points,
+          badge: p.badge || "",
+          movies: p.movies_estimate || "",
+        };
+      })
+      .filter(Boolean);
+    if (live.length) plans = live;
+  }
+
+  let packs = LD_PACKS_FALLBACK.map((p) => ({ ...p }));
+  if (data && Array.isArray(data.packs) && data.packs.length) {
+    const live = data.packs
+      .map((p) => {
+        const usd = ldUsd(p, "usd", "usd_cents");
+        const points = Number(p.points) || 0;
+        if (usd === null || !points) return null;
+        return { id: String(p.id || `p${points}`), points, usd, badge: p.badge || "" };
+      })
+      .filter(Boolean);
+    if (live.length) packs = live;
+  }
+
+  // providers === null значит «неизвестно» (гость без сессии): в этом случае
+  // кнопки не выключаем — врать «оплата не работает» так же плохо, как молчать.
+  let providers = null;
+  if (data && data.providers && typeof data.providers === "object") {
+    providers = { stripe: Boolean(data.providers.stripe), yookassa: Boolean(data.providers.yookassa) };
+  } else if (data && typeof data.enabled === "boolean") {
+    providers = { stripe: false, yookassa: data.enabled };
+  }
+
+  let current = null;
+  if (data && data.current) {
+    current = typeof data.current === "string"
+      ? { plan: data.current, period: data.current_period || "month" }
+      : { plan: data.current.plan || "", period: data.current.period || "month" };
+  }
+  return { plans, packs, providers, current };
+}
+
+function ldClips(points, engine) {
+  const cost = LD_SCENE_COST[engine] || LD_SCENE_COST.grok;
+  return Math.max(1, Math.floor(Number(points || 0) / (cost * LD_SCENES_PER_CLIP)));
+}
+
+// Формы множественного числа лежат в словаре ([1, 2–4, 5+]); правило выбора —
+// в tPlural (i18n.js), поэтому язык без склонений не требует правки кода.
+function ldClipsVars(points, engine) {
+  const n = ldClips(points, engine);
+  return { clips: tNum(n), word: tPlural(n, LT("pricing.clipWord")), n };
+}
+
+function ldClipsLine(points, engine) {
+  const vars = ldClipsVars(points, engine);
+  return vars.n === 1 ? LTX("pricing.clipsLineOne") : LTX("pricing.clipsLine", vars);
+}
+
+// Доллар остаётся префиксом на любом языке (валюта одна и та же), а вот
+// разряды разделяются по-местному: $2,870 в английском, $2 870 в русском.
+function ldMoney(usd) {
+  const n = Number(usd) || 0;
+  const digits = Number.isInteger(n) ? 0 : 2;
+  try {
+    return "$" + new Intl.NumberFormat(tLocale(), {
+      minimumFractionDigits: digits, maximumFractionDigits: digits,
+    }).format(n);
+  } catch (e) {
+    return "$" + (digits ? n.toFixed(2) : n);
+  }
+}
+
+function ldYearMonthly(plan) {
+  const total = plan.usdYear || Math.round(plan.usd * 12 * 0.8);
+  return { total, mo: Math.round(total / 12) };
+}
+
+function ldPlanCard(plan) {
+  const T = LT("pricing");
+  const copy = (T.plans || {})[plan.id] || {};
+  const paid = plan.usd > 0;
+  const year = paid ? ldYearMonthly(plan) : null;
+  const yearMode = paid && ldPeriod === "year";
+  const price = paid ? ldMoney(yearMode ? year.mo : plan.usd) : T.free;
+  const per = paid ? T.perMonth : T.forever;
+  const hint = !paid ? "&nbsp;"
+    : yearMode ? escHtml(tFill(T.yearNote, { total: ldMoney(year.total) }))
+               : escHtml(tFill(T.yearHint, { mo: ldMoney(year.mo) }));
+  const badge = copy.badge || plan.badge || "";
+  const engine = copy.engine || "grok";
+  const clips = plan.movies && !copy.engine ? plan.movies : ldClipsLine(plan.points, engine);
+  const isCur = Boolean(me && me.authed && ldPricing && ldPricing.current
+                        && ldPricing.current.plan === plan.id);
+  const feats = (copy.features || []).map((f) => `<li>${escHtml(f)}</li>`).join("");
+
+  let action;
+  if (isCur) {
+    action = `<div class="ld-plan-cur">${escHtml(T.current)}</div>`;
+  } else if (!paid) {
+    action = `<button type="button" class="ld-plan-start">${escHtml(T.ctaFree)}</button>`;
+  } else {
+    action = `<button type="button" class="primary ld-plan-pay" data-plan="${escHtml(plan.id)}"
+      >${escHtml(tFill(T.cta, { plan: copy.title || plan.id.toUpperCase() }))}</button>`;
+  }
+
+  // Рамкой выделяем РОВНО один тариф — рекомендованный (hi в словаре).
+  // Бейдж может быть и у других, но второй жирной рамки на экране не будет.
+  return `<article class="ld-plan${copy.hi ? " ld-plan-hi" : ""}">
+    ${badge ? `<span class="ld-plan-badge">${escHtml(badge)}</span>` : ""}
+    <span class="ld-plan-name">${escHtml(copy.title || plan.id.toUpperCase())}</span>
+    <div class="ld-plan-price">${escHtml(price)}<span> ${escHtml(per)}</span></div>
+    <div class="ld-plan-year muted">${hint}</div>
+    <span class="ld-plan-clips">${escHtml(clips)}</span>
+    <p class="ld-plan-note">${escHtml(tFill(T.pointsLine, { points: tNum(plan.points) }))}${
+      copy.note ? " · " + escHtml(copy.note) : ""}</p>
+    <ul class="ld-plan-feats">${feats}</ul>
+    ${action}
+  </article>`;
+}
+
+function ldRenderPlans() {
+  const box = $("#ld-plans");
+  if (!box || !ldPricing) return;
+  const T = LT("pricing");
+  box.innerHTML = ldPricing.plans.map(ldPlanCard).join("");
+
+  const off = Boolean(ldPricing.providers
+    && !ldPricing.providers.stripe && !ldPricing.providers.yookassa);
+  const note = $("#ld-pay-note");
+  if (note) {
+    note.textContent = off ? T.payOffNote : "";
+    note.classList.remove("error");
+  }
+  $$(".ld-plan-pay", box).forEach((btn) => {
+    if (off) {
+      btn.disabled = true;
+      btn.textContent = T.payOff;
+      return;
+    }
+    btn.addEventListener("click", () => ldCheckout("plan", btn.dataset.plan, btn));
+  });
+  $$(".ld-plan-start", box).forEach((btn) => btn.addEventListener("click", ldStart));
+
+  // Годовой тумблер держим в актуальном состоянии вместе с карточками.
+  $$("#ld-period button").forEach((b) => b.classList.toggle("on", b.dataset.period === ldPeriod));
+}
+
+// ────────── шкала докупки очков ──────────
+function ldPacks() {
+  return (ldPricing && ldPricing.packs && ldPricing.packs.length)
+    ? ldPricing.packs : LD_PACKS_FALLBACK;
+}
+
+function ldSavePct(pack, packs) {
+  const base = packs[0];
+  if (!base || !base.points || !pack.points) return 0;
+  const basePer = base.usd / base.points;
+  if (!basePer) return 0;
+  return Math.max(0, Math.round(100 - 100 * (pack.usd / pack.points) / basePer));
+}
+
+function ldPackLabel(points) {
+  if (points < 1000) return String(points);
+  const sep = LT("topup.decimalSep") || ".";
+  return (points / 1000).toString().replace(".", sep) + "k";
+}
+
+function ldRenderTopup() {
+  const packs = ldPacks();
+  const ticks = $("#ld-ticks");
+  const readout = $("#ld-readout");
+  const range = $("#ld-range");
+  if (!ticks || !readout || !range) return;
+  const T = LT("topup");
+  const i = Math.min(Math.max(ldPackIndex, 0), packs.length - 1);
+  ldPackIndex = i;
+  const pack = packs[i];
+
+  ticks.innerHTML = packs.map((p, idx) => `
+    <button type="button" class="${idx === i ? "on" : ""}" data-idx="${idx}">
+      <span>${escHtml(ldPackLabel(p.points))}</span>
+      <span class="ld-tick-sub">${escHtml(ldMoney(p.usd))}</span>
+    </button>`).join("");
+  $$("button", ticks).forEach((b) => b.addEventListener("click", () => {
+    ldPackIndex = Number(b.dataset.idx) || 0;
+    ldRenderTopup();
+  }));
+
+  range.max = String(packs.length - 1);
+  range.value = String(i);
+  range.setAttribute("aria-valuetext",
+    tFill(T.pointsUnit, { points: tNum(pack.points) }) + " — " + ldMoney(pack.usd));
+  const pct = packs.length > 1 ? (i / (packs.length - 1)) * 100 : 0;
+  range.style.background =
+    `linear-gradient(90deg, var(--accent-2) 0 ${pct}%, var(--surface-2) ${pct}% 100%)`;
+
+  const save = ldSavePct(pack, packs);
+  readout.innerHTML = `
+    <div class="ld-readout-price">${escHtml(ldMoney(pack.usd))}<span> ${escHtml(T.priceUnit)}</span></div>
+    <div class="ld-readout-points">${escHtml(tFill(T.pointsUnit, { points: tNum(pack.points) }))}</div>
+    ${save > 0 ? `<span class="ld-save-badge">${escHtml(tFill(T.save, { pct: save }))}</span>` : ""}
+    <ul>
+      <li>${escHtml(tFill(T.clipsTop, ldClipsVars(pack.points, "top")))}</li>
+      <li class="muted">${escHtml(tFill(T.clipsGrok, ldClipsVars(pack.points, "grok")))}</li>
+    </ul>
+    <button type="button" class="primary ld-pack-buy" data-pack="${escHtml(pack.id)}"
+      >${escHtml(tFill(T.cta, { points: tNum(pack.points) }))}</button>`;
+
+  const off = Boolean(ldPricing && ldPricing.providers
+    && !ldPricing.providers.stripe && !ldPricing.providers.yookassa);
+  const buy = $(".ld-pack-buy", readout);
+  if (buy) {
+    if (off) {
+      buy.disabled = true;
+      buy.textContent = LTX("pricing.payOff");
+    } else {
+      buy.addEventListener("click", () => ldCheckout("topup", pack.id, buy));
+    }
+  }
+}
+
+// ────────── оплата ──────────
+// Гость платит тем же кликом, которым заводит аккаунт: без аккаунта платёж
+// не к чему привязать, а форму регистрации мы принципиально не показываем.
+async function ldEnsureAccount() {
+  if (me && me.authed) return;
+  await api("/api/start" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""), { method: "POST" });
+  me = await api("/api/me");
+  ldRenderAuth();
+}
+
+async function ldCheckout(kind, id, btn) {
+  const note = $("#ld-pay-note");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = kind === "plan" ? LTX("pricing.creating") : LTX("topup.creating");
+  if (note) { note.textContent = ""; note.classList.remove("error"); }
+  try {
+    await ldEnsureAccount();
+    const body = kind === "plan"
+      ? { kind: "plan", plan: id, period: ldPeriod, promo: refCode || "" }
+      : { kind: "topup", pack: id, promo: refCode || "" };
+    const r = await api("/api/billing/create", { method: "POST", body });
+    if (r && r.url) { window.location.href = r.url; return; }
+    throw new Error(LTX("pricing.noUrl"));
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = label;
+    if (note) {
+      note.textContent = errText(e) || LTX("pricing.noUrl");
+      note.classList.add("error");
+      note.scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
+async function ldOpenPartner() {
+  const btn = $("#ld-partner-btn");
+  if (btn) btn.disabled = true;
+  try {
+    await ldEnsureAccount();
+    showApp();
+    openAccountModal("ref");
+  } catch (e) {
+    if (btn) btn.textContent = errText(e) || LTX("partner.cta");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ────────── состояние «гость / вернувшийся» ──────────
+function ldRenderAuth() {
+  const authed = Boolean(me && me.authed);
+  const T = tRaw("landing");
+  const start = $("#welcome-start");
+  const login = $("#welcome-login");
+  const navStart = $("#ld-nav-start");
+  const navLogin = $("#ld-nav-login");
+  const trust = $(".ld-hero-trust");
+  if (start) start.textContent = authed ? T.hero.ctaOpen : T.hero.ctaStart;
+  if (login) login.classList.toggle("hidden", authed);
+  if (navStart) navStart.textContent = authed ? T.nav.open : T.nav.start;
+  if (navLogin) navLogin.classList.toggle("hidden", authed);
+  if (trust) trust.textContent = authed ? T.hero.trustBack : T.hero.trust;
+}
+
+// ────────── сборка страницы ──────────
+async function ldLoadPricing() {
+  // Отдельный запрос мимо api(): гостю /api/billing/plans отвечает 401, а
+  // api() на 401 уводит на форму входа — лендинг от этого рассыпался бы.
+  let data = null;
+  try {
+    const r = await fetch("/api/billing/plans", { headers: { accept: "application/json" } });
+    if (r.ok) data = await r.json();
+  } catch (e) { data = null; }
+  ldPricing = ldNormalizePricing(data);
+  if (ldPricing.current && ldPricing.current.period === "year") ldPeriod = "year";
+  ldRenderPlans();
+  ldRenderTopup();
+}
+
+// Все тексты страницы одним проходом: и при первом показе, и при смене языка.
+function ldRenderText() {
+  if (!$("#welcome")) return;
+  applyI18n($("#welcome"));
+  const yearBtn = $('#ld-period button[data-period="year"]');
+  if (yearBtn) {
+    yearBtn.innerHTML = `${escHtml(LTX("pricing.year"))}`
+      + `<span class="ld-save">${escHtml(LTX("pricing.yearSave"))}</span>`;
+  }
+  ldBuildSteps();
+  ldBuildFeatures();
+  ldBuildFaq();
+  ldBuildPartner();
+  ldBuildFooter();
+  ldRenderPlans();
+  ldRenderTopup();
+  ldRenderAuth();
+  renderRefBanner();
+}
+
+function renderLanding() {
+  if (!$("#welcome")) return;
+  if (!ldBuilt) {
+    ldBuilt = true;
+    // Обработчики вешаем ОДИН раз: узлы статичные, перерисовка текста их не
+    // пересоздаёт — иначе на каждую смену языка копился бы новый слушатель.
+    $$("#ld-period button").forEach((b) => b.addEventListener("click", () => {
+      ldPeriod = b.dataset.period === "year" ? "year" : "month";
+      ldRenderPlans();
+    }));
+    const range = $("#ld-range");
+    if (range) range.addEventListener("input", () => {
+      ldPackIndex = Number(range.value) || 0;
+      ldRenderTopup();
+    });
+    const navStart = $("#ld-nav-start");
+    const navLogin = $("#ld-nav-login");
+    if (navStart) navStart.addEventListener("click", ldStart);
+    if (navLogin) navLogin.addEventListener("click", showLogin);
+    const partnerBtn = $("#ld-partner-btn");
+    if (partnerBtn) partnerBtn.addEventListener("click", ldOpenPartner);
+
+    // Первая отрисовка витрины — из запасных чисел, чтобы тарифы были видны
+    // мгновенно; живой ответ сервера её тут же уточняет.
+    ldPricing = ldNormalizePricing(null);
+  }
+  ldRenderText();
+  ldLoadPricing();
+}
+
+// Вернувшийся пользователь может попасть на главную по ссылке или якорю —
+// тогда студию не открываем, но первый экран зовёт «Открыть студию».
+function ldWantsLanding() {
+  try {
+    if (new URLSearchParams(location.search).has("home")) return true;
+    const h = location.hash || "";
+    return h === "#home" || h.startsWith("#ld-");
+  } catch (e) {
+    return false;
+  }
+}
+
+// ═════════════════════════ язык интерфейса ═════════════════════════
+// Статические подписи (data-i18n*) проставляем сразу, до первого показа экрана:
+// шаблоны <template> переводятся при клонировании, остальное — здесь.
+applyI18n(document);
+syncLangSwitches();
+
+// Переключение EN/RU без перезагрузки: разметку обновляет applyI18n, а всё,
+// что собрано кодом — карточки треков и сцен, кабинет, витрина тарифов, —
+// перерисовываем сами. Модалку закрываем: её содержимое построено императивно.
+onLangChange(() => {
+  // applyI18n(document) уже отработал в setLang — здесь только то, что рисует код.
+  closeModal();
+  if (!$("#app").classList.contains("hidden")) {
+    renderUserBar();                  // бейдж очков и тариф тоже подписаны словами
+    if (project) render();
+  }
+  rebuildAddTrackPicker();
+  if (!$("#welcome").classList.contains("hidden")) ldRenderText();
+  syncLangSwitches();
+});

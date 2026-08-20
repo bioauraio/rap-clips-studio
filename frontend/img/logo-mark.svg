@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260" role="img" aria-label="lolq.ai">
+  <defs>
+    <linearGradient id="lq-g" x1="12%" y1="6%" x2="92%" y2="98%">
+      <stop offset="0" stop-color="#F0453C"/>
+      <stop offset="52%" stop-color="#FA6A2B"/>
+      <stop offset="1" stop-color="#FB8B27"/>
+    </linearGradient>
+  </defs>
+
+  <!-- мягкая офсетная тень: картонный объём, но без жёсткой плашки -->
+  <g opacity=".18" transform="translate(9,11)">
+    <rect x="24" y="24" width="204" height="204" rx="60" fill="#2D211A"/>
+    <path d="M150 168 L150 232 L167 215 L179 240 L196 232 L184 207 L208 205 Z" fill="#2D211A"/>
+  </g>
+
+  <!-- корпус знака -->
+  <rect x="24" y="24" width="204" height="204" rx="60" fill="url(#lq-g)" stroke="#141414" stroke-width="15"/>
+
+  <!-- внутреннее «Q» речевым пузырём: разрыв сверху делает форму открытой -->
+  <path d="M126 74 H160 A34 34 0 0 1 194 108 V152 A34 34 0 0 1 160 186 H100
+           A34 34 0 0 1 66 152 V108 A34 34 0 0 1 100 74 H112"
+        fill="#FBF7EF" stroke="#141414" stroke-width="14"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- хвост-курсор: он же кнопка play — знак читается как «клип» -->
+  <path d="M150 160 L150 226 L168 208 L181 234 L199 225 L186 199 L211 197 Z"
+        fill="#FB8B27" stroke="#141414" stroke-width="14"
+        stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

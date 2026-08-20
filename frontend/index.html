@@ -1,122 +1,279 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
-<title>QLOLVIDEO</title>
-<link rel="stylesheet" href="/style.css?v=42" />
+<meta name="description" data-i18n-content="meta.description" content="" />
+<title>lolq.ai</title>
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="apple-touch-icon" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/style.css?v=46" />
+<link rel="stylesheet" href="/landing.css?v=46" />
 </head>
 <body>
-<div class="made-with" aria-hidden="true">сделано :333</div>
+<!-- ─────────────────────────────────────────────────────────────────────────
+     ГЛАВНАЯ СТРАНИЦА lolq.ai — витрина сервиса и воронка.
+     Все пользовательские тексты живут в словаре I18N (i18n.js): разметка
+     держит только структуру и ключи data-i18n="путь.в.словаре" (плюс
+     -ph / -title / -alt / -aria / -content для атрибутов). Повторяющиеся
+     блоки (шаги, функции, тарифы, пакеты очков, FAQ, подвал) рисует JS из
+     того же словаря — переводчику хватит одного файла.
+     ───────────────────────────────────────────────────────────────────── -->
+<div id="welcome" class="landing hidden">
+  <a class="ld-skip" href="#ld-main" data-i18n="landing.nav.skip"></a>
 
-<!-- Мини-лендинг: первое, что видит гость без сессии. -->
-<div id="welcome" class="welcome-screen hidden">
-  <div class="welcome-box">
-    <h1 class="welcome-title">QLOLVIDEO</h1>
-    <p class="welcome-sub">студия ИИ-клипов под твою музыку</p>
-
-    <ol class="wl-steps">
-      <li><b>Старт</b> — аккаунт создастся сам, без регистрации</li>
-      <li>Трек, стиль клипа, персонажи с фото</li>
-      <li><b>⚡ Супергенерация</b> — сюжет, кадры, видео</li>
-      <li>Готовый клип: скачать или пересобрать сцену</li>
-    </ol>
-
-    <div class="wl-plans">
-      <div class="wl-plan">
-        <div class="wl-plan-top"><b>FREE</b><span>0 ₽</span></div>
-        <p>кадры — ChatGPT<br>видео — Grok</p>
+  <div class="ld-topbar">
+    <header class="ld-bar">
+      <a class="ld-brand" href="#ld-top">
+        <img src="/img/logo-mark.svg" width="30" height="30" alt="" />
+        <span class="ld-brand-word">lolq<span class="brand-dot">.</span>ai</span>
+      </a>
+      <nav class="ld-menu" data-i18n-aria="landing.nav.menuAria">
+        <a href="#ld-how" data-i18n="landing.nav.how"></a>
+        <a href="#ld-features" data-i18n="landing.nav.features"></a>
+        <a href="#ld-pricing" data-i18n="landing.nav.pricing"></a>
+        <a href="#ld-faq" data-i18n="landing.nav.faq"></a>
+        <a href="/music" data-i18n="landing.nav.music"></a>
+      </nav>
+      <div class="ld-bar-actions">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+          <button type="button" data-lang="en">EN</button>
+          <button type="button" data-lang="ru">RU</button>
+        </div>
+        <button id="ld-nav-login" class="ghost" type="button" data-i18n="landing.nav.signin"></button>
+        <button id="ld-nav-start" class="primary" type="button" data-i18n="landing.nav.start"></button>
       </div>
-      <div class="wl-plan wl-plan-hi">
-        <div class="wl-plan-top"><b>PRO</b><span>990 ₽</span></div>
-        <p>+ Seedance<br>монтаж по 2 кадрам</p>
-      </div>
-      <div class="wl-plan">
-        <div class="wl-plan-top"><b>PRO MAX</b><span>2990 ₽</span></div>
-        <p>+ Kling<br>максимум движения</p>
-      </div>
-    </div>
-
-    <!-- Плашка приглашения: показывается только когда в адресе был ?ref=КОД. -->
-    <p id="welcome-ref" class="welcome-ref hidden"></p>
-
-    <div class="wl-actions">
-      <button id="welcome-start" class="primary welcome-cta">Старт — бесплатно</button>
-      <button id="welcome-login" class="ghost welcome-have">У меня есть аккаунт</button>
-    </div>
-    <p class="welcome-privacy muted">
-      проекты и файлы приватны ·
-      <a href="#" id="welcome-guide-link">как это работает</a> ·
-      <a href="/report/styles.html">разбор стилей</a>
-    </p>
+    </header>
   </div>
+
+  <main id="ld-main">
+    <!-- 1. Первый экран: оффер, вход и живое доказательство продукта -->
+    <section class="ld-hero ld-shell" id="ld-top">
+      <div class="ld-hero-grid">
+        <div class="ld-hero-copy">
+          <!-- Плашка приглашения: видна только когда в адресе был ?ref=КОД -->
+          <p id="welcome-ref" class="welcome-ref hidden"></p>
+          <span class="ld-tag" data-i18n="landing.hero.eyebrow"></span>
+          <h1 class="ld-hero-h1" data-i18n="landing.hero.title"></h1>
+          <p class="ld-hero-sub" data-i18n="landing.hero.sub"></p>
+          <div class="ld-hero-actions">
+            <button id="welcome-start" class="primary ld-cta" type="button" data-i18n="landing.hero.ctaStart"></button>
+            <button id="welcome-login" class="ld-cta" type="button" data-i18n="landing.hero.ctaLogin"></button>
+          </div>
+          <p class="ld-hero-trust" data-i18n="landing.hero.trust"></p>
+          <p class="ld-hero-more">
+            <a href="#" id="welcome-guide-link" data-i18n="landing.hero.guideLink"></a>
+          </p>
+        </div>
+
+        <figure class="ld-proof">
+          <div class="ld-proof-main">
+            <figure class="ld-phone">
+              <img src="/img/shots/clip.jpg" width="224" height="340" alt="" data-i18n-alt="landing.hero.proofAltClip" />
+              <figcaption data-i18n="landing.hero.phoneCap"></figcaption>
+            </figure>
+            <ul class="ld-frames">
+              <li><img src="/img/shots/frame-1.jpg" width="134" height="192" loading="lazy" alt="" /></li>
+              <li><img src="/img/shots/frame-2.jpg" width="134" height="192" loading="lazy" alt="" /></li>
+              <li><img src="/img/shots/frame-3.jpg" width="134" height="192" loading="lazy" alt="" /></li>
+              <li><img src="/img/shots/frame-4.jpg" width="134" height="192" loading="lazy" alt="" /></li>
+              <li><img src="/img/shots/frame-5.jpg" width="134" height="192" loading="lazy" alt="" /></li>
+              <li><img src="/img/shots/frame-6.jpg" width="134" height="192" loading="lazy" alt="" /></li>
+            </ul>
+          </div>
+          <figcaption class="ld-proof-cap">
+            <b data-i18n="landing.hero.proofMeta"></b>
+            <span data-i18n="landing.hero.proofCap"></span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 2. Как это работает: четыре шага живыми экранами студии -->
+    <section class="ld-sec ld-shell" id="ld-how">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.how.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.how.title"></h2>
+        <p class="ld-lead" data-i18n="landing.how.lead"></p>
+      </div>
+      <ol class="ld-steps" id="ld-steps"></ol>
+    </section>
+
+    <!-- 3. Что внутри -->
+    <section class="ld-sec ld-shell" id="ld-features">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.features.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.features.title"></h2>
+        <p class="ld-lead" data-i18n="landing.features.lead"></p>
+      </div>
+      <div class="ld-feats" id="ld-feats"></div>
+    </section>
+
+    <!-- 4. Тарифы: витрина из GET /api/billing/plans -->
+    <section class="ld-sec ld-shell" id="ld-pricing">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.pricing.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.pricing.title"></h2>
+        <p class="ld-lead" data-i18n="landing.pricing.lead"></p>
+      </div>
+      <div class="ld-period" id="ld-period" role="group" data-i18n-aria="landing.footer.periodAria">
+        <button type="button" class="on" data-period="month" data-i18n="landing.pricing.month"></button>
+        <button type="button" data-period="year"></button>
+      </div>
+      <div class="ld-plans" id="ld-plans"></div>
+      <p class="ld-pay-note" id="ld-pay-note"></p>
+    </section>
+
+    <!-- 5. Докупка очков: шкала пакетов -->
+    <section class="ld-sec ld-shell" id="ld-topup">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.topup.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.topup.title"></h2>
+        <p class="ld-lead" data-i18n="landing.topup.lead"></p>
+      </div>
+      <div class="ld-scale-box">
+        <div class="ld-scale">
+          <input id="ld-range" class="ld-range" type="range" min="0" max="4" step="1" value="2"
+                 data-i18n-aria="landing.footer.rangeAria" />
+          <div class="ld-ticks" id="ld-ticks"></div>
+        </div>
+        <div class="ld-readout" id="ld-readout"></div>
+      </div>
+      <p class="ld-scale-note" data-i18n="landing.topup.note"></p>
+    </section>
+
+    <!-- 6. Партнёрская программа -->
+    <section class="ld-sec ld-shell" id="ld-partner">
+      <div class="ld-partner-box">
+        <div>
+          <span class="ld-eyebrow" data-i18n="landing.partner.eyebrow"></span>
+          <h2 class="ld-h2" data-i18n="landing.partner.title"></h2>
+          <p class="ld-lead" data-i18n="landing.partner.lead"></p>
+          <ul id="ld-partner-list"></ul>
+        </div>
+        <div class="ld-partner-act">
+          <button id="ld-partner-btn" class="primary ld-cta" type="button" data-i18n="landing.partner.cta"></button>
+          <p class="ld-plan-note" data-i18n="landing.partner.note"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. FAQ -->
+    <section class="ld-sec ld-shell" id="ld-faq">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.faq.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.faq.title"></h2>
+      </div>
+      <div class="ld-faq" id="ld-faq-list"></div>
+    </section>
+  </main>
+
+  <!-- 8. Подвал -->
+  <footer class="ld-foot">
+    <div class="ld-shell">
+      <div class="ld-foot-grid">
+        <div class="ld-foot-about">
+          <a class="ld-brand" href="#ld-top">
+            <img src="/img/logo-mark.svg" width="30" height="30" alt="" />
+            <span class="ld-brand-word">lolq<span class="brand-dot">.</span>ai</span>
+          </a>
+          <p data-i18n="landing.footer.about"></p>
+          <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+            <button type="button" data-lang="en">EN</button>
+            <button type="button" data-lang="ru">RU</button>
+          </div>
+        </div>
+        <div class="ld-foot-cols" id="ld-foot-cols"></div>
+      </div>
+      <div class="ld-foot-legal">
+        <span id="ld-foot-legal-text"></span>
+        <div class="made-with" data-i18n="common.madeWith" aria-hidden="true"></div>
+      </div>
+    </div>
+  </footer>
 </div>
 
 <div id="login" class="login-screen hidden">
   <form id="login-form" class="login-box">
-    <h1>qlolvideo</h1>
-    <input id="login-login" type="text" placeholder="логин (пусто — вход владельца)" autocomplete="username" />
-    <input id="login-password" type="password" placeholder="пароль" autofocus autocomplete="current-password" />
-    <button type="submit">войти</button>
+    <h1 class="login-word">lolq<span class="brand-dot">.</span>ai</h1>
+    <input id="login-login" type="text" data-i18n-ph="auth.loginPh" autocomplete="username" />
+    <input id="login-password" type="password" data-i18n-ph="auth.passwordPh" autofocus autocomplete="current-password" />
+    <button type="submit" data-i18n="auth.submit"></button>
     <p id="login-error" class="error hidden"></p>
+    <div class="lang-switch lang-switch-center" role="group" data-i18n-aria="lang.aria">
+      <button type="button" data-lang="en">EN</button>
+      <button type="button" data-lang="ru">RU</button>
+    </div>
   </form>
 </div>
 
 <div id="app" class="app hidden">
   <header class="topbar">
-    <select id="project-select" class="project-select"></select>
-    <label id="project-cover" class="cover-slot project-cover" title="обложка проекта — клик, чтобы заменить">
-      <input id="project-cover-input" type="file" class="hidden" accept="image/jpeg,image/png,image/webp" />
-      <img id="project-cover-img" class="hidden" alt="" />
-      <span class="cover-ph">♪</span>
-    </label>
-    <input id="project-name" class="project-name" placeholder="название клипа" />
-    <span id="project-kind" class="kind-badge"></span>
-    <button id="new-project-btn">+ проект</button>
-    <span id="points-badge" class="kind-badge points-badge hidden" title="остаток генераций"></span>
-    <button id="account-btn" class="account-btn hidden" title="тариф, генерации, партнёрка">Кабинет</button>
-    <button id="save-account-btn" class="hidden">Сохранить аккаунт</button>
-    <button id="logout-btn" class="ghost">выйти</button>
+    <a id="brand" class="brand" href="/" data-i18n-title="top.brandTitle">
+      <img class="brand-mark" src="/img/logo-mark.svg" width="36" height="36" alt="" />
+      <span class="brand-word">lolq<span class="brand-dot">.</span>ai</span>
+    </a>
+    <div class="tb-project">
+      <select id="project-select" class="project-select"></select>
+      <label id="project-cover" class="cover-slot project-cover" data-i18n-title="top.coverTitle">
+        <input id="project-cover-input" type="file" class="hidden" accept="image/jpeg,image/png,image/webp" />
+        <img id="project-cover-img" class="hidden" alt="" />
+        <span class="cover-ph"></span>
+      </label>
+      <input id="project-name" class="project-name" data-i18n-ph="top.projectNamePh" />
+      <span id="project-kind" class="kind-badge"></span>
+      <button id="new-project-btn" class="tb-new" data-i18n="top.newProject"></button>
+    </div>
+    <div class="tb-user">
+      <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="ru">RU</button>
+      </div>
+      <span id="points-badge" class="kind-badge points-badge hidden" data-i18n-title="top.pointsTitle"></span>
+      <button id="account-btn" class="account-btn hidden" data-i18n-title="top.accountTitle" data-i18n="top.account"></button>
+      <button id="save-account-btn" class="hidden" data-i18n="top.saveAccount"></button>
+      <button id="logout-btn" class="ghost" data-i18n="top.logout"></button>
+    </div>
   </header>
 
   <section class="panel">
-    <h2>Герой и сюжет</h2>
-    <label title="внешность, характер — одна на все треки">Библия героя</label>
-    <textarea id="character-bible" rows="2" placeholder="Оставь пустым — придумается по первым трекам"></textarea>
+    <h2 data-i18n="story.title"></h2>
+    <label data-i18n-title="story.bibleTitle" data-i18n="story.bible"></label>
+    <textarea id="character-bible" rows="2" data-i18n-ph="story.biblePh"></textarea>
 
-    <label>Сквозной сюжет</label>
-    <textarea id="story" rows="3" placeholder="Появится после генерации"></textarea>
+    <label data-i18n="story.arc"></label>
+    <textarea id="story" rows="3" data-i18n-ph="story.arcPh"></textarea>
 
     <div class="row">
-      <button id="save-project-btn">Сохранить</button>
-      <button id="gen-story-btn" class="primary">Сгенерировать сюжет по всем трекам</button>
+      <button id="save-project-btn" data-i18n="common.save"></button>
+      <button id="gen-story-btn" class="primary" data-i18n="story.gen"></button>
       <span id="story-status" class="status"></span>
     </div>
   </section>
 
   <section class="panel">
-    <h2 title="имя + характер + фото-модельки: распространяются на весь альбом, в промптах кадров пишутся имена, внешность подтягивается всегда">Персонажи альбома</h2>
+    <h2 data-i18n-title="chars.titleHint" data-i18n="chars.title"></h2>
     <div id="characters"></div>
     <div class="row">
-      <button id="add-character-btn">+ добавить персонажа</button>
+      <button id="add-character-btn" data-i18n="chars.add"></button>
     </div>
   </section>
 
   <section class="panel">
-    <h2>Треки</h2>
+    <h2 data-i18n="tracks.title"></h2>
     <div id="tracks"></div>
     <details class="add-track">
-      <summary>+ добавить трек</summary>
+      <summary data-i18n="tracks.add"></summary>
       <form id="add-track-form" class="track-form">
-        <input name="title" placeholder="Название трека" required />
-        <label>Стиль клипа (1–3 пресета, первый — основа)</label>
+        <input name="title" data-i18n-ph="tracks.titlePh" required />
+        <label data-i18n="tracks.styleLabel"></label>
         <div class="style-picker"></div>
         <input type="hidden" name="style" />
-        <textarea name="lyrics" placeholder="Текст песни (необязательно — можно чисто бит: тогда идею закладывают комментарий и персонажи)" rows="4"></textarea>
-        <textarea name="comment" placeholder="Комментарий: что имел в виду, контекст" rows="3"></textarea>
+        <textarea name="lyrics" data-i18n-ph="tracks.lyricsPh" rows="4"></textarea>
+        <textarea name="comment" data-i18n-ph="tracks.commentPh" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
-        <button type="submit" class="primary">Добавить трек</button>
+        <button type="submit" class="primary" data-i18n="tracks.submit"></button>
       </form>
     </details>
   </section>
@@ -125,18 +282,18 @@
 <template id="track-tpl">
   <div class="track-card">
     <div class="track-head">
-      <label class="cover-slot track-cover" title="обложка трека — клик, чтобы заменить">
+      <label class="cover-slot track-cover" data-i18n-title="track.coverTitle">
         <input type="file" class="t-cover-input hidden" accept="image/jpeg,image/png,image/webp" />
         <img class="t-cover-img hidden" alt="" />
-        <span class="cover-ph">♪</span>
+        <span class="cover-ph"></span>
       </label>
       <span class="pos"></span>
-      <input class="t-title" placeholder="Название" />
-      <button class="s-supergen primary" title="весь конвейер одной кнопкой">⚡ Супергенерация</button>
+      <input class="t-title" data-i18n-ph="track.titlePh" />
+      <button class="s-supergen primary" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
       <div class="order-btns">
-        <button class="up ghost" title="выше">↑</button>
-        <button class="down ghost" title="ниже">↓</button>
-        <button class="del ghost danger" title="удалить">✕</button>
+        <button class="up ghost" data-i18n-title="common.moveUp">↑</button>
+        <button class="down ghost" data-i18n-title="common.moveDown">↓</button>
+        <button class="del ghost danger" data-i18n-title="track.delTitle">✕</button>
       </div>
     </div>
     <span class="supergen-note status"></span>
@@ -146,37 +303,37 @@
     <div class="stage-panes">
       <!-- 1. Настройка -->
       <section class="stage-pane" data-stage="setup">
-        <label title="1–3 пресета чекбоксами: первый выбранный — основа микса">Стиль клипа</label>
+        <label data-i18n-title="track.styleLabelTitle" data-i18n="track.styleLabel"></label>
         <div class="t-style-picker style-picker style-picker-wide"></div>
         <input type="hidden" class="t-style" />
         <div class="track-body">
           <div class="track-left">
-            <label>Аудио</label>
+            <label data-i18n="track.audio"></label>
             <audio class="t-audio" controls></audio>
             <span class="t-duration"></span>
-            <label class="approve-check grain-check" title="ffmpeg-зерно 16мм поверх всего собранного клипа"><input type="checkbox" class="t-grain" /> 🎞 плёночное зерно на весь клип</label>
-            <label class="approve-check grain-check" title="раскадровка = независимые рандомные панч-кадры по комментарию, сквозной сюжет не нужен"><input type="checkbox" class="t-nostory" /> 🎲 без сюжета (рандомные кадры)</label>
+            <label class="approve-check grain-check" data-i18n-title="track.grainTitle"><input type="checkbox" class="t-grain" /> <span data-i18n="track.grain"></span></label>
+            <label class="approve-check grain-check" data-i18n-title="track.nostoryTitle"><input type="checkbox" class="t-nostory" /> <span data-i18n="track.nostory"></span></label>
           </div>
           <div class="track-right">
-            <label>Комментарий</label>
-            <textarea class="t-comment" rows="4" placeholder="что имел в виду, контекст"></textarea>
+            <label data-i18n="track.comment"></label>
+            <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
           </div>
         </div>
-        <label>Текст песни</label>
-        <textarea class="t-lyrics" rows="5" placeholder="Пусто = чисто бит: идею закладывают комментарий и персонажи"></textarea>
+        <label data-i18n="track.lyrics"></label>
+        <textarea class="t-lyrics" rows="5" data-i18n-ph="track.lyricsPh"></textarea>
         <div class="row">
-          <button class="save-track">Сохранить трек</button>
+          <button class="save-track" data-i18n="track.saveTrack"></button>
         </div>
       </section>
 
       <!-- 2. Сюжет -->
       <section class="stage-pane" data-stage="plot">
         <div class="t-note-view hidden">
-          <label>🎬 Режиссёрская заметка трека</label>
+          <label data-i18n="track.noteLabel"></label>
           <p class="t-note-text muted"></p>
         </div>
         <div class="row">
-          <button class="gen-story-t primary hidden">Сгенерировать сюжет</button>
+          <button class="gen-story-t primary hidden" data-i18n="track.genStory"></button>
           <span class="t-story-status status"></span>
         </div>
       </section>
@@ -184,31 +341,31 @@
       <!-- 3. Раскадровка -->
       <section class="stage-pane" data-stage="board">
         <div class="row">
-          <button class="gen-scenes primary">Сгенерировать раскадровку</button>
+          <button class="gen-scenes primary" data-i18n="track.genScenes"></button>
           <span class="scenes-status status"></span>
         </div>
         <div class="storyboard-block">
           <div class="media-head">
-            <span>Лист раскадровки</span>
+            <span data-i18n="track.sheetTitle"></span>
             <span class="sb-status status"></span>
           </div>
           <div class="storyboard-box">
             <img class="sb-preview hidden" />
           </div>
           <div class="row">
-            <button class="gen-storyboard">Сгенерировать лист</button>
-            <button class="slice-storyboard" title="нарезать лист-сетку: каждая ячейка станет первым кадром своей сцены">Разложить лист по кадрам</button>
+            <button class="gen-storyboard" data-i18n="track.genSheet"></button>
+            <button class="slice-storyboard" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
           </div>
         </div>
         <div class="strip-wrap">
-          <button class="strip-arrow strip-prev" type="button" aria-label="назад">‹</button>
+          <button class="strip-arrow strip-prev" type="button" data-i18n-aria="common.prev">‹</button>
           <div class="scenes scenes-board"></div>
-          <button class="strip-arrow strip-next" type="button" aria-label="вперёд">›</button>
+          <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
         </div>
         <div class="row">
-          <button class="add-scene">+ кадр вручную</button>
-          <button class="gen-all-frames primary">Сгенерировать кадры всех сцен</button>
-          <button class="gen-all-videos primary" title="поставить в очередь видео по всем сценам с готовыми кадрами">🎬 Видео всех сцен</button>
+          <button class="add-scene" data-i18n="track.addScene"></button>
+          <button class="gen-all-frames primary" data-i18n="track.allFrames"></button>
+          <button class="gen-all-videos primary" data-i18n-title="track.allVideosTitle" data-i18n="track.allVideos"></button>
           <span class="all-frames-note muted"></span>
         </div>
       </section>
@@ -216,9 +373,9 @@
       <!-- 4. Анимация -->
       <section class="stage-pane" data-stage="anim">
         <div class="strip-wrap">
-          <button class="strip-arrow strip-prev" type="button" aria-label="назад">‹</button>
+          <button class="strip-arrow strip-prev" type="button" data-i18n-aria="common.prev">‹</button>
           <div class="scenes scenes-anim"></div>
-          <button class="strip-arrow strip-next" type="button" aria-label="вперёд">›</button>
+          <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
         </div>
       </section>
 
@@ -226,19 +383,19 @@
       <section class="stage-pane" data-stage="final">
         <div class="clip-block">
           <div class="media-head">
-            <span class="clip-title">Готовый клип трека</span>
+            <span class="clip-title" data-i18n="track.clipHead"></span>
             <span class="clip-status status"></span>
           </div>
           <div class="media-box clip-box">
             <video class="clip-preview hidden" controls></video>
           </div>
           <div class="row">
-            <button class="assemble primary">Собрать клип</button>
-            <a class="clip-download ghost hidden" download>скачать</a>
+            <button class="assemble primary" data-i18n="track.assemble"></button>
+            <a class="clip-download ghost hidden" download data-i18n="track.download"></a>
           </div>
         </div>
         <div class="final-scenes">
-          <div class="media-head"><span>Видео всех сцен</span></div>
+          <div class="media-head"><span data-i18n="track.finalScenes"></span></div>
           <div class="final-grid"></div>
         </div>
       </section>
@@ -249,25 +406,25 @@
 <template id="char-tpl">
   <div class="char-card">
     <div class="char-head">
-      <input class="c-name" placeholder="Имя персонажа" />
-      <label class="approve-check c-main-label"><input type="checkbox" class="c-main" /> главный</label>
-      <button class="c-del ghost danger" title="удалить">✕</button>
+      <input class="c-name" data-i18n-ph="character.namePh" />
+      <label class="approve-check c-main-label"><input type="checkbox" class="c-main" /> <span data-i18n="character.main"></span></label>
+      <button class="c-del ghost danger" data-i18n-title="character.delTitle">✕</button>
     </div>
-    <label title="пойдёт в промпты дословно">Характер и внешность</label>
+    <label data-i18n-title="character.descTitle" data-i18n="character.descLabel"></label>
     <textarea class="c-desc" rows="3"></textarea>
     <div class="row">
-      <button class="c-save">Сохранить</button>
+      <button class="c-save" data-i18n="common.save"></button>
       <label class="c-upload-label">
         <input type="file" class="c-photo-input hidden" accept="image/*" multiple />
-        <span class="c-upload-btn">+ фото-моделька</span>
+        <span class="c-upload-btn" data-i18n="character.upload"></span>
       </label>
-      <button class="c-gen-model" title="сгенерировать разворот персонажа в 4 ракурсах по описанию и приложенным фото">🧍 Сгенерировать модельку</button>
+      <button class="c-gen-model" data-i18n-title="character.genModelTitle" data-i18n="character.genModel"></button>
       <div class="char-photos"></div>
     </div>
     <div class="char-attrs-block">
       <div class="attrs-head">
-        <span class="attrs-title" title="фирменные вещи персонажа: шляпа, очки, квадрик…">Атрибуты</span>
-        <button type="button" class="attr-add">+ атрибут</button>
+        <span class="attrs-title" data-i18n-title="character.attrsTitle" data-i18n="character.attrs"></span>
+        <button type="button" class="attr-add" data-i18n="character.attrAdd"></button>
       </div>
       <div class="char-attrs"></div>
     </div>
@@ -277,63 +434,63 @@
 <template id="scene-tpl">
   <div class="scene-card">
     <div class="scene-head">
-      <button class="s-play ghost" title="прослушать этот кадр">▶</button>
+      <button class="s-play ghost" data-i18n-title="scene.playTitle">▶</button>
       <span class="s-pos"></span>
       <span class="s-time"></span>
-      <button class="s-edit-toggle ghost board-only" title="редактировать кадр">✎</button>
-      <button class="s-del ghost danger board-only" title="удалить кадр">✕</button>
+      <button class="s-edit-toggle ghost board-only" data-i18n-title="scene.editTitle">✎</button>
+      <button class="s-del ghost danger board-only" data-i18n-title="scene.delTitle">✕</button>
     </div>
 
     <div class="board-only">
       <div class="s-thumbs">
-        <div class="s-thumb" title="первый кадр">
+        <div class="s-thumb" data-i18n-title="scene.firstFrame">
           <img class="s-image-preview hidden" alt="" />
-          <span class="s-thumb-cap">перв.</span>
+          <span class="s-thumb-cap" data-i18n="scene.firstCap"></span>
         </div>
-        <div class="s-thumb" title="последний кадр">
+        <div class="s-thumb" data-i18n-title="scene.lastFrame">
           <img class="s-image-last-preview hidden" alt="" />
-          <span class="s-thumb-cap">посл.</span>
+          <span class="s-thumb-cap" data-i18n="scene.lastCap"></span>
         </div>
       </div>
       <div class="s-midframes"></div>
       <!-- Референсы кадра: чем объяснять словами «как снято», проще приложить
            картинку-образец. Стилистику всё равно диктует стиль трека. -->
-      <div class="s-refs" title="референсы кадра: композиция, свет, вайб"></div>
+      <div class="s-refs" data-i18n-title="scene.refsTitle"></div>
       <span class="s-image-status status"></span>
-      <div class="s-chars-chips" title="персонажи в кадре — клик включает/выключает"></div>
+      <div class="s-chars-chips" data-i18n-title="scene.charsTitle"></div>
       <input type="hidden" class="s-chars" />
       <details class="s-prompt-details">
-        <summary>промпт</summary>
-        <textarea class="s-image" rows="4" title="промпт первого кадра"></textarea>
+        <summary data-i18n="scene.prompt"></summary>
+        <textarea class="s-image" rows="4" data-i18n-title="scene.promptTitle"></textarea>
       </details>
       <div class="s-edit hidden">
         <div class="shot-row">
-          <input class="s-duration" type="number" min="2" max="12" title="секунд" />
-          <select class="s-shotsize" title="крупность плана">
-            <option value="">крупность —</option>
-            <option value="extreme close-up">деталь</option>
-            <option value="close-up">крупный</option>
-            <option value="medium">средний</option>
-            <option value="wide">общий</option>
-            <option value="establishing">заявочный</option>
+          <input class="s-duration" type="number" min="2" max="12" data-i18n-title="scene.durationTitle" />
+          <select class="s-shotsize" data-i18n-title="scene.shotSizeTitle">
+            <option value="" data-i18n="scene.shotSizeEmpty"></option>
+            <option value="extreme close-up" data-i18n="scene.shot.extreme close-up"></option>
+            <option value="close-up" data-i18n="scene.shot.close-up"></option>
+            <option value="medium" data-i18n="scene.shot.medium"></option>
+            <option value="wide" data-i18n="scene.shot.wide"></option>
+            <option value="establishing" data-i18n="scene.shot.establishing"></option>
           </select>
         </div>
-        <input class="s-camera" placeholder="движение камеры" title="напр. slow push-in" />
-        <input class="s-lyric" placeholder="строка лирики" />
-        <input class="s-note" placeholder="что в кадре (по-русски)" />
-        <textarea class="s-motion" rows="2" placeholder="промпт анимации кадра"></textarea>
-        <textarea class="s-motion-last" rows="2" placeholder="промпт последнего кадра сцены"></textarea>
-        <button class="s-save">Сохранить кадр</button>
+        <input class="s-camera" data-i18n-ph="scene.cameraPh" data-i18n-title="scene.cameraTitle" />
+        <input class="s-lyric" data-i18n-ph="scene.lyricPh" />
+        <input class="s-note" data-i18n-ph="scene.notePh" />
+        <textarea class="s-motion" rows="2" data-i18n-ph="scene.motionPh"></textarea>
+        <textarea class="s-motion-last" rows="2" data-i18n-ph="scene.motionLastPh"></textarea>
+        <button class="s-save" data-i18n="scene.save"></button>
       </div>
       <div class="row s-board-actions">
-        <button class="s-gen-frames">Перегенерировать кадры</button>
-        <button class="s-gen-first" title="пересобрать только первый кадр — последний останется">⟳ перв.</button>
-        <button class="s-gen-last" title="пересобрать только последний кадр — первый останется">⟳ посл.</button>
-        <button class="s-gen-mid">+ промежуточные кадры</button>
+        <button class="s-gen-frames" data-i18n="scene.regenFrames"></button>
+        <button class="s-gen-first" data-i18n-title="scene.genFirstTitle" data-i18n="scene.genFirst"></button>
+        <button class="s-gen-last" data-i18n-title="scene.genLastTitle" data-i18n="scene.genLast"></button>
+        <button class="s-gen-mid"></button>
       </div>
       <div class="row">
-        <select class="s-provider" title="провайдер видео"></select>
-        <button class="s-gen-video primary">🎬 Видео сцены</button>
+        <select class="s-provider" data-i18n-title="scene.providerTitle"></select>
+        <button class="s-gen-video primary" data-i18n="scene.genVideo"></button>
         <span class="s-video-status status"></span>
       </div>
     </div>
@@ -343,12 +500,12 @@
         <video class="s-video-preview hidden" controls loop></video>
       </div>
       <span class="s-anim-status status"></span>
-      <label class="approve-check" title="утверждённые сцены идут в общий клип">
+      <label class="approve-check" data-i18n-title="scene.approveTitle">
         <input type="checkbox" class="s-approve" />
-        в клип
+        <span data-i18n="scene.approve"></span>
       </label>
       <div class="scene-audio-row hidden">
-        <audio class="s-audio" controls title="отрезок трека под сцену"></audio>
+        <audio class="s-audio" controls data-i18n-title="scene.audioTitle"></audio>
       </div>
     </div>
   </div>
@@ -358,7 +515,7 @@
   <div class="modal-card" role="dialog" aria-modal="true">
     <div class="modal-head">
       <span id="modal-title" class="modal-title"></span>
-      <button id="modal-close" class="ghost modal-close" title="закрыть">✕</button>
+      <button id="modal-close" class="ghost modal-close" data-i18n-title="modal.closeTitle">✕</button>
     </div>
     <div id="modal-body" class="modal-body"></div>
   </div>
@@ -367,55 +524,55 @@
 <div id="guide-modal" class="guide-modal hidden">
   <div class="guide-modal-card">
     <div class="guide-modal-head">
-      <span class="guide-modal-title">Как это работает</span>
-      <button id="guide-close" class="ghost" title="закрыть">✕</button>
+      <span class="guide-modal-title" data-i18n="guide.title"></span>
+      <button id="guide-close" class="ghost" data-i18n-title="modal.closeTitle">✕</button>
     </div>
     <div class="guide-modal-body">
-    
+
     <ol class="guide-list">
       <li class="guide-step">
         <div class="guide-copy">
-          <h3 class="guide-title">Персонажи с модельками</h3>
-          <p class="guide-desc">Заводишь героя: грузишь его фото или жмёшь «🧍 Сгенерировать модельку». Лицо и одежда держатся во всех кадрах, а квадрик, шлем и очки живут отдельными атрибутами.</p>
+          <h3 class="guide-title" data-i18n="guide.chars.title"></h3>
+          <p class="guide-desc" data-i18n="guide.chars.text"></p>
         </div>
         <a class="guide-shot" href="/img/guide/characters.png" target="_blank" rel="noopener">
-          <img src="/img/guide/characters.png" width="900" height="397" alt="Карточка персонажа: описание внешности, фото-модельки и атрибуты" loading="lazy" />
+          <img src="/img/guide/characters.png" width="900" height="397" alt="" data-i18n-alt="guide.chars.alt" loading="lazy" />
         </a>
       </li>
       <li class="guide-step">
         <div class="guide-copy">
-          <h3 class="guide-title">Трек и стиль</h3>
-          <p class="guide-desc">Грузишь аудио и выбираешь 1–3 пресета стиля — они смешиваются в один вайб. Текст песни не обязателен: идею закладывает комментарий, а режим «без сюжета» соберёт клип из рандомных панч-кадров.</p>
+          <h3 class="guide-title" data-i18n="guide.setup.title"></h3>
+          <p class="guide-desc" data-i18n="guide.setup.text"></p>
         </div>
         <a class="guide-shot" href="/img/guide/setup.png" target="_blank" rel="noopener">
-          <img src="/img/guide/setup.png" width="900" height="739" alt="Этап «Настройка»: чипы стилей, аудио трека, комментарий и галочки" loading="lazy" />
+          <img src="/img/guide/setup.png" width="900" height="739" alt="" data-i18n-alt="guide.setup.alt" loading="lazy" />
         </a>
       </li>
       <li class="guide-step">
         <div class="guide-copy">
-          <h3 class="guide-title">Раскадровка</h3>
-          <p class="guide-desc">Claude режет трек на сцены под реальную динамику дорожки. Лист-эскиз раскладывается по кадрам выборочно, любой кадр перерисовывается отдельно — только первый или только последний, — и к нему можно приложить свои референсы.</p>
+          <h3 class="guide-title" data-i18n="guide.board.title"></h3>
+          <p class="guide-desc" data-i18n="guide.board.text"></p>
         </div>
         <a class="guide-shot" href="/img/guide/board.png" target="_blank" rel="noopener">
-          <img src="/img/guide/board.png" width="900" height="1332" alt="Этап «Раскадровка»: лист-эскиз и лента карточек кадров с миниатюрами" loading="lazy" />
+          <img src="/img/guide/board.png" width="900" height="1332" alt="" data-i18n-alt="guide.board.alt" loading="lazy" />
         </a>
       </li>
       <li class="guide-step">
         <div class="guide-copy">
-          <h3 class="guide-title">Анимация</h3>
-          <p class="guide-desc">Каждая сцена оживает по первому и последнему кадру (Seedance) или по одному первому (Grok). Одной кнопкой ставится очередь на все сцены сразу.</p>
+          <h3 class="guide-title" data-i18n="guide.anim.title"></h3>
+          <p class="guide-desc" data-i18n="guide.anim.text"></p>
         </div>
         <a class="guide-shot" href="/img/guide/anim.png" target="_blank" rel="noopener">
-          <img src="/img/guide/anim.png" width="900" height="678" alt="Этап «Анимация»: видео сцен с отметкой «в клип»" loading="lazy" />
+          <img src="/img/guide/anim.png" width="900" height="678" alt="" data-i18n-alt="guide.anim.alt" loading="lazy" />
         </a>
       </li>
       <li class="guide-step">
         <div class="guide-copy">
-          <h3 class="guide-title">Готовый клип</h3>
-          <p class="guide-desc">Утверждённые сцены склеиваются с твоей дорожкой. Есть плёночное зерно на весь клип и скачивание готового файла.</p>
+          <h3 class="guide-title" data-i18n="guide.ready.title"></h3>
+          <p class="guide-desc" data-i18n="guide.ready.text"></p>
         </div>
         <a class="guide-shot" href="/img/guide/ready.png" target="_blank" rel="noopener">
-          <img src="/img/guide/ready.png" width="900" height="1025" alt="Этап «Готовое»: собранный клип и сетка видео всех сцен" loading="lazy" />
+          <img src="/img/guide/ready.png" width="900" height="1025" alt="" data-i18n-alt="guide.ready.alt" loading="lazy" />
         </a>
       </li>
     </ol>
@@ -423,6 +580,7 @@
   </div>
 </div>
 
-<script src="/app.js?v=42"></script>
+<script src="/i18n.js?v=46"></script>
+<script src="/app.js?v=46"></script>
 </body>
 </html>

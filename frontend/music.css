@@ -1,0 +1,306 @@
+/* qlolmusic — витрина музыкального направления lolq.ai (лейбл, дистрибуция,
+   мастеринг) и приём заявок.
+
+   Материалы и токены берём готовыми из landing.css: страница обёрнута в
+   .landing, поэтому кнопки, секции (.ld-sec/.ld-h2/.ld-lead), FAQ и подвал
+   выглядят ровно как на главной. Здесь — только то, чего на главной нет:
+   марка направления, «состав релиза», площадки, шаги, чек-лист и форма.
+   Подключается ПОСЛЕ landing.css.
+
+   Правила те же: обводки 1/1.5/2, офсет 1–3, радиусы ≤18, семь кеглей,
+   один сплошной огонь на экран (это кнопка «Отправить демо»). */
+
+:root, .mu-page {
+  --danger-ink: #c0392b;          /* текстовый дублёр --danger: 5.09:1 на бумаге */
+  --danger-wash: rgba(192, 57, 43, .08);
+  --ok-wash: rgba(15, 122, 82, .08);
+}
+
+html:has(.mu-page) { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html:has(.mu-page) { scroll-behavior: auto; } }
+
+.mu-page { display: block; }
+.mu-page [id] { scroll-margin-top: 88px; }
+
+/* Фон страницы — тот же тихий, что у главной: одна тёплая засветка и
+   нейтральная сетка 64px. Правило главной привязано к #welcome, которого
+   здесь нет, поэтому иначе досталась бы громкая студийная миллиметровка. */
+body:has(.mu-page) {
+  background:
+    radial-gradient(1100px 520px at 88% -14%, rgba(255, 122, 41, .10), transparent 62%),
+    linear-gradient(rgba(45, 33, 26, .030) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 33, 26, .030) 1px, transparent 1px),
+    var(--bg);
+  background-size: auto, 64px 64px, 64px 64px, auto;
+}
+@media (max-width: 700px) {
+  body:has(.mu-page) {
+    background: radial-gradient(700px 380px at 90% -10%, rgba(255, 122, 41, .10), transparent 62%), var(--bg);
+  }
+}
+
+/* ────────── марка направления ────────── */
+/* Знак общий, словесная марка своя: qlol чернилами, music акцентом. Рядом —
+   обратная ссылка на lolq.ai, чтобы страница не читалась как чужой сайт. */
+.mu-word {
+  font-family: var(--font-head); font-weight: 800; font-size: var(--fs-lg);
+  letter-spacing: var(--ls-head); color: var(--text);
+}
+/* Акцентом набрано целое слово, а не точка, как на главной, — поэтому цвет
+   берём чернильный (4.89:1), иначе марка в шапке не проходит по контрасту. */
+.mu-word .brand-dot { color: var(--accent-2-ink); }
+.mu-brand-sub {
+  display: block; font-size: var(--fs-meta); font-weight: 500;
+  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted);
+}
+.mu-brand-col { display: flex; flex-direction: column; line-height: 1.15; }
+
+/* ────────── плашка статуса запуска ────────── */
+/* Пока договор с дистрибьютором не подписан, страница говорит это вслух:
+   витрина — не обещание уже работающего конвейера. */
+.mu-status {
+  display: flex; gap: var(--s-3); align-items: flex-start;
+  margin: 0 0 var(--s-6); padding: var(--s-3) var(--s-4);
+  background: var(--gold-wash); border: var(--bw-hair) solid var(--line-strong);
+  border-radius: var(--r-3); font-size: var(--fs-sm); color: var(--text);
+  max-width: 62ch;
+}
+.mu-status::before {
+  content: "◉"; color: var(--gold-ink); font-size: var(--fs-sm); line-height: 1.5; flex: none;
+}
+
+/* ────────── первый экран ────────── */
+/* padding-block: горизонтальные поля секции приходят от .ld-shell */
+.mu-hero { padding-block: var(--s-8) var(--s-12); }
+.mu-hero-grid {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  gap: var(--s-12); align-items: center;
+}
+.mu-hero-h1 {
+  margin: var(--s-3) 0 0; font-family: var(--font-head); font-weight: 800;
+  font-size: var(--fs-2xl); line-height: 1.08; letter-spacing: var(--ls-head);
+}
+.mu-hero-sub { margin: var(--s-4) 0 0; font-size: var(--fs-md); color: var(--ink-muted); max-width: 52ch; }
+.mu-hero-actions { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-6); }
+.mu-hero-trust {
+  margin: var(--s-4) 0 0; font-family: var(--font-mono); font-size: var(--fs-meta);
+  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted);
+}
+
+/* «Состав релиза»: предмет — картон, поэтому обводка 1.5 и офсет 2 */
+.mu-pack {
+  margin: 0; background: var(--surface); border: var(--bw-edge) solid var(--edge);
+  border-radius: var(--r-4); box-shadow: var(--lift-2); overflow: hidden;
+}
+.mu-pack-top { display: flex; gap: var(--s-4); padding: var(--s-4); align-items: center; }
+.mu-pack-top img {
+  display: block; width: 96px; height: 128px; object-fit: cover; flex: none;
+  border: var(--bw-hair) solid var(--edge); border-radius: var(--r-1);
+}
+.mu-pack-title { margin: 0; font-size: var(--fs-md); font-weight: 600; letter-spacing: var(--ls-head); }
+.mu-pack-cap { margin: var(--s-2) 0 0; font-size: var(--fs-sm); color: var(--ink-muted); }
+.mu-pack ul {
+  list-style: none; margin: 0; padding: var(--s-4);
+  border-top: var(--bw-hair) solid var(--line);
+  background: var(--surface-2);
+  display: flex; flex-direction: column; gap: var(--s-2); font-size: var(--fs-base);
+}
+.mu-pack li { display: flex; gap: var(--s-2); align-items: baseline; }
+.mu-pack li::before { content: "✓"; color: var(--ok-ink); font-weight: 700; flex: none; }
+
+/* ────────── площадки ────────── */
+.mu-plats { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.mu-plats li {
+  font-size: var(--fs-sm); font-weight: 500; color: var(--text);
+  background: var(--surface); border: var(--bw-hair) solid var(--line-strong);
+  border-radius: var(--r-2); padding: var(--s-2) var(--s-3); white-space: nowrap;
+}
+.mu-plats-note { margin: var(--s-4) 0 0; font-size: var(--fs-sm); color: var(--ink-muted); max-width: 72ch; }
+
+/* ────────── что даём артисту ────────── */
+.mu-offer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+.mu-offer-card {
+  display: flex; flex-direction: column; gap: var(--s-3);
+  background: var(--surface); border: var(--bw-edge) solid var(--edge);
+  border-radius: var(--r-3); box-shadow: var(--lift-2); padding: var(--s-4);
+}
+.mu-offer-card h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; letter-spacing: var(--ls-head); }
+.mu-offer-body { display: flex; gap: var(--s-4); align-items: flex-start; }
+.mu-offer-body p { margin: 0; color: var(--ink-muted); }
+.mu-offer-body img {
+  display: block; width: 96px; height: 128px; object-fit: cover; flex: none;
+  border: var(--bw-hair) solid var(--edge); border-radius: var(--r-1);
+}
+
+/* ────────── шаги релиза ────────── */
+.mu-flow {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3);
+}
+.mu-flow li {
+  display: flex; flex-direction: column; gap: var(--s-2);
+  background: var(--surface); border: var(--bw-edge) solid var(--edge);
+  border-radius: var(--r-3); box-shadow: var(--lift-2); padding: var(--s-4);
+}
+.mu-flow-n {
+  font-family: var(--font-mono); font-size: var(--fs-meta); font-weight: 700;
+  letter-spacing: var(--ls-caps); color: var(--accent-ink);
+  background: var(--accent-wash); border-radius: var(--r-1);
+  padding: 2px var(--s-2); align-self: flex-start;
+}
+.mu-flow h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; letter-spacing: var(--ls-head); }
+.mu-flow p { margin: 0; color: var(--ink-muted); }
+.mu-flow-meta {
+  margin-top: auto; padding-top: var(--s-2); font-family: var(--font-mono);
+  font-size: var(--fs-meta); letter-spacing: var(--ls-caps); text-transform: uppercase;
+  color: var(--ink-muted); border-top: var(--bw-hair) solid var(--line);
+}
+
+/* ────────── что нужно от артиста ────────── */
+.mu-need { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
+.mu-need-card {
+  display: flex; flex-direction: column; gap: var(--s-3);
+  background: var(--surface); border: var(--bw-edge) solid var(--edge);
+  border-radius: var(--r-3); box-shadow: var(--lift-2); padding: var(--s-4);
+}
+.mu-need-card h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; letter-spacing: var(--ls-head); }
+.mu-need-card ul {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--s-2); font-size: var(--fs-base);
+}
+.mu-need-card li { display: flex; gap: var(--s-2); align-items: baseline; color: var(--ink-muted); }
+.mu-need-card li::before { content: "·"; color: var(--accent-ink); font-weight: 700; flex: none; }
+.mu-need-note {
+  margin-top: auto; padding-top: var(--s-2); border-top: var(--bw-hair) solid var(--line);
+  font-size: var(--fs-sm); color: var(--gold-ink);
+}
+
+/* ────────── права и деньги ────────── */
+.mu-terms {
+  background: var(--surface-2); border: var(--bw-hair) solid var(--line-strong);
+  border-radius: var(--r-4); padding: var(--s-8);
+}
+.mu-terms ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-3); }
+/* Строки здесь начинаются с <b>…</b> и продолжаются обычным текстом, поэтому
+   flex не годится: он разложил бы зачин и продолжение по разным колонкам.
+   Маркер вешаем абсолютно, текст остаётся одним потоком. */
+.mu-terms li { position: relative; padding-left: var(--s-4); color: var(--ink-muted); max-width: 78ch; }
+.mu-terms li::before { content: "·"; position: absolute; left: 0; color: var(--accent-ink); font-weight: 700; }
+.mu-terms b { color: var(--text); }
+.mu-terms-note { margin: var(--s-6) 0 0; font-size: var(--fs-sm); color: var(--ink-muted); max-width: 78ch; }
+
+/* ────────── подвал ────────── */
+/* Раскладку правовой строки в landing.css держит #ld-foot-legal-text — свой
+   контейнер здесь получает то же правило, иначе строки слипаются в одну. */
+#mu-foot-legal-text {
+  display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-6); align-items: baseline;
+}
+
+/* ────────── форма заявки ────────── */
+.mu-apply-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: var(--s-12); align-items: start; }
+.mu-apply-side .ld-lead { margin-bottom: var(--s-8); }
+.mu-side-title { margin: 0; }
+.mu-apply-side ul { list-style: none; margin: var(--s-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.mu-apply-side li { display: flex; gap: var(--s-2); align-items: baseline; color: var(--ink-muted); }
+.mu-apply-side li::before { content: "→"; color: var(--accent-ink); font-weight: 700; flex: none; }
+
+.mu-form-box {
+  background: var(--surface); border: var(--bw-edge) solid var(--edge);
+  border-radius: var(--r-4); box-shadow: var(--lift-2); padding: var(--s-6);
+}
+.mu-form { display: flex; flex-direction: column; gap: var(--s-4); }
+.mu-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+.mu-field { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+/* Группа радио живёт в fieldset ради доступности — снимаем его рамку и поля */
+.mu-page fieldset.mu-field { border: 0; margin: 0; padding: 0; }
+.mu-page .mu-field legend {
+  padding: 0; margin: 0 0 var(--s-2); font-size: var(--fs-sm); font-weight: 500; color: var(--text);
+}
+.mu-page .mu-field label {
+  display: block; margin: 0; font-family: inherit; font-size: var(--fs-sm); font-weight: 500;
+  letter-spacing: 0; text-transform: none; color: var(--text);
+}
+.mu-page .mu-field input,
+.mu-page .mu-field textarea {
+  width: 100%; font-family: inherit; font-size: var(--fs-base); color: var(--text);
+  background: #fff; border: var(--bw-hair) solid var(--line-strong);
+  border-radius: var(--r-2); padding: 10px var(--s-3); min-height: 44px;
+  transition: border-color var(--t), box-shadow var(--t);
+}
+.mu-page .mu-field textarea { min-height: 104px; resize: vertical; line-height: 1.5; }
+.mu-page .mu-field input:focus,
+.mu-page .mu-field textarea:focus {
+  outline: none; border-color: var(--accent-ink); box-shadow: var(--ring);
+}
+.mu-page .mu-field input::placeholder,
+.mu-page .mu-field textarea::placeholder { color: var(--muted-soft, #9b8a7d); }
+.mu-hint { font-size: var(--fs-sm); color: var(--ink-muted); }
+.mu-err { font-size: var(--fs-sm); color: var(--danger-ink); }
+.mu-field.bad input, .mu-field.bad textarea { border-color: var(--danger-ink); }
+
+/* Выбор услуги: чипы-радио. Выбран ровно один — тонировка, а не заливка. */
+.mu-opts { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.mu-opt {
+  position: relative; display: inline-flex; align-items: center; gap: var(--s-2);
+  font-size: var(--fs-sm); font-weight: 500; color: var(--ink-muted); cursor: pointer;
+  background: var(--surface); border: var(--bw-edge) solid var(--edge);
+  border-radius: var(--r-2); box-shadow: var(--lift-1); padding: var(--s-2) var(--s-3);
+  min-height: 40px; transition: background var(--t), color var(--t), border-color var(--t);
+}
+.mu-opt input { position: absolute; opacity: 0; width: 0; height: 0; }
+.mu-opt:hover { background: #fff; color: var(--text); }
+.mu-opt:has(input:checked) {
+  background: var(--accent-wash); border-color: var(--accent-line);
+  color: var(--accent-ink); font-weight: 600;
+}
+.mu-opt:has(input:focus-visible) { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+
+.mu-form-foot { display: flex; flex-direction: column; gap: var(--s-3); }
+.mu-page .mu-form-foot button { align-self: flex-start; }
+.mu-consent { font-size: var(--fs-sm); color: var(--ink-muted); max-width: 56ch; }
+
+/* Честные сообщения: заявка НЕ ушла — так и написано, плюс запасной выход. */
+.mu-note {
+  display: flex; flex-direction: column; gap: var(--s-2);
+  padding: var(--s-3) var(--s-4); border-radius: var(--r-3);
+  font-size: var(--fs-sm); color: var(--text);
+  background: var(--surface-2); border: var(--bw-hair) solid var(--line-strong);
+}
+.mu-note.warn { background: var(--gold-wash); }
+.mu-note.error { background: var(--danger-wash); border-color: rgba(192, 57, 43, .28); }
+.mu-note b { display: block; font-size: var(--fs-base); }
+.mu-note a { color: var(--accent-2-ink); text-underline-offset: 3px; }
+.mu-note-acts { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.mu-page .mu-note-acts button { min-height: 36px; font-size: var(--fs-sm); padding: 0 var(--s-3); }
+
+.mu-ok {
+  display: flex; flex-direction: column; gap: var(--s-3); align-items: flex-start;
+  padding: var(--s-6); border-radius: var(--r-3);
+  background: var(--ok-wash); border: var(--bw-hair) solid rgba(15, 122, 82, .28);
+}
+.mu-ok b { font-size: var(--fs-lg); font-weight: 700; letter-spacing: var(--ls-head); }
+.mu-ok p { margin: 0; color: var(--ink-muted); max-width: 56ch; }
+
+/* Ловушка для ботов: человек её не видит и не встретит табом. */
+.mu-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+/* ────────── планшет и телефон ────────── */
+@media (max-width: 1000px) {
+  .mu-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mu-need { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 940px) {
+  .mu-hero-grid { grid-template-columns: 1fr; gap: var(--s-8); }
+  .mu-apply-grid { grid-template-columns: 1fr; gap: var(--s-8); }
+  .mu-pack-top img { width: 84px; height: 112px; }
+}
+@media (max-width: 700px) {
+  .mu-hero { padding-block: var(--s-6) var(--s-8); }
+  .mu-flow, .mu-need, .mu-offer { grid-template-columns: 1fr; }
+  .mu-form-row { grid-template-columns: 1fr; }
+  .mu-terms { padding: var(--s-4); }
+  .mu-form-box { padding: var(--s-4); }
+  .mu-page .mu-form-foot button { align-self: stretch; width: 100%; }
+  .mu-opt { min-height: 44px; }
+  .mu-plats li { white-space: normal; }
+}
