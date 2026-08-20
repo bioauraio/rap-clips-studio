@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 import claude
 import mediagen
+import stripe_pay
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, FileOwner,
     Payout, ProcessedPayment, Project, RefEvent, Scene, SceneRef, SessionLocal,
@@ -49,7 +50,7 @@ if not APP_PASSWORD or not SECRET_KEY:
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 signer = URLSafeTimedSerializer(SECRET_KEY, salt="rapclips-session")
 
-app = FastAPI(title="qlolvideo")
+app = FastAPI(title=os.environ.get("BRAND_NAME", "lolq.ai"))
 init_db()
 
 
@@ -181,26 +182,165 @@ def _check_file_owner(db: Session, user: User, fname: str) -> None:
         raise HTTPException(404, "файл не найден")
 
 
+# ─────────────────────── деньги: доллары, рубли, курс ───────────────────────
+# Сервис международный, поэтому правда о цене — ДОЛЛАРЫ в центах. Рубли для
+# ЮKassa считаются от них по курсу из env: ходить за курсом в интернет нельзя —
+# биллинг не должен зависеть от чужого API, а цена не должна прыгать между
+# показом витрины и нажатием «оплатить». Нужен свой рублёвый ценник — задай
+# PRICE_PRO_RUB / PRICE_PRO_MAX_RUB / PRICE_STUDIO_RUB (в рублях), он победит курс.
+USD_RUB = max(1, int(float(os.environ.get("USD_RUB", "100"))))
+YEAR_DISCOUNT_PCT = max(0, min(90, int(os.environ.get("YEAR_DISCOUNT_PCT", "20"))))
+PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
+PLAN_YEAR_DAYS = int(os.environ.get("PLAN_YEAR_DAYS", "365"))
+
+
+def _year_cents(usd_cents: int) -> int:
+    """Годовой ценник: 12 месяцев минус скидка, округлённые до целых долларов —
+    $2870, а не $2870.40: дробный годовой ценник выглядит как ошибка вёрстки."""
+    raw = usd_cents * 12 * (100 - YEAR_DISCOUNT_PCT) // 100
+    return (raw + 50) // 100 * 100
+
+
+def _rub_kopeks(key: str, usd_cents: int) -> int:
+    """Рублёвый ценник: явный из env (PRICE_<KEY>_RUB) или пересчёт по курсу."""
+    env = os.environ.get(f"PRICE_{key.upper()}_RUB", "").strip()
+    if env:
+        return int(round(float(env) * 100))
+    return usd_cents * USD_RUB
+
+
 # Тарифы сервиса. free — на наших подписках (ChatGPT рисует кадры, Grok
 # оживляет); платные открывают Seedance и Kling, за которые платим по API.
+# points — месячная норма очков, цена работы в очках — в SCENE_COST ниже.
+# Тексты витрины на английском: интерфейс сервиса международный.
 PLANS = {
-    "free": {"title": "FREE", "price": 0, "points": 60,
-             "video": ["grok"], "seedance_model": "",
-             "note": "кадры — ChatGPT, видео — Grok"},
-    "pro": {"title": "PRO", "price": int(os.environ.get("PRICE_PRO", "990")), "points": 600,
-            "video": ["grok", "seedance"], "seedance_model": "seedance-2-0",
-            "note": "+ Seedance 2.0: монтаж по первому и последнему кадру"},
-    "pro_max": {"title": "PRO MAX", "price": int(os.environ.get("PRICE_PRO_MAX", "2990")),
-                "points": 2500, "video": ["grok", "seedance", "kling"],
-                "seedance_model": "seedance-2-5",
-                "note": "+ Seedance 2.5 и Kling: максимум качества"},
+    "free": {
+        "title": "FREE", "usd_cents": 0, "points": 120,
+        "video": ["grok"], "seedance_model": "", "priority": False, "badge": "",
+        "note": "One full 3-minute clip on us — Grok engine",
+        "features": [
+            "120 points — enough for one 3-minute clip",
+            "Grok engine: animates the first frame of every scene",
+            "Story, storyboard, characters and one-click assembly",
+        ],
+    },
+    "pro": {
+        "title": "PRO", "usd_cents": int(os.environ.get("PRICE_PRO_USD", "20")) * 100,
+        "points": 700, "video": ["grok", "seedance"], "seedance_model": "seedance-2-0",
+        "priority": False, "badge": "",
+        "note": "Seedance 2.0 — motion between your first and last frame",
+        "features": [
+            "700 points every month",
+            "Seedance 2.0: video interpolated between first and last frame",
+            "Unused points roll over, up to two monthly norms",
+        ],
+    },
+    "pro_max": {
+        "title": "PRO MAX", "usd_cents": int(os.environ.get("PRICE_PRO_MAX_USD", "100")) * 100,
+        "points": 2400, "video": ["grok", "seedance", "kling"],
+        "seedance_model": "seedance-2-5", "priority": False, "badge": "Most popular",
+        "note": "Seedance 2.5 and Kling — the good-looking ones",
+        "features": [
+            "2400 points every month",
+            "Seedance 2.5 and Kling unlocked",
+            "Unused points roll over, up to two monthly norms",
+        ],
+    },
+    "studio": {
+        "title": "STUDIO", "usd_cents": int(os.environ.get("PRICE_STUDIO_USD", "299")) * 100,
+        "points": 6000, "video": ["grok", "seedance", "kling"],
+        "seedance_model": "seedance-2-5",
+        # priority — пока ЯРЛЫК ВИТРИНЫ: очередь генераций у нас одна и
+        # однопоточная (см. _run_all_videos). Реальный приоритет = отдельная
+        # задача; не обещай в интерфейсе больше, чем этот флаг делает.
+        "priority": True, "badge": "For labels",
+        "note": "Album-scale volume on every engine",
+        "features": [
+            "6000 points every month — about a dozen 3-minute clips",
+            "Every engine, including Seedance 2.5 and Kling",
+            "Priority processing and direct support",
+        ],
+    },
 }
+# Производные ценники считаем один раз на старте: год = месяц ×12 −20 %,
+# рубли = доллары × курс. Оба ценника лежат рядом, чтобы витрина и платёжка
+# не считали цену каждая по-своему.
+for _pid, _p in PLANS.items():
+    _p["usd_year_cents"] = _year_cents(_p["usd_cents"])
+    _p["rub_kopeks"] = _rub_kopeks(_pid, _p["usd_cents"])
+    _p["rub_year_kopeks"] = _rub_kopeks(f"{_pid}_year", _p["usd_year_cents"])
+    # Легаси-поле для старого фронта, который рисует «₽»: цена в рублях.
+    _p["price"] = _p["rub_kopeks"] // 100
+
+# Пакеты очков (докупка сверх подписки). Ступеньками: чем больше пакет, тем
+# дешевле очко — от 2.25¢ до 1.13¢. Купленные очки НЕ сгорают при продлении и
+# не упираются в потолок накопления: человек заплатил за них отдельно.
+TOPUP_PACKS = {
+    "p400": {"points": 400, "usd_cents": 900, "badge": ""},
+    "p1000": {"points": 1000, "usd_cents": 1900, "badge": ""},
+    "p2500": {"points": 2500, "usd_cents": 3900, "badge": "Popular"},
+    "p6000": {"points": 6000, "usd_cents": 7900, "badge": ""},
+    "p15000": {"points": 15000, "usd_cents": 16900, "badge": "Best value"},
+}
+_BASE_PER_POINT = TOPUP_PACKS["p400"]["usd_cents"] / TOPUP_PACKS["p400"]["points"]
+for _kid, _k in TOPUP_PACKS.items():
+    _k["rub_kopeks"] = _rub_kopeks(_kid, _k["usd_cents"])
+    # Выгода относительно самого мелкого пакета — витрине нужен ярлык «−44 %».
+    _k["save_pct"] = int(round(100 - 100 * (_k["usd_cents"] / _k["points"]) / _BASE_PER_POINT))
+
+# ───────────────────────── сколько стоит работа ─────────────────────────
+# Цена сцены зависит от ДВИЖКА, а не плоская: Grok — наша подписка и стоит нам
+# ноль, Seedance и Kling мы покупаем по API. Раньше все три списывали по 10, и
+# бесплатный движок съедал у человека столько же, сколько самый дорогой.
+#
+# Сцена — единица тарификации: кадры входят в её цену и отдельно НЕ списываются.
+# Механика: кадры берут аванс FRAMES_COST, генерация видео добирает разницу до
+# цены своего движка (см. _scene_charge). Итог за сцену — ровно SCENE_COST[движок].
+SCENE_COST = {
+    "grok": 4,            # наша подписка: два кадра + анимация первого
+    "seedance-2-0": 10,   # платный API
+    "seedance-2-5": 16,   # платный API, дороже
+    "kling": 16,          # платный API
+}
+FRAMES_COST = SCENE_COST["grok"]  # аванс за кадры сцены (они тоже на нашей подписке)
+# Текстовые шаги идут через нашу подписку Claude и стоят нам ноль — берём за них
+# ноль и мы: иначе бесплатный тариф не доживал до первого клипа, а именно первый
+# собранный клип и продаёт сервис.
+COST_STORY = 0
+COST_SCENES = 0
+COST_STORYBOARD = 2        # лист раскадровки — картинка
+COST_CHARACTER_MODEL = 2   # разворот персонажа — картинка
+CLIP_SCENES = int(os.environ.get("CLIP_SCENES", "30"))  # клип 3 минуты ≈ 30 сцен по 6 сек
+SCENE_SEC = 6              # средняя длина сцены, из claude.py
 
 
 def _plan_of(user: "User") -> str:
     if user.is_admin:
         return "pro_max"
     return user.plan if user.plan in PLANS else "free"
+
+
+def _plan_engines(plan_id: str) -> dict:
+    """Движки тарифа с ценой сцены: {"grok": 4, "seedance-2-5": 16}. Одно место
+    правды и для витрины, и для оценки «сколько клипов выйдет на тарифе»."""
+    plan = PLANS.get(plan_id) or PLANS["free"]
+    out = {}
+    for prov in plan["video"]:
+        if prov == "seedance":
+            model = plan.get("seedance_model") or "seedance-2-0"
+            out[model] = SCENE_COST.get(model, SCENE_COST["seedance-2-0"])
+        else:
+            out[prov] = SCENE_COST.get(prov, SCENE_COST["grok"])
+    return out
+
+
+def _scene_cost(user: "User", provider: str) -> int:
+    """Цена сцены для этого пользователя и этого движка. Модель Seedance
+    определяется тарифом — 2.0 у PRO, 2.5 у старших, и цена у них разная."""
+    if provider == "seedance":
+        model = PLANS[_plan_of(user)].get("seedance_model") or "seedance-2-0"
+        return SCENE_COST.get(model, SCENE_COST["seedance-2-0"])
+    return SCENE_COST.get(provider, SCENE_COST["grok"])
 
 
 def _allowed_provider(user: "User", wanted: str) -> str:
@@ -215,16 +355,104 @@ def _allowed_provider(user: "User", wanted: str) -> str:
     return "grok"
 
 
+class ApiError(Exception):
+    """Ошибка с машиночитаемым кодом: фронту нужно различать «платежи не
+    подключены» и «нет такого тарифа», а не разбирать текст сообщения."""
+
+    def __init__(self, status: int, code: str, message: str = "", **extra):
+        super().__init__(message or code)
+        self.status, self.code, self.message, self.extra = status, code, message, extra
+
+
+@app.exception_handler(ApiError)
+async def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
+    body = {"error": exc.code, "detail": exc.message or exc.code}
+    body.update(exc.extra)
+    return JSONResponse(status_code=exc.status, content=body)
+
+
+class NotEnoughPoints(Exception):
+    """Очки кончились. Не текст «напиши владельцу сервиса», а структура: по ней
+    фронт открывает витрину с нужной суммой, а не показывает тупик.
+    Ответ 402: {"error":"not_enough_points","need":…,"have":…,"plan":…}."""
+
+    def __init__(self, need: int, have: int, plan: str, what: str = ""):
+        super().__init__("not_enough_points")
+        self.need, self.have, self.plan, self.what = int(need), int(have), plan, what
+
+
+@app.exception_handler(NotEnoughPoints)
+async def _not_enough_points_handler(request: Request, exc: NotEnoughPoints) -> JSONResponse:
+    return JSONResponse(
+        status_code=402,
+        content={
+            "error": "not_enough_points",
+            "need": exc.need,
+            "have": exc.have,
+            "short": max(0, exc.need - exc.have),
+            "plan": exc.plan,
+            # exc.what — внутренняя метка для логов (по-русски), наружу не идёт:
+            # интерфейс английский, и это не текст для человека.
+            # detail — для клиентов, которые по привычке читают это поле.
+            "detail": f"Not enough points: this step costs {exc.need}, "
+                      f"you have {exc.have}.",
+        },
+    )
+
+
+def _take_points(db: Session, user: User, points: int) -> bool:
+    """Тихое списание: False — не хватило. Нужно фоновым шагам (супергенерация
+    доводит счёт по факту), которым некуда бросать HTTP-ошибку."""
+    if user.is_admin or points <= 0:
+        return True
+    if int(user.gen_points or 0) < points:
+        return False
+    user.gen_points = int(user.gen_points) - points
+    db.commit()
+    return True
+
+
 def _charge(db: Session, user: User, points: int, what: str) -> None:
     """Списание очков генерации В МОМЕНТ постановки задачи (не в треде):
     генерации идут через подписки владельца, лимит защищает его кошелёк."""
     if user.is_admin or points <= 0:
         return
-    if user.gen_points < points:
-        raise HTTPException(402, "лимит генераций исчерпан — напиши владельцу сервиса")
-    user.gen_points -= points
-    db.commit()
+    if not _take_points(db, user, points):
+        raise NotEnoughPoints(points, int(user.gen_points or 0), _plan_of(user), what)
     log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
+
+
+def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str) -> None:
+    """Списать за сцену ДО её цены, а не заново.
+
+    Кадры взяли аванс, видео добирает разницу до цены движка, перегенерация
+    уже оплаченного не стоит ничего. Так «кадры входят в цену сцены»
+    превращается в честную арифметику, а не в двойную оплату одной сцены."""
+    paid = int(scene.charged_points or 0)
+    if cost <= paid:
+        return
+    _charge(db, user, cost - paid, what)
+    scene.charged_points = cost
+    db.commit()
+
+
+def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str) -> int:
+    """То же для пачки сцен: одно списание на весь пакет (и один отказ, если
+    очков не хватило), потом отметки на сценах."""
+    rows, total = [], 0
+    for s in scenes:
+        cost = cost_of(s)
+        paid = int(s.charged_points or 0)
+        if cost > paid:
+            total += cost - paid
+            rows.append((s, cost))
+    if total:
+        _charge(db, user, total, what)
+    for s, cost in rows:
+        s.charged_points = cost
+    if rows:
+        db.commit()
+    return total
 
 
 # ─────────── партнёрка: промокоды, рефералы, вознаграждения ───────────
@@ -347,7 +575,10 @@ def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str) -
     amb = db.get(User, buyer.referred_by)
     if not amb or amb.id == buyer.id:
         return
-    if db.query(RefEvent).filter(RefEvent.payment_id == pay_id).first():
+    # Ищем и по «голому» id: платежи, начатые до перехода на префикс провайдера,
+    # записаны в ленту без него, и второй раз платить за них нельзя.
+    legacy = pay_id.split(":", 1)[1] if ":" in pay_id else pay_id
+    if db.query(RefEvent).filter(RefEvent.payment_id.in_([pay_id, legacy])).first():
         return
     reward = amount_kopeks * REF_REWARD_PCT // 100
     db.add(RefEvent(ambassador_id=amb.id, referral_id=buyer.id, kind="payment",
@@ -1027,7 +1258,7 @@ def generate_story(project_id: int | None = None, user: User = Depends(current_u
     project = get_or_create_project(db, user, project_id)
     if not project.tracks:
         raise HTTPException(400, "сначала загрузи хотя бы один трек")
-    _charge(db, user, 1, "сюжет проекта")
+    _charge(db, user, COST_STORY, "сюжет проекта")
     project.story_status = "queued"
     db.commit()
     Thread(target=_run_story_generation, args=(project.id,), daemon=True).start()
@@ -1289,7 +1520,7 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
     track = _own_track(db, user, track_id)
     if not track.project.story and not track.no_story:
         raise HTTPException(400, "сначала сгенерируй общий сюжет проекта (или включи «без сюжета»)")
-    _charge(db, user, 1, f"раскадровка трека {track.id}")
+    _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}")
     track.scenes_status = "queued"
     db.commit()
     Thread(target=_run_scene_generation, args=(track_id,), daemon=True).start()
@@ -1582,7 +1813,7 @@ def generate_storyboard(track_id: int, user: User = Depends(current_user), db: S
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку трека")
-    _charge(db, user, 2, f"лист раскадровки трека {track.id}")
+    _charge(db, user, COST_STORYBOARD, f"лист раскадровки трека {track.id}")
     track.storyboard_status = "queued"
     db.commit()
     Thread(target=_run_storyboard, args=(track_id,), daemon=True).start()
@@ -1859,8 +2090,10 @@ def generate_scene_frames(scene_id: int, which: str = "both", user: User = Depen
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
     if which not in ("both", "first", "last"):
         which = "both"
-    # Один кадр — половина работы, половина и цены.
-    _charge(db, user, 2 if which == "both" else 1, f"кадры сцены {scene.id} ({which})")
+    # Кадры не имеют своей цены: они берут аванс в счёт цены сцены. Видео потом
+    # добирает разницу до цены движка, а перерисовка кадров уже оплаченной
+    # сцены бесплатна — человек не должен бояться жать «перегенерировать».
+    _scene_charge(db, user, scene, FRAMES_COST, f"кадры сцены {scene.id} ({which})")
     scene.image_status = "queued"
     db.commit()
     Thread(target=_run_scene_frames, args=(scene_id, which), daemon=True).start()
@@ -1923,7 +2156,8 @@ def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Se
         raise HTTPException(400, "сначала сгенерируй кадры сцены — референсом идёт первый кадр")
     if not (scene.image_prompt or "").strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
-    _charge(db, user, total, f"промежуточные кадры сцены {scene.id}")
+    # Промежуточные кадры — тоже кадры этой сцены: входят в её цену.
+    _scene_charge(db, user, scene, FRAMES_COST, f"промежуточные кадры сцены {scene.id}")
     Thread(target=_run_midframes, args=(scene_id,), daemon=True).start()
     return {"ok": True, "count": total}
 
@@ -1947,7 +2181,7 @@ def _run_scene_video(scene_id: int) -> None:
         )
         import asyncio
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
-        model = PLANS[_plan_of(owner)]["seedance_model"] if owner else ""
+        model = PLANS[_plan_of(owner)].get("seedance_model", "") if owner else ""
         fname = asyncio.run(mediagen.animate_scene(
             prompt=scene.motion_prompt, first_path=first_path, last_path=last_path,
             duration_sec=scene.duration_sec, provider=scene.video_provider,
@@ -1996,7 +2230,18 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
     provider = _allowed_provider(user, provider)
     if provider not in mediagen.video_providers():
         raise HTTPException(400, f"провайдер {provider} недоступен: {mediagen.video_providers()}")
-    _charge(db, user, 10, f"видео сцены {scene.id}")
+    # Цена по движку: Grok идёт по нашей подписке и стоит вчетверо дешевле
+    # платного Seedance 2.5 — раньше оба списывали одинаковые 10.
+    cost = _scene_cost(user, provider)
+    if scene.video_filename:
+        # Перерендер: у сцены уже есть видео, и это НОВЫЙ вызов платного API.
+        # Берём цену самого видео — цену сцены без аванса за кадры (их не
+        # перерисовываем). У Grok разница нулевая, и перерендер бесплатен:
+        # он и правда ничего нам не стоит.
+        _charge(db, user, max(0, cost - FRAMES_COST),
+                f"перерендер видео сцены {scene.id} ({provider})")
+    else:
+        _scene_charge(db, user, scene, cost, f"видео сцены {scene.id} ({provider})")
     scene.video_provider = provider
     scene.video_status = "queued"
     db.commit()
@@ -2064,9 +2309,53 @@ def assemble_track_clip(track_id: int, user: User = Depends(current_user), db: S
 
 # ──────────────────────────── супергенерация ────────────────────────────
 
-def _run_supergen(track_id: int) -> None:
+def _est_scenes(duration_sec: int) -> int:
+    """Сколько сцен выйдет из трека: одна сцена на ~6 секунд (claude.py режет
+    по 2–10). Верхняя граница 200 — защита от битой длительности, а не тариф."""
+    dur = int(duration_sec or 180)
+    return max(1, min(200, int(round(dur / SCENE_SEC))))
+
+
+def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) -> str:
+    """Развести предоплату супергенерации по реально нарезанным сценам.
+
+    Предоплата бралась по ОЦЕНКЕ длительности, а сцен Claude мог нарезать
+    больше или меньше. Лишние оплаченные сцены возвращаем очками, недостающие
+    добираем с баланса. Пустая строка — всё сошлось; текст — почему не сошлось
+    (тогда конвейер останавливается, а не работает бесплатно)."""
+    if per_scene <= 0:
+        return ""
+    owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
+    scenes = sorted(track.scenes, key=lambda s: s.position)
+    unpaid = [s for s in scenes if int(s.charged_points or 0) < per_scene]
+    left = max(0, int(prepaid))
+    need = 0
+    for s in unpaid:
+        if left > 0:
+            left -= 1  # эту сцену закрывает предоплата
+        else:
+            need += per_scene - int(s.charged_points or 0)
+    if need and owner and not _take_points(db, owner, need):
+        return (f"не хватило {need} очков: трек длиннее оценки "
+                f"({len(scenes)} сцен). Пополни баланс и запусти ещё раз")
+    for s in unpaid:
+        s.charged_points = per_scene
+    if left and owner:
+        # Оценка была щедрее реальности — неиспользованное возвращаем.
+        owner.gen_points = int(owner.gen_points or 0) + left * per_scene
+        log.info("супергенерация трека %s: вернули %s очков за %s лишних сцен",
+                 track.id, left * per_scene, left)
+    db.commit()
+    return ""
+
+
+def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
     """Весь конвейер одним нажатием: сюжет (если пуст) → раскадровка (если нет)
     → кадры всех сцен → видео всех сцен → авто-утверждение → сборка клипа.
+
+    per_scene/prepaid — цена сцены и сколько сцен оплачено вперёд: реальное
+    число сцен известно только после раскадровки, поэтому счёт сводится уже
+    внутри (см. _settle_supergen).
 
     Шаги выполняются ПОСЛЕДОВАТЕЛЬНО в одном треде: генераторы за шлюзами всё
     равно однопоточные, а так прогресс честный и падение любого шага видно."""
@@ -2105,6 +2394,12 @@ def _run_supergen(track_id: int) -> None:
             if track.scenes_status == "error" or not track.scenes:
                 note("раскадровка не сгенерилась — смотри ошибку у трека", "error")
                 return
+
+        # Сцены есть — сводим счёт: предоплата шла по оценке длительности.
+        problem = _settle_supergen(db, track, per_scene, prepaid)
+        if problem:
+            note(problem, "error")
+            return
 
         scene_ids = [s.id for s in sorted(track.scenes, key=lambda x: x.position)]
         total = len(scene_ids)
@@ -2172,22 +2467,39 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
         raise HTTPException(400, "в проекте нет персонажей — добавь нового или клонируй из базы")
     if track.supergen_status in ("queued", "running"):
         raise HTTPException(400, "супергенерация уже идёт")
-    # Стоимость всего конвейера — вперёд, по фактическому объёму работ:
-    # сюжет 1 + раскадровка 1 + (кадры 2 + видео 10) на каждую сцену.
+    # Стоимость конвейера — вперёд. Цена сцены зависит от движка, которым
+    # супергенерация будет рисовать видео: тот же выбор, что и в _run_supergen.
+    prov = _allowed_provider(user, "seedance" if mediagen.seedance_available() else "grok")
+    per_scene = _scene_cost(user, prov)
     scenes = list(track.scenes)
-    cost = 0 if (track.project.story or "").strip() else 1
+    if not (track.project.story or "").strip():
+        _charge(db, user, COST_STORY, f"сюжет проекта {track.project.id}")
+    prepaid = 0
     if scenes:
-        cost += 2 * sum(1 for s in scenes if not (s.image_filename and s.image_last_filename))
-        cost += 10 * sum(1 for s in scenes if not s.video_filename)
+        # Сцены уже есть: платим только за ту работу, которую конвейер реально
+        # сделает. Готовое видео он не перерисовывает — брать за него нельзя.
+        def _sg_cost(s: Scene) -> int:
+            if not s.video_filename:
+                return per_scene    # полный круг: кадры + видео
+            if not (s.image_filename and s.image_last_filename):
+                return FRAMES_COST  # видео есть, дорисуем недостающие кадры
+            return 0                # делать нечего
+
+        _scenes_charge(db, user, scenes, _sg_cost,
+                       f"супергенерация трека {track.id} ({prov})")
     else:
-        cost += 1
-        # Сцен ещё нет — объём оцениваем по длительности трека (~6 сек на кадр).
-        cost += 12 * max(4, min(30, (track.audio_duration_sec or 180) // 6))
-    _charge(db, user, cost, f"супергенерация трека {track.id}")
+        # Сцен ещё нет — объём оцениваем по длительности трека (~6 сек на сцену).
+        # Прежняя оценка упиралась в потолок 30 сцен: четырёхминутный трек
+        # списывал как трёхминутный, а работу делал всю. Теперь оценка честная,
+        # а расхождение с реальностью разводит _settle_supergen: недостачу
+        # добирает, лишнее возвращает.
+        prepaid = _est_scenes(track.audio_duration_sec)
+        _charge(db, user, COST_SCENES + per_scene * prepaid,
+                f"супергенерация трека {track.id} ({prov}, ~{prepaid} сцен)")
     track.supergen_status = "queued"
     track.supergen_note = "старт…"
     db.commit()
-    Thread(target=_run_supergen, args=(track_id,), daemon=True).start()
+    Thread(target=_run_supergen, args=(track_id, per_scene, prepaid), daemon=True).start()
     return {"ok": True}
 
 
@@ -2462,7 +2774,7 @@ async def generate_character_model(char_id: int, request: Request,
         raise HTTPException(400, "нужно описание персонажа")
     kind = str(body.get("kind") or "3d")
     base = MODEL_SHEET_STYLES.get(kind, MODEL_SHEET_STYLES["3d"])
-    _charge(db, user, 2, f"моделька персонажа {ch.id}")
+    _charge(db, user, COST_CHARACTER_MODEL, f"моделька персонажа {ch.id}")
 
     paths = []
     for ph in ch.photos[:3]:
@@ -2662,7 +2974,9 @@ def generate_all_frames(track_id: int, user: User = Depends(current_user), db: S
     if not todo:
         raise HTTPException(400, "у всех сцен кадры уже готовы")
     # Списываем за весь пакет вперёд — до того, как сцены встанут в очередь.
-    _charge(db, user, 2 * len(todo), f"кадры всех сцен трека {track.id}")
+    # Кадры берут аванс в счёт цены сцены; уже оплаченные сцены не платят снова.
+    _scenes_charge(db, user, todo, lambda s: FRAMES_COST,
+                   f"кадры всех сцен трека {track.id}")
     for s in todo:
         s.image_status = "queued"
     db.commit()
@@ -2699,8 +3013,11 @@ def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(
     todo = [s for s in track.scenes if s.image_filename and not s.video_filename]
     if not todo:
         raise HTTPException(400, "нет сцен с кадрами без видео")
-    _charge(db, user, 10 * len(todo), f"видео всех сцен трека {track.id}")
+    # Движок выбираем ДО списания: цена сцены зависит именно от него.
     prov = _allowed_provider(user, provider or ("seedance" if mediagen.seedance_available() else "grok"))
+    cost = _scene_cost(user, prov)
+    _scenes_charge(db, user, todo, lambda s: cost,
+                   f"видео всех сцен трека {track.id} ({prov})")
     for s in todo:
         s.video_provider = prov
         s.video_status = "queued"
@@ -2710,13 +3027,24 @@ def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(
     return {"ok": True, "queued": len(todo), "provider": prov}
 
 
-# ─────────────────────────── оплата (ЮKassa) ───────────────────────────
-# Магазин отдельный: shop_id и секретный ключ кладутся в infra/.env. Пока их
-# нет — витрина тарифов показывается, но кнопка оплаты честно говорит, что
-# приём платежей ещё не подключён.
+# ────────────────────────── оплата: Stripe + ЮKassa ──────────────────────────
+# Два провайдера рядом, не вместо: Stripe продаёт в долларах международной
+# аудитории, ЮKassa — в рублях российской. Ключи в infra/.env; какого нет, тот
+# просто выключен, и витрина честно говорит об этом флагом в /api/billing/plans.
 YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET = os.environ.get("YOOKASSA_SECRET_KEY", "")
-PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
+BRAND = os.environ.get("BRAND_NAME", "lolq.ai")  # уходит в выписку по карте
+# Сколько дней после неудачного списания тариф ещё живёт. Раньше первый же
+# сбой сети сбрасывал человека на free и стирал его карту — отток на ровном месте.
+SUB_GRACE_DAYS = int(os.environ.get("SUB_GRACE_DAYS", "3"))
+
+
+def _yookassa_enabled() -> bool:
+    return bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET)
+
+
+def _stripe_enabled() -> bool:
+    return stripe_pay.enabled()
 
 
 def _as_utc(dt):
@@ -2729,101 +3057,434 @@ def _as_utc(dt):
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
 
-def _claim_payment(db: Session, payment_id: str, user_id: int = 0,
-                   plan: str = "", amount_kopeks: int = 0) -> bool:
-    """Занять платёж под выдачу тарифа. False — его уже обрабатывали.
+def _period_days(period: str) -> int:
+    return PLAN_YEAR_DAYS if period == "year" else PLAN_DAYS
 
-    ЮKassa шлёт payment.succeeded повторно, пока не получит 200, и тот же
-    платёж приезжает вебхуком после автосписания. Без этой отметки каждый
-    дубль добавлял ещё месяц подписки. Занимаем ДО изменения пользователя,
-    чтобы гонка двух вебхуков разошлась на UNIQUE, а не на двух выдачах."""
-    pay_id = str(payment_id or "").strip()
-    if not pay_id:
+
+def _norm_period(value) -> str:
+    return "year" if str(value or "").strip().lower() in ("year", "annual", "yearly") else "month"
+
+
+def _plan_price(plan_id: str, period: str) -> tuple[int, int]:
+    """Ценник тарифа за период: (центы, копейки). Одно место, где месяц
+    превращается в год, — иначе витрина и платёжка разъедутся."""
+    plan = PLANS[plan_id]
+    if period == "year":
+        return int(plan["usd_year_cents"]), int(plan["rub_year_kopeks"])
+    return int(plan["usd_cents"]), int(plan["rub_kopeks"])
+
+
+def _pay_key(provider: str, payment_id: str) -> str:
+    """Ключ платежа для таблицы обработанных: id платёжки с её именем.
+    Два провайдера пишут в одну колонку, пересечься их id не должны."""
+    pid = str(payment_id or "").strip()
+    return f"{provider}:{pid}" if pid else ""
+
+
+def _grant_plan_points(user: User, plan_id: str, period: str) -> int:
+    """Начислить очки за оплаченный период.
+
+    ПРИБАВЛЯЕМ к остатку, а не перезаписываем. Раньше стояло
+    max(остаток, норма): экономный человек, у которого осталось 590 из 600,
+    после оплаты получал 10 очков за 990 ₽ — тариф наказывал за бережливость.
+    Потолок — две нормы периода: копить бесконечно нельзя, иначе подписка
+    превращается в склад, но месяц простоя больше не сгорает.
+    Опускать баланс потолок не имеет права: сверху могли лежать докупленные
+    пакеты, за них заплачено отдельно и они не сгорают."""
+    norm = int(PLANS[plan_id]["points"])
+    grant = norm * (12 if period == "year" else 1)
+    cap = 2 * grant
+    cur = int(user.gen_points or 0)
+    user.gen_points = max(cur, min(cur + grant, cap))
+    return int(user.gen_points) - cur
+
+
+def _already_processed(db: Session, provider: str, payment_id: str,
+                       alt_ids=()) -> bool:
+    """Выдавали ли уже по этому платежу.
+
+    alt_ids — ДРУГИЕ имена того же платежа. Одна оплата подписки Stripe
+    приезжает двумя событиями, и у сессии чекаута поле invoice бывает пустым
+    (Stripe кладёт id счёта не всегда) — тогда события ключевались по-разному,
+    и один платёж выдавал ДВА месяца, две нормы очков и две доли амбассадору.
+    Поэтому ищем по всем известным именам, а пишем каноническое."""
+    key = _pay_key(provider, payment_id)
+    if not key:
+        return True
+    names = {key, str(payment_id or "").strip()}  # + «голое» имя: платежи до префиксов
+    for alt in alt_ids:
+        alt = str(alt or "").strip()
+        if alt:
+            names.update({_pay_key(provider, alt), alt})
+    return bool(db.query(ProcessedPayment)
+                .filter(ProcessedPayment.payment_id.in_(sorted(names))).first())
+
+
+def _stripe_first_key(sub_id: str) -> str:
+    """Имя первого платежа подписки Stripe: «sub_first:<id подписки>».
+
+    Одна оплата приезжает двумя событиями — checkout.session.completed и
+    invoice.paid, — и общего id у них может не быть (поле invoice у сессии
+    пустое). Общее у них ровно одно: подписка. По ней и ключуем первый период;
+    продления идут по своим id счетов и не пересекаются."""
+    sid = str(sub_id or "").strip()
+    return f"sub_first:{sid}" if sid else ""
+
+
+def _stripe_is_first_invoice(db: Session, obj: dict, sub_id: str) -> bool:
+    """Это первый счёт подписки (тот же платёж, что и чекаут), а не продление.
+
+    Обычно достаточно billing_reason=subscription_create. Если Stripe его не
+    прислал, смотрим, не выдавали ли мы только что первый период этой подписки:
+    два события одного платежа приходят с разницей в секунды, а продление — через
+    месяц, поэтому свежая отметка означает «это тот же платёж»."""
+    if not sub_id:
         return False
-    if db.query(ProcessedPayment).filter(ProcessedPayment.payment_id == pay_id).first():
+    reason = str(obj.get("billing_reason") or "")
+    if reason:
+        return reason == "subscription_create"
+    from datetime import timedelta
+    row = (db.query(ProcessedPayment)
+           .filter(ProcessedPayment.payment_id == _pay_key("stripe", _stripe_first_key(sub_id)))
+           .first())
+    return bool(row and _as_utc(row.created_at)
+                and _as_utc(row.created_at) > now() - timedelta(hours=24))
+
+
+def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
+                   kind: str = "plan", plan_id: str = "", period: str = "month",
+                   pack_id: str = "", amount_cents: int = 0, amount_kopeks: int = 0,
+                   currency: str = "USD", pay_method_id: str = "",
+                   stripe_customer: str = "", stripe_subscription: str = "",
+                   alt_ids=()) -> bool:
+    """Выдать оплаченное: тариф с очками или пакет очков. False — уже выдавали.
+
+    ИДЕМПОТЕНТНОСТЬ. Обе платёжки повторяют уведомление, пока не получат 200,
+    и один платёж приезжает к нам по нескольку раз (а подписочный — ещё и
+    двумя разными событиями). Отметка об обработке и сама выдача пишутся ОДНОЙ
+    транзакцией: раньше отметка коммитилась отдельно, и падение между ними
+    оставляло человека без тарифа при взятых деньгах — повтор вебхука уже
+    отбивался как дубль. Гонку двух одновременных уведомлений ловит UNIQUE на
+    payment_id: проигравший откатывается целиком и ничего не выдаёт."""
+    key = _pay_key(provider, payment_id)
+    if not key or _already_processed(db, provider, payment_id, alt_ids):
         return False
-    db.add(ProcessedPayment(payment_id=pay_id, user_id=int(user_id or 0),
-                            plan=str(plan or ""), amount_kopeks=int(amount_kopeks or 0)))
+
+    points = 0
+    if kind == "topup":
+        pack = TOPUP_PACKS.get(pack_id)
+        if not pack:
+            log.warning("платёж %s: неизвестный пакет очков %r", key, pack_id)
+            return False
+        # Пакет считаем ПО СВОЕЙ таблице, а не по числу из metadata: metadata
+        # ездит через чужой сервис, а прайс живёт здесь.
+        points = int(pack["points"])
+        user.gen_points = int(user.gen_points or 0) + points
+    else:
+        if plan_id not in PLANS or PLANS[plan_id]["usd_cents"] <= 0:
+            log.warning("платёж %s: неизвестный тариф %r", key, plan_id)
+            return False
+        period = _norm_period(period)
+        points = _grant_plan_points(user, plan_id, period)
+        user.plan = plan_id
+        user.plan_period = period
+        from datetime import timedelta
+        until = _as_utc(user.plan_until)
+        base = until if (until and until > now()) else now()
+        user.plan_until = base + timedelta(days=_period_days(period))
+        user.autopay = True  # оплатил подписку — автопродление снова включено
+
+    if pay_method_id:
+        user.pay_method_id = pay_method_id
+    if stripe_customer:
+        user.stripe_customer_id = stripe_customer
+    if stripe_subscription:
+        user.stripe_subscription_id = stripe_subscription
+
+    db.add(ProcessedPayment(
+        payment_id=key, user_id=user.id, plan=plan_id or pack_id,
+        provider=provider, kind=kind, period=period, points=points,
+        amount_kopeks=int(amount_kopeks or 0), amount_cents=int(amount_cents or 0),
+        currency=(currency or "USD").upper(),
+    ))
     try:
         db.commit()
     except IntegrityError:
+        # Второе уведомление по тому же платежу успело раньше — откатываем
+        # ВСЁ, включая выдачу: месяц и очки уже начислены им.
         db.rollback()
+        log.info("платёж %s уже обработан — пропускаем", key)
         return False
+    log.info("выдано по платежу %s: юзер %s, %s %s, +%s очков", key, user.id, kind,
+             plan_id or pack_id, points)
     return True
+
+
+def _reward_kopeks(amount_kopeks: int, amount_cents: int) -> int:
+    """Сумма платежа в копейках для партнёрки: доллары пересчитываем по курсу,
+    потому что выплаты амбассадорам идут в рублях и баланс у них один."""
+    if amount_kopeks > 0:
+        return int(amount_kopeks)
+    return int(amount_cents or 0) * USD_RUB
+
+
+# ─────────────────────────── витрина тарифов ───────────────────────────
+
+def _movies_estimate(points: int, scene_cost: int) -> int:
+    """Сколько клипов по 3 минуты выходит из этих очков на таком движке."""
+    if points <= 0 or scene_cost <= 0:
+        return 0
+    return int(points) // (scene_cost * CLIP_SCENES)
+
+
+def _plan_card(plan_id: str) -> dict:
+    """Карточка тарифа для витрины: оба ценника, оба периода, оценка в клипах."""
+    p = PLANS[plan_id]
+    engines = _plan_engines(plan_id)
+    top = max(engines.values()) if engines else SCENE_COST["grok"]
+    usd_c, rub_k = int(p["usd_cents"]), int(p["rub_kopeks"])
+    usd_y, rub_y = int(p["usd_year_cents"]), int(p["rub_year_kopeks"])
+    return {
+        "id": plan_id,
+        "title": p["title"],
+        "usd": round(usd_c / 100, 2),
+        "usd_cents": usd_c,
+        "usd_year": round(usd_y / 100, 2),
+        "usd_year_cents": usd_y,
+        # «$16 в месяц при годовой оплате» — главный аргумент годового тарифа.
+        "usd_year_per_month": round(usd_y / 12 / 100, 2),
+        "rub": rub_k // 100,
+        "rub_kopeks": rub_k,
+        "rub_year": rub_y // 100,
+        "rub_year_kopeks": rub_y,
+        "price": p["price"],  # легаси-поле старого фронта: рубли
+        "points": int(p["points"]),
+        "points_year": int(p["points"]) * 12,
+        "video": list(p["video"]),
+        "engines": engines,               # движок → цена сцены
+        "scene_cost": top,                # худший (самый дорогой) движок тарифа
+        "movies_estimate": _movies_estimate(p["points"], top),
+        "movies_estimate_grok": _movies_estimate(p["points"], SCENE_COST["grok"]),
+        "features": list(p["features"]),
+        "badge": p["badge"],
+        "note": p["note"],
+        "priority": bool(p["priority"]),
+        "year_discount_pct": YEAR_DISCOUNT_PCT if usd_c > 0 else 0,
+    }
+
+
+def _pack_card(pack_id: str) -> dict:
+    k = TOPUP_PACKS[pack_id]
+    return {
+        "id": pack_id,
+        "points": int(k["points"]),
+        "usd": round(k["usd_cents"] / 100, 2),
+        "usd_cents": int(k["usd_cents"]),
+        "rub": int(k["rub_kopeks"]) // 100,
+        "rub_kopeks": int(k["rub_kopeks"]),
+        "usd_per_1000_points": round(k["usd_cents"] / k["points"] * 10, 2),
+        "save_pct": int(k["save_pct"]),
+        "badge": k["badge"],
+        "movies_estimate": _movies_estimate(k["points"], SCENE_COST["seedance-2-5"]),
+        "movies_estimate_grok": _movies_estimate(k["points"], SCENE_COST["grok"]),
+    }
+
+
+def _providers_state() -> dict:
+    return {"stripe": _stripe_enabled(), "yookassa": _yookassa_enabled()}
 
 
 @app.get("/api/billing/plans")
 def billing_plans(user: User = Depends(current_user)):
+    """Всё, что нужно витрине: тарифы обоих периодов, пакеты очков, флаги
+    платёжек, цена работы в очках и текущее состояние человека."""
+    providers = _providers_state()
     return {
         "current": _plan_of(user),
-        "enabled": bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET),
-        "plans": [
-            {"id": pid, "title": p["title"], "price": p["price"],
-             "points": p["points"], "note": p["note"], "video": p["video"]}
-            for pid, p in PLANS.items()
-        ],
+        "current_period": user.plan_period or "month",
+        "plan_until": user.plan_until.isoformat() if user.plan_until else "",
+        "autopay": bool(user.autopay and (user.pay_method_id or user.stripe_subscription_id)),
+        "points": int(user.gen_points or 0),
+        # enabled — легаси-флаг старого фронта: хоть одна платёжка жива.
+        "enabled": any(providers.values()),
+        "providers": providers,
+        "stripe_enabled": providers["stripe"],
+        "yookassa_enabled": providers["yookassa"],
+        "currency_default": "usd" if providers["stripe"] else "rub",
+        "usd_rub": USD_RUB,
+        "year_discount_pct": YEAR_DISCOUNT_PCT,
+        "plans": [_plan_card(pid) for pid in PLANS],
+        "packs": [_pack_card(kid) for kid in TOPUP_PACKS],
+        # Прайс работы в очках — витрине, чтобы объяснять, куда они уходят.
+        "costs": {
+            "scene": dict(SCENE_COST),
+            "frames_advance": FRAMES_COST,
+            "story": COST_STORY,
+            "storyboard_scenes": COST_SCENES,
+            "storyboard_sheet": COST_STORYBOARD,
+            "character_model": COST_CHARACTER_MODEL,
+            "clip_scenes": CLIP_SCENES,
+        },
     }
 
+
+@app.get("/api/billing/packs")
+def billing_packs(user: User = Depends(current_user)):
+    """Пакеты очков отдельно от тарифов: докупка не трогает подписку."""
+    return {
+        "packs": [_pack_card(kid) for kid in TOPUP_PACKS],
+        "providers": _providers_state(),
+        "currency_default": "usd" if _stripe_enabled() else "rub",
+        "points": int(user.gen_points or 0),
+    }
+
+
+# ─────────────────────────── создание платежа ───────────────────────────
 
 @app.post("/api/billing/create")
 async def billing_create(request: Request, user: User = Depends(current_user),
                          db: Session = Depends(db_session)):
-    """Создаёт платёж в ЮKassa и возвращает ссылку на оплату."""
-    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
-        raise HTTPException(400, "приём платежей ещё не подключён")
-    body = await request.json()
-    plan_id = str(body.get("plan") or "")
-    plan = PLANS.get(plan_id)
-    if not plan or plan["price"] <= 0:
-        raise HTTPException(400, "неизвестный тариф")
+    """Ссылка на оплату: подписка на тариф или разовая покупка пакета очков.
 
-    # Промокод: если человек ещё ни за кем не закреплён — закрепляем прямо
-    # здесь (то же первое касание, что и по ссылке ?ref=). Скидку даём один
-    # раз, на первую оплату; продления идут по полной цене тарифа.
+    body: {kind:"plan"|"topup", plan?, pack?, period?:"month"|"year",
+           provider?:"stripe"|"yookassa", currency?:"usd"|"rub", promo?}
+    Провайдер по умолчанию выбирается валютой: доллары — Stripe, рубли — ЮKassa."""
+    body = await request.json() if await request.body() else {}
+    kind = str(body.get("kind") or "").strip().lower()
+    plan_id = str(body.get("plan") or "").strip()
+    pack_id = str(body.get("pack") or "").strip()
+    if kind not in ("plan", "topup"):
+        kind = "topup" if pack_id else "plan"
+    period = _norm_period(body.get("period"))
+
+    currency = str(body.get("currency") or "").strip().lower()
+    provider = str(body.get("provider") or "").strip().lower()
+    if provider not in ("stripe", "yookassa"):
+        provider = "yookassa" if currency in ("rub", "rur", "₽") else "stripe"
+    # Выключенный провайдер — не тупик: если жив второй, уходим на него.
+    if provider == "stripe" and not _stripe_enabled():
+        provider = "yookassa"
+    elif provider == "yookassa" and not _yookassa_enabled():
+        provider = "stripe"
+    if (provider == "stripe" and not _stripe_enabled()) or \
+       (provider == "yookassa" and not _yookassa_enabled()):
+        raise ApiError(503, "payments_disabled", "Payments are not connected yet.")
+
+    if kind == "topup":
+        pack = TOPUP_PACKS.get(pack_id)
+        if not pack:
+            raise ApiError(400, "unknown_pack", f"Unknown points pack: {pack_id!r}")
+        amount_cents, amount_kopeks = int(pack["usd_cents"]), int(pack["rub_kopeks"])
+        title = f"{BRAND} — {pack['points']} points"
+        points = int(pack["points"])
+    else:
+        plan = PLANS.get(plan_id)
+        if not plan or plan["usd_cents"] <= 0:
+            raise ApiError(400, "unknown_plan", f"Unknown plan: {plan_id!r}")
+        amount_cents, amount_kopeks = _plan_price(plan_id, period)
+        title = f"{BRAND} {plan['title']} — {'12 months' if period == 'year' else '1 month'}"
+        points = int(plan["points"])
+
+    # Промокод партнёрки: если человек ещё ни за кем не закреплён — закрепляем
+    # прямо здесь (то же первое касание, что и по ссылке ?ref=). Скидка — один
+    # раз, на первую ПОДПИСКУ; продления и пакеты очков идут по прайсу.
     promo = _norm_code(body.get("promo") or "")
     if promo:
         _attach_ref(db, user, promo)
     amb = db.get(User, user.referred_by) if user.referred_by else None
-    amount_kopeks = int(plan["price"]) * 100
-    discount_kopeks = 0
-    if amb and REF_DISCOUNT_PCT > 0 and _ref_first_payment(db, user):
-        discount_kopeks = amount_kopeks * REF_DISCOUNT_PCT // 100
-        amount_kopeks -= discount_kopeks
+    discount_pct = 0
+    if kind == "plan" and amb and REF_DISCOUNT_PCT > 0 and _ref_first_payment(db, user):
+        discount_pct = REF_DISCOUNT_PCT
+    discount_cents = amount_cents * discount_pct // 100
+    discount_kopeks = amount_kopeks * discount_pct // 100
 
+    meta_promo = amb.ref_code if amb else ""
+    if provider == "stripe":
+        coupon = ""
+        if discount_pct:
+            # У подписки цена рекуррентная, скидать её на первый счёт умеет
+            # только купон duration=once — поэтому заводим его на лету.
+            try:
+                coupon = await stripe_pay.create_coupon(discount_pct, f"{BRAND} referral")
+            except Exception as e:  # noqa: BLE001 — и отказ Stripe, и обрыв сети
+                # Скидка не должна мешать оплате: без купона человек просто
+                # платит полную цену, а не упирается в ошибку.
+                log.warning("stripe: купон не создался (%s) — платим без скидки",
+                            str(e)[:200])
+                coupon, discount_pct, discount_cents = "", 0, 0
+        try:
+            session = await stripe_pay.create_checkout_session(
+                kind=kind, user_id=user.id, title=title, amount_cents=amount_cents,
+                success_url=f"{PUBLIC_BASE_URL}/?paid={plan_id or pack_id}"
+                            f"&session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{PUBLIC_BASE_URL}/?checkout=cancelled",
+                period=period, plan_id=plan_id, pack_id=pack_id, points=points,
+                email=user.email or "", customer_id=user.stripe_customer_id or "",
+                coupon_id=coupon, promo=meta_promo,
+                ambassador_id=amb.id if amb else 0,
+            )
+        except stripe_pay.StripeError as e:
+            raise ApiError(502, "stripe_failed", str(e))
+        except Exception as e:  # noqa: BLE001 — сеть до Stripe тоже отваливается
+            log.warning("stripe: сессия не создалась: %s", str(e)[:200])
+            raise ApiError(502, "stripe_failed", "Stripe is unreachable, try again.")
+        if not session.get("url"):
+            raise ApiError(502, "stripe_failed", "Stripe returned no checkout URL.")
+        if session.get("customer") and not user.stripe_customer_id:
+            user.stripe_customer_id = session["customer"]
+            db.commit()
+        return {
+            "ok": True, "url": session["url"], "provider": "stripe", "currency": "usd",
+            "kind": kind, "plan": plan_id, "pack": pack_id, "period": period,
+            "payment_id": session["id"],
+            "amount_cents": amount_cents - discount_cents, "discount_cents": discount_cents,
+            "amount_kopeks": 0, "discount_kopeks": 0,
+            "promo": meta_promo,
+        }
+
+    # ── ЮKassa: рубли, сохранённая карта и наше автосписание ──
+    pay_kopeks = amount_kopeks - discount_kopeks
     import httpx as _httpx
-    idem = uuid.uuid4().hex
     payload = {
-        "amount": {"value": f"{amount_kopeks // 100}.{amount_kopeks % 100:02d}",
-                   "currency": "RUB"},
+        "amount": {"value": f"{pay_kopeks // 100}.{pay_kopeks % 100:02d}", "currency": "RUB"},
         "capture": True,
-        # Сохранённый способ оплаты = подписка: дальше списываем сами раз в месяц.
-        "save_payment_method": True,
-        "confirmation": {"type": "redirect", "return_url": f"{PUBLIC_BASE_URL}/?paid={plan_id}"},
-        "description": f"QLOLVIDEO {plan['title']} — {PLAN_DAYS} дней",
+        # Сохранённый способ оплаты = подписка: дальше списываем сами.
+        # Пакет очков — разовая покупка, карту для него не сохраняем.
+        "save_payment_method": kind == "plan",
+        "confirmation": {"type": "redirect",
+                         "return_url": f"{PUBLIC_BASE_URL}/?paid={plan_id or pack_id}"},
+        "description": title,
         # promo и ambassador_id — след для разбора спорных начислений: по
         # платежу в кабинете ЮKassa видно, чей это был реферал.
-        "metadata": {"user_id": str(user.id), "plan": plan_id,
-                     "promo": amb.ref_code if amb else "",
-                     "ambassador_id": str(amb.id) if amb else ""},
+        "metadata": {"user_id": str(user.id), "plan": plan_id, "kind": kind,
+                     "pack": pack_id, "period": period,
+                     "promo": meta_promo, "ambassador_id": str(amb.id) if amb else ""},
     }
     async with _httpx.AsyncClient(timeout=30) as client:
         r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
                               auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
-                              headers={"Idempotence-Key": idem})
+                              headers={"Idempotence-Key": uuid.uuid4().hex})
     if r.status_code not in (200, 201):
-        raise HTTPException(502, f"ЮKassa отказала: {r.text[:200]}")
+        raise ApiError(502, "yookassa_failed", f"YooKassa refused: {r.text[:200]}")
     data = r.json() or {}
     url = ((data.get("confirmation") or {}).get("confirmation_url") or "")
     if not url:
-        raise HTTPException(502, "ЮKassa не вернула ссылку оплаты")
-    return {"ok": True, "url": url, "payment_id": data.get("id", ""),
-            "amount_kopeks": amount_kopeks, "discount_kopeks": discount_kopeks,
-            "promo": amb.ref_code if amb else ""}
+        raise ApiError(502, "yookassa_failed", "YooKassa returned no payment URL.")
+    return {
+        "ok": True, "url": url, "provider": "yookassa", "currency": "rub",
+        "kind": kind, "plan": plan_id, "pack": pack_id, "period": period,
+        "payment_id": data.get("id", ""),
+        "amount_kopeks": pay_kopeks, "discount_kopeks": discount_kopeks,
+        "amount_cents": 0, "discount_cents": 0,
+        "promo": meta_promo,
+    }
 
+
+# ─────────────────────────── вебхук ЮKassa ───────────────────────────
 
 @app.post("/api/billing/webhook")
 async def billing_webhook(request: Request, db: Session = Depends(db_session)):
-    """Уведомление ЮKassa: по успешной оплате выдаём тариф и очки.
+    """Уведомление ЮKassa: по успешной оплате выдаём тариф или пакет очков.
 
     Событие проверяем обратным запросом в ЮKassa — на вебхук можно прислать
     что угодно, доверять телу нельзя."""
@@ -2832,7 +3493,7 @@ async def billing_webhook(request: Request, db: Session = Depends(db_session)):
     pay_id = str(obj.get("id") or "")
     if (body or {}).get("event") != "payment.succeeded" or not pay_id:
         return {"ok": True}
-    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
+    if not _yookassa_enabled():
         return {"ok": True}
     import httpx as _httpx
     async with _httpx.AsyncClient(timeout=30) as client:
@@ -2846,9 +3507,15 @@ async def billing_webhook(request: Request, db: Session = Depends(db_session)):
         return {"ok": True}
     meta = real.get("metadata") or {}
     uid = int(meta.get("user_id") or 0)
-    plan_id = str(meta.get("plan") or "")
     user = db.get(User, uid)
-    if not user or plan_id not in PLANS:
+    kind = str(meta.get("kind") or "plan")
+    plan_id = str(meta.get("plan") or "")
+    pack_id = str(meta.get("pack") or "")
+    period = _norm_period(meta.get("period"))
+    if not user:
+        # Платёж без нашей metadata — деньги пришли, а кому выдавать, неясно.
+        # Раньше это был тихий 200 в никуда; теперь хотя бы видно в логах.
+        log.warning("вебхук ЮKassa: платёж %s без пользователя (metadata=%r)", pay_id, meta)
         return {"ok": True}
     # Долю амбассадору считаем от ФАКТИЧЕСКИ оплаченной суммы — со скидкой по
     # промокоду, а не от прайса тарифа.
@@ -2857,100 +3524,245 @@ async def billing_webhook(request: Request, db: Session = Depends(db_session)):
     except (TypeError, ValueError):
         paid_value = 0.0
     paid_kopeks = int(round(paid_value * 100))
-    # Дубль вебхука не должен выдавать месяц второй раз.
-    if not _claim_payment(db, pay_id, user.id, plan_id, paid_kopeks):
-        log.info("вебхук ЮKassa: платёж %s уже обработан — пропускаем", pay_id)
-        return {"ok": True}
-    user.plan = plan_id
-    user.gen_points = max(user.gen_points, PLANS[plan_id]["points"])
-    from datetime import timedelta
-    until = _as_utc(user.plan_until)
-    base = until if (until and until > now()) else now()
-    user.plan_until = base + timedelta(days=PLAN_DAYS)
     pm = (real.get("payment_method") or {})
-    if pm.get("saved") and pm.get("id"):
-        user.pay_method_id = str(pm["id"])
-    db.commit()
-    log.info("оплачен тариф %s для юзера %s (платёж %s)", plan_id, uid, pay_id)
-    _ref_reward(db, user, paid_kopeks, pay_id)
+    saved_method = str(pm.get("id") or "") if pm.get("saved") else ""
+    granted = _grant_payment(db, user, provider="yookassa", payment_id=pay_id, kind=kind,
+                             plan_id=plan_id, period=period, pack_id=pack_id,
+                             amount_kopeks=paid_kopeks, currency="RUB",
+                             pay_method_id=saved_method)
+    if not granted:
+        return {"ok": True}
+    _ref_reward(db, user, paid_kopeks, _pay_key("yookassa", pay_id))
     return {"ok": True}
 
 
-async def _charge_subscription(db: Session, user: "User") -> bool:
-    """Автосписание за следующий месяц по сохранённому способу оплаты."""
+# ─────────────────────────── вебхук Stripe ───────────────────────────
+
+@app.post("/api/billing/stripe-webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(db_session)):
+    """Уведомление Stripe. Подпись проверяется по STRIPE_WEBHOOK_SECRET —
+    обратного запроса, как у ЮKassa, тут не нужно: подпись и есть доказательство.
+
+    Событий на один платёж приходит несколько (checkout.session.completed и
+    invoice.paid по одному счёту), поэтому ключом идемпотентности берём id
+    СЧЁТА: продление и первая оплата подписки одинаково сводятся к нему."""
+    raw = await request.body()
+    event = stripe_pay.verify_webhook(raw, request.headers.get("stripe-signature", ""))
+    if event is None:
+        # 400, а не 200: Stripe повторит, а мы увидим проблему в дашборде.
+        raise HTTPException(400, "bad stripe signature")
+    etype = str(event.get("type") or "")
+    obj = ((event.get("data") or {}).get("object")) or {}
+    meta = stripe_pay.event_metadata(obj)
+    uid = int(meta.get("user_id") or obj.get("client_reference_id") or 0)
+    user = db.get(User, uid) if uid else None
+
+    if etype == "checkout.session.completed":
+        if str(obj.get("payment_status") or "") not in ("paid", "no_payment_required"):
+            return {"ok": True}
+        if not user:
+            log.warning("stripe: сессия %s без пользователя (metadata=%r)",
+                        obj.get("id"), meta)
+            return {"ok": True}
+        mode = str(obj.get("mode") or "")
+        amount_cents = int(obj.get("amount_total") or 0)
+        sub_id = stripe_pay.subscription_id_of(obj)
+        customer = str(obj.get("customer") or "")
+        if mode == "subscription":
+            invoice = obj.get("invoice")
+            inv_id = invoice if isinstance(invoice, str) else str(
+                (invoice or {}).get("id") or "")
+            # Ключ первого периода подписки — САМА ПОДПИСКА, а не счёт: поле
+            # invoice у сессии бывает пустым, и тогда этот же платёж приезжал
+            # событием invoice.paid под своим id и выдавался второй раз.
+            pay_id = _stripe_first_key(sub_id) or inv_id or str(obj.get("id") or "")
+            granted = _grant_payment(
+                db, user, provider="stripe", payment_id=pay_id, kind="plan",
+                plan_id=str(meta.get("plan") or ""), period=_norm_period(meta.get("period")),
+                amount_cents=amount_cents, currency="USD",
+                stripe_customer=customer, stripe_subscription=sub_id,
+                alt_ids=(inv_id, str(obj.get("id") or "")))
+        else:
+            # Разовая покупка очков: ключ — id платёжного намерения.
+            pi = obj.get("payment_intent")
+            pay_id = pi if isinstance(pi, str) else str(
+                (pi or {}).get("id") or obj.get("id") or "")
+            granted = _grant_payment(
+                db, user, provider="stripe", payment_id=pay_id, kind="topup",
+                pack_id=str(meta.get("pack") or ""), amount_cents=amount_cents,
+                currency="USD", stripe_customer=customer)
+        if granted:
+            _ref_reward(db, user, _reward_kopeks(0, amount_cents),
+                        _pay_key("stripe", pay_id))
+        return {"ok": True}
+
+    if etype in ("invoice.paid", "invoice.payment_succeeded"):
+        # Продление подписки: Stripe списывает сам, нам остаётся выдать месяц.
+        if not user:
+            log.warning("stripe: счёт %s без пользователя (metadata=%r)", obj.get("id"), meta)
+            return {"ok": True}
+        if str(obj.get("status") or "paid") != "paid":
+            return {"ok": True}
+        amount_cents = int(obj.get("amount_paid") or obj.get("amount_due") or 0)
+        inv_id = str(obj.get("id") or "")
+        sub_id = stripe_pay.subscription_id_of(obj)
+        # Первый счёт подписки — тот же платёж, что и checkout.session.completed:
+        # ключуем его подпиской, чтобы два события сошлись в одну выдачу.
+        # Продление (subscription_cycle) — уже свой платёж, ключ у него свой.
+        first_key = _stripe_first_key(sub_id) if _stripe_is_first_invoice(db, obj, sub_id) else ""
+        pay_id = first_key or inv_id
+        granted = _grant_payment(
+            db, user, provider="stripe", payment_id=pay_id, kind="plan",
+            plan_id=str(meta.get("plan") or ""), period=_norm_period(meta.get("period")),
+            amount_cents=amount_cents, currency="USD",
+            stripe_customer=str(obj.get("customer") or ""),
+            stripe_subscription=sub_id, alt_ids=(inv_id,) if first_key else ())
+        if granted:
+            # Доля амбассадора идёт с КАЖДОГО платежа реферала, включая продления.
+            _ref_reward(db, user, _reward_kopeks(0, amount_cents),
+                        _pay_key("stripe", pay_id))
+        return {"ok": True}
+
+    if etype == "customer.subscription.deleted":
+        # Подписка закрыта на стороне Stripe (отмена или неоплата). Доступ не
+        # отбираем: он доработает до plan_until, дальше человека снимет воркер.
+        sub_id = str(obj.get("id") or "")
+        target = user or (db.query(User)
+                          .filter(User.stripe_subscription_id == sub_id).first()
+                          if sub_id else None)
+        if target:
+            target.stripe_subscription_id = ""
+            target.autopay = False
+            db.commit()
+            log.info("stripe: подписка %s закрыта, автопродление у юзера %s снято",
+                     sub_id, target.id)
+        return {"ok": True}
+
+    return {"ok": True}
+
+
+# ────────────────── автопродление ЮKassa (у Stripe своё) ──────────────────
+
+async def _charge_subscription(db: Session, user: "User") -> str:
+    """Автосписание за следующий период по сохранённой карте ЮKassa.
+
+    Возвращает "ok" | "pending" | "fail". Отдельный pending важен: при 3DS и
+    асинхронном подтверждении платёж приходит позже вебхуком, и считать это
+    провалом (как раньше) значило сбросить человеку тариф на ровном месте."""
     plan = PLANS.get(user.plan or "free")
-    if not plan or plan["price"] <= 0 or not user.pay_method_id or not user.autopay:
-        return False
+    period = _norm_period(user.plan_period)
+    if not plan or plan["usd_cents"] <= 0 or not user.pay_method_id or not user.autopay:
+        return "fail"
+    if user.stripe_subscription_id:
+        return "pending"  # этого продлевает сам Stripe, руками не лезем
+    _, amount_kopeks = _plan_price(user.plan, period)
+    if amount_kopeks <= 0:
+        return "fail"
+    # Idempotence-Key ДЕТЕРМИНИРОВАННЫЙ: если ЮKassa списала, а ответ до нас не
+    # дошёл (таймаут сети), повтор через час вернёт ТОТ ЖЕ платёж, а не спишет
+    # с карты второй раз. Раньше тут был свежий uuid на каждый заход.
+    seed = f"sub:{user.id}:{user.plan}:{period}:{_as_utc(user.plan_until) or now():%Y-%m-%d}"
+    idem = uuid.uuid5(uuid.NAMESPACE_URL, seed).hex
     import httpx as _httpx
     payload = {
-        "amount": {"value": f"{plan['price']}.00", "currency": "RUB"},
+        "amount": {"value": f"{amount_kopeks // 100}.{amount_kopeks % 100:02d}",
+                   "currency": "RUB"},
         "capture": True,
         "payment_method_id": user.pay_method_id,
-        "description": f"QLOLVIDEO {plan['title']} — продление",
-        "metadata": {"user_id": str(user.id), "plan": user.plan},
+        "description": f"{BRAND} {plan['title']} — renewal",
+        "metadata": {"user_id": str(user.id), "plan": user.plan, "kind": "plan",
+                     "period": period},
     }
     async with _httpx.AsyncClient(timeout=40) as client:
         r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
                               auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
-                              headers={"Idempotence-Key": uuid.uuid4().hex})
+                              headers={"Idempotence-Key": idem})
     data = (r.json() or {}) if r.status_code in (200, 201) else {}
-    ok = bool(data.get("status") == "succeeded")
-    if ok:
+    status = str(data.get("status") or "")
+    if status == "succeeded":
         pay_id = str(data.get("id") or "")
-        amount_kopeks = int(plan["price"]) * 100
-        # Этот же платёж приедет ещё и вебхуком: занимаем его здесь, иначе
-        # месяц начислялся бы дважды — тут и там.
-        if not _claim_payment(db, pay_id, user.id, user.plan, amount_kopeks):
-            log.info("подписка юзера %s: платёж %s уже учтён", user.id, pay_id)
-            return True
-        from datetime import timedelta
-        user.plan_until = now() + timedelta(days=PLAN_DAYS)
-        user.gen_points = max(user.gen_points, plan["points"])
-        db.commit()
-        log.info("подписка продлена: юзер %s, тариф %s", user.id, user.plan)
-        # Доля амбассадора идёт с КАЖДОГО платежа реферала, включая продления.
-        # Начисляем здесь: вебхук по этому платежу мы уже заняли выше.
-        _ref_reward(db, user, amount_kopeks, pay_id)
-    else:
-        log.warning("не продлилась подписка юзера %s: %s", user.id, r.text[:200])
-    return ok
+        # Этот же платёж приедет ещё и вебхуком: выдача идемпотентна по id,
+        # поэтому неважно, кто из них успеет первым.
+        if _grant_payment(db, user, provider="yookassa", payment_id=pay_id, kind="plan",
+                          plan_id=user.plan, period=period, amount_kopeks=amount_kopeks,
+                          currency="RUB"):
+            _ref_reward(db, user, amount_kopeks, _pay_key("yookassa", pay_id))
+        return "ok"
+    if status in ("pending", "waiting_for_capture"):
+        log.info("подписка юзера %s: платёж в статусе %s — ждём вебхук", user.id, status)
+        return "pending"
+    log.warning("не продлилась подписка юзера %s: %s", user.id, r.text[:200])
+    return "fail"
+
+
+def _subscription_pass() -> None:
+    """Один проход по подпискам, которым пора продлиться.
+
+    Проход делает ДВЕ вещи: списывает по карте ЮKassa и снимает с тарифа тех,
+    у кого срок вышел. Раньше он весь целиком выключался без ключей ЮKassa —
+    и на международном контуре (только Stripe) закончившиеся подписки не
+    снимались НИКОГДА: отменил в Stripe, а PRO остаётся навсегда."""
+    import asyncio as _asyncio
+    from datetime import timedelta
+    db = SessionLocal()
+    try:
+        due = db.query(User).filter(User.plan != "free", User.plan_until.isnot(None),
+                                    User.plan_until <= now()).all()
+        for u in due:
+            if u.stripe_subscription_id:
+                continue  # продлевает Stripe своим счётом
+            res = "fail"
+            if _yookassa_enabled() and u.pay_method_id:
+                try:
+                    res = _asyncio.run(_charge_subscription(db, u))
+                except Exception as e:  # noqa: BLE001
+                    res = "fail"
+                    log.warning("ошибка автосписания у %s: %s", u.id, str(e)[:150])
+            if res in ("ok", "pending"):
+                continue
+            # Не списалось — даём отсрочку: карта могла не ответить один раз,
+            # а сбрасывать тариф и стирать способ оплаты (как было раньше)
+            # значит терять человека из-за чужого таймаута.
+            until = _as_utc(u.plan_until)
+            if until and until + timedelta(days=SUB_GRACE_DAYS) > now():
+                continue
+            u.plan = "free"
+            u.plan_period = "month"
+            db.commit()
+            log.info("подписка юзера %s закончилась — вернули на free (карту сохранили)", u.id)
+    finally:
+        db.close()
 
 
 def _subscription_worker() -> None:
     """Раз в час проверяет, кому пора продлить подписку, и списывает.
 
-    Кому не удалось списать и срок вышел — мягко возвращаем на free, доступ
-    не отбираем задним числом."""
-    import asyncio as _asyncio
+    Сначала работаем, потом спим: раньше цикл начинался со сна, и после каждого
+    рестарта контейнера продления ждали лишний час."""
     while True:
-        time.sleep(3600)
-        if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
-            continue
-        db = SessionLocal()
         try:
-            due = db.query(User).filter(User.plan != "free", User.plan_until.isnot(None),
-                                        User.plan_until <= now()).all()
-            for u in due:
-                try:
-                    ok = _asyncio.run(_charge_subscription(db, u))
-                except Exception as e:  # noqa: BLE001
-                    ok = False
-                    log.warning("ошибка автосписания у %s: %s", u.id, str(e)[:150])
-                if not ok:
-                    u.plan = "free"
-                    u.pay_method_id = ""
-                    db.commit()
-                    log.info("подписка юзера %s закончилась — вернули на free", u.id)
-        finally:
-            db.close()
+            _subscription_pass()
+        except Exception as e:  # noqa: BLE001
+            log.warning("проход по подпискам упал: %s", str(e)[:200])
+        time.sleep(3600)
 
 
 @app.post("/api/billing/cancel")
-def billing_cancel(user: User = Depends(current_user), db: Session = Depends(db_session)):
+async def billing_cancel(user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Отключить автопродление — тариф доработает до конца оплаченного срока."""
     user.autopay = False
     db.commit()
-    return {"ok": True, "until": user.plan_until.isoformat() if user.plan_until else ""}
+    stripe_ok = True
+    if user.stripe_subscription_id and _stripe_enabled():
+        try:
+            await stripe_pay.cancel_subscription(user.stripe_subscription_id)
+        except Exception as e:  # noqa: BLE001
+            stripe_ok = False
+            log.warning("stripe: не отменилась подписка %s: %s",
+                        user.stripe_subscription_id, str(e)[:200])
+    return {"ok": True, "stripe_cancelled": stripe_ok,
+            "plan": _plan_of(user), "period": user.plan_period or "month",
+            "until": user.plan_until.isoformat() if user.plan_until else ""}
 
 
 # ─────────────────────── кабинет амбассадора ───────────────────────
@@ -3155,9 +3967,16 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
         "avatar_url": user.avatar_url,
         "plan": plan, "plan_title": PLANS[plan]["title"],
         "plan_note": PLANS[plan]["note"],
+        "plan_period": user.plan_period or "month",
         "plan_until": user.plan_until.isoformat() if user.plan_until else "",
-        "autopay": bool(user.autopay and user.pay_method_id),
+        # Автопродление живёт в двух местах: карта ЮKassa у нас, подписка — у Stripe.
+        "autopay": bool(user.autopay and (user.pay_method_id or user.stripe_subscription_id)),
+        "pay_provider": ("stripe" if user.stripe_subscription_id
+                         else ("yookassa" if user.pay_method_id else "")),
         "points": user.gen_points, "projects": projects,
+        # Сколько клипов по 3 минуты ещё выйдет из остатка на топовом движке тарифа.
+        "movies_left": _movies_estimate(int(user.gen_points or 0),
+                                        max(_plan_engines(plan).values())),
         "linked": {"telegram": bool(user.tg_id), "yandex": bool(user.yandex_id),
                    "google": bool(user.google_id), "password": bool(user.login)},
         "ambassador": {
@@ -3175,6 +3994,34 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
 @app.get("/api/health")
 def health():
     return {"ok": True, "ts": int(time.time())}
+
+
+def _backfill_scene_ledger() -> None:
+    """Проставить счётчик оплаты сценам, сделанным ДО посценовой тарификации.
+
+    У старых сцен charged_points = 0, и без этого они выглядят неоплаченными:
+    супергенерация и пакетные кнопки взяли бы за уже готовые кадры и видео
+    деньги второй раз. Ставим прежний прайс (видео 10, кадры 2) — ровно то,
+    что за них уже списали. Работает поверх мягкой миграции и сама себя
+    исчерпывает: у новых сцен счётчик заполняется в момент списания."""
+    from sqlalchemy import text as _sqltext
+    from db import engine as _engine
+    try:
+        with _engine.begin() as conn:
+            done = conn.execute(_sqltext(
+                "UPDATE scenes SET charged_points = 10 "
+                "WHERE charged_points = 0 AND video_filename != ''")).rowcount
+            done += conn.execute(_sqltext(
+                "UPDATE scenes SET charged_points = 2 "
+                "WHERE charged_points = 0 AND image_filename != ''")).rowcount
+        if done:
+            log.info("бэкфилл оплаты сцен: отмечено %s старых сцен", done)
+    except Exception as e:  # noqa: BLE001
+        # Не критично для работы сервиса — но знать об этом надо.
+        log.warning("бэкфилл оплаты сцен не прошёл: %s", str(e)[:200])
+
+
+_backfill_scene_ledger()
 
 
 # ─────────────────────────────── статика (SPA) ───────────────────────────────

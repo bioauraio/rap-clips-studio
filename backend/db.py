@@ -38,11 +38,15 @@ class User(Base):
     password_hash = Column(String, nullable=False, default="")
     is_admin = Column(Boolean, nullable=False, default=False)
     # Очки генераций: защита кошелька владельца — генерации идут через его
-    # подписки. Гость стартует с 60, админ получает практически бесконечность.
-    gen_points = Column(Integer, nullable=False, default=60)
+    # подписки. Гость стартует с месячной нормы плана free (держи это число
+    # равным PLANS["free"]["points"] в main.py), админ — с бесконечностью.
+    gen_points = Column(Integer, nullable=False, default=120)
     # Тариф: free — видео только через Grok (наша подписка, бесплатно),
     # pro — открывается Seedance (платные кредиты владельца сервиса).
     plan = Column(String, nullable=False, default="free")
+    # Период подписки: month | year. Нужен и для витрины (какой вариант
+    # оплачен), и для продления — годовую нельзя продлевать на 30 дней.
+    plan_period = Column(String, nullable=False, default="month")
     # Внешние входы: аккаунт создаётся и опознаётся по Telegram-ID или Яндекс-ID,
     # пароль при этом не нужен. Уникальность проверяется кодом (мягкие миграции
     # не умеют добавлять UNIQUE к существующей таблице).
@@ -51,10 +55,15 @@ class User(Base):
     yandex_id = Column(String, nullable=False, default="")
     google_id = Column(String, nullable=False, default="")
     email = Column(String, nullable=False, default="")
-    # Подписка: способ оплаты для автосписания и дата следующего продления.
+    # Подписка ЮKassa: способ оплаты для автосписания и дата продления.
     pay_method_id = Column(String, nullable=False, default="")
     plan_until = Column(DateTime, nullable=True)
     autopay = Column(Boolean, nullable=False, default=True)
+    # Подписка Stripe (международная аудитория). Продление там делает сам
+    # Stripe и присылает invoice.paid — своего автосписания для него нет,
+    # поэтому часовой воркер такие подписки не трогает (см. main.py).
+    stripe_customer_id = Column(String, nullable=False, default="")
+    stripe_subscription_id = Column(String, nullable=False, default="")
     avatar_url = Column(String, nullable=False, default="")
     # Партнёрка «амбассадор». ref_code пустой, пока человек не подключился:
     # так поиск владельца кода не цепляет обычных пользователей.
@@ -107,18 +116,28 @@ class Payout(Base):
 
 
 class ProcessedPayment(Base):
-    """Платежи ЮKassa, по которым тариф уже выдан.
+    """Платежи, по которым тариф или пакет очков уже выданы (оба провайдера).
 
-    ЮKassa повторяет payment.succeeded, пока не получит 200, и дублирует его
-    сама на ретраях сети. Без этой таблицы каждый дубль двигал plan_until ещё
-    на месяц: человек платил один раз, а подписка росла на глазах. UNIQUE на
-    payment_id закрывает и гонку двух одновременно приехавших вебхуков."""
+    Обе платёжки повторяют событие, пока не получат 200, и дублируют его на
+    ретраях сети. Без этой таблицы каждый дубль двигал plan_until ещё на
+    месяц: человек платил один раз, а подписка росла на глазах. UNIQUE на
+    payment_id закрывает и гонку двух одновременно приехавших вебхуков.
+
+    payment_id хранится С ПРЕФИКСОМ провайдера ("stripe:in_…", "yookassa:…"):
+    идентификаторы двух систем живут в одной колонке и пересечься не должны."""
     __tablename__ = "processed_payments"
     id = Column(Integer, primary_key=True)
     payment_id = Column(String, nullable=False, unique=True)
     user_id = Column(Integer, nullable=True, index=True)
     plan = Column(String, nullable=False, default="")
     amount_kopeks = Column(Integer, nullable=False, default=0)
+    # Ниже — колонки международного контура (добавлены мягкой миграцией).
+    provider = Column(String, nullable=False, default="yookassa")  # yookassa | stripe
+    kind = Column(String, nullable=False, default="plan")          # plan | topup
+    period = Column(String, nullable=False, default="month")       # month | year
+    points = Column(Integer, nullable=False, default=0)            # сколько очков выдали
+    amount_cents = Column(Integer, nullable=False, default=0)      # сумма в центах, если USD
+    currency = Column(String, nullable=False, default="RUB")
     created_at = Column(DateTime, default=now)
 
 
@@ -327,6 +346,13 @@ class Scene(Base):
     video_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     video_error = Column(Text, nullable=False, default="")
     video_provider = Column(String, nullable=False, default="seedance")
+
+    # Сколько очков за ЭТУ сцену уже списано. Сцена — единица тарификации:
+    # кадры берут аванс, видео добирает разницу до цены своего движка, а
+    # перегенерация уже оплаченного не списывает второй раз. Без счётчика
+    # пришлось бы либо брать за кадры отдельно (двойная плата за сцену),
+    # либо отдавать кадры даром (бесконечная перерисовка на нашей подписке).
+    charged_points = Column(Integer, nullable=False, default=0)
 
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
