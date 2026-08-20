@@ -708,3 +708,40 @@ textarea { transition: min-height .15s; }
 .cell-foot { display: flex; align-items: center; gap: 6px; padding: 5px 6px; }
 .cell-foot select { font-size: 11px; padding: 3px 5px; border-radius: 8px; }
 .cell-foot input { width: auto; accent-color: var(--accent); }
+
+/* ────────── лендинг: всё в один экран ────────── */
+.welcome-screen { min-height: 100vh; padding: 16px 14px; justify-content: center; }
+.welcome-box { max-width: 560px; gap: 10px; padding: 20px 22px 16px; }
+.welcome-title { font-size: 27px; letter-spacing: .18em; }
+.welcome-sub { font-size: 13.5px; }
+.wl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: left; margin: 2px 0 0; }
+.wl-steps { list-style: none; counter-reset: wls; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; line-height: 1.35; }
+.wl-steps li { counter-increment: wls; display: flex; gap: 7px; align-items: baseline; }
+.wl-steps li::before {
+  content: counter(wls); flex: none; width: 17px; height: 17px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800; color: #fff;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  border: 1.5px solid #2d211a;
+}
+.wl-feats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.35; }
+.wl-feats li { background: var(--inset); border: 1px solid var(--border); border-radius: 10px; padding: 6px 9px; }
+.wl-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.welcome-cta { font-size: 16px; padding: 12px 18px; }
+.welcome-privacy { font-size: 11px; line-height: 1.5; }
+.welcome-privacy a { color: var(--accent-2); }
+
+/* гайд со скриншотами — модалкой поверх */
+.guide-modal { position: fixed; inset: 0; z-index: 50; background: rgba(45,33,26,.55); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 20px 14px; }
+.guide-modal-card {
+  background: var(--panel); border: 2.5px solid #2d211a; border-radius: 20px;
+  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px #2d211a; max-width: 820px; width: 100%;
+  max-height: 88vh; overflow-y: auto; padding: 16px 20px 20px;
+}
+.guide-modal-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -16px; background: var(--panel); padding: 4px 0 8px; }
+.guide-modal-title { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--accent-2); font-weight: 800; }
+@media (max-width: 700px) {
+  .wl-grid { grid-template-columns: 1fr; gap: 8px; }
+  .welcome-title { font-size: 23px; }
+  .guide-modal-card { padding: 12px 14px 16px; }
+}

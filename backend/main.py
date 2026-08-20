@@ -178,6 +178,15 @@ def _check_file_owner(db: Session, user: User, fname: str) -> None:
         raise HTTPException(404, "файл не найден")
 
 
+def _allowed_provider(user: "User", wanted: str) -> str:
+    """Тариф решает, чем рисуем видео: free — только Grok (наша подписка),
+    pro и админ — Seedance (платные кредиты). Тихо понижаем вместо отказа,
+    чтобы кнопка всегда работала."""
+    if user.is_admin or (user.plan or "free") == "pro":
+        return wanted or "seedance"
+    return "grok"
+
+
 def _charge(db: Session, user: User, points: int, what: str) -> None:
     """Списание очков генерации В МОМЕНТ постановки задачи (не в треде):
     генерации идут через подписки владельца, лимит защищает его кошелёк."""
@@ -271,7 +280,7 @@ def get_or_create_project(db: Session, user: User, project_id: int | None = None
 
 def _user_dict(user: User) -> dict:
     return {"id": user.id, "name": user.name, "login": user.login,
-            "is_admin": user.is_admin, "gen_points": user.gen_points}
+            "is_admin": user.is_admin, "gen_points": user.gen_points, "plan": user.plan}
 
 
 def _session_response(user: User) -> JSONResponse:
@@ -1706,6 +1715,7 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
         raise HTTPException(400, "сначала сгенерируй кадры сцены")
     body = await request.json() if await request.body() else {}
     provider = str(body.get("provider") or scene.video_provider or "seedance")
+    provider = _allowed_provider(user, provider)
     if provider not in mediagen.video_providers():
         raise HTTPException(400, f"провайдер {provider} недоступен: {mediagen.video_providers()}")
     _charge(db, user, 10, f"видео сцены {scene.id}")
@@ -1833,6 +1843,9 @@ def _run_supergen(track_id: int) -> None:
                     return
 
         provider = "seedance" if mediagen.seedance_available() else "grok"
+        owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
+        if owner:
+            provider = _allowed_provider(owner, provider)
         for i, sid in enumerate(scene_ids, 1):
             db.expire_all()
             s = db.get(Scene, sid)
@@ -1992,7 +2005,10 @@ def get_outbox(filename: str):
 
 @app.get("/api/providers")
 def providers(user: User = Depends(current_user)):
-    return {"video": mediagen.video_providers(), "seedance": mediagen.seedance_available()}
+    pro = user.is_admin or (user.plan or "free") == "pro"
+    avail = mediagen.video_providers() if pro else ["grok"]
+    return {"video": avail, "seedance": mediagen.seedance_available() and pro,
+            "plan": "pro" if pro else "free"}
 
 
 
@@ -2405,7 +2421,7 @@ def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(
     if not todo:
         raise HTTPException(400, "нет сцен с кадрами без видео")
     _charge(db, user, 10 * len(todo), f"видео всех сцен трека {track.id}")
-    prov = provider or ("seedance" if mediagen.seedance_available() else "grok")
+    prov = _allowed_provider(user, provider or ("seedance" if mediagen.seedance_available() else "grok"))
     for s in todo:
         s.video_provider = prov
         s.video_status = "queued"

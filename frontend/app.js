@@ -243,6 +243,20 @@ function renderUserBar() {
   }
   badge.classList.toggle("hidden", Boolean(u.is_admin));
   badge.textContent = `⚡ ${u.gen_points}`;
+  // Тариф видно сразу: на free видео рисует Grok, Seedance открыт на pro.
+  let planBadge = $("#plan-badge");
+  if (!planBadge) {
+    planBadge = document.createElement("span");
+    planBadge.id = "plan-badge";
+    planBadge.className = "kind-badge";
+    badge.after(planBadge);
+  }
+  const pro = Boolean(u.is_admin) || u.plan === "pro";
+  planBadge.textContent = pro ? "PRO · Seedance" : "FREE · Grok";
+  planBadge.title = pro
+    ? "Seedance доступен: монтаж по первому и последнему кадру"
+    : "бесплатный тариф: видео через Grok; Seedance откроется на платном";
+  planBadge.style.opacity = pro ? "1" : ".7";
   saveBtn.classList.toggle("hidden", Boolean(u.is_admin) || Boolean(u.login));
 }
 
@@ -1815,4 +1829,18 @@ function openModelModal(c) {
     row.appendChild(go); row.appendChild(cancel);
     body.appendChild(row);
   });
+}
+
+// Гайд со скриншотами открывается модалкой — лендинг остаётся в один экран.
+{
+  const link = document.querySelector("#welcome-guide-link");
+  const modal = document.querySelector("#guide-modal");
+  const closeBtn = document.querySelector("#guide-close");
+  const close = () => modal && modal.classList.add("hidden");
+  if (link && modal) {
+    link.addEventListener("click", (e) => { e.preventDefault(); modal.classList.remove("hidden"); });
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  }
 }
