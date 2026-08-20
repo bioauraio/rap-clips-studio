@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -52,6 +53,19 @@ OUTBOX_DIR = os.environ.get("OUTBOX_DIR", "/data/outbox")
 os.makedirs(OUTBOX_DIR, exist_ok=True)
 SEEDANCE_TIMEOUT_S = float(os.environ.get("SEEDANCE_TIMEOUT_S", "900"))
 
+# Kling (Kuaishou) — второй платный видеогенератор. Два канала на выбор:
+#   kie   — агрегатор kie.ai: дешевле всех, простая оплата, ключ KIE_API_KEY;
+#   kling — официальный API klingai.com (api-singapore), ключи KLING_ACCESS_KEY/SECRET.
+# Оба умеют первый+последний кадр, поэтому монтаж не деградирует.
+KIE_API_KEY = os.environ.get("KIE_API_KEY", "")
+KIE_API = os.environ.get("KIE_API", "https://api.kie.ai")
+KIE_MODEL = os.environ.get("KIE_MODEL", "kling-v2-6")
+KLING_ACCESS_KEY = os.environ.get("KLING_ACCESS_KEY", "")
+KLING_SECRET_KEY = os.environ.get("KLING_SECRET_KEY", "")
+KLING_API = os.environ.get("KLING_API", "https://api-singapore.klingai.com")
+KLING_MODEL = os.environ.get("KLING_MODEL", "kling-v2-6")
+KLING_TIMEOUT_S = float(os.environ.get("KLING_TIMEOUT_S", "900"))
+
 IMAGE_TIMEOUT = httpx.Timeout(200.0, connect=15.0)
 VIDEO_TIMEOUT = httpx.Timeout(560.0, connect=15.0)
 
@@ -75,10 +89,17 @@ def seedance_available() -> bool:
     return bool(SEEVIO_API_KEY)
 
 
+def kling_available() -> bool:
+    """Kling доступен, если задан ключ агрегатора или пара ключей официального API."""
+    return bool(KIE_API_KEY or (KLING_ACCESS_KEY and KLING_SECRET_KEY))
+
+
 def video_providers() -> list[str]:
     out = []
     if seedance_available():
         out.append("seedance")
+    if kling_available():
+        out.append("kling")
     out.append("grok")
     return out
 
@@ -189,6 +210,7 @@ def _outbox_publish(path: str) -> tuple[str, str]:
 
 async def _animate_seedance(
     prompt: str, first_path: str, last_path: str | None, duration_sec: int,
+    model: str = "",
 ) -> str:
     """seevio.ai (Seedance 2.5): image-to-video по первому и последнему кадру.
 
@@ -207,7 +229,7 @@ async def _animate_seedance(
             outbox.append(name2)
             image_urls.append(last_url)
         payload = {
-            "model": SEEVIO_MODEL,
+            "model": model or SEEVIO_MODEL,
             "input": {
                 "prompt": prompt,
                 "generation_type": "image-to-video",
@@ -313,18 +335,226 @@ async def _animate_grok(prompt: str, first_path: str) -> str:
     return dst_name
 
 
+def _kling_jwt() -> str:
+    """Официальный Kling авторизуется коротким JWT (HS256) из пары ключей."""
+    import base64 as _b64
+    import hashlib as _hl
+    import hmac as _hmac
+    import json as _json
+    now = int(time.time())
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {"iss": KLING_ACCESS_KEY, "exp": now + 1800, "nbf": now - 5}
+
+    def seg(obj: dict) -> bytes:
+        raw = _json.dumps(obj, separators=(",", ":")).encode()
+        return _b64.urlsafe_b64encode(raw).rstrip(b"=")
+
+    signing = seg(header) + b"." + seg(payload)
+    sig = _hmac.new(KLING_SECRET_KEY.encode(), signing, _hl.sha256).digest()
+    return (signing + b"." + _b64.urlsafe_b64encode(sig).rstrip(b"=")).decode()
+
+
+async def _animate_via_kie(model: str, prompt: str, first_path: str,
+                           last_path: str | None, duration_sec: int) -> str:
+    """Единый путь через агрегатор kie.ai — там живут и Seedance, и Kling.
+
+    Один ключ, один баланс и одинаковый протокол задач: дешевле прямых
+    каналов и стабильнее браузерных обёрток."""
+    outbox: list[str] = []
+    try:
+        first_url, n1 = _outbox_publish(first_path)
+        outbox.append(n1)
+        inp: dict = {"prompt": prompt, "image_url": first_url,
+                     "duration": 10 if duration_sec > 7 else 5,
+                     "aspect_ratio": "9:16"}
+        if last_path and os.path.exists(last_path):
+            tail_url, n2 = _outbox_publish(last_path)
+            outbox.append(n2)
+            inp["tail_image_url"] = tail_url
+        headers = {"Authorization": f"Bearer {KIE_API_KEY}"}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            r = await client.post(f"{KIE_API}/api/v1/jobs/createTask",
+                                  json={"model": model, "input": inp}, headers=headers)
+        if r.status_code not in (200, 201, 202):
+            raise MediaError(f"kie.ai submit {r.status_code}: {r.text[:250]}")
+        data = (r.json() or {})
+        inner = data.get("data") or {}
+        task_id = inner.get("taskId") or inner.get("task_id") or data.get("taskId")
+        if not task_id:
+            raise MediaError(f"kie.ai: нет taskId ({str(data)[:200]})")
+
+        deadline = time.time() + KLING_TIMEOUT_S
+        video_url = ""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            while time.time() < deadline:
+                await asyncio.sleep(10)
+                sr = await client.get(f"{KIE_API}/api/v1/jobs/recordInfo?taskId={task_id}",
+                                      headers=headers)
+                if sr.status_code != 200:
+                    continue
+                sd = (sr.json() or {}).get("data") or {}
+                state = str(sd.get("state") or "").lower()
+                if state in ("fail", "failed", "error"):
+                    raise MediaError(f"kie.ai: задача упала — {str(sd.get('failMsg'))[:200]}")
+                m = re.search(r"https?://[^\s\"'\)]+\.mp4", str(sd))
+                if m and state in ("success", "succeed", "completed"):
+                    video_url = m.group(0)
+                    break
+        if not video_url:
+            raise MediaError("kie.ai: таймаут ожидания видео")
+        return await _fetch_video(video_url, duration_sec)
+    finally:
+        for name in outbox:
+            try:
+                os.remove(os.path.join(OUTBOX_DIR, name))
+            except OSError:
+                pass
+
+
+async def _fetch_video(video_url: str, duration_sec: int) -> str:
+    """Скачивает готовый ролик и подрезает под длительность сцены."""
+    dst_name = f"scene_{uuid.uuid4().hex}.mp4"
+    dst = os.path.join(UPLOAD_DIR, dst_name)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0),
+                                 follow_redirects=True) as client:
+        vr = await client.get(video_url)
+        if vr.status_code != 200 or len(vr.content) < 50_000:
+            raise MediaError(f"видео не скачалось ({vr.status_code})")
+        with open(dst, "wb") as f:
+            f.write(vr.content)
+    if duration_sec and duration_sec >= 2:
+        trimmed = dst + ".trim.mp4"
+        r2 = subprocess.run(
+            [FFMPEG, "-y", "-i", dst, "-t", str(duration_sec),
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+             "-an", "-pix_fmt", "yuv420p", trimmed],
+            capture_output=True, timeout=300,
+        )
+        if r2.returncode == 0 and os.path.exists(trimmed):
+            os.replace(trimmed, dst)
+    return dst_name
+
+
+async def _animate_kling(prompt: str, first_path: str, last_path: str | None,
+                         duration_sec: int) -> str:
+    """Kling image-to-video по первому (и последнему) кадру."""
+    if KIE_API_KEY:
+        return await _animate_via_kie(KIE_MODEL, prompt, first_path, last_path, duration_sec)
+    outbox: list[str] = []
+    try:
+        first_url, n1 = _outbox_publish(first_path)
+        outbox.append(n1)
+        tail_url = ""
+        if last_path and os.path.exists(last_path):
+            tail_url, n2 = _outbox_publish(last_path)
+            outbox.append(n2)
+        dur = 10 if duration_sec > 7 else 5  # Kling принимает только 5 или 10 секунд
+
+        if KIE_API_KEY:
+            headers = {"Authorization": f"Bearer {KIE_API_KEY}"}
+            payload = {
+                "model": KIE_MODEL,
+                "input": {"prompt": prompt, "image_url": first_url,
+                          "duration": dur, "aspect_ratio": "9:16"},
+            }
+            if tail_url:
+                payload["input"]["tail_image_url"] = tail_url
+            submit_url = f"{KIE_API}/api/v1/jobs/createTask"
+            status_url = f"{KIE_API}/api/v1/jobs/recordInfo?taskId="
+        else:
+            headers = {"Authorization": f"Bearer {_kling_jwt()}"}
+            payload = {
+                "model_name": KLING_MODEL, "prompt": prompt, "image": first_url,
+                "duration": str(dur), "aspect_ratio": "9:16", "mode": "std",
+            }
+            if tail_url:
+                payload["image_tail"] = tail_url
+            submit_url = f"{KLING_API}/v1/videos/image2video"
+            status_url = f"{KLING_API}/v1/videos/image2video/"
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            r = await client.post(submit_url, json=payload, headers=headers)
+        if r.status_code not in (200, 201, 202):
+            raise MediaError(f"Kling submit {r.status_code}: {r.text[:250]}")
+        data = r.json() or {}
+        inner = data.get("data") or {}
+        task_id = (inner.get("taskId") or inner.get("task_id") or inner.get("id")
+                   or data.get("taskId") or data.get("task_id"))
+        if not task_id:
+            raise MediaError(f"Kling: нет task_id ({str(data)[:200]})")
+
+        deadline = time.time() + KLING_TIMEOUT_S
+        video_url = ""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            while time.time() < deadline:
+                await asyncio.sleep(10)
+                sr = await client.get(f"{status_url}{task_id}", headers=headers)
+                if sr.status_code != 200:
+                    continue
+                sd = (sr.json() or {}).get("data") or {}
+                state = str(sd.get("state") or sd.get("task_status") or "").lower()
+                if state in ("fail", "failed", "error"):
+                    reason = sd.get("failMsg") or sd.get("task_status_msg") or "без причины"
+                    raise MediaError(f"Kling: задача упала — {str(reason)[:200]}")
+                # у обоих каналов результат лежит в разных местах — ищем ссылку
+                blob = str(sd)
+                m = re.search(r"https?://[^\s\"'\)]+\.mp4", blob)
+                if state in ("success", "succeed", "completed") and m:
+                    video_url = m.group(0)
+                    break
+        if not video_url:
+            raise MediaError("Kling: таймаут ожидания видео")
+
+        dst_name = f"scene_{uuid.uuid4().hex}.mp4"
+        dst = os.path.join(UPLOAD_DIR, dst_name)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0),
+                                     follow_redirects=True) as client:
+            vr = await client.get(video_url)
+            if vr.status_code != 200 or len(vr.content) < 50_000:
+                raise MediaError(f"Kling: не скачалось видео ({vr.status_code})")
+            with open(dst, "wb") as f:
+                f.write(vr.content)
+        if duration_sec and duration_sec >= 2:
+            trimmed = dst + ".trim.mp4"
+            r2 = subprocess.run(
+                [FFMPEG, "-y", "-i", dst, "-t", str(duration_sec),
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                 "-an", "-pix_fmt", "yuv420p", trimmed],
+                capture_output=True, timeout=300,
+            )
+            if r2.returncode == 0 and os.path.exists(trimmed):
+                os.replace(trimmed, dst)
+        return dst_name
+    finally:
+        for name in outbox:
+            try:
+                os.remove(os.path.join(OUTBOX_DIR, name))
+            except OSError:
+                pass
+
+
 async def animate_scene(
     *, prompt: str, first_path: str, last_path: str | None,
-    duration_sec: int, provider: str,
+    duration_sec: int, provider: str, seedance_model: str = "",
 ) -> str:
     """Возвращает имя mp4 в UPLOAD_DIR."""
     if provider == "seedance":
+        # kie.ai дешевле seevio и живёт на том же ключе, что Kling — если он
+        # настроен, Seedance берём оттуда, а seevio остаётся запасным каналом.
+        if KIE_API_KEY:
+            kie_model = (seedance_model or SEEVIO_MODEL).replace("seedance-2-5", "seedance-2-5") \
+                .replace("seedance-2-0", "seedance-2-0")
+            try:
+                return await _animate_via_kie(kie_model, prompt, first_path, last_path, duration_sec)
+            except MediaError as e:
+                log.warning("kie.ai не смог, пробую seevio: %s", str(e)[:200])
         if not seedance_available():
             raise MediaError(
                 "Seedance недоступен: нет SEEVIO_API_KEY — создай ключ в "
                 "дашборде seevio.ai и добавь его в infra/.env")
         try:
-            return await _animate_seedance(prompt, first_path, last_path, duration_sec)
+            return await _animate_seedance(prompt, first_path, last_path, duration_sec,
+                                           model=seedance_model)
         except MediaError as e:
             # Кончились кредиты seevio — не роняем сцену, а дорисовываем через
             # Grok (он по подписке и бесплатен). Отличие: оживляет только
@@ -334,6 +564,10 @@ async def animate_scene(
                 raise
             log.warning("seevio без кредитов, откатываюсь на Grok: %s", str(e)[:200])
             return await _animate_grok(prompt, first_path)
+    if provider == "kling":
+        if not kling_available():
+            raise MediaError("Kling недоступен: нет KIE_API_KEY или ключей KLING_*")
+        return await _animate_kling(prompt, first_path, last_path, duration_sec)
     if provider == "grok":
         return await _animate_grok(prompt, first_path)
     raise MediaError(f"неизвестный провайдер видео: {provider}")

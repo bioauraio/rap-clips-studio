@@ -49,6 +49,12 @@ class User(Base):
     tg_id = Column(String, nullable=False, default="")
     tg_username = Column(String, nullable=False, default="")
     yandex_id = Column(String, nullable=False, default="")
+    google_id = Column(String, nullable=False, default="")
+    email = Column(String, nullable=False, default="")
+    # Подписка: способ оплаты для автосписания и дата следующего продления.
+    pay_method_id = Column(String, nullable=False, default="")
+    plan_until = Column(DateTime, nullable=True)
+    autopay = Column(Boolean, nullable=False, default=True)
     avatar_url = Column(String, nullable=False, default="")
 
 

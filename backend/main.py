@@ -178,12 +178,37 @@ def _check_file_owner(db: Session, user: User, fname: str) -> None:
         raise HTTPException(404, "файл не найден")
 
 
+# Тарифы сервиса. free — на наших подписках (ChatGPT рисует кадры, Grok
+# оживляет); платные открывают Seedance и Kling, за которые платим по API.
+PLANS = {
+    "free": {"title": "FREE", "price": 0, "points": 60,
+             "video": ["grok"], "seedance_model": "",
+             "note": "кадры — ChatGPT, видео — Grok"},
+    "pro": {"title": "PRO", "price": int(os.environ.get("PRICE_PRO", "990")), "points": 600,
+            "video": ["grok", "seedance"], "seedance_model": "seedance-2-0",
+            "note": "+ Seedance 2.0: монтаж по первому и последнему кадру"},
+    "pro_max": {"title": "PRO MAX", "price": int(os.environ.get("PRICE_PRO_MAX", "2990")),
+                "points": 2500, "video": ["grok", "seedance", "kling"],
+                "seedance_model": "seedance-2-5",
+                "note": "+ Seedance 2.5 и Kling: максимум качества"},
+}
+
+
+def _plan_of(user: "User") -> str:
+    if user.is_admin:
+        return "pro_max"
+    return user.plan if user.plan in PLANS else "free"
+
+
 def _allowed_provider(user: "User", wanted: str) -> str:
-    """Тариф решает, чем рисуем видео: free — только Grok (наша подписка),
-    pro и админ — Seedance (платные кредиты). Тихо понижаем вместо отказа,
-    чтобы кнопка всегда работала."""
-    if user.is_admin or (user.plan or "free") == "pro":
-        return wanted or "seedance"
+    """Тариф решает, чем рисуем видео. Недоступный провайдер тихо понижаем
+    до разрешённого, чтобы кнопка работала всегда, а не падала с ошибкой."""
+    allowed = PLANS[_plan_of(user)]["video"]
+    if wanted in allowed:
+        return wanted
+    for p in ("seedance", "kling", "grok"):
+        if p in allowed:
+            return p
     return "grok"
 
 
@@ -280,7 +305,7 @@ def get_or_create_project(db: Session, user: User, project_id: int | None = None
 
 def _user_dict(user: User) -> dict:
     return {"id": user.id, "name": user.name, "login": user.login,
-            "is_admin": user.is_admin, "gen_points": user.gen_points, "plan": user.plan}
+            "is_admin": user.is_admin, "gen_points": user.gen_points, "plan": _plan_of(user), "plan_title": PLANS[_plan_of(user)]["title"]}
 
 
 def _session_response(user: User) -> JSONResponse:
@@ -384,6 +409,7 @@ def auth_config():
         "telegram": bool(TG_BOT_TOKEN and TG_BOT_USERNAME),
         "telegram_bot": TG_BOT_USERNAME,
         "yandex": bool(YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET),
+        "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
     }
 
 
@@ -431,6 +457,89 @@ async def auth_telegram(request: Request, db: Session = Depends(db_session)):
     else:
         user = _adopt_guest(db, guest, user)
     return _auth_response(user)
+
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+
+
+def _external_login(db: Session, request: Request, field: str, ext_id: str,
+                    name: str, email: str = "", avatar: str = "") -> "User":
+    """Общий вход по внешнему id: находим аккаунт, иначе «повышаем» гостя,
+    иначе заводим нового. Проекты гостя не теряются."""
+    user = db.query(User).filter(getattr(User, field) == ext_id).first()
+    guest = None
+    token = request.cookies.get(QV_COOKIE)
+    if token:
+        try:
+            guest = db.get(User, int(signer.loads(token, max_age=COOKIE_MAX_AGE).get("uid") or 0))
+        except Exception:  # noqa: BLE001
+            guest = None
+    fresh_guest = guest and not guest.login and not guest.tg_id and not guest.yandex_id \
+        and not guest.google_id
+    if not user:
+        user = guest if fresh_guest else User()
+        if not fresh_guest:
+            db.add(user)
+        setattr(user, field, ext_id)
+        user.name = name or user.name or "гость"
+        if email:
+            user.email = email
+        if avatar:
+            user.avatar_url = avatar
+        db.commit()
+        db.refresh(user)
+    else:
+        _adopt_guest(db, guest, user)
+    return user
+
+
+@app.get("/api/auth/google/start")
+def auth_google_start():
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(400, "вход через Google не настроен")
+    from fastapi.responses import RedirectResponse
+    redirect = f"{PUBLIC_BASE_URL}/api/auth/google/callback"
+    url = ("https://accounts.google.com/o/oauth2/v2/auth?response_type=code"
+           f"&client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect}"
+           "&scope=openid%20email%20profile&access_type=online&prompt=select_account")
+    return RedirectResponse(url)
+
+
+@app.get("/api/auth/google/callback")
+async def auth_google_callback(code: str = "", request: Request = None,
+                               db: Session = Depends(db_session)):
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        raise HTTPException(400, "вход через Google не настроен")
+    if not code:
+        raise HTTPException(400, "Google не вернул код")
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=30) as client:
+        tok = await client.post("https://oauth2.googleapis.com/token", data={
+            "code": code, "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": f"{PUBLIC_BASE_URL}/api/auth/google/callback",
+            "grant_type": "authorization_code",
+        })
+        if tok.status_code != 200:
+            raise HTTPException(403, f"Google отказал: {tok.text[:150]}")
+        access = (tok.json() or {}).get("access_token", "")
+        info = await client.get("https://www.googleapis.com/oauth2/v2/userinfo",
+                                headers={"Authorization": f"Bearer {access}"})
+        if info.status_code != 200:
+            raise HTTPException(403, "не удалось получить профиль Google")
+        prof = info.json() or {}
+    gid = str(prof.get("id") or "")
+    if not gid:
+        raise HTTPException(403, "Google не вернул id")
+    user = _external_login(db, request, "google_id", gid,
+                           prof.get("name") or prof.get("email") or "гость",
+                           prof.get("email") or "", prof.get("picture") or "")
+    from fastapi.responses import RedirectResponse
+    resp = RedirectResponse("/")
+    resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=COOKIE_MAX_AGE,
+                    httponly=True, samesite="lax", secure=True)
+    return resp
 
 
 @app.get("/api/auth/yandex/start")
@@ -1671,9 +1780,12 @@ def _run_scene_video(scene_id: int) -> None:
             if scene.image_last_filename else None
         )
         import asyncio
+        owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
+        model = PLANS[_plan_of(owner)]["seedance_model"] if owner else ""
         fname = asyncio.run(mediagen.animate_scene(
             prompt=scene.motion_prompt, first_path=first_path, last_path=last_path,
             duration_sec=scene.duration_sec, provider=scene.video_provider,
+            seedance_model=model,
         ))
         old_video = scene.video_filename
         scene.video_filename = fname
@@ -2005,10 +2117,11 @@ def get_outbox(filename: str):
 
 @app.get("/api/providers")
 def providers(user: User = Depends(current_user)):
-    pro = user.is_admin or (user.plan or "free") == "pro"
-    avail = mediagen.video_providers() if pro else ["grok"]
-    return {"video": avail, "seedance": mediagen.seedance_available() and pro,
-            "plan": "pro" if pro else "free"}
+    plan = _plan_of(user)
+    live = mediagen.video_providers()  # что реально настроено ключами
+    avail = [p for p in PLANS[plan]["video"] if p in live]
+    return {"video": avail or ["grok"], "plan": plan,
+            "seedance": "seedance" in avail, "kling": "kling" in avail}
 
 
 
@@ -2431,12 +2544,201 @@ def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(
     return {"ok": True, "queued": len(todo), "provider": prov}
 
 
+# ─────────────────────────── оплата (ЮKassa) ───────────────────────────
+# Магазин отдельный: shop_id и секретный ключ кладутся в infra/.env. Пока их
+# нет — витрина тарифов показывается, но кнопка оплаты честно говорит, что
+# приём платежей ещё не подключён.
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
+YOOKASSA_SECRET = os.environ.get("YOOKASSA_SECRET_KEY", "")
+PLAN_DAYS = int(os.environ.get("PLAN_DAYS", "30"))
+
+
+@app.get("/api/billing/plans")
+def billing_plans(user: User = Depends(current_user)):
+    return {
+        "current": _plan_of(user),
+        "enabled": bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET),
+        "plans": [
+            {"id": pid, "title": p["title"], "price": p["price"],
+             "points": p["points"], "note": p["note"], "video": p["video"]}
+            for pid, p in PLANS.items()
+        ],
+    }
+
+
+@app.post("/api/billing/create")
+async def billing_create(request: Request, user: User = Depends(current_user),
+                         db: Session = Depends(db_session)):
+    """Создаёт платёж в ЮKassa и возвращает ссылку на оплату."""
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
+        raise HTTPException(400, "приём платежей ещё не подключён")
+    body = await request.json()
+    plan_id = str(body.get("plan") or "")
+    plan = PLANS.get(plan_id)
+    if not plan or plan["price"] <= 0:
+        raise HTTPException(400, "неизвестный тариф")
+
+    import httpx as _httpx
+    idem = uuid.uuid4().hex
+    payload = {
+        "amount": {"value": f"{plan['price']}.00", "currency": "RUB"},
+        "capture": True,
+        # Сохранённый способ оплаты = подписка: дальше списываем сами раз в месяц.
+        "save_payment_method": True,
+        "confirmation": {"type": "redirect", "return_url": f"{PUBLIC_BASE_URL}/?paid={plan_id}"},
+        "description": f"QLOLVIDEO {plan['title']} — {PLAN_DAYS} дней",
+        "metadata": {"user_id": str(user.id), "plan": plan_id},
+    }
+    async with _httpx.AsyncClient(timeout=30) as client:
+        r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
+                              auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
+                              headers={"Idempotence-Key": idem})
+    if r.status_code not in (200, 201):
+        raise HTTPException(502, f"ЮKassa отказала: {r.text[:200]}")
+    data = r.json() or {}
+    url = ((data.get("confirmation") or {}).get("confirmation_url") or "")
+    if not url:
+        raise HTTPException(502, "ЮKassa не вернула ссылку оплаты")
+    return {"ok": True, "url": url, "payment_id": data.get("id", "")}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request, db: Session = Depends(db_session)):
+    """Уведомление ЮKassa: по успешной оплате выдаём тариф и очки.
+
+    Событие проверяем обратным запросом в ЮKassa — на вебхук можно прислать
+    что угодно, доверять телу нельзя."""
+    body = await request.json()
+    obj = (body or {}).get("object") or {}
+    pay_id = str(obj.get("id") or "")
+    if (body or {}).get("event") != "payment.succeeded" or not pay_id:
+        return {"ok": True}
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
+        return {"ok": True}
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(f"https://api.yookassa.ru/v3/payments/{pay_id}",
+                             auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET))
+    if r.status_code != 200:
+        log.warning("вебхук ЮKassa: платёж %s не подтвердился (%s)", pay_id, r.status_code)
+        return {"ok": True}
+    real = r.json() or {}
+    if real.get("status") != "succeeded" or not real.get("paid"):
+        return {"ok": True}
+    meta = real.get("metadata") or {}
+    uid = int(meta.get("user_id") or 0)
+    plan_id = str(meta.get("plan") or "")
+    user = db.get(User, uid)
+    if not user or plan_id not in PLANS:
+        return {"ok": True}
+    user.plan = plan_id
+    user.gen_points = max(user.gen_points, PLANS[plan_id]["points"])
+    from datetime import timedelta
+    base = user.plan_until if (user.plan_until and user.plan_until > now()) else now()
+    user.plan_until = base + timedelta(days=PLAN_DAYS)
+    pm = (real.get("payment_method") or {})
+    if pm.get("saved") and pm.get("id"):
+        user.pay_method_id = str(pm["id"])
+    db.commit()
+    log.info("оплачен тариф %s для юзера %s (платёж %s)", plan_id, uid, pay_id)
+    return {"ok": True}
+
+
+async def _charge_subscription(db: Session, user: "User") -> bool:
+    """Автосписание за следующий месяц по сохранённому способу оплаты."""
+    plan = PLANS.get(user.plan or "free")
+    if not plan or plan["price"] <= 0 or not user.pay_method_id or not user.autopay:
+        return False
+    import httpx as _httpx
+    payload = {
+        "amount": {"value": f"{plan['price']}.00", "currency": "RUB"},
+        "capture": True,
+        "payment_method_id": user.pay_method_id,
+        "description": f"QLOLVIDEO {plan['title']} — продление",
+        "metadata": {"user_id": str(user.id), "plan": user.plan},
+    }
+    async with _httpx.AsyncClient(timeout=40) as client:
+        r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
+                              auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
+                              headers={"Idempotence-Key": uuid.uuid4().hex})
+    ok = r.status_code in (200, 201) and (r.json() or {}).get("status") == "succeeded"
+    if ok:
+        from datetime import timedelta
+        user.plan_until = now() + timedelta(days=PLAN_DAYS)
+        user.gen_points = max(user.gen_points, plan["points"])
+        db.commit()
+        log.info("подписка продлена: юзер %s, тариф %s", user.id, user.plan)
+    else:
+        log.warning("не продлилась подписка юзера %s: %s", user.id, r.text[:200])
+    return ok
+
+
+def _subscription_worker() -> None:
+    """Раз в час проверяет, кому пора продлить подписку, и списывает.
+
+    Кому не удалось списать и срок вышел — мягко возвращаем на free, доступ
+    не отбираем задним числом."""
+    import asyncio as _asyncio
+    while True:
+        time.sleep(3600)
+        if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
+            continue
+        db = SessionLocal()
+        try:
+            due = db.query(User).filter(User.plan != "free", User.plan_until.isnot(None),
+                                        User.plan_until <= now()).all()
+            for u in due:
+                try:
+                    ok = _asyncio.run(_charge_subscription(db, u))
+                except Exception as e:  # noqa: BLE001
+                    ok = False
+                    log.warning("ошибка автосписания у %s: %s", u.id, str(e)[:150])
+                if not ok:
+                    u.plan = "free"
+                    u.pay_method_id = ""
+                    db.commit()
+                    log.info("подписка юзера %s закончилась — вернули на free", u.id)
+        finally:
+            db.close()
+
+
+@app.post("/api/billing/cancel")
+def billing_cancel(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Отключить автопродление — тариф доработает до конца оплаченного срока."""
+    user.autopay = False
+    db.commit()
+    return {"ok": True, "until": user.plan_until.isoformat() if user.plan_until else ""}
+
+
+@app.get("/api/account")
+def account(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Личный кабинет: тариф, срок, очки, привязки входа, проекты."""
+    plan = _plan_of(user)
+    projects = db.query(Project).filter(Project.owner_id == user.id).count()
+    return {
+        "name": user.name, "email": user.email, "login": user.login,
+        "avatar_url": user.avatar_url,
+        "plan": plan, "plan_title": PLANS[plan]["title"],
+        "plan_note": PLANS[plan]["note"],
+        "plan_until": user.plan_until.isoformat() if user.plan_until else "",
+        "autopay": bool(user.autopay and user.pay_method_id),
+        "points": user.gen_points, "projects": projects,
+        "linked": {"telegram": bool(user.tg_id), "yandex": bool(user.yandex_id),
+                   "google": bool(user.google_id), "password": bool(user.login)},
+    }
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "ts": int(time.time())}
 
 
 # ─────────────────────────────── статика (SPA) ───────────────────────────────
+
+# Фоновая проверка подписок: раз в час смотрим, кому пора продлить.
+from threading import Thread as _Thread  # noqa: E402
+_Thread(target=_subscription_worker, daemon=True).start()
+
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")
 if os.path.isdir(FRONTEND_DIR):
