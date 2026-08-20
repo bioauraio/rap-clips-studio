@@ -1,14 +1,24 @@
 """Медиа-слой: картинки кадров, видео сцен, нарезка аудио, сборка клипа.
 
-Картинки — через host-шлюзы BIOAURA (ChatGPT/Grok по подписке), чистый HTTP.
-Видео — два провайдера, оба по ПОДПИСКЕ (ключей не покупаем):
-  * seedance — host-шлюз с живым UI Dreamina (infra/seedance_gateway.py).
-    Умеет ПЕРВЫЙ и ПОСЛЕДНИЙ кадр: сцена интерполируется между двумя нашими
-    картинками, отсюда связный монтаж вместо отдельного «оживления» одного
-    кадра. Доступен, только когда в шлюзе живая сессия владельца.
-  * grok — резервный, оживляет ТОЛЬКО первый кадр (последний игнорирует).
-    Работает через ту же подписочную сессию, что и контент-конвейер, и пишет
-    результат в общий каталог организма — забираем файл себе и стираем оттуда.
+КАДРЫ — движки в IMAGE_ENGINES:
+  * chatgpt / grok — host-шлюзы BIOAURA по подписке владельца, стоят нам ноль,
+    но принимают ОДИН референс (отсюда hstack-коллаж в main.py) и живут в
+    одной браузерной сессии на весь Организм.
+  * nano-banana / nano-banana-2 / nano-banana-pro — Google Gemini Image через
+    агрегатор kie.ai. Берут до 8-14 ОТДЕЛЬНЫХ референсов (коллаж не нужен),
+    отдают нативную вертикаль 1K/2K/4K и держат параллельные задачи.
+    Платные: тариф решает, кому они достаются.
+
+ВИДЕО — движки в VIDEO_ENGINES:
+  * grok — host-шлюз по подписке, бесплатен, но оживляет ТОЛЬКО первый кадр.
+  * seedance-2-mini / 2-0 / 2-5, kling-3.0(-pro), minimax-h3 — через kie.ai,
+    все умеют ПЕРВЫЙ и ПОСЛЕДНИЙ кадр: сцена интерполируется между двумя
+    нашими картинками, отсюда связный монтаж.
+  * seevio.ai и официальный klingai.com остаются АВАРИЙНЫМИ каналами.
+
+Себестоимость каждого движка в долларах лежит прямо в реестрах — из этих же
+чисел main.py собирает цену сцены в очках, поэтому прайс не может разойтись
+с реальными расходами.
 
 ffmpeg (есть в образе) режет аудиодорожку под каждую сцену и собирает
 утверждённые сцены в цельный клип на трек.
@@ -17,8 +27,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -53,18 +63,31 @@ OUTBOX_DIR = os.environ.get("OUTBOX_DIR", "/data/outbox")
 os.makedirs(OUTBOX_DIR, exist_ok=True)
 SEEDANCE_TIMEOUT_S = float(os.environ.get("SEEDANCE_TIMEOUT_S", "900"))
 
-# Kling (Kuaishou) — второй платный видеогенератор. Два канала на выбор:
-#   kie   — агрегатор kie.ai: дешевле всех, простая оплата, ключ KIE_API_KEY;
-#   kling — официальный API klingai.com (api-singapore), ключи KLING_ACCESS_KEY/SECRET.
-# Оба умеют первый+последний кадр, поэтому монтаж не деградирует.
+# kie.ai — агрегатор: один ключ и один баланс на Nano Banana (кадры), Seedance
+# и Kling (видео). Дешевле прямых каналов и не требует второго кошелька.
+#   KIE_API_KEY  — ключ из kie.ai/api-key;
+#   kling        — официальный API klingai.com (api-singapore) остаётся
+#                  АВАРИЙНЫМ каналом: он дороже kie на 17-21 %.
 KIE_API_KEY = os.environ.get("KIE_API_KEY", "")
 KIE_API = os.environ.get("KIE_API", "https://api.kie.ai")
-KIE_MODEL = os.environ.get("KIE_MODEL", "kling-v2-6")
+KIE_TIMEOUT_S = float(os.environ.get("KIE_TIMEOUT_S", "900"))
+# Как часто опрашиваем задачу. Вебхук (callBackUrl) не используем: у сервиса
+# один домен и лишний публичный роут-приёмник тут не окупается.
+KIE_POLL_S = float(os.environ.get("KIE_POLL_S", "10"))
+# Кадры готовятся быстрее видео, а их на трёхминутный клип шестьдесят: опрос
+# раз в 10 секунд накидывал бы минуты пустого ожидания на ровном месте.
+KIE_POLL_IMAGE_S = float(os.environ.get("KIE_POLL_IMAGE_S", "3"))
 KLING_ACCESS_KEY = os.environ.get("KLING_ACCESS_KEY", "")
 KLING_SECRET_KEY = os.environ.get("KLING_SECRET_KEY", "")
 KLING_API = os.environ.get("KLING_API", "https://api-singapore.klingai.com")
 KLING_MODEL = os.environ.get("KLING_MODEL", "kling-v2-6")
 KLING_TIMEOUT_S = float(os.environ.get("KLING_TIMEOUT_S", "900"))
+
+# Кадры Nano Banana: разрешение (1K|2K|4K) и порядок движков картинок.
+# 2K — рабочий компромисс: нативная вертикаль без апскейла и вдвое дешевле 4K.
+NANO_RESOLUTION = os.environ.get("NANO_RESOLUTION", "2K")
+# Порядок фолбэка движков кадров, если явный не задан вызовом.
+IMAGE_PROVIDER_ORDER = os.environ.get("IMAGE_PROVIDER_ORDER", "").strip()
 
 IMAGE_TIMEOUT = httpx.Timeout(200.0, connect=15.0)
 VIDEO_TIMEOUT = httpx.Timeout(560.0, connect=15.0)
@@ -84,9 +107,14 @@ class MediaError(RuntimeError):
     pass
 
 
+def kie_available() -> bool:
+    """kie.ai доступен, когда задан ключ агрегатора."""
+    return bool(KIE_API_KEY)
+
+
 def seedance_available() -> bool:
-    """Провайдер доступен, когда задан API-ключ seevio."""
-    return bool(SEEVIO_API_KEY)
+    """Seedance доступен через kie.ai (основной канал) или seevio (запасной)."""
+    return bool(KIE_API_KEY or SEEVIO_API_KEY)
 
 
 def kling_available() -> bool:
@@ -95,6 +123,8 @@ def kling_available() -> bool:
 
 
 def video_providers() -> list[str]:
+    """Семейства движков видео — словарь, который знает фронт: grok/seedance/kling.
+    Конкретную модель внутри семейства выбирает тариф (см. VIDEO_ENGINES)."""
     out = []
     if seedance_available():
         out.append("seedance")
@@ -104,58 +134,317 @@ def video_providers() -> list[str]:
     return out
 
 
+# ─────────────────────── реестр движков (правда о цене) ───────────────────────
+# Один реестр на весь сервис: id движка → как его вызвать и сколько он стоит
+# НАМ в долларах. Тарификация в очках собирается из этих же чисел (main.py),
+# поэтому цена в очках физически не может разойтись с себестоимостью.
+#
+# Цены — прайс kie.ai (август 2026), сцена 6 секунд, вертикаль 9:16, без звука.
+# ВАЖНО: это ПРАЙС-ЛИСТ, а не факт. Реальный расход (creditsConsumed) виден в
+# kie.ai/logs — по нему цифры калибруются после первых прогонов.
+
+IMAGE_ENGINES: dict[str, dict] = {
+    # Шлюзы владельца: подписка уже оплачена, генерация стоит нам ноль.
+    "chatgpt": {
+        "title": "ChatGPT (gateway)", "channel": "gateway",
+        "usd": 0.0, "max_refs": 1, "native_4k": False, "paid": False,
+    },
+    "grok": {
+        "title": "Grok (gateway)", "channel": "gateway",
+        "usd": 0.0, "max_refs": 1, "native_4k": False, "paid": False,
+    },
+    # Nano Banana (Google Gemini Image) через kie.ai. Смысл не в Elo — по
+    # слепым тестам GPT Image 2 со шлюза даже выше, — а в инженерии: до 14
+    # ОТДЕЛЬНЫХ референсов вместо склеенного коллажа, нативная вертикаль
+    # 1K/2K/4K без ffmpeg-апскейла и параллельные задачи вместо одной
+    # браузерной сессии на весь Организм.
+    "nano-banana": {
+        "title": "Nano Banana (edit)", "channel": "kie",
+        "model": "google/nano-banana-edit", "refs_field": "image_urls",
+        "usd": 0.02, "max_refs": 10, "native_4k": False, "paid": True,
+        # ПРЕДПОЛОЖЕНИЕ: у edit-модели поля aspect_ratio в доках нет — не шлём.
+        "resolutions": (), "aspect": False,
+    },
+    "nano-banana-2": {
+        "title": "Nano Banana 2", "channel": "kie",
+        "model": "nano-banana-2", "refs_field": "image_input",
+        # 1K $0.04 / 2K $0.06 / 4K $0.09 — цену берём под выбранное разрешение.
+        "usd": 0.06, "usd_by_res": {"1K": 0.04, "2K": 0.06, "4K": 0.09},
+        "max_refs": 14, "native_4k": True, "paid": True,
+        "resolutions": ("1K", "2K", "4K"), "aspect": True,
+    },
+    "nano-banana-pro": {
+        "title": "Nano Banana Pro", "channel": "kie",
+        "model": "nano-banana-pro", "refs_field": "image_input",
+        # 1K и 2K по $0.09, 4K $0.12.
+        "usd": 0.09, "usd_by_res": {"1K": 0.09, "2K": 0.09, "4K": 0.12},
+        "max_refs": 8, "native_4k": True, "paid": True,
+        "resolutions": ("1K", "2K", "4K"), "aspect": True,
+    },
+}
+
+GATEWAY_IMAGE_ENGINES = ("chatgpt", "grok")
+
+
+def image_engine_usd(engine: str, resolution: str = "") -> float:
+    """Себестоимость ОДНОЙ картинки на этом движке в долларах."""
+    spec = IMAGE_ENGINES.get(engine) or {}
+    by_res = spec.get("usd_by_res") or {}
+    res = (resolution or NANO_RESOLUTION).upper()
+    return float(by_res.get(res, spec.get("usd", 0.0)))
+
+
+def image_engines_live() -> list[str]:
+    """Что реально можно вызвать прямо сейчас (по ключам)."""
+    out = list(GATEWAY_IMAGE_ENGINES)
+    if kie_available():
+        out += [k for k, v in IMAGE_ENGINES.items() if v["channel"] == "kie"]
+    return out
+
+
+def resolve_image_engine(wanted: str) -> str:
+    """Движок кадров, который реально отработает. Нет ключа kie → молча
+    возвращаем шлюз: сцена не должна падать из-за ненастроенного агрегатора,
+    но наверх (в /api/providers) уходит именно ЭТОТ, честный ответ."""
+    wanted = (wanted or "").strip()
+    if wanted in IMAGE_ENGINES and wanted in image_engines_live():
+        return wanted
+    return "chatgpt"
+
+
+# ──────────────────────────── kie.ai: общий протокол ────────────────────────────
+
+def _kie_headers() -> dict:
+    return {"Authorization": f"Bearer {KIE_API_KEY}", "Content-Type": "application/json"}
+
+
+async def _kie_upload(client: httpx.AsyncClient, path: str) -> str:
+    """Свой файл → публичная ссылка kie.ai (base64-аплоад).
+
+    Почему не наш outbox: PUBLIC_BASE_URL исторически указывает на другой
+    домен, и тогда kie молча не скачает кадр. Плюс аплоад не светит наши
+    файлы наружу — ссылка живёт у них и протухает сама."""
+    payload = {
+        "base64Data": _data_url(path),
+        "uploadPath": "images/rapclips",
+        "fileName": os.path.basename(path),
+    }
+    r = await client.post(f"{KIE_API}/api/file-base64-upload", json=payload,
+                          headers=_kie_headers())
+    if r.status_code not in (200, 201):
+        raise MediaError(f"kie upload {r.status_code}: {r.text[:200]}")
+    data = (r.json() or {})
+    inner = data.get("data") or {}
+    url = (inner.get("downloadUrl") or inner.get("fileUrl") or inner.get("url")
+           or data.get("downloadUrl") or "")
+    if not url:
+        raise MediaError(f"kie upload: нет ссылки в ответе ({str(data)[:200]})")
+    return str(url)
+
+
+async def _kie_result_urls(model: str, payload_input: dict, *, timeout_s: float,
+                           poll_s: float = 0.0) -> list[str]:
+    """createTask → poll recordInfo → список готовых ссылок.
+
+    Результат у kie лежит СТРОКОЙ JSON в data.resultJson — разбираем именно
+    её, а не выцепляем ссылку регуляркой из всего словаря: в data.param
+    приезжает наш же запрос, и регулярка ловила ссылку на входной кадр."""
+    body = {"model": model, "input": payload_input}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0)) as client:
+        r = await client.post(f"{KIE_API}/api/v1/jobs/createTask", json=body,
+                              headers=_kie_headers())
+        if r.status_code == 402:
+            raise MediaError(f"kie.ai insufficient_credits: {r.text[:200]}")
+        if r.status_code == 429:
+            # Задача НЕ встаёт в очередь при 429 — это отказ, а не задержка.
+            raise MediaError(f"kie.ai rate limit 429: {r.text[:200]}")
+        if r.status_code not in (200, 201, 202):
+            raise MediaError(f"kie.ai submit {r.status_code}: {r.text[:250]}")
+        data = r.json() or {}
+        if int(data.get("code") or 200) not in (200, 0):
+            msg = str(data.get("msg") or data)[:200]
+            if "credit" in msg.lower():
+                raise MediaError(f"kie.ai insufficient_credits: {msg}")
+            raise MediaError(f"kie.ai отказал: {msg}")
+        inner = data.get("data") or {}
+        task_id = inner.get("taskId") or inner.get("task_id") or data.get("taskId")
+        if not task_id:
+            raise MediaError(f"kie.ai: нет taskId ({str(data)[:200]})")
+
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            await asyncio.sleep(poll_s or KIE_POLL_S)
+            sr = await client.get(f"{KIE_API}/api/v1/jobs/recordInfo",
+                                  params={"taskId": task_id}, headers=_kie_headers())
+            if sr.status_code != 200:
+                continue
+            sd = (sr.json() or {}).get("data") or {}
+            state = str(sd.get("state") or "").lower()
+            if state == "fail":
+                reason = sd.get("failMsg") or sd.get("failCode") or "без причины"
+                text = str(reason)
+                if "credit" in text.lower() or "insufficient" in text.lower():
+                    raise MediaError(f"kie.ai insufficient_credits: {text[:200]}")
+                raise MediaError(f"kie.ai: задача упала — {text[:200]}")
+            if state == "success":
+                raw = sd.get("resultJson") or "{}"
+                try:
+                    parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                except (ValueError, TypeError):
+                    parsed = {}
+                urls = parsed.get("resultUrls") or parsed.get("result_urls") or []
+                if not urls:
+                    raise MediaError(f"kie.ai: пустой результат ({str(sd)[:200]})")
+                log.info("kie.ai %s: готово, списано кредитов %s",
+                         model, sd.get("creditsConsumed"))
+                return [str(u) for u in urls]
+    raise MediaError(f"kie.ai: таймаут ожидания результата ({model})")
+
+
 # ──────────────────────────── картинки ────────────────────────────
 
-async def generate_image(prompt: str, reference_path: str | None = None) -> tuple[bytes, str]:
-    """Генерация картинки кадра. Возвращает (байты, mime).
+async def _nano_banana(prompt: str, ref_paths: list[str], engine: str,
+                       resolution: str, aspect: str) -> tuple[bytes, str]:
+    """Кадр через Nano Banana на kie.ai.
 
-    reference_path — фото-моделька персонажа (путь в контейнере). Референс
-    умеет только Grok-шлюз (кладём файл на вход его Imagine-композера), поэтому
-    с референсом порядок провайдеров разворачивается: Grok — первым, ChatGPT —
-    запасным (уже без модельки, чисто по словесному описанию)."""
-    errors = []
+    Референсы уходят ОТДЕЛЬНЫМИ картинками (до max_refs), а не склейкой:
+    именно ради этого движок и подключался — hstack-коллаж модель periodически
+    воспроизводила как сетку прямо в кадре."""
+    spec = IMAGE_ENGINES[engine]
+    urls: list[str] = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
+        for pth in ref_paths[: int(spec["max_refs"])]:
+            if pth and os.path.exists(pth):
+                urls.append(await _kie_upload(client, pth))
+    inp: dict = {"prompt": prompt, "output_format": "png"}
+    if urls:
+        inp[spec["refs_field"]] = urls
+    if spec.get("resolutions"):
+        res = (resolution or NANO_RESOLUTION).upper()
+        if res not in spec["resolutions"]:
+            res = spec["resolutions"][0]
+        inp["resolution"] = res
+    if spec.get("aspect"):
+        inp["aspect_ratio"] = aspect or "9:16"
+    out = await _kie_result_urls(spec["model"], inp, timeout_s=KIE_TIMEOUT_S,
+                                 poll_s=KIE_POLL_IMAGE_S)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0),
+                                 follow_redirects=True) as client:
+        ir = await client.get(out[0])
+    if ir.status_code != 200 or len(ir.content) < 1000:
+        raise MediaError(f"kie.ai: кадр не скачался ({ir.status_code})")
+    mime = ir.headers.get("content-type", "image/png").split(";")[0].strip()
+    if not mime.startswith("image/"):
+        mime = "image/png"
+    return ir.content, mime
 
-    async def _chatgpt() -> tuple[bytes, str] | None:
+
+async def generate_image_ex(
+    prompt: str,
+    reference_path: str | None = None,
+    *,
+    reference_paths: list[str] | None = None,
+    engine: str = "",
+    resolution: str = "",
+    aspect: str = "9:16",
+) -> dict:
+    """Кадр + честный ответ, ЧЕМ он нарисован.
+
+    Возвращает {"data","mime","engine","native_4k"}. native_4k=True значит,
+    что движок отдал нативный 4K и ffmpeg-апскейл кадру уже не нужен.
+
+    reference_path — старый одиночный референс (коллаж моделек);
+    reference_paths — список отдельных картинок, его понимает только
+    Nano Banana; шлюзам всё равно достанется первая (у них вход на одну).
+
+    Порядок движков: запрошенный → ChatGPT-шлюз → Grok-шлюз. Падение kie
+    не роняет сцену, а тихо откатывается на подписочные шлюзы."""
+    errors: list[str] = []
+    refs = [p for p in (reference_paths or []) if p and os.path.exists(p)]
+    if not refs and reference_path and os.path.exists(reference_path):
+        refs = [reference_path]
+    single_ref = reference_path if (reference_path and os.path.exists(reference_path)) \
+        else (refs[0] if refs else None)
+
+    async def _chatgpt() -> dict | None:
         payload: dict = {"prompt": prompt}
         # ChatGPT-шлюз умеет референс напрямую (reference_image_b64) — модель
         # держит лицо/предмет с фото, не только Grok.
-        if reference_path and os.path.exists(reference_path):
-            with open(reference_path, "rb") as f:
+        if single_ref:
+            with open(single_ref, "rb") as f:
                 payload["reference_image_b64"] = base64.b64encode(f.read()).decode()
-            payload["reference_mime"] = "image/png" if reference_path.lower().endswith(".png") else "image/jpeg"
+            payload["reference_mime"] = "image/png" if single_ref.lower().endswith(".png") else "image/jpeg"
         try:
             async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
                 r = await client.post(IMAGE_GATEWAY_URL, json=payload)
             if r.status_code == 200:
                 data = r.json()
-                return base64.b64decode(data["image_b64"]), data.get("mime", "image/png")
+                return {"data": base64.b64decode(data["image_b64"]),
+                        "mime": data.get("mime", "image/png"),
+                        "engine": "chatgpt", "native_4k": False}
             errors.append(f"ChatGPT-шлюз {r.status_code}: {r.text[:150]}")
         except Exception as e:  # noqa: BLE001
             errors.append(f"ChatGPT-шлюз недоступен: {e}")
         return None
 
-    async def _grok() -> tuple[bytes, str] | None:
+    async def _grok() -> dict | None:
         payload: dict = {"prompt": prompt}
-        if reference_path and os.path.exists(reference_path):
-            payload["image_path"] = _host_path(reference_path)
+        if single_ref:
+            payload["image_path"] = _host_path(single_ref)
         try:
             async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
                 r = await client.post(f"{GROK_GATEWAY_URL}/generate_image", json=payload)
             if r.status_code == 200:
                 data = r.json()
-                return base64.b64decode(data["image_b64"]), data.get("mime", "image/jpeg")
+                return {"data": base64.b64decode(data["image_b64"]),
+                        "mime": data.get("mime", "image/jpeg"),
+                        "engine": "grok", "native_4k": False}
             errors.append(f"Grok-шлюз {r.status_code}: {r.text[:150]}")
         except Exception as e:  # noqa: BLE001
             errors.append(f"Grok-шлюз недоступен: {e}")
         return None
 
-    # ChatGPT первым всегда: у него выше качество и он теперь тоже умеет референс.
-    order = (_chatgpt, _grok)
-    for fn in order:
-        result = await fn()
+    async def _nano(engine_id: str) -> dict | None:
+        try:
+            data, mime = await _nano_banana(prompt, refs, engine_id, resolution, aspect)
+            res = (resolution or NANO_RESOLUTION).upper()
+            return {"data": data, "mime": mime, "engine": engine_id,
+                    "native_4k": res == "4K"}
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{IMAGE_ENGINES[engine_id]['title']}: {str(e)[:200]}")
+        return None
+
+    # Порядок: явно запрошенный движок, дальше — бесплатные шлюзы владельца.
+    order: list[str] = []
+    wanted = (engine or "").strip()
+    if wanted and wanted in IMAGE_ENGINES:
+        order.append(wanted)
+    elif IMAGE_PROVIDER_ORDER:
+        order += [x.strip() for x in IMAGE_PROVIDER_ORDER.split(",") if x.strip()]
+    for fallback in GATEWAY_IMAGE_ENGINES:
+        if fallback not in order:
+            order.append(fallback)
+
+    live = image_engines_live()
+    for engine_id in order:
+        if engine_id not in live:
+            continue
+        if engine_id == "chatgpt":
+            result = await _chatgpt()
+        elif engine_id == "grok":
+            result = await _grok()
+        else:
+            result = await _nano(engine_id)
         if result:
             return result
-    raise MediaError(" / ".join(errors))
+    raise MediaError(" / ".join(errors) or "нет ни одного живого движка кадров")
+
+
+async def generate_image(prompt: str, reference_path: str | None = None,
+                         **kwargs) -> tuple[bytes, str]:
+    """Совместимая обёртка старого контракта: (байты, mime)."""
+    res = await generate_image_ex(prompt, reference_path, **kwargs)
+    return res["data"], res["mime"]
 
 
 def upscale_to_4k(path: str) -> None:
@@ -354,61 +643,162 @@ def _kling_jwt() -> str:
     return (signing + b"." + _b64.urlsafe_b64encode(sig).rstrip(b"=")).decode()
 
 
-async def _animate_via_kie(model: str, prompt: str, first_path: str,
+# ─────────────────────── реестр движков видео ───────────────────────
+# Схемы полей у моделей kie.ai РАЗНЫЕ, общего inp не существует: Seedance и
+# MiniMax ждут first_frame_url/last_frame_url, Kling — массив image_urls,
+# у части моделей вообще нет aspect_ratio. Поэтому у каждого движка свой
+# сборщик тела запроса, а не один словарь на всех.
+#
+# first_last=False — движок НЕ умеет хвостовой кадр: наш монтаж на нём
+# деградирует до «оживления первого кадра», и это надо честно показывать.
+
+def _body_seedance(prompt: str, first: str, last: str | None, dur: int,
+                   spec: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "first_frame_url": first,
+        "duration": max(4, min(30, int(round(dur)))),
+        "resolution": spec.get("resolution", "720p"),
+        "aspect_ratio": "9:16",
+        # По умолчанию Seedance генерит звук — это и лишние деньги, и мусорная
+        # дорожка под наш трек.
+        "generate_audio": False,
+    }
+    if last:
+        inp["last_frame_url"] = last
+    return inp
+
+
+def _body_kling(prompt: str, first: str, last: str | None, dur: int,
+                spec: dict) -> dict:
+    # У Kling 3.0 duration — СТРОКА, кадры лежат массивом [первый, последний],
+    # а multi_shots обязателен: с ним модель режет ролик на планы сама.
+    urls = [first] + ([last] if last else [])
+    return {
+        "prompt": prompt,
+        "image_urls": urls,
+        "duration": str(max(3, min(15, int(round(dur))))),
+        "mode": spec.get("mode", "std"),
+        "aspect_ratio": "9:16",
+        "multi_shots": False,
+    }
+
+
+def _body_minimax(prompt: str, first: str, last: str | None, dur: int,
+                  spec: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "first_frame_url": first,
+        "duration": max(4, min(15, int(round(dur)))),
+        "resolution": spec.get("resolution", "768p"),
+    }
+    if last:
+        inp["last_frame_url"] = last
+    return inp
+
+
+VIDEO_ENGINES: dict[str, dict] = {
+    # Шлюз владельца: стоит нам ноль, но оживляет ТОЛЬКО первый кадр.
+    "grok": {
+        "title": "Grok (gateway)", "family": "grok", "channel": "gateway",
+        "usd_6s": 0.0, "first_last": False, "paid": False,
+        "note": "Наша подписка. Оживляет только первый кадр сцены.",
+    },
+    # Seedance 2 Mini — топовое семейство арены по цене входного билета,
+    # и оно умеет первый+последний кадр. Рабочая лошадь платных тарифов.
+    "seedance-2-mini": {
+        "title": "Seedance 2 Mini · 720p", "family": "seedance", "channel": "kie",
+        "model": "bytedance/seedance-2-mini", "body": _body_seedance,
+        "resolution": "720p", "usd_6s": 0.246, "first_last": True, "paid": True,
+        "note": "Интерполяция между первым и последним кадром, 720p.",
+    },
+    "seedance-2-0": {
+        "title": "Seedance 2.0 · 720p", "family": "seedance", "channel": "kie",
+        "model": "bytedance/seedance-2", "body": _body_seedance,
+        "resolution": "720p", "usd_6s": 1.23, "first_last": True, "paid": True,
+        "note": "Первое место слепой арены image-to-video. Дорогая.",
+    },
+    "seedance-2-5": {
+        "title": "Seedance 2.5 · 720p", "family": "seedance", "channel": "kie",
+        "model": "bytedance/seedance-2-5", "body": _body_seedance,
+        "resolution": "720p", "usd_6s": 1.89, "first_last": True, "paid": True,
+        "note": "Самая дорогая позиция прайса. Витринный движок, не поточный.",
+    },
+    "seedance-2-5-480": {
+        "title": "Seedance 2.5 · 480p", "family": "seedance", "channel": "kie",
+        "model": "bytedance/seedance-2-5", "body": _body_seedance,
+        "resolution": "480p", "usd_6s": 0.84, "first_last": True, "paid": True,
+        "note": "Та же модель вдвое дешевле — ценой разрешения.",
+    },
+    "kling-3.0": {
+        "title": "Kling 3.0 · 720p", "family": "kling", "channel": "kie",
+        "model": "kling-3.0/video", "body": _body_kling, "mode": "std",
+        "usd_6s": 0.42, "first_last": True, "paid": True,
+        "note": "Kling 3.0 в стандартном режиме, первый+последний кадр.",
+    },
+    "kling-3.0-pro": {
+        "title": "Kling 3.0 Pro · 1080p", "family": "kling", "channel": "kie",
+        "model": "kling-3.0/video", "body": _body_kling, "mode": "pro",
+        "usd_6s": 0.54, "first_last": True, "paid": True,
+        "note": "Kling 3.0 Pro, 1080p, первый+последний кадр.",
+    },
+    "minimax-h3": {
+        "title": "MiniMax H3 · 768p", "family": "seedance", "channel": "kie",
+        "model": "minimax-h3/image-to-video", "body": _body_minimax,
+        "resolution": "768p", "usd_6s": 0.48, "first_last": True, "paid": True,
+        "note": "Второе место арены. Пока не выведен на витрину.",
+    },
+}
+
+
+def video_engine_usd(engine: str, duration_sec: int = 6) -> float:
+    """Себестоимость сцены такой длительности. Прайс у нас за 6 секунд —
+    другие длины считаем пропорционально (у kie цена посекундная)."""
+    spec = VIDEO_ENGINES.get(engine) or {}
+    base = float(spec.get("usd_6s", 0.0))
+    if not duration_sec or duration_sec == 6:
+        return base
+    return round(base * (float(duration_sec) / 6.0), 4)
+
+
+def video_engine_live(engine: str) -> bool:
+    """Движок реально вызываем прямо сейчас?"""
+    spec = VIDEO_ENGINES.get(engine)
+    if not spec:
+        return False
+    if spec["channel"] == "gateway":
+        return True
+    if spec["family"] == "kling":
+        return bool(KIE_API_KEY or (KLING_ACCESS_KEY and KLING_SECRET_KEY))
+    return bool(KIE_API_KEY or SEEVIO_API_KEY)
+
+
+def video_engines_live() -> list[str]:
+    return [k for k in VIDEO_ENGINES if video_engine_live(k)]
+
+
+async def _animate_via_kie(engine: str, prompt: str, first_path: str,
                            last_path: str | None, duration_sec: int) -> str:
     """Единый путь через агрегатор kie.ai — там живут и Seedance, и Kling.
 
-    Один ключ, один баланс и одинаковый протокол задач: дешевле прямых
-    каналов и стабильнее браузерных обёрток."""
-    outbox: list[str] = []
-    try:
-        first_url, n1 = _outbox_publish(first_path)
-        outbox.append(n1)
-        inp: dict = {"prompt": prompt, "image_url": first_url,
-                     "duration": 10 if duration_sec > 7 else 5,
-                     "aspect_ratio": "9:16"}
-        if last_path and os.path.exists(last_path):
-            tail_url, n2 = _outbox_publish(last_path)
-            outbox.append(n2)
-            inp["tail_image_url"] = tail_url
-        headers = {"Authorization": f"Bearer {KIE_API_KEY}"}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
-            r = await client.post(f"{KIE_API}/api/v1/jobs/createTask",
-                                  json={"model": model, "input": inp}, headers=headers)
-        if r.status_code not in (200, 201, 202):
-            raise MediaError(f"kie.ai submit {r.status_code}: {r.text[:250]}")
-        data = (r.json() or {})
-        inner = data.get("data") or {}
-        task_id = inner.get("taskId") or inner.get("task_id") or data.get("taskId")
-        if not task_id:
-            raise MediaError(f"kie.ai: нет taskId ({str(data)[:200]})")
-
-        deadline = time.time() + KLING_TIMEOUT_S
-        video_url = ""
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
-            while time.time() < deadline:
-                await asyncio.sleep(10)
-                sr = await client.get(f"{KIE_API}/api/v1/jobs/recordInfo?taskId={task_id}",
-                                      headers=headers)
-                if sr.status_code != 200:
-                    continue
-                sd = (sr.json() or {}).get("data") or {}
-                state = str(sd.get("state") or "").lower()
-                if state in ("fail", "failed", "error"):
-                    raise MediaError(f"kie.ai: задача упала — {str(sd.get('failMsg'))[:200]}")
-                m = re.search(r"https?://[^\s\"'\)]+\.mp4", str(sd))
-                if m and state in ("success", "succeed", "completed"):
-                    video_url = m.group(0)
-                    break
-        if not video_url:
-            raise MediaError("kie.ai: таймаут ожидания видео")
-        return await _fetch_video(video_url, duration_sec)
-    finally:
-        for name in outbox:
-            try:
-                os.remove(os.path.join(OUTBOX_DIR, name))
-            except OSError:
-                pass
+    Один ключ, один баланс и одинаковый протокол задач. Кадры уходят
+    base64-аплоадом на их же хранилище: наш outbox светил файлы наружу и
+    зависел от PUBLIC_BASE_URL, который у сервиса исторически чужой."""
+    spec = VIDEO_ENGINES.get(engine)
+    if not spec or spec["channel"] != "kie":
+        raise MediaError(f"движок {engine!r} не ходит через kie.ai")
+    if not (first_path and os.path.exists(first_path)):
+        raise MediaError(f"нет файла первого кадра: {first_path}")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
+        first_url = await _kie_upload(client, first_path)
+        last_url = ""
+        # Хвостовой кадр отправляем ТОЛЬКО тем, кто его понимает: остальным он
+        # либо игнорируется, либо ломает валидацию запроса.
+        if spec.get("first_last") and last_path and os.path.exists(last_path):
+            last_url = await _kie_upload(client, last_path)
+    inp = spec["body"](prompt, first_url, last_url or None, duration_sec, spec)
+    urls = await _kie_result_urls(spec["model"], inp, timeout_s=KIE_TIMEOUT_S)
+    return await _fetch_video(urls[0], duration_sec)
 
 
 async def _fetch_video(video_url: str, duration_sec: int) -> str:
@@ -435,11 +825,15 @@ async def _fetch_video(video_url: str, duration_sec: int) -> str:
     return dst_name
 
 
-async def _animate_kling(prompt: str, first_path: str, last_path: str | None,
-                         duration_sec: int) -> str:
-    """Kling image-to-video по первому (и последнему) кадру."""
-    if KIE_API_KEY:
-        return await _animate_via_kie(KIE_MODEL, prompt, first_path, last_path, duration_sec)
+async def _animate_kling_official(prompt: str, first_path: str, last_path: str | None,
+                                  duration_sec: int) -> str:
+    """АВАРИЙНЫЙ канал Kling: официальный API klingai.com по паре ключей.
+
+    Основной путь — kie.ai: там та же модель дешевле на 17-21 %, и это один
+    баланс с Nano Banana и Seedance вместо второго кошелька. Эта ветка живёт
+    на случай, когда агрегатор лёг или у него кончились кредиты."""
+    if not (KLING_ACCESS_KEY and KLING_SECRET_KEY):
+        raise MediaError("официальный Kling недоступен: нет KLING_ACCESS_KEY/KLING_SECRET_KEY")
     outbox: list[str] = []
     try:
         first_url, n1 = _outbox_publish(first_path)
@@ -448,29 +842,18 @@ async def _animate_kling(prompt: str, first_path: str, last_path: str | None,
         if last_path and os.path.exists(last_path):
             tail_url, n2 = _outbox_publish(last_path)
             outbox.append(n2)
-        dur = 10 if duration_sec > 7 else 5  # Kling принимает только 5 или 10 секунд
+        # Официальный API принимает длительность строкой и только 5 или 10 секунд.
+        dur = 10 if duration_sec > 7 else 5
 
-        if KIE_API_KEY:
-            headers = {"Authorization": f"Bearer {KIE_API_KEY}"}
-            payload = {
-                "model": KIE_MODEL,
-                "input": {"prompt": prompt, "image_url": first_url,
-                          "duration": dur, "aspect_ratio": "9:16"},
-            }
-            if tail_url:
-                payload["input"]["tail_image_url"] = tail_url
-            submit_url = f"{KIE_API}/api/v1/jobs/createTask"
-            status_url = f"{KIE_API}/api/v1/jobs/recordInfo?taskId="
-        else:
-            headers = {"Authorization": f"Bearer {_kling_jwt()}"}
-            payload = {
-                "model_name": KLING_MODEL, "prompt": prompt, "image": first_url,
-                "duration": str(dur), "aspect_ratio": "9:16", "mode": "std",
-            }
-            if tail_url:
-                payload["image_tail"] = tail_url
-            submit_url = f"{KLING_API}/v1/videos/image2video"
-            status_url = f"{KLING_API}/v1/videos/image2video/"
+        headers = {"Authorization": f"Bearer {_kling_jwt()}"}
+        payload: dict = {
+            "model_name": KLING_MODEL, "prompt": prompt, "image": first_url,
+            "duration": str(dur), "aspect_ratio": "9:16", "mode": "std",
+        }
+        if tail_url:
+            payload["image_tail"] = tail_url
+        submit_url = f"{KLING_API}/v1/videos/image2video"
+        status_url = f"{KLING_API}/v1/videos/image2video/"
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
             r = await client.post(submit_url, json=payload, headers=headers)
@@ -478,8 +861,8 @@ async def _animate_kling(prompt: str, first_path: str, last_path: str | None,
             raise MediaError(f"Kling submit {r.status_code}: {r.text[:250]}")
         data = r.json() or {}
         inner = data.get("data") or {}
-        task_id = (inner.get("taskId") or inner.get("task_id") or inner.get("id")
-                   or data.get("taskId") or data.get("task_id"))
+        task_id = (inner.get("task_id") or inner.get("taskId") or inner.get("id")
+                   or data.get("task_id") or data.get("taskId"))
         if not task_id:
             raise MediaError(f"Kling: нет task_id ({str(data)[:200]})")
 
@@ -492,39 +875,20 @@ async def _animate_kling(prompt: str, first_path: str, last_path: str | None,
                 if sr.status_code != 200:
                     continue
                 sd = (sr.json() or {}).get("data") or {}
-                state = str(sd.get("state") or sd.get("task_status") or "").lower()
+                state = str(sd.get("task_status") or sd.get("state") or "").lower()
                 if state in ("fail", "failed", "error"):
-                    reason = sd.get("failMsg") or sd.get("task_status_msg") or "без причины"
+                    reason = sd.get("task_status_msg") or sd.get("failMsg") or "без причины"
                     raise MediaError(f"Kling: задача упала — {str(reason)[:200]}")
-                # у обоих каналов результат лежит в разных местах — ищем ссылку
-                blob = str(sd)
-                m = re.search(r"https?://[^\s\"'\)]+\.mp4", blob)
-                if state in ("success", "succeed", "completed") and m:
-                    video_url = m.group(0)
+                if state in ("succeed", "success", "completed"):
+                    videos = ((sd.get("task_result") or {}).get("videos") or [])
+                    if videos:
+                        video_url = str(videos[0].get("url") or "")
+                    if not video_url:
+                        raise MediaError(f"Kling: пустой результат ({str(sd)[:200]})")
                     break
         if not video_url:
             raise MediaError("Kling: таймаут ожидания видео")
-
-        dst_name = f"scene_{uuid.uuid4().hex}.mp4"
-        dst = os.path.join(UPLOAD_DIR, dst_name)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0),
-                                     follow_redirects=True) as client:
-            vr = await client.get(video_url)
-            if vr.status_code != 200 or len(vr.content) < 50_000:
-                raise MediaError(f"Kling: не скачалось видео ({vr.status_code})")
-            with open(dst, "wb") as f:
-                f.write(vr.content)
-        if duration_sec and duration_sec >= 2:
-            trimmed = dst + ".trim.mp4"
-            r2 = subprocess.run(
-                [FFMPEG, "-y", "-i", dst, "-t", str(duration_sec),
-                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                 "-an", "-pix_fmt", "yuv420p", trimmed],
-                capture_output=True, timeout=300,
-            )
-            if r2.returncode == 0 and os.path.exists(trimmed):
-                os.replace(trimmed, dst)
-        return dst_name
+        return await _fetch_video(video_url, duration_sec)
     finally:
         for name in outbox:
             try:
@@ -533,44 +897,90 @@ async def _animate_kling(prompt: str, first_path: str, last_path: str | None,
                 pass
 
 
+def _no_credits(err: Exception) -> bool:
+    """Отказ «нет денег» — единственная ошибка, при которой откат на Grok
+    честен: у платного канала кончился баланс, а сцена всё равно должна выйти."""
+    text = str(err).lower()
+    return ("insufficient_credits" in text or "insufficient" in text
+            or " 402" in text or "credit" in text)
+
+
+def resolve_video_engine(provider: str, engine: str = "") -> str:
+    """Семейство (grok/seedance/kling) + желаемая модель → конкретный движок.
+
+    Фронт пока знает только семейства, конкретную модель внутри семейства
+    задаёт тариф. Незнакомое имя не роняем — берём самый дешёвый живой
+    движок этого семейства."""
+    engine = (engine or "").strip()
+    if engine in VIDEO_ENGINES:
+        return engine
+    family = (provider or "grok").strip()
+    if family == "grok":
+        return "grok"
+    same = [k for k, v in VIDEO_ENGINES.items() if v["family"] == family]
+    if not same:
+        return "grok"
+    return sorted(same, key=lambda k: VIDEO_ENGINES[k]["usd_6s"])[0]
+
+
 async def animate_scene(
     *, prompt: str, first_path: str, last_path: str | None,
-    duration_sec: int, provider: str, seedance_model: str = "",
+    duration_sec: int, provider: str, seedance_model: str = "", engine: str = "",
 ) -> str:
-    """Возвращает имя mp4 в UPLOAD_DIR."""
-    if provider == "seedance":
-        # kie.ai дешевле seevio и живёт на том же ключе, что Kling — если он
-        # настроен, Seedance берём оттуда, а seevio остаётся запасным каналом.
-        if KIE_API_KEY:
-            kie_model = (seedance_model or SEEVIO_MODEL).replace("seedance-2-5", "seedance-2-5") \
-                .replace("seedance-2-0", "seedance-2-0")
-            try:
-                return await _animate_via_kie(kie_model, prompt, first_path, last_path, duration_sec)
-            except MediaError as e:
-                log.warning("kie.ai не смог, пробую seevio: %s", str(e)[:200])
-        if not seedance_available():
-            raise MediaError(
-                "Seedance недоступен: нет SEEVIO_API_KEY — создай ключ в "
-                "дашборде seevio.ai и добавь его в infra/.env")
+    """Возвращает имя mp4 в UPLOAD_DIR.
+
+    Приоритет каналов: kie.ai (дешевле, один ключ) → seevio (запасной, только
+    Seedance) → официальный Kling (запасной, только Kling) → Grok-шлюз
+    (последний рубеж, оживляет лишь первый кадр).
+
+    seedance_model — легаси-имя модели из тарифа; engine — новый явный id
+    движка из VIDEO_ENGINES, он побеждает."""
+    engine_id = resolve_video_engine(provider, engine or seedance_model)
+    spec = VIDEO_ENGINES.get(engine_id) or VIDEO_ENGINES["grok"]
+
+    if engine_id == "grok" or spec["channel"] == "gateway":
+        return await _animate_grok(prompt, first_path)
+
+    if not video_engine_live(engine_id):
+        raise MediaError(
+            f"{spec['title']} недоступен: нет KIE_API_KEY "
+            f"(создай ключ на kie.ai/api-key и добавь в infra/.env)")
+
+    # 1. Основной канал — kie.ai.
+    if KIE_API_KEY:
+        try:
+            return await _animate_via_kie(engine_id, prompt, first_path, last_path, duration_sec)
+        except MediaError as e:
+            log.warning("kie.ai не смог (%s): %s", engine_id, str(e)[:200])
+            kie_error = e
+    else:
+        kie_error = MediaError("нет KIE_API_KEY")
+
+    # 2. Запасные каналы своего семейства.
+    if spec["family"] == "seedance" and SEEVIO_API_KEY:
         try:
             return await _animate_seedance(prompt, first_path, last_path, duration_sec,
-                                           model=seedance_model)
+                                           model=seedance_model or SEEVIO_MODEL)
         except MediaError as e:
-            # Кончились кредиты seevio — не роняем сцену, а дорисовываем через
-            # Grok (он по подписке и бесплатен). Отличие: оживляет только
-            # первый кадр, последний игнорируется.
-            text = str(e).lower()
-            if "insufficient_credits" not in text and " 402" not in text:
+            if not _no_credits(e):
                 raise
             log.warning("seevio без кредитов, откатываюсь на Grok: %s", str(e)[:200])
             return await _animate_grok(prompt, first_path)
-    if provider == "kling":
-        if not kling_available():
-            raise MediaError("Kling недоступен: нет KIE_API_KEY или ключей KLING_*")
-        return await _animate_kling(prompt, first_path, last_path, duration_sec)
-    if provider == "grok":
+    if spec["family"] == "kling" and KLING_ACCESS_KEY and KLING_SECRET_KEY:
+        try:
+            return await _animate_kling_official(prompt, first_path, last_path, duration_sec)
+        except MediaError as e:
+            if not _no_credits(e):
+                raise
+            log.warning("официальный Kling без кредитов, откатываюсь на Grok: %s", str(e)[:200])
+            return await _animate_grok(prompt, first_path)
+
+    # 3. Кончились деньги у агрегатора — сцену всё равно отдаём (через Grok);
+    # любая другая ошибка уходит наверх, чтобы её было видно, а не замазано.
+    if _no_credits(kie_error):
+        log.warning("kie.ai без кредитов, откатываюсь на Grok: %s", str(kie_error)[:200])
         return await _animate_grok(prompt, first_path)
-    raise MediaError(f"неизвестный провайдер видео: {provider}")
+    raise kie_error
 
 
 # ──────────────────────────── сборка клипа ────────────────────────────

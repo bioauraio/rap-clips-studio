@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -209,14 +210,33 @@ def _rub_kopeks(key: str, usd_cents: int) -> int:
     return usd_cents * USD_RUB
 
 
-# Тарифы сервиса. free — на наших подписках (ChatGPT рисует кадры, Grok
-# оживляет); платные открывают Seedance и Kling, за которые платим по API.
-# points — месячная норма очков, цена работы в очках — в SCENE_COST ниже.
-# Тексты витрины на английском: интерфейс сервиса международный.
+# Тарифы сервиса. free — целиком на подписках владельца (ChatGPT рисует кадры,
+# Grok оживляет), и стоит нам ноль. Платные открывают Nano Banana для кадров и
+# Seedance/Kling для видео — за них мы платим по API kie.ai.
+#
+# ВАЖНО про экономику. Очко привязано к деньгам ровно одной константой
+# POINT_USD (ниже): столько СЕБЕСТОИМОСТИ мы кладём в одно очко. Отсюда:
+#   норма тарифа × POINT_USD = максимум, который тариф может стоить нам за месяц.
+# Это худший случай — человек спускает все очки на самый дорогой движок. По
+# нынешней сетке он равен 41-44 % выручки тарифа. Маржа положительная, но
+# ЭТО НЕ 30 %: движки уровня Seedance 2.5 столько стоят на самом деле, и
+# подгонять цифры «чтобы красиво» здесь нельзя.
+#
+# video — СЕМЕЙСТВА движков, которые видит фронт (grok|seedance|kling).
+# engines — какая конкретная модель стоит за семейством на ЭТОМ тарифе:
+# «Seedance» у PRO и у PRO MAX — разные деньги и разное качество.
+# extra_engines — модели, доступные тарифу сверх дефолтных (явным выбором;
+# фронт научится их показывать, см. backend/models_patch.md).
+# image_engine — движок КАДРОВ по умолчанию. Нет ключа kie — молча работаем
+# на шлюзе, и /api/providers честно отдаёт, что реально включилось.
 PLANS = {
     "free": {
         "title": "FREE", "usd_cents": 0, "points": 120,
-        "video": ["grok"], "seedance_model": "", "priority": False, "badge": "",
+        "video": ["grok"], "engines": {"grok": "grok"}, "extra_engines": [],
+        # FREE обязан остаться на шлюзовых кадрах: Nano Banana для всех
+        # означала бы $3.60 живых денег за каждого зарегистрировавшегося.
+        "image_engine": "chatgpt",
+        "priority": False, "badge": "",
         "note": "One full 3-minute clip on us — Grok engine",
         "features": [
             "120 points — enough for one 3-minute clip",
@@ -226,42 +246,67 @@ PLANS = {
     },
     "pro": {
         "title": "PRO", "usd_cents": int(os.environ.get("PRICE_PRO_USD", "20")) * 100,
-        "points": 700, "video": ["grok", "seedance"], "seedance_model": "seedance-2-0",
+        # 660 очков = ровно один трёхминутный клип на Seedance 2 Mini
+        # (30 сцен × 22 очка). Раньше было 700 очков при цене сцены 10 —
+        # то есть два клипа по $1.23 за сцену, это −$50 на каждом подписчике.
+        "points": 660,
+        "video": ["grok", "seedance"],
+        "engines": {"grok": "grok", "seedance": "seedance-2-mini"},
+        "extra_engines": [],
+        "image_engine": "chatgpt",
         "priority": False, "badge": "",
-        "note": "Seedance 2.0 — motion between your first and last frame",
+        "note": "Seedance 2 Mini — motion between your first and last frame",
         "features": [
-            "700 points every month",
-            "Seedance 2.0: video interpolated between first and last frame",
+            "660 points every month — one full 3-minute clip on Seedance",
+            "Seedance 2 Mini: video interpolated between first and last frame",
             "Unused points roll over, up to two monthly norms",
         ],
     },
     "pro_max": {
         "title": "PRO MAX", "usd_cents": int(os.environ.get("PRICE_PRO_MAX_USD", "100")) * 100,
-        "points": 2400, "video": ["grok", "seedance", "kling"],
-        "seedance_model": "seedance-2-5", "priority": False, "badge": "Most popular",
-        "note": "Seedance 2.5 and Kling — the good-looking ones",
+        # 2400 → 3400 очков (+42 %). Больше дать нельзя: 3400 × POINT_USD =
+        # $42.5 предельной себестоимости на $100 выручки.
+        "points": 3400,
+        "video": ["grok", "seedance", "kling"],
+        "engines": {"grok": "grok", "seedance": "seedance-2-5", "kling": "kling-3.0-pro"},
+        # Дешёвые сильные модели тарифу тоже открыты — выбором, а не по умолчанию.
+        "extra_engines": ["seedance-2-mini", "seedance-2-5-480", "kling-3.0", "minimax-h3"],
+        "image_engine": "nano-banana-pro",
+        "priority": False, "badge": "Most popular",
+        "note": "Nano Banana Pro frames, Seedance 2.5 and Kling 3.0 Pro",
         "features": [
-            "2400 points every month",
-            "Seedance 2.5 and Kling unlocked",
+            "3400 points every month",
+            "Nano Banana Pro draws the frames — native vertical 2K, up to 8 references",
+            "Seedance 2.5 and Kling 3.0 Pro unlocked",
             "Unused points roll over, up to two monthly norms",
         ],
     },
     "studio": {
         "title": "STUDIO", "usd_cents": int(os.environ.get("PRICE_STUDIO_USD", "299")) * 100,
-        "points": 6000, "video": ["grok", "seedance", "kling"],
-        "seedance_model": "seedance-2-5",
+        # 10500 очков = два полных клипа на Seedance 2.5 (62 сцены) или шесть
+        # на Kling 3.0 Pro. Целый клип на самой дорогой модели физически
+        # помещается только сюда.
+        "points": 10500,
+        "video": ["grok", "seedance", "kling"],
+        "engines": {"grok": "grok", "seedance": "seedance-2-5", "kling": "kling-3.0-pro"},
+        "extra_engines": ["seedance-2-mini", "seedance-2-0", "seedance-2-5-480",
+                          "kling-3.0", "minimax-h3"],
+        "image_engine": "nano-banana-pro",
         # priority — пока ЯРЛЫК ВИТРИНЫ: очередь генераций у нас одна и
         # однопоточная (см. _run_all_videos). Реальный приоритет = отдельная
         # задача; не обещай в интерфейсе больше, чем этот флаг делает.
         "priority": True, "badge": "For labels",
         "note": "Album-scale volume on every engine",
         "features": [
-            "6000 points every month — about a dozen 3-minute clips",
-            "Every engine, including Seedance 2.5 and Kling",
-            "Priority processing and direct support",
+            "10500 points every month — two full clips on Seedance 2.5",
+            "Every engine, including Seedance 2.0 and 480p Seedance 2.5",
+            "Nano Banana Pro frames, priority processing and direct support",
         ],
     },
 }
+# Легаси-поле старого кода и старых записей: имя модели Seedance у тарифа.
+for _pid, _p in PLANS.items():
+    _p["seedance_model"] = _p["engines"].get("seedance", "")
 # Производные ценники считаем один раз на старте: год = месяц ×12 −20 %,
 # рубли = доллары × курс. Оба ценника лежат рядом, чтобы витрина и платёжка
 # не считали цену каждая по-своему.
@@ -272,37 +317,67 @@ for _pid, _p in PLANS.items():
     # Легаси-поле для старого фронта, который рисует «₽»: цена в рублях.
     _p["price"] = _p["rub_kopeks"] // 100
 
-# Пакеты очков (докупка сверх подписки). Ступеньками: чем больше пакет, тем
-# дешевле очко — от 2.25¢ до 1.13¢. Купленные очки НЕ сгорают при продлении и
-# не упираются в потолок накопления: человек заплатил за них отдельно.
+# Пакеты очков (докупка сверх подписки).
+#
+# ПОЧИНЕНА ДЫРА. Было: очко в пакете 1.13-2.25¢ против 4.2¢ в PRO MAX — вчетверо
+# дешевле, да ещё и без подписки. В таком виде подписку выгоднее было не
+# покупать вообще. Стало: САМОЕ дешёвое пакетное очко (3.19¢) дороже САМОГО
+# дорогого подписочного (3.03¢ у PRO), то есть пакет проигрывает любой
+# подписке по цене и остаётся тем, чем должен быть — удобством «добрать
+# сейчас», а не способом обойти тариф.
 TOPUP_PACKS = {
-    "p400": {"points": 400, "usd_cents": 900, "badge": ""},
-    "p1000": {"points": 1000, "usd_cents": 1900, "badge": ""},
-    "p2500": {"points": 2500, "usd_cents": 3900, "badge": "Popular"},
-    "p6000": {"points": 6000, "usd_cents": 7900, "badge": ""},
-    "p15000": {"points": 15000, "usd_cents": 16900, "badge": "Best value"},
+    "p400": {"points": 400, "usd_cents": 1500, "badge": ""},
+    "p1000": {"points": 1000, "usd_cents": 3600, "badge": ""},
+    "p2500": {"points": 2500, "usd_cents": 8700, "badge": "Popular"},
+    "p6000": {"points": 6000, "usd_cents": 19900, "badge": ""},
+    "p15000": {"points": 15000, "usd_cents": 47900, "badge": "Best value"},
 }
+# Вторая половина той же дыры: пакеты продавались кому угодно, включая FREE.
+# Теперь докупка — только при живой платной подписке.
+TOPUP_REQUIRES_PLAN = os.environ.get("TOPUP_REQUIRES_PLAN", "1") not in ("0", "false", "no")
 _BASE_PER_POINT = TOPUP_PACKS["p400"]["usd_cents"] / TOPUP_PACKS["p400"]["points"]
 for _kid, _k in TOPUP_PACKS.items():
     _k["rub_kopeks"] = _rub_kopeks(_kid, _k["usd_cents"])
-    # Выгода относительно самого мелкого пакета — витрине нужен ярлык «−44 %».
+    # Выгода относительно самого мелкого пакета — витрине нужен ярлык «−15 %».
     _k["save_pct"] = int(round(100 - 100 * (_k["usd_cents"] / _k["points"]) / _BASE_PER_POINT))
 
 # ───────────────────────── сколько стоит работа ─────────────────────────
-# Цена сцены зависит от ДВИЖКА, а не плоская: Grok — наша подписка и стоит нам
-# ноль, Seedance и Kling мы покупаем по API. Раньше все три списывали по 10, и
-# бесплатный движок съедал у человека столько же, сколько самый дорогой.
-#
-# Сцена — единица тарификации: кадры входят в её цену и отдельно НЕ списываются.
-# Механика: кадры берут аванс FRAMES_COST, генерация видео добирает разницу до
-# цены своего движка (см. _scene_charge). Итог за сцену — ровно SCENE_COST[движок].
-SCENE_COST = {
-    "grok": 4,            # наша подписка: два кадра + анимация первого
-    "seedance-2-0": 10,   # платный API
-    "seedance-2-5": 16,   # платный API, дороже
-    "kling": 16,          # платный API
+# ЕДИНСТВЕННАЯ константа, связывающая очки с деньгами: сколько себестоимости
+# лежит в одном очке. Всё остальное считается из неё и из долларовых цен
+# движков в mediagen.VIDEO_ENGINES/IMAGE_ENGINES — цена в очках физически не
+# может разойтись с тем, что мы платим kie.ai.
+POINT_USD = float(os.environ.get("POINT_USD", "0.0125"))
+# Шлюзы владельца стоят нам ноль, но даром отдавать их нельзя: без ценника
+# перерисовка кадров становится бесконечным насосом по чужой подписке.
+# 2 очка — символическая плата ровно за это.
+GATEWAY_POINTS = int(os.environ.get("GATEWAY_POINTS", "2"))
+SCENE_SEC = 6              # средняя длина сцены, из claude.py
+
+
+def _points_of_usd(usd: float) -> int:
+    """Доллары себестоимости → очки. Округление ВВЕРХ: недобор очка — это
+    наши деньги, а не пользовательские."""
+    if usd <= 0:
+        return GATEWAY_POINTS
+    return max(GATEWAY_POINTS, math.ceil(usd / POINT_USD))
+
+
+# Цена ПАРЫ кадров сцены (первый + последний) по движку картинок.
+FRAME_COST = {
+    eid: _points_of_usd(2 * mediagen.image_engine_usd(eid))
+    for eid in mediagen.IMAGE_ENGINES
 }
-FRAMES_COST = SCENE_COST["grok"]  # аванс за кадры сцены (они тоже на нашей подписке)
+# Цена ВИДЕО сцены (6 секунд) по движку видео.
+VIDEO_COST = {
+    eid: _points_of_usd(mediagen.video_engine_usd(eid, SCENE_SEC))
+    for eid in mediagen.VIDEO_ENGINES
+}
+# Легаси-карта «движок → цена сцены целиком» для витрины и старых вызовов:
+# кадры считаются по шлюзу (базовый случай), видео — по своему движку.
+SCENE_COST = {
+    eid: FRAME_COST["chatgpt"] + VIDEO_COST[eid] for eid in VIDEO_COST
+}
+FRAMES_COST = FRAME_COST["chatgpt"]  # аванс за кадры на шлюзе (легаси-имя)
 # Текстовые шаги идут через нашу подписку Claude и стоят нам ноль — берём за них
 # ноль и мы: иначе бесплатный тариф не доживал до первого клипа, а именно первый
 # собранный клип и продаёт сервис.
@@ -311,7 +386,6 @@ COST_SCENES = 0
 COST_STORYBOARD = 2        # лист раскадровки — картинка
 COST_CHARACTER_MODEL = 2   # разворот персонажа — картинка
 CLIP_SCENES = int(os.environ.get("CLIP_SCENES", "30"))  # клип 3 минуты ≈ 30 сцен по 6 сек
-SCENE_SEC = 6              # средняя длина сцены, из claude.py
 
 
 def _plan_of(user: "User") -> str:
@@ -320,27 +394,79 @@ def _plan_of(user: "User") -> str:
     return user.plan if user.plan in PLANS else "free"
 
 
-def _plan_engines(plan_id: str) -> dict:
-    """Движки тарифа с ценой сцены: {"grok": 4, "seedance-2-5": 16}. Одно место
-    правды и для витрины, и для оценки «сколько клипов выйдет на тарифе»."""
+def _plan_image_engine(user: "User | None") -> str:
+    """Движок КАДРОВ этого человека: дефолт тарифа, опущенный до реально
+    живого. Нет KIE_API_KEY — тихо работаем на шлюзе (сцена не должна падать
+    из-за ненастроенного агрегатора), но врать об этом наверх нельзя."""
+    plan = PLANS[_plan_of(user)] if user else PLANS["free"]
+    return mediagen.resolve_image_engine(plan.get("image_engine") or "chatgpt")
+
+
+def _plan_engine_ids(plan_id: str) -> list[str]:
+    """Все движки видео тарифа: дефолтные по семействам + явные extra."""
     plan = PLANS.get(plan_id) or PLANS["free"]
-    out = {}
-    for prov in plan["video"]:
-        if prov == "seedance":
-            model = plan.get("seedance_model") or "seedance-2-0"
-            out[model] = SCENE_COST.get(model, SCENE_COST["seedance-2-0"])
-        else:
-            out[prov] = SCENE_COST.get(prov, SCENE_COST["grok"])
-    return out
+    out = list(plan["engines"].values())
+    for eid in plan.get("extra_engines", []):
+        if eid not in out:
+            out.append(eid)
+    return [e for e in out if e in mediagen.VIDEO_ENGINES]
 
 
-def _scene_cost(user: "User", provider: str) -> int:
-    """Цена сцены для этого пользователя и этого движка. Модель Seedance
-    определяется тарифом — 2.0 у PRO, 2.5 у старших, и цена у них разная."""
-    if provider == "seedance":
-        model = PLANS[_plan_of(user)].get("seedance_model") or "seedance-2-0"
-        return SCENE_COST.get(model, SCENE_COST["seedance-2-0"])
-    return SCENE_COST.get(provider, SCENE_COST["grok"])
+def _plan_video_engine(user: "User | None", provider: str, engine: str = "") -> str:
+    """Семейство + (необязательный) явный движок → что реально запустим.
+
+    Явный движок принимается, только если он открыт тарифом: иначе человек с
+    FREE попросил бы Seedance 2.5 строкой в запросе."""
+    plan_id = _plan_of(user) if user else "free"
+    plan = PLANS[plan_id]
+    engine = (engine or "").strip()
+    if engine and engine in _plan_engine_ids(plan_id):
+        return engine
+    return plan["engines"].get(provider) or plan["engines"].get("grok", "grok")
+
+
+def _plan_work_cost(plan_id: str) -> int:
+    """Цена сцены на РАБОЧЕЙ лошадке тарифа — самом дешёвом платном движке.
+    Именно по ней честно считать «сколько клипов выйдет»: самый дорогой
+    движок тарифа существует для отдельных кадров, а не для целого клипа."""
+    engines = _plan_engines(plan_id)
+    paid = {eid: c for eid, c in engines.items()
+            if mediagen.VIDEO_ENGINES.get(eid, {}).get("paid")}
+    if paid:
+        return min(paid.values())
+    return min(engines.values(), default=SCENE_COST["grok"])
+
+
+def _plan_engines(plan_id: str) -> dict:
+    """Движки тарифа с ПОЛНОЙ ценой сцены на этом тарифе (кадры + видео):
+    {"seedance-2-5": 167, ...}. Одно место правды и для витрины, и для оценки
+    «сколько клипов выйдет на тарифе»."""
+    plan = PLANS.get(plan_id) or PLANS["free"]
+    frames = FRAME_COST.get(plan.get("image_engine") or "chatgpt", FRAMES_COST)
+    return {eid: frames + VIDEO_COST[eid] for eid in _plan_engine_ids(plan_id)}
+
+
+def _image_cost(user: "User", engine: str = "") -> int:
+    """Цена ОДНОЙ служебной картинки (лист раскадровки, моделька персонажа).
+    Раньше была плоской двойкой — на Nano Banana Pro такая картинка стоит нам
+    $0.09, и плоская цена превращала витрину персонажей в дыру в кошельке."""
+    eng = engine or _plan_image_engine(user)
+    return max(2, _points_of_usd(mediagen.image_engine_usd(eng)))
+
+
+def _frames_cost(user: "User", scene: "Scene | None" = None) -> int:
+    """Цена пары кадров сцены. Если кадры уже нарисованы — по ТОМУ движку,
+    которым их реально нарисовали: иначе смена тарифа между кадрами и видео
+    ломала бы добор до цены сцены."""
+    engine = (scene.image_engine if scene else "") or _plan_image_engine(user)
+    return FRAME_COST.get(engine, FRAMES_COST)
+
+
+def _scene_cost(user: "User", provider: str, scene: "Scene | None" = None,
+                engine: str = "") -> int:
+    """Полная цена сцены: кадры своим движком + видео своим движком."""
+    vid = _plan_video_engine(user, provider, engine or (scene.video_engine if scene else ""))
+    return _frames_cost(user, scene) + VIDEO_COST.get(vid, VIDEO_COST["grok"])
 
 
 def _allowed_provider(user: "User", wanted: str) -> str:
@@ -1667,13 +1793,19 @@ def _run_storyboard(track_id: int) -> None:
                 paths.append(cand)
             if len(paths) >= 3:
                 break
-        if len(paths) == 1:
+        owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
+        engine = _plan_image_engine(owner)
+        multi = mediagen.IMAGE_ENGINES.get(engine, {}).get("max_refs", 1) > 1
+        if multi:
+            pass  # Nano Banana возьмёт модельки отдельными картинками
+        elif len(paths) == 1:
             board_ref = paths[0]
         elif paths:
             board_ref = _ref_collage(db, paths, track.project.owner_id)
             if board_ref:
                 board_collage = os.path.basename(board_ref)
-        data, mime = asyncio.run(mediagen.generate_image(prompt, board_ref))
+        data, mime = asyncio.run(mediagen.generate_image(
+            prompt, board_ref, reference_paths=paths if multi else None, engine=engine))
         old = track.storyboard_filename
         # Лист смотрят целиком, апскейл до 4К ему не нужен.
         track.storyboard_filename = _save_image(data, mime, upscale=False)
@@ -1813,7 +1945,7 @@ def generate_storyboard(track_id: int, user: User = Depends(current_user), db: S
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку трека")
-    _charge(db, user, COST_STORYBOARD, f"лист раскадровки трека {track.id}")
+    _charge(db, user, _image_cost(user), f"лист раскадровки трека {track.id}")
     track.storyboard_status = "queued"
     db.commit()
     Thread(target=_run_storyboard, args=(track_id,), daemon=True).start()
@@ -1959,6 +2091,34 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     return _ref_collage(db, paths, project.owner_id) or paths[0]
 
 
+def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[str]:
+    """Те же референсы, что и в _scene_reference_photo, но СПИСКОМ — без
+    hstack-склейки.
+
+    Коллаж был костылём под шлюзы: они принимают ровно одну картинку. Nano
+    Banana берёт до 8-14 отдельных, и это принципиально другое качество
+    идентичности — модель перестаёт воспроизводить саму сетку коллажа в кадре.
+    Порядок тот же: реф кадра первым (он главный), дальше модельки героев."""
+    chars = _scene_characters(scene, project)
+    out: list[str] = []
+    scene_refs = _scene_ref_paths(scene)
+    if scene_refs:
+        out += scene_refs[:3]
+        out += _character_model_paths(
+            chars or [c for c in project.characters if c.is_main], 3)
+    else:
+        attr_path = _scene_attribute_photo(scene, chars)
+        if attr_path:
+            out.append(attr_path)
+        if not chars:
+            chars = [c for c in project.characters if c.is_main]
+        out += _character_model_paths(chars, 4)
+    # Дедуп с сохранением порядка + потолок по самому скупому Nano Banana (8).
+    seen: set[str] = set()
+    uniq = [p for p in out if not (p in seen or seen.add(p))]
+    return uniq[:8]
+
+
 # ───────────────────── первый и последний кадр сцены ─────────────────────
 
 # Общий хвост промпта: и первый, и последний кадр рисуются с оглядкой на
@@ -2030,28 +2190,48 @@ def _run_scene_frames(scene_id: int, which: str = "both") -> None:
         db.commit()
         track = scene.track
         import asyncio
-        reference = _scene_reference_photo(db, scene, track.project)
-        if reference and os.path.basename(reference).startswith("refjoin_"):
-            collage = os.path.basename(reference)
+        owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
+        engine = _plan_image_engine(owner)
+        # Nano Banana берёт референсы ОТДЕЛЬНЫМИ картинками (до 8-14 штук) —
+        # ради этого движок и подключался. Шлюзам по-прежнему нужен один файл,
+        # поэтому коллаж собираем только для них.
+        multi = mediagen.IMAGE_ENGINES.get(engine, {}).get("max_refs", 1) > 1
+        reference = None
+        ref_list: list[str] = []
+        if multi:
+            ref_list = _scene_reference_paths(db, scene, track.project)
+        else:
+            reference = _scene_reference_photo(db, scene, track.project)
+            if reference and os.path.basename(reference).startswith("refjoin_"):
+                collage = os.path.basename(reference)
         first_data = last_data = None
         first_mime = last_mime = ""
+        native_4k = False
         if which in ("both", "first"):
-            first_data, first_mime = asyncio.run(
-                mediagen.generate_image(_frame_prompt(scene, track, "first"), reference_path=reference))
+            res = asyncio.run(mediagen.generate_image_ex(
+                _frame_prompt(scene, track, "first"), reference,
+                reference_paths=ref_list, engine=engine))
+            first_data, first_mime = res["data"], res["mime"]
+            native_4k = res["native_4k"]
+            scene.image_engine = res["engine"]
         if which in ("both", "last"):
-            last_data, last_mime = asyncio.run(
-                mediagen.generate_image(_frame_prompt(scene, track, "last"), reference_path=reference))
+            res = asyncio.run(mediagen.generate_image_ex(
+                _frame_prompt(scene, track, "last"), reference,
+                reference_paths=ref_list, engine=engine))
+            last_data, last_mime = res["data"], res["mime"]
+            native_4k = native_4k or res["native_4k"]
+            scene.image_engine = res["engine"]
 
         old_first, old_last = scene.image_filename, scene.image_last_filename
         old_video, old_audio = scene.video_filename, scene.audio_filename
         old_mids = [m.get("filename", "") for m in _midframes(scene)]
         if first_data is not None:
-            scene.image_filename = _save_image(first_data, first_mime)
+            scene.image_filename = _save_image(first_data, first_mime, upscale=not native_4k)
             _reg_file(db, scene.image_filename, track.project.owner_id)
         else:
             old_first = ""  # первый кадр не пересобирали — оставляем как есть
         if last_data is not None:
-            scene.image_last_filename = _save_image(last_data, last_mime)
+            scene.image_last_filename = _save_image(last_data, last_mime, upscale=not native_4k)
             _reg_file(db, scene.image_last_filename, track.project.owner_id)
         else:
             old_last = ""
@@ -2093,7 +2273,8 @@ def generate_scene_frames(scene_id: int, which: str = "both", user: User = Depen
     # Кадры не имеют своей цены: они берут аванс в счёт цены сцены. Видео потом
     # добирает разницу до цены движка, а перерисовка кадров уже оплаченной
     # сцены бесплатна — человек не должен бояться жать «перегенерировать».
-    _scene_charge(db, user, scene, FRAMES_COST, f"кадры сцены {scene.id} ({which})")
+    _scene_charge(db, user, scene, _frames_cost(user, scene),
+                  f"кадры сцены {scene.id} ({which})")
     scene.image_status = "queued"
     db.commit()
     Thread(target=_run_scene_frames, args=(scene_id, which), daemon=True).start()
@@ -2157,7 +2338,8 @@ def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Se
     if not (scene.image_prompt or "").strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
     # Промежуточные кадры — тоже кадры этой сцены: входят в её цену.
-    _scene_charge(db, user, scene, FRAMES_COST, f"промежуточные кадры сцены {scene.id}")
+    _scene_charge(db, user, scene, _frames_cost(user, scene),
+                  f"промежуточные кадры сцены {scene.id}")
     Thread(target=_run_midframes, args=(scene_id,), daemon=True).start()
     return {"ok": True, "count": total}
 
@@ -2181,11 +2363,15 @@ def _run_scene_video(scene_id: int) -> None:
         )
         import asyncio
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
-        model = PLANS[_plan_of(owner)].get("seedance_model", "") if owner else ""
+        # Семейство знает фронт, конкретную модель выбирает тариф — и она
+        # уже записана на сцене при списании, чтобы движок не «переехал»
+        # между оплатой и генерацией.
+        engine = scene.video_engine or _plan_video_engine(owner, scene.video_provider)
         fname = asyncio.run(mediagen.animate_scene(
             prompt=scene.motion_prompt, first_path=first_path, last_path=last_path,
             duration_sec=scene.duration_sec, provider=scene.video_provider,
-            seedance_model=model,
+            seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
+            engine=engine,
         ))
         old_video = scene.video_filename
         scene.video_filename = fname
@@ -2230,19 +2416,23 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
     provider = _allowed_provider(user, provider)
     if provider not in mediagen.video_providers():
         raise HTTPException(400, f"провайдер {provider} недоступен: {mediagen.video_providers()}")
-    # Цена по движку: Grok идёт по нашей подписке и стоит вчетверо дешевле
-    # платного Seedance 2.5 — раньше оба списывали одинаковые 10.
-    cost = _scene_cost(user, provider)
+    # engine — явный id модели (см. /api/providers.video_engines). Чужой тарифу
+    # движок молча опускается до дефолтного, а не даёт FREE'шнику Seedance 2.5.
+    engine = _plan_video_engine(user, provider, str(body.get("engine") or ""))
+    # Цена по движку: Grok идёт по нашей подписке и стоит в разы дешевле
+    # платного Seedance 2.5 — раньше все платные списывали одинаковые 16.
+    cost = _scene_cost(user, provider, scene, engine)
     if scene.video_filename:
         # Перерендер: у сцены уже есть видео, и это НОВЫЙ вызов платного API.
         # Берём цену самого видео — цену сцены без аванса за кадры (их не
         # перерисовываем). У Grok разница нулевая, и перерендер бесплатен:
         # он и правда ничего нам не стоит.
-        _charge(db, user, max(0, cost - FRAMES_COST),
-                f"перерендер видео сцены {scene.id} ({provider})")
+        _charge(db, user, max(0, cost - _frames_cost(user, scene)),
+                f"перерендер видео сцены {scene.id} ({engine})")
     else:
-        _scene_charge(db, user, scene, cost, f"видео сцены {scene.id} ({provider})")
+        _scene_charge(db, user, scene, cost, f"видео сцены {scene.id} ({engine})")
     scene.video_provider = provider
+    scene.video_engine = engine
     scene.video_status = "queued"
     db.commit()
     Thread(target=_run_scene_video, args=(scene_id,), daemon=True).start()
@@ -2419,14 +2609,18 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
         if owner:
             provider = _allowed_provider(owner, provider)
+        # Модель внутри семейства фиксируем один раз на весь конвейер: иначе
+        # соседние сцены одного клипа уехали бы на разные движки.
+        engine = _plan_video_engine(owner, provider)
         for i, sid in enumerate(scene_ids, 1):
             db.expire_all()
             s = db.get(Scene, sid)
             if not s:
                 continue
             if not s.video_filename:
-                note(f"видео: сцена {i}/{total} через {provider}…")
+                note(f"видео: сцена {i}/{total} через {engine}…")
                 s.video_provider = provider
+                s.video_engine = engine
                 db.commit()
                 _run_scene_video(sid)
                 db.expire_all()
@@ -2482,7 +2676,8 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
             if not s.video_filename:
                 return per_scene    # полный круг: кадры + видео
             if not (s.image_filename and s.image_last_filename):
-                return FRAMES_COST  # видео есть, дорисуем недостающие кадры
+                # видео есть, дорисуем недостающие кадры — по цене СВОЕГО движка
+                return _frames_cost(user, s)
             return 0                # делать нечего
 
         _scenes_charge(db, user, scenes, _sg_cost,
@@ -2595,11 +2790,66 @@ def get_outbox(filename: str):
 
 @app.get("/api/providers")
 def providers(user: User = Depends(current_user)):
-    plan = _plan_of(user)
-    live = mediagen.video_providers()  # что реально настроено ключами
-    avail = [p for p in PLANS[plan]["video"] if p in live]
-    return {"video": avail or ["grok"], "plan": plan,
-            "seedance": "seedance" in avail, "kling": "kling" in avail}
+    """Честная картина движков: что открыто тарифом, что реально живо по
+    ключам и сколько стоит сцена на каждом.
+
+    Принцип: если тариф обещает Nano Banana Pro, а KIE_API_KEY не задан, мы
+    молча рисуем на шлюзе — но отдаём наверх ИМЕННО ЭТО, а не обещание.
+    Фронт должен показывать реальность, иначе человек платит за строчку."""
+    plan_id = _plan_of(user)
+    plan = PLANS[plan_id]
+    live_fams = mediagen.video_providers()  # что реально настроено ключами
+    avail = [p for p in plan["video"] if p in live_fams]
+
+    frames = _frames_cost(user)
+    engines = []
+    for eid in _plan_engine_ids(plan_id):
+        spec = mediagen.VIDEO_ENGINES[eid]
+        engines.append({
+            "id": eid, "title": spec["title"], "family": spec["family"],
+            "default": plan["engines"].get(spec["family"]) == eid,
+            "live": mediagen.video_engine_live(eid),
+            "first_last": bool(spec["first_last"]),
+            "paid": bool(spec["paid"]),
+            "scene_cost": frames + VIDEO_COST[eid],
+            "video_cost": VIDEO_COST[eid],
+            "usd_per_scene": round(mediagen.video_engine_usd(eid, SCENE_SEC), 4),
+            "note": spec.get("note", ""),
+        })
+
+    want_image = plan.get("image_engine") or "chatgpt"
+    real_image = _plan_image_engine(user)
+    images = []
+    for eid, spec in mediagen.IMAGE_ENGINES.items():
+        images.append({
+            "id": eid, "title": spec["title"],
+            "live": eid in mediagen.image_engines_live(),
+            "max_refs": int(spec["max_refs"]),
+            "native_4k": bool(spec["native_4k"]),
+            "frames_cost": FRAME_COST[eid],
+            "usd_per_image": round(mediagen.image_engine_usd(eid), 4),
+            "current": eid == real_image,
+        })
+    return {
+        # Легаси-контракт фронта: семейства движков и два булевых флага.
+        "video": avail or ["grok"], "plan": plan_id,
+        "seedance": "seedance" in avail, "kling": "kling" in avail,
+        # Новое: конкретные модели с ценой и реальной доступностью.
+        "video_engines": engines,
+        "image_engines": images,
+        "image_engine": real_image,
+        "image_engine_planned": want_image,
+        # Тариф обещает платный движок кадров, а ключа нет — фронту нужен
+        # повод сказать об этом вслух, а не показывать несбывшееся обещание.
+        "image_engine_downgraded": real_image != want_image,
+        "frames_cost": frames,
+        "keys": {
+            "kie": mediagen.kie_available(),
+            "seevio": bool(mediagen.SEEVIO_API_KEY),
+            "kling_official": bool(mediagen.KLING_ACCESS_KEY and mediagen.KLING_SECRET_KEY),
+        },
+        "priority": bool(plan["priority"]),
+    }
 
 
 
@@ -2774,17 +3024,23 @@ async def generate_character_model(char_id: int, request: Request,
         raise HTTPException(400, "нужно описание персонажа")
     kind = str(body.get("kind") or "3d")
     base = MODEL_SHEET_STYLES.get(kind, MODEL_SHEET_STYLES["3d"])
-    _charge(db, user, COST_CHARACTER_MODEL, f"моделька персонажа {ch.id}")
+    _charge(db, user, _image_cost(user), f"моделька персонажа {ch.id}")
 
+    engine = _plan_image_engine(user)
+    max_refs = int(mediagen.IMAGE_ENGINES.get(engine, {}).get("max_refs", 1))
     paths = []
-    for ph in ch.photos[:3]:
+    for ph in ch.photos[: max(3, max_refs)]:
         cand = os.path.join(UPLOAD_DIR, ph.filename)
         if os.path.exists(cand):
             paths.append(cand)
     owner_id = ch.project.owner_id
     reference = None
     collage = ""
-    if len(paths) == 1:
+    # Идентичность героя держится на референсах: движок с несколькими входами
+    # получает их по одному, шлюзу по-прежнему клеим коллаж.
+    if max_refs > 1:
+        pass
+    elif len(paths) == 1:
         reference = paths[0]
     elif paths:
         reference = _ref_collage(db, paths, owner_id)
@@ -2798,7 +3054,9 @@ async def generate_character_model(char_id: int, request: Request,
         "Horizontal sheet, plain background, no text, no labels, no watermark."
     )
     try:
-        data, mime = await mediagen.generate_image(prompt, reference)
+        data, mime = await mediagen.generate_image(
+            prompt, reference,
+            reference_paths=paths if max_refs > 1 else None, engine=engine)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"генератор не отдал модельку: {str(e)[:200]}")
     finally:
@@ -2975,7 +3233,7 @@ def generate_all_frames(track_id: int, user: User = Depends(current_user), db: S
         raise HTTPException(400, "у всех сцен кадры уже готовы")
     # Списываем за весь пакет вперёд — до того, как сцены встанут в очередь.
     # Кадры берут аванс в счёт цены сцены; уже оплаченные сцены не платят снова.
-    _scenes_charge(db, user, todo, lambda s: FRAMES_COST,
+    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc),
                    f"кадры всех сцен трека {track.id}")
     for s in todo:
         s.image_status = "queued"
@@ -3006,7 +3264,8 @@ def _run_all_videos(track_id: int) -> None:
 
 
 @app.post("/api/tracks/{track_id}/generate-all-videos")
-def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(current_user),
+def generate_all_videos(track_id: int, provider: str = "", engine: str = "",
+                        user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
     from threading import Thread
     track = _own_track(db, user, track_id)
@@ -3015,16 +3274,17 @@ def generate_all_videos(track_id: int, provider: str = "", user: User = Depends(
         raise HTTPException(400, "нет сцен с кадрами без видео")
     # Движок выбираем ДО списания: цена сцены зависит именно от него.
     prov = _allowed_provider(user, provider or ("seedance" if mediagen.seedance_available() else "grok"))
-    cost = _scene_cost(user, prov)
-    _scenes_charge(db, user, todo, lambda s: cost,
-                   f"видео всех сцен трека {track.id} ({prov})")
+    eng = _plan_video_engine(user, prov, engine)
+    _scenes_charge(db, user, todo, lambda sc: _scene_cost(user, prov, sc, eng),
+                   f"видео всех сцен трека {track.id} ({eng})")
     for s in todo:
         s.video_provider = prov
+        s.video_engine = eng
         s.video_status = "queued"
         s.video_error = ""
     db.commit()
     Thread(target=_run_all_videos, args=(track_id,), daemon=True).start()
-    return {"ok": True, "queued": len(todo), "provider": prov}
+    return {"ok": True, "queued": len(todo), "provider": prov, "engine": eng}
 
 
 # ────────────────────────── оплата: Stripe + ЮKassa ──────────────────────────
@@ -3238,9 +3498,15 @@ def _movies_estimate(points: int, scene_cost: int) -> int:
 
 
 def _plan_card(plan_id: str) -> dict:
-    """Карточка тарифа для витрины: оба ценника, оба периода, оценка в клипах."""
+    """Карточка тарифа для витрины: оба ценника, оба периода, оценка в клипах.
+
+    «Сколько клипов» считаем по РАБОЧЕЙ лошадке тарифа — самому дешёвому
+    платному движку. По самому дорогому (Seedance 2.5) выходит меньше одного
+    клипа на PRO MAX, и это правда, но правда про потолок, а не про тариф:
+    её отдаём отдельным полем movies_estimate_top."""
     p = PLANS[plan_id]
     engines = _plan_engines(plan_id)
+    work = _plan_work_cost(plan_id)
     top = max(engines.values()) if engines else SCENE_COST["grok"]
     usd_c, rub_k = int(p["usd_cents"]), int(p["rub_kopeks"])
     usd_y, rub_y = int(p["usd_year_cents"]), int(p["rub_year_kopeks"])
@@ -3261,10 +3527,23 @@ def _plan_card(plan_id: str) -> dict:
         "points": int(p["points"]),
         "points_year": int(p["points"]) * 12,
         "video": list(p["video"]),
-        "engines": engines,               # движок → цена сцены
-        "scene_cost": top,                # худший (самый дорогой) движок тарифа
-        "movies_estimate": _movies_estimate(p["points"], top),
+        "engines": engines,               # движок → полная цена сцены на тарифе
+        "engine_titles": {eid: mediagen.VIDEO_ENGINES[eid]["title"]
+                          for eid in engines if eid in mediagen.VIDEO_ENGINES},
+        "default_engines": dict(p["engines"]),   # семейство → модель по умолчанию
+        "image_engine": p.get("image_engine") or "chatgpt",
+        "image_engine_title": mediagen.IMAGE_ENGINES.get(
+            p.get("image_engine") or "chatgpt", {}).get("title", ""),
+        "frames_cost": FRAME_COST.get(p.get("image_engine") or "chatgpt", FRAMES_COST),
+        "scene_cost": work,               # рабочая лошадка тарифа
+        "scene_cost_top": top,            # самый дорогой движок тарифа
+        "movies_estimate": _movies_estimate(p["points"], work),
+        "movies_estimate_top": _movies_estimate(p["points"], top),
         "movies_estimate_grok": _movies_estimate(p["points"], SCENE_COST["grok"]),
+        # Правда об экономике очка: сколько человек платит за очко и сколько
+        # себестоимости в него заложено. Считаем один раз тут, а не на фронте.
+        "usd_per_point": round(int(p["usd_cents"]) / 100 / int(p["points"]), 5)
+        if int(p["points"]) else 0.0,
         "features": list(p["features"]),
         "badge": p["badge"],
         "note": p["note"],
@@ -3283,9 +3562,13 @@ def _pack_card(pack_id: str) -> dict:
         "rub": int(k["rub_kopeks"]) // 100,
         "rub_kopeks": int(k["rub_kopeks"]),
         "usd_per_1000_points": round(k["usd_cents"] / k["points"] * 10, 2),
+        "usd_per_point": round(k["usd_cents"] / 100 / k["points"], 5),
         "save_pct": int(k["save_pct"]),
         "badge": k["badge"],
-        "movies_estimate": _movies_estimate(k["points"], SCENE_COST["seedance-2-5"]),
+        # Пакет — добор, а не тариф: он дороже подписочного очка и продаётся
+        # только при живой платной подписке (см. TOPUP_REQUIRES_PLAN).
+        "requires_plan": TOPUP_REQUIRES_PLAN,
+        "movies_estimate": _movies_estimate(k["points"], SCENE_COST["seedance-2-mini"]),
         "movies_estimate_grok": _movies_estimate(k["points"], SCENE_COST["grok"]),
     }
 
@@ -3321,15 +3604,47 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
         "year_discount_pct": YEAR_DISCOUNT_PCT,
         "plans": [_plan_card(pid) for pid in PLANS],
         "packs": [_pack_card(kid) for kid in TOPUP_PACKS],
+        # Докупка очков разрешена только при живой платной подписке.
+        "topup_requires_plan": TOPUP_REQUIRES_PLAN,
+        "topup_allowed": bool(user and _plan_of(user) != "free") if TOPUP_REQUIRES_PLAN else True,
         # Прайс работы в очках — витрине, чтобы объяснять, куда они уходят.
         "costs": {
-            "scene": dict(SCENE_COST),
+            "scene": dict(SCENE_COST),          # кадры на шлюзе + видео движком
+            "video": dict(VIDEO_COST),          # только видео сцены
+            "frames": dict(FRAME_COST),         # пара кадров по движку картинок
             "frames_advance": FRAMES_COST,
             "story": COST_STORY,
             "storyboard_scenes": COST_SCENES,
             "storyboard_sheet": COST_STORYBOARD,
             "character_model": COST_CHARACTER_MODEL,
             "clip_scenes": CLIP_SCENES,
+            "scene_sec": SCENE_SEC,
+            # Якорь экономики: сколько себестоимости лежит в одном очке.
+            "point_usd": POINT_USD,
+        },
+        # Справочник движков для витрины «что даёт верхний тариф».
+        "engines": {
+            "video": {
+                eid: {
+                    "title": spec["title"], "family": spec["family"],
+                    "first_last": bool(spec["first_last"]), "paid": bool(spec["paid"]),
+                    "video_cost": VIDEO_COST[eid],
+                    "usd_per_scene": round(mediagen.video_engine_usd(eid, SCENE_SEC), 4),
+                    "live": mediagen.video_engine_live(eid),
+                    "note": spec.get("note", ""),
+                }
+                for eid, spec in mediagen.VIDEO_ENGINES.items()
+            },
+            "image": {
+                eid: {
+                    "title": spec["title"], "max_refs": int(spec["max_refs"]),
+                    "native_4k": bool(spec["native_4k"]),
+                    "frames_cost": FRAME_COST[eid],
+                    "usd_per_image": round(mediagen.image_engine_usd(eid), 4),
+                    "live": eid in mediagen.image_engines_live(),
+                }
+                for eid, spec in mediagen.IMAGE_ENGINES.items()
+            },
         },
     }
 
@@ -3341,6 +3656,8 @@ def billing_packs(request: Request, db: Session = Depends(db_session)):
     user = _resolve_user(request, db)
     return {
         "packs": [_pack_card(kid) for kid in TOPUP_PACKS],
+        "topup_requires_plan": TOPUP_REQUIRES_PLAN,
+        "topup_allowed": bool(user and _plan_of(user) != "free") if TOPUP_REQUIRES_PLAN else True,
         "providers": _providers_state(),
         "currency_default": "usd" if _stripe_enabled() else "rub",
         "points": int(user.gen_points or 0) if user else 0,
@@ -3383,6 +3700,13 @@ async def billing_create(request: Request, user: User = Depends(current_user),
         pack = TOPUP_PACKS.get(pack_id)
         if not pack:
             raise ApiError(400, "unknown_pack", f"Unknown points pack: {pack_id!r}")
+        # Вторая половина дыры в экономике: пакеты продавались кому угодно, и
+        # подписку можно было не покупать вообще. Докупка — ДОБОР к живому
+        # тарифу, а не его замена.
+        if TOPUP_REQUIRES_PLAN and _plan_of(user) == "free":
+            raise ApiError(403, "subscription_required",
+                           "Points packs top up an active plan. "
+                           "Subscribe first, then add points any time.")
         amount_cents, amount_kopeks = int(pack["usd_cents"]), int(pack["rub_kopeks"])
         title = f"{BRAND} — {pack['points']} points"
         points = int(pack["points"])
@@ -3983,9 +4307,13 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
         "pay_provider": ("stripe" if user.stripe_subscription_id
                          else ("yookassa" if user.pay_method_id else "")),
         "points": user.gen_points, "projects": projects,
-        # Сколько клипов по 3 минуты ещё выйдет из остатка на топовом движке тарифа.
+        # Сколько клипов по 3 минуты ещё выйдет из остатка. Считаем по рабочей
+        # лошадке тарифа (самый дешёвый ПЛАТНЫЙ движок): по самому дорогому на
+        # PRO MAX выходит «0 клипов», хотя на Seedance 2 Mini их три.
         "movies_left": _movies_estimate(int(user.gen_points or 0),
-                                        max(_plan_engines(plan).values())),
+                                        _plan_work_cost(plan)),
+        "movies_left_top": _movies_estimate(int(user.gen_points or 0),
+                                            max(_plan_engines(plan).values())),
         "linked": {"telegram": bool(user.tg_id), "yandex": bool(user.yandex_id),
                    "google": bool(user.google_id), "password": bool(user.login)},
         "ambassador": {

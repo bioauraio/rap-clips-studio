@@ -346,6 +346,13 @@ class Scene(Base):
     video_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     video_error = Column(Text, nullable=False, default="")
     video_provider = Column(String, nullable=False, default="seedance")
+    # Конкретные движки этой сцены (id из mediagen.VIDEO_ENGINES/IMAGE_ENGINES).
+    # video_provider — только СЕМЕЙСТВО (grok|seedance|kling), его знает фронт;
+    # модель внутри семейства выбирает тариф, и стоят они по-разному, поэтому
+    # писать её надо рядом. image_engine нужен ещё и для честного добора цены:
+    # сцена = кадры ТЕМ движком, которым их реально нарисовали, плюс видео.
+    image_engine = Column(String, nullable=False, default="")
+    video_engine = Column(String, nullable=False, default="")
 
     # Сколько очков за ЭТУ сцену уже списано. Сцена — единица тарификации:
     # кадры берут аванс, видео добирает разницу до цены своего движка, а
