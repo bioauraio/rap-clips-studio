@@ -156,8 +156,8 @@ body {
 .topbar {
   position: sticky; top: 10px; z-index: 60;
   display: flex; align-items: center; gap: 12px;
-  margin-bottom: 20px; padding: 9px 14px;
-  border: 2px solid #2d211a; border-radius: 20px;
+  margin-bottom: 20px; padding: 7px 13px;
+  border: 2px solid #2d211a; border-radius: 18px;
   background: linear-gradient(180deg, rgba(255,252,247,.82), rgba(255,244,232,.72));
   box-shadow: 0 5px 0 #2d211a, 0 16px 34px rgba(180,90,30,.16),
               inset 0 1px 0 rgba(255,255,255,.9);
@@ -186,10 +186,14 @@ body {
 .tb-user { display: flex; align-items: center; gap: 8px; flex: none; }
 .tb-sep { width: 2px; align-self: stretch; background: rgba(45,33,26,.14); border-radius: 2px; }
 .project-name {
-  flex: 1; font-family: var(--font-head); font-size: 22px; font-weight: 800;
-  letter-spacing: .02em; background: transparent; border: none; color: var(--text); padding: 8px 6px;
+  flex: 1; font-family: var(--font-head); font-size: 17px; font-weight: 800;
+  letter-spacing: .02em; background: transparent; border: none; color: var(--text); padding: 5px 6px;
 }
 .project-name:focus { outline: 1px solid var(--border-bright); border-radius: 8px; }
+/* Высоту капсулы держат её самые рослые жильцы — селект и кнопки: их поля
+   ужаты вместе с обложкой, иначе меню осталось бы прежней высоты. */
+.topbar .project-select { padding: 6px 9px; font-size: 12.5px; border-radius: 10px; }
+.tb-new, .account-btn, #save-account-btn, #logout-btn { padding: 6px 11px; font-size: 12px; }
 
 .panel {
   position: relative;
@@ -298,19 +302,20 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-head .s-supergen { flex: none; font-size: 12px; padding: 7px 12px; }
 .supergen-note { display: block; margin: 2px 0 0; }
 .supergen-note:empty { display: none; }
-.t-story-quote {
-  margin: 4px 0 8px; padding: 10px 12px; border-left: 4px solid var(--accent-2);
-  background: var(--inset); border-radius: 0 12px 12px 0;
-  font-size: 13px; line-height: 1.5; white-space: pre-wrap;
-}
-.t-story-quote.empty { color: var(--muted); font-style: italic; }
 .t-note-text { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; }
 
-/* «Готовое»: сетка видео всех сцен */
-.final-scenes { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border); }
+/* Видео всех сцен: свёрнутый список под витриной клипа — раскрывают, когда
+   нужно пересмотреть отдельные куски, а не каждый раз. */
+.final-scenes { width: 100%; margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.final-scenes > summary {
+  cursor: pointer; font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  padding: 3px 0; user-select: none;
+}
+.final-scenes > summary:hover { color: var(--accent-2); }
 .final-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px; margin-top: 8px;
 }
 .final-cell { display: flex; flex-direction: column; gap: 4px; }
 .final-cell video {
@@ -327,18 +332,46 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 
 /* ────────── лист раскадровки / клип ────────── */
-.storyboard-block, .clip-block { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--border); }
+.storyboard-block, .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--border); }
 .media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
 .storyboard-box, .media-box {
   background: var(--inset); border: 2px dashed rgba(45,33,26,.4); border-radius: 16px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
-.storyboard-box { min-height: 100px; }
-.storyboard-box img { width: 100%; height: auto; display: block; }
+/* Лист — контрольный отпечаток фиксированной высоты, а не полотно во всю
+   страницу: картинка вписывается целиком, разглядывают её кликом в модалке. */
+.storyboard-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.storyboard-box {
+  height: 280px; flex: 0 1 auto; min-width: 190px; max-width: min(100%, 360px); padding: 6px;
+}
+.storyboard-box img {
+  width: auto; height: auto; max-width: 100%; max-height: 100%;
+  object-fit: contain; display: block; cursor: zoom-in; border-radius: 8px;
+}
+.sb-empty { font-size: 11px; }
+.storyboard-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .media-box { aspect-ratio: 9/16; max-height: 270px; }
 .media-box img, .media-box video { width: 100%; height: 100%; object-fit: cover; }
-.clip-box { aspect-ratio: 9/16; max-height: 440px; margin: 0 auto; box-shadow: 0 12px 44px rgba(255, 110, 45, .28); }
 .clip-download { color: var(--accent); font-family: var(--font-mono); font-size: 12px; text-decoration: none; letter-spacing: .06em; }
+
+/* ────────── витрина клипа: всегда внизу карточки трека ──────────
+   Клип перестал быть этапом: окно видно на любом шаге и показывает актуальную
+   склейку. Ширину задаёт высота через 9/16 — иначе вертикальное видео
+   растянулось бы на всю карточку и обрезалось по бокам. */
+.clip-dock-body { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.clip-box {
+  height: 300px; width: auto; max-height: none; flex: none; margin: 0;
+  box-shadow: 0 12px 44px rgba(255, 110, 45, .28);
+}
+.clip-empty { font-size: 11px; }
+.clip-dock-side {
+  flex: 1 1 240px; min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+}
+.clip-dock-side .row { margin-top: 0; }
+.autoasm-label { font-size: 12px; padding: 6px 11px; }
+.autoasm-note { display: block; }
+.autoasm-note:empty { display: none; }
 
 /* ────────── сцены: горизонтальная лента ────────── */
 .strip-wrap { position: relative; margin-top: 14px; }
@@ -384,9 +417,34 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   width: 34px; height: 60px; object-fit: cover; border-radius: 7px;
   border: 1.5px solid #2d211a; cursor: zoom-in; display: block;
 }
+/* Верхняя строка кадра: слева референсы и «+ реф», справа — движок видео и
+   промпт. Раскрытый промпт забирает всю ширину карточки (.prompt-open),
+   свёрнутый жмётся вправо и не отбирает у референсов ни строки. */
+.s-top-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
+.s-top-right {
+  flex: 0 0 auto; margin-left: auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+}
+.s-top-right .s-prompt-details { width: 100%; }
+.s-top-right .s-prompt-details summary { text-align: right; }
+.scene-card.prompt-open .s-top-right { flex: 1 1 100%; margin-left: 0; align-items: stretch; }
+.scene-card.prompt-open .s-top-right .s-prompt-details summary { text-align: left; }
+/* движок видео: сегментный переключатель вместо системного селекта */
+.s-provider-seg { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.prov-chip {
+  padding: 3px 9px; font-size: 10.5px; border-radius: 999px;
+  border-width: 1.5px; box-shadow: 0 2px 0 #2d211a; white-space: nowrap;
+}
+.prov-chip.on,
+.prov-chip.on:hover:not(:disabled) {
+  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+}
+.prov-chip.single { cursor: default; }
+.prov-chip.single:active { transform: none; box-shadow: 0 2px 0 #2d211a; }
+
 /* референсы кадра: картинки-образцы композиции/света/вайба (картон, как фото
    персонажей) — стилистику всё равно диктует стиль трека, реф только «как снято» */
-.s-refs { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.s-refs { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; flex: 1 1 auto; min-width: 0; }
 .s-ref {
   position: relative; width: 60px; height: 60px; border-radius: 10px; overflow: hidden;
   border: 2px solid #2d211a; box-shadow: 0 2px 0 #e8d8c4, 0 2px 0 2px #2d211a; flex: none;
@@ -464,12 +522,41 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 .approve-check input { width: auto; accent-color: var(--ok); }
 
-/* ────────── персонажи ────────── */
+/* ────────── персонажи ──────────
+   На панели — визитка в ленте (листается вправо, как сцены). Досье с
+   описанием, фото и атрибутами открывается модалкой по клику. */
+.chars-wrap { margin-top: 4px; }
+.chars-strip { scroll-snap-type: x mandatory; }
 .char-card {
-  background: var(--card); border: 2px solid #2d211a; border-radius: 20px;
-  padding: 14px; margin-bottom: 14px;
-  box-shadow: 0 5px 0 #e8d8c4, 0 5px 0 2px #2d211a;
+  flex: 0 0 132px; scroll-snap-align: start;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 10px 8px; text-align: center; font-size: 12.5px; font-weight: 700;
+  background: var(--card); border: 2px solid #2d211a; border-radius: 18px;
+  box-shadow: 0 4px 0 #e8d8c4, 0 4px 0 2px #2d211a;
 }
+.char-card:hover { background: #fff; }
+.char-card:active { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
+.cc-thumb {
+  position: relative; width: 84px; height: 84px; flex: none; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid #2d211a; border-radius: 14px;
+  background: linear-gradient(135deg, var(--gold), var(--accent-2), var(--accent));
+  color: #fff; font-size: 30px; font-weight: 800; text-shadow: 0 2px 10px rgba(45,33,26,.35);
+}
+.cc-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cc-name { font-size: 12.5px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.cc-meta {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.cc-main {
+  color: #fff; padding: 2px 8px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+/* досье персонажа в модалке */
+.char-edit .char-photos { margin-top: 8px; }
 .char-head { display: flex; align-items: center; gap: 10px; }
 .c-name { flex: 1; font-weight: 700; }
 .c-main-label { padding: 6px 10px; font-size: 11.5px; white-space: nowrap; }
@@ -625,8 +712,10 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .cover-slot:hover { box-shadow: 0 3px 0 #e8d8c4, 0 3px 0 2px #2d211a, 0 8px 22px rgba(255, 122, 41, .3); }
 .cover-slot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .cover-ph { color: #fff; font-weight: 800; text-shadow: 0 2px 10px rgba(45, 33, 26, .35); user-select: none; }
-.project-cover { width: 64px; height: 64px; border-radius: 14px; }
-.project-cover .cover-ph { font-size: 24px; }
+/* Обложка проекта в шапке — марка, а не витрина: именно она задавала высоту
+   плавающей капсулы, поэтому ужата до размера знака бренда. */
+.project-cover { width: 36px; height: 36px; border-radius: 11px; }
+.project-cover .cover-ph { font-size: 15px; }
 .track-cover { width: 120px; height: 120px; border-radius: 16px; }
 .track-cover .cover-ph { font-size: 40px; }
 @media (max-width: 700px) {
@@ -739,10 +828,11 @@ textarea { transition: min-height .15s; }
 .style-picker-wide { display: flex; flex-wrap: wrap; gap: 5px; }
 .style-picker-wide .style-chip { font-size: 10.5px; padding: 4px 9px; box-shadow: 0 2px 0 #2d211a; }
 
-/* разбор листа: сетка ячеек с выбором целевой сцены */
+/* разбор листа: сетка ячеек с выбором целевой сцены (компактная — ячеек
+   бывает полтора десятка, и модалка не должна уезжать в бесконечность) */
 .cells-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px; margin: 8px 0 12px; max-height: 56vh; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px; margin: 8px 0 12px; max-height: 52vh; overflow-y: auto;
 }
 .cell-card {
   border: 2px solid #2d211a; border-radius: 12px; overflow: hidden;
@@ -1027,4 +1117,47 @@ button.primary:hover:not(:disabled) {
      за правый край экрана (английские подписи длиннее русских). */
   .tb-user { flex: 1 1 100%; min-width: 0; justify-content: flex-end; }
   .tb-user > * { min-width: 0; }
+}
+
+/* ────────── крупный просмотр листа раскадровки ──────────
+   В карточке трека лист живёт миниатюрой, а разглядывают его здесь: широкая
+   карточка модалки, два режима — «вписать» и 1:1 с прокруткой, стрелки листают
+   лист по горизонтали, когда он не влезает целиком. */
+.modal-card.wide { max-width: min(1160px, 96vw); }
+.sheet-stage { position: relative; margin-top: 10px; }
+.sheet-view {
+  overflow: auto; max-height: calc(100vh - 220px); border-radius: 16px;
+  border: 2px dashed rgba(45,33,26,.4); background: var(--inset);
+  display: flex; align-items: flex-start; justify-content: center; padding: 6px;
+}
+.sheet-view img { display: block; max-width: none; height: auto; }
+.sheet-view.fit { overflow: hidden; }
+.sheet-view.fit img { max-width: 100%; max-height: calc(100vh - 236px); width: auto; object-fit: contain; }
+.sheet-prev { left: -10px; }
+.sheet-next { right: -10px; }
+@media (max-width: 700px) {
+  .sheet-view { max-height: 62vh; }
+  .sheet-view.fit img { max-height: 60vh; }
+  .sheet-prev, .sheet-next { display: none; }
+}
+
+/* ────────── мобильная вёрстка новых блоков ────────── */
+@media (max-width: 700px) {
+  /* обложка проекта пропорционально знаку бренда */
+  .project-cover { width: 30px; height: 30px; border-radius: 9px; }
+  .project-cover .cover-ph { font-size: 13px; }
+  /* Жильцы шапки в 375px не влезают при любых полях (поле имени уже сжато до
+     упора), и раньше из-за них вся страница ездила вбок. Лишнее уезжает
+     прокруткой внутри самой капсулы — документ вбок больше не скроллится. */
+  .topbar { overflow-x: auto; scrollbar-width: none; }
+  .topbar::-webkit-scrollbar { display: none; }
+  /* лист раскадровки и клип: во всю ширину колонки, но по-прежнему невысокие */
+  .storyboard-box { height: 200px; max-width: 100%; min-width: 0; flex: 1 1 100%; }
+  .storyboard-acts { flex-direction: row; flex-wrap: wrap; width: 100%; }
+  .storyboard-acts button { flex: 1 1 auto; }
+  .clip-box { height: 240px; margin: 0 auto; }
+  .clip-dock-side { flex: 1 1 100%; }
+  /* персонажи: визитка почти во весь экран, как карточка сцены */
+  .char-card { flex-basis: 118px; }
+  .cc-thumb { width: 74px; height: 74px; }
 }

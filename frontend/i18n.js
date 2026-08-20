@@ -113,10 +113,8 @@ const I18N = {
 
     stages: {
       setup: "Setup",
-      plot: "Story",
       board: "Storyboard",
       anim: "Animation",
-      final: "Final",
     },
 
     stylePicker: {
@@ -149,12 +147,14 @@ const I18N = {
       lyricsPh: "Empty = pure beat: the comment and the characters carry the idea",
       saveTrack: "Save track",
       noteLabel: "Director's note for this track",
-      genStory: "Write the story",
       genScenes: "Generate storyboard",
-      genScenesTitle: "write the album story first (Story stage)",
+      genScenesTitle: "write the album story first — the “Character & story” panel above",
       scenesCount: "scenes: {n}",
       scenesDone: "done, scenes: {n}",
       sheetTitle: "Storyboard sheet",
+      sheetEmpty: "no sheet yet",
+      sheetOpen: "Open large",
+      sheetOpenTitle: "open the sheet full screen",
       genSheet: "Generate sheet",
       redrawSheet: "Redraw sheet",
       sheetBusy: "drawing the sheet…",
@@ -174,9 +174,14 @@ const I18N = {
       animEmpty: "No video yet — generate it from the Storyboard stage: the Animate button on a scene card.",
       clipHead: "Finished clip of the track",
       clipTitle: "Finished clip — approved scenes: {a}/{b}",
+      clipEmpty: "no clip yet",
       assemble: "Assemble clip",
+      reassemble: "Reassemble",
       assembleBusy: "assembling the clip…",
       assembleTitle: "approve at least one scene (Animation stage)",
+      autoAsm: "auto-assemble",
+      autoAsmTitle: "every new scene video goes into the clip on its own and the clip is reassembled — no need to press the button",
+      autoAsmOn: "on: new scene videos go into the clip",
       clipDone: "clip is ready",
       download: "download",
       finalScenes: "Video of every scene",
@@ -234,6 +239,8 @@ const I18N = {
       providerTitle: "video engine",
       providerSeedance: "Seedance (2 frames)",
       providerGrok: "Grok (1 frame)",
+      providerSeedanceShort: "Seedance",
+      providerGrokShort: "Grok",
       genVideo: "Animate scene",
       regenVideo: "Re-animate",
       videoBusy: "generating…",
@@ -250,6 +257,10 @@ const I18N = {
 
     character: {
       namePh: "Character name",
+      noName: "no name",
+      openTitle: "click: the character's dossier",
+      attrsN: "attributes: {n}",
+      attrsNone: "no attributes",
       main: "main",
       delTitle: "delete",
       delConfirm: "Delete the character “{name}” together with the photos?",
@@ -328,6 +339,17 @@ const I18N = {
         ideaBad: "No lyrics and no comment — write the idea of the clip in the comment field",
         info: "The story arc is optional: write your own in “Character & story” or leave it empty and it will be written for you. Everything after that runs on its own: story → storyboard → frames → video of every scene → the clip assembled with your track. Progress shows up on the track card. If the scenes were already generated in a different style, hit “Generate storyboard” again first.",
         go: "Let's go",
+      },
+
+      sheet: {
+        title: "Storyboard sheet",
+        full: "Actual size",
+        fit: "Fit to screen",
+        original: "open the original",
+      },
+
+      character: {
+        title: "Character",
       },
 
       cells: {
@@ -1177,10 +1199,8 @@ const I18N = {
 
     stages: {
       setup: "Настройка",
-      plot: "Сюжет",
       board: "Раскадровка",
       anim: "Анимация",
-      final: "Готовое",
     },
 
     stylePicker: {
@@ -1213,12 +1233,14 @@ const I18N = {
       lyricsPh: "Пусто = чисто бит: идею закладывают комментарий и персонажи",
       saveTrack: "Сохранить трек",
       noteLabel: "Режиссёрская заметка трека",
-      genStory: "Сгенерировать сюжет",
       genScenes: "Сгенерировать раскадровку",
-      genScenesTitle: "сначала сгенерируй общий сюжет (этап «Сюжет»)",
+      genScenesTitle: "сначала сгенерируй общий сюжет — панель «Сюжет и герой» выше",
       scenesCount: "кадров: {n}",
       scenesDone: "готово, кадров: {n}",
       sheetTitle: "Лист раскадровки",
+      sheetEmpty: "листа ещё нет",
+      sheetOpen: "Открыть крупно",
+      sheetOpenTitle: "показать лист во весь экран",
       genSheet: "Сгенерировать лист",
       redrawSheet: "Перерисовать лист",
       sheetBusy: "рисую лист…",
@@ -1238,9 +1260,14 @@ const I18N = {
       animEmpty: "Видео ещё нет — сгенерируй их из «Раскадровки»: кнопка «Видео сцены» на карточке кадра.",
       clipHead: "Готовый клип трека",
       clipTitle: "Готовый клип — утверждено сцен: {a}/{b}",
+      clipEmpty: "клипа ещё нет",
       assemble: "Собрать клип",
+      reassemble: "Пересобрать",
       assembleBusy: "собираю клип…",
       assembleTitle: "утверди хотя бы одну сцену (этап «Анимация»)",
+      autoAsm: "автосборка",
+      autoAsmTitle: "каждое новое видео сцены само идёт в клип, и клип пересобирается — кнопку нажимать не нужно",
+      autoAsmOn: "включена: новые видео сцен идут в клип",
       clipDone: "клип готов",
       download: "скачать",
       finalScenes: "Видео всех сцен",
@@ -1298,6 +1325,8 @@ const I18N = {
       providerTitle: "провайдер видео",
       providerSeedance: "Seedance (2 кадра)",
       providerGrok: "Grok (1 кадр)",
+      providerSeedanceShort: "Seedance",
+      providerGrokShort: "Grok",
       genVideo: "Видео сцены",
       regenVideo: "Перегенерировать видео",
       videoBusy: "генерирую…",
@@ -1314,6 +1343,10 @@ const I18N = {
 
     character: {
       namePh: "Имя персонажа",
+      noName: "без имени",
+      openTitle: "клик: досье персонажа",
+      attrsN: "атрибутов: {n}",
+      attrsNone: "без атрибутов",
       main: "главный",
       delTitle: "удалить",
       delConfirm: "Удалить персонажа «{name}» вместе с фото?",
@@ -1392,6 +1425,17 @@ const I18N = {
         ideaBad: "Нет ни текста, ни комментария — впиши идею клипа в комментарий",
         info: "Сквозной сюжет — по желанию: впиши свой в блоке «Герой и сюжет» или оставь пустым, напишу сам. Дальше всё автоматом: сюжет → раскадровка → кадры → видео каждой сцены → сборка клипа с треком. Прогресс будет виден на карточке трека. Если сцены уже были сгенерены с другим стилем — сначала нажми «Сгенерировать раскадровку» заново.",
         go: "Погнали",
+      },
+
+      sheet: {
+        title: "Лист раскадровки",
+        full: "Реальный размер",
+        fit: "Вписать в экран",
+        original: "открыть оригинал",
+      },
+
+      character: {
+        title: "Персонаж",
       },
 
       cells: {

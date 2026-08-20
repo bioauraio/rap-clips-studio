@@ -8,8 +8,8 @@
 <title>lolq.ai</title>
 <link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
 <link rel="apple-touch-icon" href="/img/logo-mark.svg" />
-<link rel="stylesheet" href="/style.css?v=46" />
-<link rel="stylesheet" href="/landing.css?v=46" />
+<link rel="stylesheet" href="/style.css?v=47" />
+<link rel="stylesheet" href="/landing.css?v=47" />
 </head>
 <body>
 <!-- ─────────────────────────────────────────────────────────────────────────
@@ -254,7 +254,13 @@
 
   <section class="panel">
     <h2 data-i18n-title="chars.titleHint" data-i18n="chars.title"></h2>
-    <div id="characters"></div>
+    <!-- Персонажи листаются вправо той же лентой, что и сцены (bindStrip):
+         на панели живёт компактная визитка, полное досье — в модалке. -->
+    <div class="strip-wrap chars-wrap">
+      <button class="strip-arrow strip-prev" type="button" data-i18n-aria="common.prev">‹</button>
+      <div id="characters" class="scenes chars-strip"></div>
+      <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
+    </div>
     <div class="row">
       <button id="add-character-btn" data-i18n="chars.add"></button>
     </div>
@@ -317,6 +323,13 @@
           <div class="track-right">
             <label data-i18n="track.comment"></label>
             <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
+            <!-- Режиссёрская заметка трека: её пишет генератор сюжета. Сюжет
+                 альбома живёт в своей панели, а заметка — свойство трека,
+                 поэтому она осталась здесь, рядом с комментарием владельца. -->
+            <div class="t-note-view hidden">
+              <label data-i18n="track.noteLabel"></label>
+              <p class="t-note-text muted"></p>
+            </div>
           </div>
         </div>
         <label data-i18n="track.lyrics"></label>
@@ -326,35 +339,29 @@
         </div>
       </section>
 
-      <!-- 2. Сюжет -->
-      <section class="stage-pane" data-stage="plot">
-        <div class="t-note-view hidden">
-          <label data-i18n="track.noteLabel"></label>
-          <p class="t-note-text muted"></p>
-        </div>
-        <div class="row">
-          <button class="gen-story-t primary hidden" data-i18n="track.genStory"></button>
-          <span class="t-story-status status"></span>
-        </div>
-      </section>
-
-      <!-- 3. Раскадровка -->
+      <!-- 2. Раскадровка -->
       <section class="stage-pane" data-stage="board">
         <div class="row">
           <button class="gen-scenes primary" data-i18n="track.genScenes"></button>
           <span class="scenes-status status"></span>
         </div>
+        <!-- Лист раскадровки — контрольный отпечаток, а не полотно на всю
+             страницу: миниатюра фиксированной высоты, клик открывает крупно. -->
         <div class="storyboard-block">
           <div class="media-head">
             <span data-i18n="track.sheetTitle"></span>
             <span class="sb-status status"></span>
           </div>
-          <div class="storyboard-box">
-            <img class="sb-preview hidden" />
-          </div>
-          <div class="row">
-            <button class="gen-storyboard" data-i18n="track.genSheet"></button>
-            <button class="slice-storyboard" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
+          <div class="storyboard-row">
+            <div class="storyboard-box">
+              <img class="sb-preview hidden" />
+              <span class="sb-empty muted" data-i18n="track.sheetEmpty"></span>
+            </div>
+            <div class="storyboard-acts">
+              <button class="sb-open" data-i18n-title="track.sheetOpenTitle" data-i18n="track.sheetOpen"></button>
+              <button class="gen-storyboard" data-i18n="track.genSheet"></button>
+              <button class="slice-storyboard" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
+            </div>
           </div>
         </div>
         <div class="strip-wrap">
@@ -370,7 +377,7 @@
         </div>
       </section>
 
-      <!-- 4. Анимация -->
+      <!-- 3. Анимация -->
       <section class="stage-pane" data-stage="anim">
         <div class="strip-wrap">
           <button class="strip-arrow strip-prev" type="button" data-i18n-aria="common.prev">‹</button>
@@ -378,33 +385,60 @@
           <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
         </div>
       </section>
+    </div>
 
-      <!-- 5. Готовое -->
-      <section class="stage-pane" data-stage="final">
-        <div class="clip-block">
-          <div class="media-head">
-            <span class="clip-title" data-i18n="track.clipHead"></span>
-            <span class="clip-status status"></span>
-          </div>
-          <div class="media-box clip-box">
-            <video class="clip-preview hidden" controls></video>
-          </div>
+    <!-- Готовый клип — не этап, а витрина трека: видна на любом этапе и всегда
+         показывает актуальную склейку. Галочка «автосборка» пересобирает клип
+         сама, как только у трека появляется новое готовое видео сцены. -->
+    <div class="clip-dock">
+      <div class="media-head">
+        <span class="clip-title" data-i18n="track.clipHead"></span>
+        <span class="clip-status status"></span>
+      </div>
+      <div class="clip-dock-body">
+        <div class="media-box clip-box">
+          <video class="clip-preview hidden" controls></video>
+          <span class="clip-empty muted" data-i18n="track.clipEmpty"></span>
+        </div>
+        <div class="clip-dock-side">
+          <label class="approve-check autoasm-label" data-i18n-title="track.autoAsmTitle">
+            <input type="checkbox" class="t-autoasm" />
+            <span data-i18n="track.autoAsm"></span>
+          </label>
           <div class="row">
             <button class="assemble primary" data-i18n="track.assemble"></button>
             <a class="clip-download ghost hidden" download data-i18n="track.download"></a>
           </div>
+          <span class="autoasm-note status"></span>
+          <details class="final-scenes">
+            <summary data-i18n="track.finalScenes"></summary>
+            <div class="final-grid"></div>
+          </details>
         </div>
-        <div class="final-scenes">
-          <div class="media-head"><span data-i18n="track.finalScenes"></span></div>
-          <div class="final-grid"></div>
-        </div>
-      </section>
+      </div>
     </div>
   </div>
 </template>
 
+<!-- Визитка персонажа в ленте: моделька, имя, «главный», счётчик атрибутов.
+     Клик открывает досье (#char-edit-tpl) в общей модалке. -->
 <template id="char-tpl">
-  <div class="char-card">
+  <button type="button" class="char-card" data-i18n-title="character.openTitle">
+    <span class="cc-thumb">
+      <img class="cc-img hidden" alt="" />
+      <span class="cc-ph"></span>
+    </span>
+    <span class="cc-name"></span>
+    <span class="cc-meta">
+      <span class="cc-main hidden" data-i18n="character.main"></span>
+      <span class="cc-attrs"></span>
+    </span>
+  </button>
+</template>
+
+<!-- Досье персонажа: то же, что раньше лежало распахнутым на панели. -->
+<template id="char-edit-tpl">
+  <div class="char-edit">
     <div class="char-head">
       <input class="c-name" data-i18n-ph="character.namePh" />
       <label class="approve-check c-main-label"><input type="checkbox" class="c-main" /> <span data-i18n="character.main"></span></label>
@@ -412,14 +446,14 @@
     </div>
     <label data-i18n-title="character.descTitle" data-i18n="character.descLabel"></label>
     <textarea class="c-desc" rows="3"></textarea>
+    <div class="char-photos"></div>
     <div class="row">
-      <button class="c-save" data-i18n="common.save"></button>
+      <button class="c-save primary" data-i18n="common.save"></button>
       <label class="c-upload-label">
         <input type="file" class="c-photo-input hidden" accept="image/*" multiple />
         <span class="c-upload-btn" data-i18n="character.upload"></span>
       </label>
       <button class="c-gen-model" data-i18n-title="character.genModelTitle" data-i18n="character.genModel"></button>
-      <div class="char-photos"></div>
     </div>
     <div class="char-attrs-block">
       <div class="attrs-head">
@@ -453,16 +487,24 @@
         </div>
       </div>
       <div class="s-midframes"></div>
-      <!-- Референсы кадра: чем объяснять словами «как снято», проще приложить
-           картинку-образец. Стилистику всё равно диктует стиль трека. -->
-      <div class="s-refs" data-i18n-title="scene.refsTitle"></div>
+      <!-- Верхняя строка кадра: слева референсы и «+ реф» (чем объяснять
+           словами «как снято», проще приложить картинку-образец), справа —
+           движок видео и промпт. Кнопки перегенерации остаются внизу. -->
+      <div class="s-top-row">
+        <div class="s-refs" data-i18n-title="scene.refsTitle"></div>
+        <div class="s-top-right">
+          <!-- Чипы движка рисует JS; сам select остаётся источником правды. -->
+          <div class="s-provider-seg" data-i18n-title="scene.providerTitle"></div>
+          <select class="s-provider hidden" data-i18n-title="scene.providerTitle"></select>
+          <details class="s-prompt-details">
+            <summary data-i18n="scene.prompt"></summary>
+            <textarea class="s-image" rows="4" data-i18n-title="scene.promptTitle"></textarea>
+          </details>
+        </div>
+      </div>
       <span class="s-image-status status"></span>
       <div class="s-chars-chips" data-i18n-title="scene.charsTitle"></div>
       <input type="hidden" class="s-chars" />
-      <details class="s-prompt-details">
-        <summary data-i18n="scene.prompt"></summary>
-        <textarea class="s-image" rows="4" data-i18n-title="scene.promptTitle"></textarea>
-      </details>
       <div class="s-edit hidden">
         <div class="shot-row">
           <input class="s-duration" type="number" min="2" max="12" data-i18n-title="scene.durationTitle" />
@@ -488,8 +530,7 @@
         <button class="s-gen-last" data-i18n-title="scene.genLastTitle" data-i18n="scene.genLast"></button>
         <button class="s-gen-mid"></button>
       </div>
-      <div class="row">
-        <select class="s-provider" data-i18n-title="scene.providerTitle"></select>
+      <div class="row s-video-row">
         <button class="s-gen-video primary" data-i18n="scene.genVideo"></button>
         <span class="s-video-status status"></span>
       </div>
@@ -580,7 +621,7 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=46"></script>
-<script src="/app.js?v=46"></script>
+<script src="/i18n.js?v=47"></script>
+<script src="/app.js?v=47"></script>
 </body>
 </html>

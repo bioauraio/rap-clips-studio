@@ -398,17 +398,23 @@ $("#save-account-btn").addEventListener("click", () => {
 });
 
 // ────────── общая модалка: оверлей + карточка, закрытие по ✕ / фону / Esc ──────────
-function openModal(title, buildBody) {
+// opts.wide — карточка во весь экран (крупный просмотр листа раскадровки).
+function openModal(title, buildBody, opts = {}) {
   $("#modal-title").textContent = title;
   const body = $("#modal-body");
   body.innerHTML = "";
+  body.removeAttribute("data-char-id");
+  $("#modal-overlay .modal-card").classList.toggle("wide", Boolean(opts.wide));
   buildBody(body);
   $("#modal-overlay").classList.remove("hidden");
 }
 
 function closeModal() {
   $("#modal-overlay").classList.add("hidden");
-  $("#modal-body").innerHTML = "";
+  $("#modal-overlay .modal-card").classList.remove("wide");
+  const body = $("#modal-body");
+  body.innerHTML = "";
+  body.removeAttribute("data-char-id");
 }
 
 $("#modal-close").addEventListener("click", closeModal);
@@ -920,6 +926,9 @@ async function loadProject() {
   if (!providers.loaded) {
     providers = { ...(await api("/api/providers")), loaded: true };
   }
+  // До отрисовки: автосборка может поставить клип в очередь, и карточка
+  // должна показать это сразу, а поллер — не погаснуть.
+  await autoAssembleTick();
   render();
   schedulePoll();
 }
@@ -1075,6 +1084,96 @@ function schedulePoll() {
   if (busy) pollTimer = setTimeout(loadProject, 3000);
 }
 
+// ═════════════════════ автосборка клипа ═════════════════════
+// Галочка «автосборка» живёт на треке: как только у трека появляется новое
+// готовое видео сцены, клип пересобирается сам. Бэкенд не трогаем — флаг
+// хранится в localStorage по id трека, а решение принимается на клиенте,
+// на том же поллинге статусов, что уже крутится (schedulePoll → loadProject).
+const AUTOASM_KEY = "rc_autoasm";
+
+function autoAsmMap() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(AUTOASM_KEY) || "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch (e) {
+    return {};   // приватный режим или мусор в ключе — считаем, что выключено
+  }
+}
+
+function autoAsmOn(trackId) {
+  return Boolean(autoAsmMap()[String(trackId)]);
+}
+
+function setAutoAsm(trackId, on) {
+  const map = autoAsmMap();
+  if (on) map[String(trackId)] = true;
+  else delete map[String(trackId)];
+  try { localStorage.setItem(AUTOASM_KEY, JSON.stringify(map)); } catch (e) { /* приватный режим */ }
+}
+
+// Снимок «какие видео сцен трек уже показывал» с прошлого опроса: по нему и
+// видно новое готовое видео. undefined = трека ещё не видели (первый проход
+// после загрузки страницы) — тогда только запоминаем, не собираем.
+const autoAsmSeen = new Map();      // trackId → сигнатура готовых видео
+const autoAsmFlight = new Set();    // трек, по которому сборка уже отправлена
+const autoAsmNote = new Map();      // trackId → текст ошибки под галочкой
+
+function videosSig(tr) {
+  return (tr.scenes || [])
+    .filter((s) => s.video_url)
+    .map((s) => `${s.id}:${s.video_url}`)
+    .sort()
+    .join("|");
+}
+
+// Один проход по всем трекам проекта. Вызывается из loadProject ДО render(),
+// поэтому статусы, которые мы поменяли, сразу видны и в разметке, и в
+// schedulePoll — иначе поллинг погас бы, не дождавшись нашей же сборки.
+async function autoAssembleTick() {
+  for (const tr of project.tracks || []) {
+    const prev = autoAsmSeen.get(tr.id);
+    const sig = videosSig(tr);
+    autoAsmSeen.set(tr.id, sig);
+
+    // Наша сборка в полёте: ждём, пока сервер её доведёт. Статус вернулся из
+    // «queued/running» — значит, отработала (успешно или с ошибкой).
+    if (autoAsmFlight.has(tr.id)) {
+      if (["queued", "running"].includes(tr.clip_status)) continue;
+      autoAsmFlight.delete(tr.id);
+    }
+    if (!autoAsmOn(tr.id)) continue;
+    if (prev === undefined) continue;                                  // первый проход — только базовый снимок
+    if (sig === prev) continue;                                        // ничего нового не появилось
+    if (["queued", "running"].includes(tr.clip_status)) continue;      // сервер уже собирает (в т.ч. супергенерация)
+
+    // Новые видео сами идут в клип: без этого пересборка дала бы ту же
+    // склейку. Сцены, снятые владельцем с галочки вручную, не трогаем —
+    // «новым» считается только видео, которого в прошлом снимке не было.
+    const prevSet = new Set(prev.split("|").filter(Boolean));
+    const fresh = (tr.scenes || []).filter(
+      (s) => s.video_url && !s.approved && !prevSet.has(`${s.id}:${s.video_url}`),
+    );
+    try {
+      for (const s of fresh) {
+        await api(`/api/scenes/${s.id}/approve`, { method: "POST", body: { approved: true } });
+        s.approved = true;
+      }
+      const inClip = (tr.scenes || []).filter((s) => s.video_url && s.approved).length;
+      if (!inClip) continue;                                           // собирать нечего — бэк ответил бы 400
+      autoAsmFlight.add(tr.id);
+      await api(`/api/tracks/${tr.id}/assemble`, { method: "POST" });
+      // Сервер поставил сборку в очередь — отражаем это здесь же, чтобы
+      // карточка сразу показала «собираю», а поллер не заснул.
+      tr.clip_status = "queued";
+      tr.approved_count = inClip;
+      autoAsmNote.delete(tr.id);
+    } catch (e) {
+      autoAsmFlight.delete(tr.id);
+      autoAsmNote.set(tr.id, errText(e));
+    }
+  }
+}
+
 function fmtTime(sec) {
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
@@ -1102,15 +1201,24 @@ function render() {
   const charsBox = $("#characters");
   charsBox.innerHTML = "";
   (project.characters || []).forEach((c) => charsBox.appendChild(renderCharacter(c)));
+  // Стрелки ленты персонажей статичны (лежат в разметке, а не в шаблоне) —
+  // вешаем обработчики один раз, иначе каждый опрос добавлял бы ещё пару.
+  const charsWrap = charsBox.closest(".strip-wrap");
+  if (charsWrap && !charsWrap.dataset.bound) {
+    charsWrap.dataset.bound = "1";
+    bindStrip(charsWrap);
+  }
 
   const container = $("#tracks");
   container.innerHTML = "";
   project.tracks.forEach((tr) => container.appendChild(renderTrack(tr)));
 }
 
-// ────────── степпер трека: 5 этапов, никакой автогенерации при переключении ──────────
+// ────────── степпер трека: 3 этапа, никакой автогенерации при переключении ──────────
 // Ключи этапов; подписи — в словаре (stages.*), чтобы степпер переводился.
-const STAGES = ["setup", "plot", "board", "anim", "final"];
+// Сюжета среди этапов нет: он общий на проект и живёт в своей панели, а
+// «Готовое» — не этап, а витрина клипа внизу карточки (.clip-dock).
+const STAGES = ["setup", "board", "anim"];
 // Активный этап на трек — переживает пере-рендеры поллинга.
 const trackStages = new Map();
 
@@ -1124,9 +1232,6 @@ function stageStates(tr) {
   return {
     setup: tr.style && tr.audio_duration_sec ? "done"
       : (tr.title || tr.style || tr.audio_duration_sec || tr.lyrics || tr.comment) ? "part" : "empty",
-    plot: project.story_status === "error" ? "error"
-      : busy(project.story_status) ? "busy"
-      : (project.story || "").trim() ? "done" : "empty",
     board: (tr.scenes_status === "error" || tr.storyboard_status === "error" ||
         scenes.some((s) => s.image_status === "error")) ? "error"
       : (busy(tr.scenes_status) || busy(tr.storyboard_status) || anyImgBusy) ? "busy"
@@ -1134,16 +1239,23 @@ function stageStates(tr) {
     anim: scenes.some((s) => s.video_status === "error") ? "error"
       : anyVidBusy ? "busy"
       : videosDone ? "done" : scenes.some((s) => s.video_url) ? "part" : "empty",
-    final: tr.clip_status === "error" ? "error"
-      : busy(tr.clip_status) ? "busy"
-      : tr.clip_url ? "done" : "empty",
   };
 }
 
 function defaultStage(tr) {
-  if (tr.clip_url) return "final";
+  // Клип больше не этап: трек с готовым видео открывается на «Анимации»,
+  // а сам клип всё равно виден внизу карточки на любом этапе.
+  if ((tr.scenes || []).some((s) => s.video_url)) return "anim";
   if (tr.scenes_count) return "board";
   return "setup";
+}
+
+// Активный этап переживает пере-рендеры, но не переживает смену набора этапов
+// (в trackStages может лежать ключ, которого уже нет) — иначе трек откроется
+// без единой видимой панели.
+function activeStage(tr) {
+  const cur = trackStages.get(tr.id);
+  return STAGES.includes(cur) ? cur : defaultStage(tr);
 }
 
 function setStage(card, key) {
@@ -1183,7 +1295,7 @@ function renderTrack(tr) {
 
   // ── табы-этапы с точками-статусами
   const states = stageStates(tr);
-  const active = trackStages.get(tr.id) || defaultStage(tr);
+  const active = activeStage(tr);
   const tabsBox = $(".stage-tabs", card);
   STAGES.forEach((key, i) => {
     const name = t("stages." + key);
@@ -1219,7 +1331,7 @@ function renderTrack(tr) {
     const dy = e.changedTouches[0].clientY - touchY;
     touchX = null;
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
-    const cur = trackStages.get(tr.id) || defaultStage(tr);
+    const cur = activeStage(tr);
     const idx = STAGES.indexOf(cur);
     const next = STAGES[idx + (dx < 0 ? 1 : -1)];
     if (next) {
@@ -1228,7 +1340,11 @@ function renderTrack(tr) {
     }
   }, { passive: true });
 
-  // ── этап 1: настройка
+  // ── этап 1: настройка (+ режиссёрская заметка трека, если сюжет её написал)
+  if (tr.director_note) {
+    $(".t-note-view", card).classList.remove("hidden");
+    $(".t-note-text", card).textContent = tr.director_note;
+  }
   $(".t-style", card).value = tr.style;
   buildStylePicker($(".t-style-picker", card), tr.style, (v) => { $(".t-style", card).value = v; });
   $(".t-comment", card).value = tr.comment;
@@ -1251,30 +1367,7 @@ function renderTrack(tr) {
   $(".del", card).addEventListener("click", () => deleteTrack(tr.id));
   $(".save-track", card).addEventListener("click", () => saveTrack(tr.id, card));
 
-  // ── этап 2: сюжет (read-only цитата + заметка режиссёра + генерация, если пуст)
-  if (tr.director_note) {
-    $(".t-note-view", card).classList.remove("hidden");
-    $(".t-note-text", card).textContent = tr.director_note;
-  }
-  const storyBtn = $(".gen-story-t", card);
-  const storyBusy = ["queued", "running"].includes(project.story_status);
-  storyBtn.classList.toggle("hidden", Boolean((project.story || "").trim()) && !storyBusy);
-  storyBtn.disabled = storyBusy;
-  storyBtn.addEventListener("click", async () => {
-    await saveProject();
-    try {
-      await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
-    } catch (e) {
-      fail(e);
-    }
-    await loadProject();
-  });
-  const tStoryStatus = statusLabel(project.story_status);
-  const tStoryEl = $(".t-story-status", card);
-  tStoryEl.textContent = tStoryStatus.text;
-  tStoryEl.className = "status " + tStoryStatus.cls;
-
-  // ── этап 3: раскадровка
+  // ── этап 2: раскадровка
   $(".add-scene", card).addEventListener("click", () => addManualScene(tr.id));
   const allBtn = $(".gen-all-frames", card);
   const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
@@ -1344,10 +1437,18 @@ function renderTrack(tr) {
   const sbStatusEl = $(".sb-status", card);
   sbStatusEl.textContent = sbStatus.text;
   sbStatusEl.className = "status " + sbStatus.cls;
+  const sbEmpty = $(".sb-empty", card);
+  const sbOpenBtn = $(".sb-open", card);
   if (tr.storyboard_url) {
     const img = $(".sb-preview", card);
     img.src = tr.storyboard_url;
     img.classList.remove("hidden");
+    img.addEventListener("click", () => openSheetModal(tr));
+    if (sbEmpty) sbEmpty.classList.add("hidden");
+  }
+  if (sbOpenBtn) {
+    sbOpenBtn.disabled = !tr.storyboard_url;
+    sbOpenBtn.addEventListener("click", () => openSheetModal(tr));
   }
   const sbBtn = $(".gen-storyboard", card);
   const sbBusy = ["queued", "running"].includes(tr.storyboard_status);
@@ -1378,13 +1479,14 @@ function renderTrack(tr) {
   }
   $$(".strip-wrap", card).forEach(bindStrip);
 
-  // ── этап 5: готовое — финальный клип + все видео сцен в одном месте
+  // ── витрина клипа внизу карточки: видна на любом этапе, всегда актуальна
   const clipStatus = statusLabel(tr.clip_status, t("track.clipDone"));
   const clipStatusEl = $(".clip-status", card);
   clipStatusEl.textContent = clipStatus.text;
   clipStatusEl.className = "status " + clipStatus.cls;
   $(".clip-title", card).textContent =
     t("track.clipTitle", { a: tr.approved_count, b: tr.scenes_count });
+  const clipEmpty = $(".clip-empty", card);
   if (tr.clip_url) {
     const v = $(".clip-preview", card);
     v.src = tr.clip_url;
@@ -1392,13 +1494,40 @@ function renderTrack(tr) {
     const dl = $(".clip-download", card);
     dl.href = tr.clip_url;
     dl.classList.remove("hidden");
+    if (clipEmpty) clipEmpty.classList.add("hidden");
   }
   const asmBtn = $(".assemble", card);
   const asmBusy = ["queued", "running"].includes(tr.clip_status);
   asmBtn.disabled = asmBusy || !tr.approved_count;
   asmBtn.title = tr.approved_count ? "" : t("track.assembleTitle");
-  asmBtn.textContent = asmBusy ? t("track.assembleBusy") : t("track.assemble");
+  asmBtn.textContent = asmBusy ? t("track.assembleBusy")
+    : tr.clip_url ? t("track.reassemble") : t("track.assemble");
   asmBtn.addEventListener("click", () => assembleClip(tr.id));
+
+  // Автосборка: флаг живёт в localStorage, работу делает autoAssembleTick
+  // на общем поллинге. Здесь только галочка и её сообщение.
+  const autoBox = $(".t-autoasm", card);
+  if (autoBox) {
+    autoBox.checked = autoAsmOn(tr.id);
+    autoBox.addEventListener("change", () => {
+      setAutoAsm(tr.id, autoBox.checked);
+      autoAsmNote.delete(tr.id);
+      // Снимок «что уже видели» обновляем прямо сейчас: включённая галочка не
+      // должна пересобирать клип из-за видео, которые лежали тут и до неё.
+      autoAsmSeen.set(tr.id, videosSig(tr));
+      const note = $(".autoasm-note", card);
+      if (note) {
+        note.textContent = autoBox.checked ? t("track.autoAsmOn") : "";
+        note.className = "status autoasm-note";
+      }
+    });
+    const note = $(".autoasm-note", card);
+    if (note) {
+      const err = autoAsmNote.get(tr.id);
+      note.textContent = err || (autoBox.checked ? t("track.autoAsmOn") : "");
+      note.className = "status autoasm-note" + (err ? " error" : "");
+    }
+  }
 
   const grid = $(".final-grid", card);
   const withVideo = (tr.scenes || []).filter((s) => s.video_url);
@@ -1665,7 +1794,10 @@ function renderScene(s, audioEl, mode = "board") {
     const ph = $(".s-image-preview", card);
     if (ph) { ph.src = s.image_thumb_url || s.image_url; ph.classList.remove("hidden"); }
   }
+  // Движок видео: системный select оставлен источником правды (на его .value
+  // висит генерация), а виден — сегментный переключатель в стиле студии.
   const provSel = $(".s-provider", card);
+  const provSeg = $(".s-provider-seg", card);
   if (provSel) {
   provSel.innerHTML = "";
   (providers.video || ["grok"]).forEach((p) => {
@@ -1675,6 +1807,41 @@ function renderScene(s, audioEl, mode = "board") {
     provSel.appendChild(opt);
   });
   provSel.value = s.video_provider;
+  // Сцену сняли на движке, который сейчас недоступен (free-тариф оставляет
+  // только Grok): у select'а не осталось выбранного пункта, и .value пуст.
+  // Ставим первый доступный — на нём сервер и сгенерирует (_allowed_provider
+  // всё равно понижает недоступный), а чип показывает это честно, а не пустым.
+  if (!provSel.value && provSel.options.length) provSel.value = provSel.options[0].value;
+  if (provSeg) {
+    const list = providers.video || ["grok"];
+    const syncSeg = () => $$(".prov-chip", provSeg)
+      .forEach((el) => el.classList.toggle("on", el.dataset.prov === provSel.value));
+    list.forEach((p) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "prov-chip";
+      chip.dataset.prov = p;
+      // В чипе — имя движка: карточка кадра узкая, полная подпись
+      // «Seedance (2 кадра)» вытесняла бы референсы на отдельную строку.
+      chip.textContent = t(p === "seedance" ? "scene.providerSeedanceShort" : "scene.providerGrokShort");
+      chip.title = t(p === "seedance" ? "scene.providerSeedance" : "scene.providerGrok");
+      // Один движок — переключать нечего, чип остаётся подписью.
+      if (list.length > 1) {
+        chip.addEventListener("click", () => { provSel.value = p; syncSeg(); });
+      } else {
+        chip.classList.add("single");
+      }
+      provSeg.appendChild(chip);
+    });
+    syncSeg();
+  }
+  }
+
+  // Раскрытый промпт занимает всю ширину карточки, свёрнутый — жмётся вправо.
+  const promptDet = $(".s-prompt-details", card);
+  if (promptDet) {
+    promptDet.addEventListener("toggle", () =>
+      card.classList.toggle("prompt-open", promptDet.open));
   }
 
   const vidBtn = $(".s-gen-video", card);
@@ -1898,10 +2065,57 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   await loadProject();
 });
 
+// Визитка персонажа в ленте: моделька, имя, «главный», счётчик атрибутов.
+// Всё остальное — в досье (openCharacterModal): панель не должна занимать
+// пол-экрана ради трёх героев.
 function renderCharacter(c) {
   const tpl = $("#char-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".char-card");
   applyI18n(card);
+  card.dataset.id = c.id;
+  const name = (c.name || "").trim();
+  $(".cc-name", card).textContent = name || t("character.noName");
+  const photo = (c.photos || [])[0];
+  if (photo) {
+    const img = $(".cc-img", card);
+    img.src = photo.url + `?t=${photo.id}`;
+    img.classList.remove("hidden");
+  } else {
+    $(".cc-ph", card).textContent = (name || "?").charAt(0).toUpperCase() || "?";
+  }
+  if (c.is_main) $(".cc-main", card).classList.remove("hidden");
+  const attrs = (c.attributes || []).length;
+  $(".cc-attrs", card).textContent = attrs
+    ? t("character.attrsN", { n: attrs })
+    : t("character.attrsNone");
+  card.addEventListener("click", () => openCharacterModal(c));
+  return card;
+}
+
+// Досье персонажа в модалке: имя, описание, фото-модельки, атрибуты.
+// Любая правка внутри перезагружает проект — поэтому тело модалки после неё
+// пересобирается на свежих данных, а не остаётся врать прошлым снимком.
+async function charModalRefresh(id) {
+  await loadProject();
+  const body = $("#modal-body");
+  if (body.dataset.charId !== String(id)) return;   // модалку уже закрыли или сменили
+  const fresh = (project.characters || []).find((c) => c.id === id);
+  if (fresh) openCharacterModal(fresh);
+  else closeModal();
+}
+
+function openCharacterModal(c) {
+  openModal((c.name || "").trim() || t("modal.character.title"), (body) => {
+    body.dataset.charId = String(c.id);
+    const card = $("#char-edit-tpl").content.cloneNode(true).querySelector(".char-edit");
+    applyI18n(card);
+    body.appendChild(card);
+    bindCharacterEditor(card, c);
+  });
+}
+
+function bindCharacterEditor(card, c) {
+  const back = () => charModalRefresh(c.id);
   card.dataset.id = c.id;
   $(".c-name", card).value = c.name;
   $(".c-desc", card).value = c.description;
@@ -1918,7 +2132,7 @@ function renderCharacter(c) {
     del.title = t("character.photoDel");
     del.addEventListener("click", async () => {
       await api(`/api/characters/photos/${ph.id}`, { method: "DELETE" });
-      await loadProject();
+      await back();
     });
     wrap.appendChild(img);
     wrap.appendChild(del);
@@ -1930,15 +2144,17 @@ function renderCharacter(c) {
       description: $(".c-desc", card).value,
       is_main: $(".c-main", card).checked,
     }});
+    closeModal();
     await loadProject();
   });
   $(".c-del", card).addEventListener("click", async () => {
     if (!confirm(t("character.delConfirm", { name: c.name }))) return;
     await api(`/api/characters/${c.id}`, { method: "DELETE" });
+    closeModal();
     await loadProject();
   });
   const genModelBtn = $(".c-gen-model", card);
-  if (genModelBtn) genModelBtn.addEventListener("click", () => openModelModal(c));
+  if (genModelBtn) genModelBtn.addEventListener("click", () => openModelModal(c, back));
   const input = $(".c-photo-input", card);
   input.addEventListener("change", async () => {
     for (const file of input.files) {
@@ -1946,19 +2162,19 @@ function renderCharacter(c) {
       fd.append("photo", file);
       await api(`/api/characters/${c.id}/photos`, { method: "POST", body: fd });
     }
-    await loadProject();
+    await back();
   });
 
   // Атрибуты — фирменные вещи персонажа: чипы с миниатюрами ракурсов.
   const attrsBox = $(".char-attrs", card);
-  (c.attributes || []).forEach((a) => attrsBox.appendChild(renderAttribute(a)));
-  $(".attr-add", card).addEventListener("click", () => openAttributeModal(c.id));
+  (c.attributes || []).forEach((a) => attrsBox.appendChild(renderAttribute(a, back)));
+  $(".attr-add", card).addEventListener("click", () => openAttributeModal(c.id, null, back));
 
   return card;
 }
 
 // Чип атрибута: имя (клик = редактирование), миниатюры фото с ✕, «+ фото», ✕ атрибута.
-function renderAttribute(a) {
+function renderAttribute(a, onDone = null) {
   const chip = document.createElement("div");
   chip.className = "attr-chip";
   chip.dataset.id = a.id;
@@ -1968,7 +2184,7 @@ function renderAttribute(a) {
   name.className = "attr-name";
   name.textContent = a.name;
   name.title = (a.description ? a.description + " — " : "") + t("character.attrEditTitle");
-  name.addEventListener("click", () => openAttributeModal(null, a));
+  name.addEventListener("click", () => openAttributeModal(null, a, onDone));
   chip.appendChild(name);
 
   const photos = document.createElement("div");
@@ -1985,7 +2201,7 @@ function renderAttribute(a) {
     del.title = t("character.photoDel");
     del.addEventListener("click", async () => {
       await api(`/api/attributes/photos/${ph.id}`, { method: "DELETE" });
-      await loadProject();
+      if (onDone) await onDone(); else await loadProject();
     });
     wrap.append(img, del);
     photos.appendChild(wrap);
@@ -2005,7 +2221,7 @@ function renderAttribute(a) {
       fd.append("photo", file);
       await api(`/api/attributes/${a.id}/photos`, { method: "POST", body: fd });
     }
-    await loadProject();
+    if (onDone) await onDone(); else await loadProject();
   });
   const uploadBtn = document.createElement("span");
   uploadBtn.className = "attr-upload-btn";
@@ -2018,14 +2234,16 @@ function renderAttribute(a) {
   delAttr.className = "ghost danger attr-del";
   delAttr.textContent = "✕";
   delAttr.title = t("character.attrDelTitle");
-  delAttr.addEventListener("click", () => confirmDeleteAttribute(a));
+  delAttr.addEventListener("click", () => confirmDeleteAttribute(a, onDone));
   chip.appendChild(delAttr);
 
   return chip;
 }
 
 // Одна модалка на создание (charId) и редактирование (attr) атрибута.
-function openAttributeModal(charId, attr = null) {
+// onDone — куда вернуться после сохранения: из досье персонажа это оно само,
+// иначе просто закрытие модалки.
+function openAttributeModal(charId, attr = null, onDone = null) {
   openModal(t(attr ? "modal.attribute.editTitle" : "modal.attribute.newTitle"), (body) => {
     body.innerHTML = `
       <label>${escHtml(t("modal.attribute.nameLabel"))}</label>
@@ -2053,8 +2271,7 @@ function openAttributeModal(charId, attr = null) {
         const payload = { name, description: descInput.value.trim() };
         if (attr) await api(`/api/attributes/${attr.id}`, { method: "PATCH", body: payload });
         else await api(`/api/characters/${charId}/attributes`, { method: "POST", body: payload });
-        closeModal();
-        await loadProject();
+        if (onDone) { await onDone(); } else { closeModal(); await loadProject(); }
       } catch (e) {
         errEl.textContent = errText(e);
         errEl.classList.remove("hidden");
@@ -2067,7 +2284,7 @@ function openAttributeModal(charId, attr = null) {
   });
 }
 
-function confirmDeleteAttribute(a) {
+function confirmDeleteAttribute(a, onDone = null) {
   openModal(t("modal.attribute.delTitle"), (body) => {
     body.innerHTML = `
       <p class="muted attr-del-text" style="margin:10px 0 0"></p>
@@ -2083,8 +2300,7 @@ function confirmDeleteAttribute(a) {
       yesBtn.disabled = true;
       try {
         await api(`/api/attributes/${a.id}`, { method: "DELETE" });
-        closeModal();
-        await loadProject();
+        if (onDone) { await onDone(); } else { closeModal(); await loadProject(); }
       } catch (e) {
         const errEl = $(".ad-error", body);
         errEl.textContent = errText(e);
@@ -2262,6 +2478,62 @@ rebuildAddTrackPicker();
   }
 })();
 
+// Лист раскадровки крупно: в карточке трека он живёт миниатюрой, а разглядывать
+// его нужно во весь экран. Два режима — «вписать» и 1:1 с прокруткой; стрелки
+// листают лист по горизонтали, когда он не влезает целиком.
+function openSheetModal(tr) {
+  if (!tr.storyboard_url) return;
+  openModal(t("modal.sheet.title"), (body) => {
+    const wrap = document.createElement("div");
+    wrap.className = "sheet-view fit";
+    const img = document.createElement("img");
+    img.src = tr.storyboard_url;
+    img.alt = "";
+    wrap.appendChild(img);
+
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "strip-arrow sheet-prev";
+    prev.textContent = "‹";
+    prev.setAttribute("aria-label", t("common.prev"));
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "strip-arrow sheet-next";
+    next.textContent = "›";
+    next.setAttribute("aria-label", t("common.next"));
+    const step = () => Math.max(240, Math.round(wrap.clientWidth * 0.8));
+    prev.addEventListener("click", () => wrap.scrollBy({ left: -step(), behavior: "smooth" }));
+    next.addEventListener("click", () => wrap.scrollBy({ left: step(), behavior: "smooth" }));
+
+    const stage = document.createElement("div");
+    stage.className = "sheet-stage";
+    stage.append(prev, wrap, next);
+    body.appendChild(stage);
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const zoom = document.createElement("button");
+    zoom.type = "button";
+    zoom.textContent = t("modal.sheet.full");
+    zoom.addEventListener("click", () => {
+      const fit = wrap.classList.toggle("fit");
+      zoom.textContent = fit ? t("modal.sheet.full") : t("modal.sheet.fit");
+    });
+    const open = document.createElement("a");
+    open.className = "clip-download";
+    open.href = tr.storyboard_url;
+    open.target = "_blank";
+    open.rel = "noopener";
+    open.textContent = t("modal.sheet.original");
+    const close = document.createElement("button");
+    close.className = "ghost";
+    close.textContent = t("common.close");
+    close.addEventListener("click", closeModal);
+    row.append(zoom, open, close);
+    body.appendChild(row);
+  }, { wide: true });
+}
+
 // Разбор листа раскадровки: ячейки сеткой, владелец сам решает, какие взять
 // и в какие сцены их положить. Не выбранные сцены остаются как есть.
 async function openCellsModal(tr) {
@@ -2333,7 +2605,7 @@ async function openCellsModal(tr) {
 }
 
 // Генерация модельки персонажа: разворот в 4 ракурсах по описанию + фото-рефам.
-function openModelModal(c) {
+function openModelModal(c, onDone = null) {
   openModal(t("modal.model.title", { name: c.name || t("modal.model.someone") }), (body) => {
     const info = document.createElement("p");
     info.className = "muted";
@@ -2375,8 +2647,7 @@ function openModelModal(c) {
         await api(`/api/characters/${c.id}/generate-model`, {
           method: "POST", body: { description: ta.value, kind: sel.value },
         });
-        closeModal();
-        await loadProject();
+        if (onDone) { await onDone(); } else { closeModal(); await loadProject(); }
       } catch (e) {
         go.disabled = false;
         go.textContent = t("common.generate");
