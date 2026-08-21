@@ -20,6 +20,7 @@ const I18N = {
   // ═══════════════════════════════ ENGLISH ═══════════════════════════════
   en: {
     common: {
+      saved: "saved",
       save: "Save",
       saving: "saving…",
       cancel: "Cancel",
@@ -352,7 +353,6 @@ const I18N = {
       empty: "nothing here yet",
       edit: "Edit",
       save: "Save",
-      saved: "saved",
       ideaLabel: "Idea (optional)",
       ideaPh: "One or two sentences: what this is about",
       episodesLabel: "Episodes in the season",
@@ -1978,6 +1978,7 @@ const I18N = {
   // ═══════════════════════════════ РУССКИЙ ═══════════════════════════════
   ru: {
     common: {
+      saved: "сохранено",
       save: "Сохранить",
       saving: "сохраняю…",
       cancel: "отмена",

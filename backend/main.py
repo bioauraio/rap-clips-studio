@@ -2352,6 +2352,12 @@ async def update_project(request: Request, project_id: int | None = None, user: 
         project.name = str(body["name"])
     if "character_bible" in body:
         project.character_bible = str(body["character_bible"])
+    # Сюжет правится руками не реже, чем генерируется: без этой ветки правки
+    # в поле «Сюжет» уходили в никуда — кнопка «Сохранить» их не отправляла.
+    if "story" in body:
+        project.story = str(body["story"] or "")
+        if project.story.strip() and project.story_status != "running":
+            project.story_status = "done"
     # ТЕКСТОВАЯ МОДЕЛЬ сценарного конвейера. Пустая строка валидна и значит
     # «как решит тариф» — снять свой выбор можно так же, как сделать.
     # Проверяем по реестру, а не по тарифу: тариф опустит закрытое сам в

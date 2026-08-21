@@ -433,7 +433,9 @@ if (signupBtn) signupBtn.addEventListener("click", ldStart);
 
 
 $("#logout-btn").addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST" });
+  // Даже если сервер не ответил, локально разлогиниваем: человек нажал «выйти»
+  // и должен выйти, а не остаться в чужом аккаунте из-за сетевой ошибки.
+  try { await api("/api/logout", { method: "POST" }); } catch (e) { /* всё равно выходим */ }
   me = { authed: false, user: null };
   showWelcome();
 });
@@ -2934,7 +2936,9 @@ $("#project-cover-input").addEventListener("change", async (e) => {
   if (!file) return;
   const fd = new FormData();
   fd.append("cover", file);
-  await api(`/api/projects/${activeProjectId}/cover`, { method: "POST", body: fd });
+  try {
+    await api(`/api/projects/${activeProjectId}/cover`, { method: "POST", body: fd });
+  } catch (err) { e.target.value = ""; fail(err); return; }
   e.target.value = "";
   await loadProject();
 });
@@ -5358,16 +5362,41 @@ function mountSceneVersions(card, s) {
   });
 }
 
-async function saveProject() {
-  await api(`/api/project?project_id=${activeProjectId}`, {
-    method: "PATCH",
-    body: { name: $("#project-name").value, character_bible: $("#character-bible").value },
-  });
+async function saveProject({ quiet = false } = {}) {
+  // Сюжет сохраняем вместе с остальным: раньше PATCH слал только имя и библию,
+  // а текст сюжета из #story уходил только через генерацию — правки руками
+  // терялись молча.
+  const story = $("#story");
+  const body = {
+    name: $("#project-name").value,
+    character_bible: $("#character-bible").value,
+  };
+  if (story) body.story = story.value;
+  try {
+    await api(`/api/project?project_id=${activeProjectId}`, { method: "PATCH", body });
+  } catch (e) {
+    if (!quiet) fail(e);
+    throw e;
+  }
 }
-$("#save-project-btn").addEventListener("click", saveProject);
+
+$("#save-project-btn").addEventListener("click", async () => {
+  const btn = $("#save-project-btn");
+  const was = btn.textContent;
+  btn.disabled = true;
+  try {
+    await saveProject();
+    // Обратная связь: без неё нажатие «Сохранить» выглядит как пустое.
+    btn.textContent = t("common.saved") || "сохранено";
+    setTimeout(() => { btn.textContent = was; btn.disabled = false; }, 1200);
+  } catch (e) {
+    btn.textContent = was;
+    btn.disabled = false;
+  }
+});
 
 $("#gen-story-btn").addEventListener("click", async () => {
-  await saveProject();
+  try { await saveProject({ quiet: true }); } catch (e) { fail(e); return; }
   try {
     await api(`/api/project/generate-story?project_id=${activeProjectId}`, { method: "POST" });
   } catch (e) {
@@ -5710,17 +5739,23 @@ function bindCharacterEditor(card, c) {
     models.forEach((ph) => modelsBox.appendChild(photoTile(ph, true)));
   }
   $(".c-save", card).addEventListener("click", async () => {
-    await api(`/api/characters/${c.id}`, { method: "PATCH", body: {
-      name: $(".c-name", card).value,
-      description: $(".c-desc", card).value,
-      is_main: $(".c-main", card).checked,
-    }});
+    // Ошибку показываем и модалку НЕ закрываем: иначе правки исчезают вместе
+    // с окном, а человек уверен, что сохранил.
+    try {
+      await api(`/api/characters/${c.id}`, { method: "PATCH", body: {
+        name: $(".c-name", card).value,
+        description: $(".c-desc", card).value,
+        is_main: $(".c-main", card).checked,
+      }});
+    } catch (e) { fail(e); return; }
     closeModal();
     await loadProject();
   });
   $(".c-del", card).addEventListener("click", async () => {
     if (!confirm(t("character.delConfirm", { name: c.name }))) return;
-    await api(`/api/characters/${c.id}`, { method: "DELETE" });
+    try {
+      await api(`/api/characters/${c.id}`, { method: "DELETE" });
+    } catch (e) { fail(e); return; }
     closeModal();
     await loadProject();
   });
@@ -5728,11 +5763,18 @@ function bindCharacterEditor(card, c) {
   if (genModelBtn) genModelBtn.addEventListener("click", () => openModelModal(c, back));
   const input = $(".c-photo-input", card);
   input.addEventListener("change", async () => {
+    // Каждый файл отдельно: упавший пятый не должен отменять четыре уже
+    // загруженных, но и молчать о нём нельзя.
+    const bad = [];
     for (const file of input.files) {
       const fd = new FormData();
       fd.append("photo", file);
-      await api(`/api/characters/${c.id}/photos`, { method: "POST", body: fd });
+      try {
+        await api(`/api/characters/${c.id}/photos`, { method: "POST", body: fd });
+      } catch (e) { bad.push(`${file.name}: ${errText(e)}`); }
     }
+    input.value = "";
+    if (bad.length) alert(bad.join("\n"));
     await back();
   });
 
@@ -7236,7 +7278,9 @@ async function renderOnboarding() {
     </div>`;
 
   $(".ob-hide", box).addEventListener("click", async () => {
-    await api("/api/onboarding", { method: "POST", body: { mark: "hide", on: true } });
+    // Прячем в любом случае: это местная настройка вида, а не данные.
+    try { await api("/api/onboarding", { method: "POST", body: { mark: "hide", on: true } }); }
+    catch (e) { /* не удалось запомнить — не повод оставлять чеклист на экране */ }
     box.classList.add("hidden");
   });
   $(".ob-guide", box).addEventListener("click", ldOpenGuide);
@@ -7262,7 +7306,8 @@ function renderOnboardingWin(box) {
     box.classList.add("hidden");
   });
   $(".ob-plans", box).addEventListener("click", async () => {
-    await api("/api/onboarding", { method: "POST", body: { mark: "winseen", on: true } });
+    try { await api("/api/onboarding", { method: "POST", body: { mark: "winseen", on: true } }); }
+    catch (e) { /* отметка не критична, тарифы показать всё равно надо */ }
     openAccountModal("plan");
   });
 }
