@@ -516,8 +516,17 @@ async def update_track(track_id: int, request: Request,
         if key not in body:
             continue
         val = str(body.get(key) or "").strip()[:2000]
-        if key == "release_date" and val and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", val):
-            raise _api_error(400, "bad_date", "Release date must look like 2026-09-01.")
+        if key == "release_date" and val:
+            # Формы мало: «2026-13-40» проходит регулярку и ложится в карточку
+            # как валидная дата, а спотыкается уже дистрибьютор. Проверяем
+            # календарём — поле обязано быть настоящей датой.
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", val):
+                raise _api_error(400, "bad_date", "Release date must look like 2026-09-01.")
+            try:
+                date.fromisoformat(val)
+            except ValueError:
+                raise _api_error(400, "bad_date",
+                                 f"{val} is not a real date on the calendar.") from None
         if key == "isrc" and val and not re.fullmatch(r"[A-Za-z]{2}[A-Za-z0-9]{3}\d{7}", val.replace("-", "")):
             raise _api_error(400, "bad_isrc",
                              "An ISRC looks like RUA1B2500001 — 12 characters. "

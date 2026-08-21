@@ -233,7 +233,7 @@ body:has(.mu-page) {
   outline: none; border-color: var(--accent-ink); box-shadow: var(--ring);
 }
 .mu-page .mu-field input::placeholder,
-.mu-page .mu-field textarea::placeholder { color: var(--muted-soft, #9b8a7d); }
+.mu-page .mu-field textarea::placeholder { color: var(--ink-muted); }
 .mu-hint { font-size: var(--fs-sm); color: var(--ink-muted); }
 .mu-err { font-size: var(--fs-sm); color: var(--danger-ink); }
 .mu-field.bad input, .mu-field.bad textarea { border-color: var(--danger-ink); }

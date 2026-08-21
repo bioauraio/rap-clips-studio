@@ -104,7 +104,31 @@
 .mus-prog i { display: block; height: 100%; width: 0; background: var(--fire-ink); transition: width .2s; }
 
 /* ────────── генерация ────────── */
-.mus-gen-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+/* Строка запуска: длительность → «только инструментал» → цена → действие.
+   Была ломаной: select наследовал width:100% из style.css и уезжал на свою
+   строку, а кнопка, чекбокс и цена стояли разной высоты. Канон (§4.1, §4.2 и
+   замечания владельца №5/№9): контролы одной строки — одной высоты, действие
+   прижато к концу строки, цена стоит ДО кнопки (§6.1). */
+.mus-gen-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px;
+}
+.mus-gen-row > select {
+  width: auto; min-width: 108px; flex: none;
+}
+.mus-gen-row > select,
+.mus-gen-row > button,
+.mus-gen-row > .mus-match {
+  min-height: 36px;
+}
+.mus-gen-row > .mus-match { display: inline-flex; align-items: center; gap: 6px; }
+.mus-gen-row > .mus-price { margin-left: auto; }
+@media (max-width: 700px) {
+  /* На телефоне действие занимает строку целиком: полукнопка рядом с
+     чекбоксом — это промах пальцем, а не компактность. */
+  .mus-gen-row > select { flex: 1 1 100%; width: 100%; min-height: 40px; }
+  .mus-gen-row > button { flex: 1 1 100%; min-height: 40px; }
+  .mus-gen-row > .mus-price { margin-left: 0; }
+}
 .mus-gen textarea { min-height: 72px; resize: vertical; }
 .mus-price {
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); white-space: nowrap;
@@ -148,7 +172,7 @@
   padding: 4px 9px; border-radius: 999px;
   border: 1.5px solid rgba(45, 33, 26, .35); background: var(--inset); color: var(--text);
 }
-.mus-tag.ok { background: rgba(20, 160, 107, .12); color: var(--ok-ink, #0f7a52); border-color: rgba(15, 122, 82, .3); }
+.mus-tag.ok { background: rgba(20, 160, 107, .09); color: var(--ok-ink, #0f7a52); border-color: rgba(15, 122, 82, .3); }
 .mus-tag.warn { background: var(--gold-wash, rgba(255, 181, 69, .18)); color: var(--gold-ink, #8a5a2b); border-color: rgba(138, 90, 43, .3); }
 .mus-tag.bad { background: var(--accent-wash, rgba(207, 34, 34, .08)); color: var(--accent-ink, #cf2222); border-color: var(--accent-line, rgba(207, 34, 34, .22)); }
 

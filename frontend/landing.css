@@ -658,7 +658,7 @@ body:has(#welcome:not(.hidden)) {
    вещь на плитке, поэтому он lazy и с фиксированным соотношением: без
    height картинка на загрузке дёргает всю сетку. */
 .ld-tabs {
-  display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-5);
+  display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-6);
 }
 .landing .ld-tabs button {
   min-height: 34px; padding: 0 var(--s-3); border: var(--bw-hair) solid var(--line);
@@ -740,7 +740,7 @@ body:has(#welcome:not(.hidden)) {
 /* Урок в модалке: читаемая колонка, широкие таблицы скроллятся внутри себя. */
 .ld-lesson { max-width: 68ch; line-height: 1.6; }
 .ld-lesson h1 { font-size: var(--fs-xl); margin: 0 0 var(--s-3); }
-.ld-lesson h2 { font-size: var(--fs-lg); margin: var(--s-5) 0 var(--s-2); }
+.ld-lesson h2 { font-size: var(--fs-lg); margin: var(--s-6) 0 var(--s-2); }
 .ld-lesson h3 { font-size: var(--fs-md); margin: var(--s-4) 0 var(--s-1); }
 .ld-lesson p, .ld-lesson ul, .ld-lesson ol { margin: 0 0 var(--s-3); }
 .ld-lesson code { font-family: var(--font-mono); font-size: .92em; background: var(--surface-2);
