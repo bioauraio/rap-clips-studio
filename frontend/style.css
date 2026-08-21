@@ -466,12 +466,15 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
    промпт. Раскрытый промпт забирает всю ширину карточки (.prompt-open),
    свёрнутый жмётся вправо и не отбирает у референсов ни строки. */
 .s-top-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
+/* Правая колонка карточки кадра. Раньше строки прижимались к правому краю,
+   а первая переносилась влево — три подписи стояли по трём разным осям и блок
+   выглядел неопрятно. Теперь всё по одной левой оси и одним ритмом. */
 .s-top-right {
-  flex: 0 0 auto; margin-left: auto; min-width: 0;
-  display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+  flex: 1 1 auto; margin-left: auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
 }
 .s-top-right .s-prompt-details { width: 100%; }
-.s-top-right .s-prompt-details summary { text-align: right; }
+.s-top-right .s-prompt-details summary { text-align: left; }
 .scene-card.prompt-open .s-top-right { flex: 1 1 100%; margin-left: 0; align-items: stretch; }
 .scene-card.prompt-open .s-top-right .s-prompt-details summary { text-align: left; }
 /* Движки в карточке кадра. Ленты чипов теперь общие (.eng-tabs / .eng-chip,
@@ -480,9 +483,8 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
    занимали экран тридцать раз. Прежние классы .prov-chip / .img-chip больше
    не рисуются — правила удалены, чтобы не гадать, какое из двух работает. */
 .s-top-right .eng-tabs { justify-content: flex-end; }
-.s-top-right details.s-engine-override { width: 100%; text-align: right; }
-.s-top-right details.s-engine-override[open] { text-align: left; }
-.s-top-right details.s-engine-override .eng-row { justify-content: flex-end; }
+.s-top-right details.s-engine-override { width: 100%; text-align: left; }
+.s-top-right details.s-engine-override .eng-row { justify-content: flex-start; }
 
 /* референсы кадра: картинки-образцы композиции/света/вайба (картон, как фото
    персонажей) — стилистику всё равно диктует стиль трека, реф только «как снято» */
@@ -1737,15 +1739,22 @@ button.primary:hover:not(:disabled) {
    маленькое «поменять» — чипы раскрываются только по требованию, иначе на
    треке из тридцати сцен они занимают экран тридцать раз. */
 .s-engine-line {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  font-size: 11px; color: var(--muted); margin-top: 4px;
+  display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--muted);
+  margin-top: 2px; line-height: 1.35;
 }
-.s-engine-line .s-engine-name { color: var(--text); font-weight: 700; }
-details.s-engine-override { margin-top: 4px; }
+.s-engine-line .s-engine-name {
+  color: var(--text); font-weight: 700; font-family: inherit;
+}
+details.s-engine-override { margin-top: 0; }
 details.s-engine-override > summary {
-  cursor: pointer; list-style: none; font-size: 11px; color: var(--accent-2-ink);
-  font-weight: 700;
+  cursor: pointer; list-style: none;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 500;
+  color: var(--muted); text-decoration: underline;
+  text-decoration-color: rgba(45,33,26,.25); text-underline-offset: 3px;
+  padding: 1px 0;
 }
+details.s-engine-override > summary:hover { color: var(--accent-2-ink); }
 details.s-engine-override > summary::-webkit-details-marker { display: none; }
 details.s-engine-override[open] > summary { color: var(--muted); }
 details.s-engine-override .eng-tabs { margin-top: 6px; }
@@ -2384,25 +2393,49 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-frame-note:empty { display: none; }
 .ms-foot { margin: 0; }
 
-/* Витрина каркасов — та самая, что до сих пор жила только на лендинге. */
-.ms-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.ms-preset {
-  position: relative; display: flex; flex-direction: column; gap: 2px;
-  flex: 1 1 190px; max-width: 260px; text-align: left;
-  padding: 8px 10px; border-radius: 12px;
-  border: 1.5px solid #2d211a; background: var(--card);
-  box-shadow: 0 2px 0 #2d211a; cursor: pointer; color: var(--text);
+/* Каркасы сюжета — ЛЕНТА, а не стена карточек.
+   Тринадцать карточек с описаниями занимали весь экран и читались как
+   простыня: человек не выбирал, а утыкался в текст. Теперь это компактные
+   плитки в одну прокручиваемую строку — заголовок виден сразу, описание
+   раскрывается у выбранной. Метка «панч-кадры» больше не налезает на
+   заголовок: она стоит в строке названия, а не поверх него. */
+.ms-presets {
+  display: flex; gap: 8px; margin-bottom: 10px;
+  overflow-x: auto; padding-bottom: 4px;
+  scroll-snap-type: x proximity; scrollbar-width: thin;
 }
-.ms-preset:hover { background: #fff; }
-.ms-preset:active { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
-.ms-preset b { font-size: 12.5px; }
-.ms-preset .muted { font-size: 11px; line-height: 1.4; }
-.ms-preset.on { color: var(--on-accent); background: var(--fire-ink); }
-.ms-preset.on .muted { color: rgba(255, 255, 255, .86); }
+.ms-preset {
+  display: flex; flex-direction: column; gap: 3px;
+  flex: 0 0 auto; width: 168px; text-align: left; scroll-snap-align: start;
+  padding: 9px 11px; border-radius: 12px;
+  border: 1.5px solid var(--border); background: var(--card);
+  box-shadow: none; cursor: pointer; color: var(--text);
+  transition: border-color .14s ease, background .14s ease;
+}
+.ms-preset:hover { background: #fff; border-color: #2d211a; }
+.ms-preset:active { transform: translateY(1px); }
+.ms-preset-head { display: flex; align-items: baseline; gap: 6px; }
+.ms-preset b { font-size: 12.5px; line-height: 1.25; }
+.ms-preset .muted {
+  font-size: 10.5px; line-height: 1.4;
+  /* Свёрнутое описание — две строки: карточки одной высоты, глаз не спотыкается. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Выбранный каркас — единственный, кто раскрывает описание целиком и
+   получает огонь: на экране один акцент, а не тринадцать. */
+.ms-preset.on {
+  color: var(--on-accent); background: var(--fire-ink);
+  border-color: #2d211a; box-shadow: 0 2px 0 #2d211a;
+  width: 232px;
+}
+.ms-preset.on .muted {
+  color: rgba(255, 255, 255, .9); -webkit-line-clamp: unset; overflow: visible;
+}
 .ms-preset-mark {
-  position: absolute; top: 6px; right: 8px; font-style: normal;
+  flex: none; font-style: normal;
   font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .08em;
-  text-transform: uppercase; opacity: .7;
+  text-transform: uppercase; opacity: .6; white-space: nowrap;
 }
 /* Каркас подсказывает стиль: styles_fit наконец работает в интерфейсе. */
 .style-chip.ms-fit:not(.on) { border-color: var(--gold); }
@@ -2435,3 +2468,23 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   .ms-preset { flex: 1 1 100%; max-width: none; }
   .ms-row > label { min-width: 100%; }
 }
+
+/* ────────── правая колонка карточки кадра: единый ритм ──────────
+   Три подписи подряд (движок, «поменять», «промпт») набирались разными
+   шрифтами и кеглями и стояли по разным осям. Приводим к одному виду:
+   мономодуль 10.5px, одна левая ось, одинаковые интервалы. */
+.s-top-right > * { text-align: left; }
+.s-prompt-details summary,
+details.s-engine-override > summary,
+.s-engine-line {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  padding: 2px 0;
+}
+/* «ПРОМПТ» остаётся капсом-ярлыком — он открывает поле, а не переключает
+   настройку, и по нему глаз ищет вход в текст. */
+.s-prompt-details summary { text-transform: uppercase; letter-spacing: .1em; }
+/* Разделитель между строкой движка и ссылкой «поменять»: тонкая пунктирная
+   черта вместо пустоты — видно, что это одна группа. */
+details.s-engine-override { border-top: 1px dashed rgba(45,33,26,.14); padding-top: 3px; }

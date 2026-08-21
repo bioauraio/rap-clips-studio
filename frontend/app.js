@@ -3858,18 +3858,24 @@ function msPresets(card, tr, mode) {
     b.type = "button";
     b.className = "ms-preset" + (p.key === cur ? " on" : "");
     b.dataset.key = p.key;
+    // Заголовок и метка — в одной строке: раньше метка стояла поверх карточки
+    // и налезала на длинные названия вроде «Один герой, десять ситуаций».
+    const head = document.createElement("span");
+    head.className = "ms-preset-head";
     const lab = document.createElement("b");
     lab.textContent = typeof p.label === "string" ? p.label : ((p.label && (p.label[LANG] || p.label.en)) || p.key);
-    const log = document.createElement("span");
-    log.className = "muted";
-    log.textContent = typeof p.logline === "string" ? p.logline : ((p.logline && (p.logline[LANG] || p.logline.en)) || "");
-    b.append(lab, log);
+    head.appendChild(lab);
     if (p.no_story) {
       const mark = document.createElement("i");
       mark.className = "ms-preset-mark";
       mark.textContent = t("modeSetup.punch");
-      b.appendChild(mark);
+      head.appendChild(mark);
     }
+    const log = document.createElement("span");
+    log.className = "muted";
+    log.textContent = typeof p.logline === "string" ? p.logline : ((p.logline && (p.logline[LANG] || p.logline.en)) || "");
+    b.append(head, log);
+    b.title = log.textContent || lab.textContent;
     b.addEventListener("click", async () => {
       try {
         if (isClip) {
@@ -3896,11 +3902,18 @@ function msPresets(card, tr, mode) {
 
   // Каркас подсказывает стиль, а не наоборот: styles_fit до сих пор лежал в
   // каталоге и не использовался интерфейсом нигде.
+  //
+  // Метку ставим ПОСЛЕ загрузки каталога стилей: buildStylePicker рисует чипы
+  // из loadStyles().then(...), то есть в момент сборки блока их в карточке
+  // ещё нет — разметка пустая, и разметить нечего.
   const chosen = items.find((p) => p.key === cur);
   const fit = (chosen && chosen.styles_fit) || [];
-  $$(".style-chip", card).forEach((chip) => {
-    const k = chip.dataset.key || chip.dataset.style || "";
-    chip.classList.toggle("ms-fit", Boolean(k && fit.includes(k)));
+  loadStyles().then(() => {
+    if (!card.isConnected) return;
+    $$(".style-chip", card).forEach((chip) => {
+      const k = chip.dataset.key || "";
+      chip.classList.toggle("ms-fit", Boolean(k && fit.includes(k)));
+    });
   });
 }
 
