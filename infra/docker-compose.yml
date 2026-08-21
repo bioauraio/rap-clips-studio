@@ -28,6 +28,28 @@ services:
       EGRESS_PROXY: ${EGRESS_PROXY:-socks5://172.18.0.1:1081}
       # Файлы стилей из админки — в том, а не в образе.
       STYLE_ASSETS_DIR: /data/styles
+      # ─────────────────────── место на диске ───────────────────────
+      # У машины общий раздел с ЧУЖИМИ проектами, поэтому расход диска —
+      # первоклассное ограничение, а не примечание. Значения перекрываются
+      # в infra/.env без правки этого файла.
+      #   FRAME_FORMAT=png    вернёт прежнее хранение кадров целиком;
+      #   FRAMES_CONVERT=0    выключит разовую конверсию старых PNG.
+      FRAME_FORMAT: ${FRAME_FORMAT:-webp}
+      FRAMES_CONVERT: ${FRAMES_CONVERT:-1}
+      CLIP_CRF: ${CLIP_CRF:-20}
+      CLIP_MAXRATE: ${CLIP_MAXRATE:-12M}
+      CLIP_KEEP_DAYS: ${CLIP_KEEP_DAYS:-14}
+      DISK_MIN_FREE_PCT: ${DISK_MIN_FREE_PCT:-10}
+      # Тяжёлый ffmpeg строго по одному: два параллельных апскейла 4К на
+      # коробке с 3.8 ГБ И БЕЗ СВОПА — это сценарий, где OOM-killer убивает
+      # не нас, а соседнюю базу.
+      FFMPEG_SLOTS: ${FFMPEG_SLOTS:-1}
+    # ЛИМИТ ПАМЯТИ. До него его не было ни у одного контейнера на машине:
+    # любой всплеск нашего ffmpeg бил по соседям (podsoznanie-dver, rod,
+    # family-postgres живут здесь же). memswap = memory, потому что свопа на
+    # хосте нет вовсе, и «дать своп» тут не вариант, а иллюзия.
+    mem_limit: ${API_MEM_LIMIT:-1500m}
+    memswap_limit: ${API_MEM_LIMIT:-1500m}
     ports:
       - "127.0.0.1:8930:8000"
     volumes:
