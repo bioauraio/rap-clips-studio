@@ -5338,9 +5338,9 @@ MOTIONS: list[dict] = [
         "desc": {"en": "Heavy clothing arrives after the body. One line, and the walk stops looking generated.",
                  "ru": "Тяжёлая одежда приходит после тела. Одна строка — и походка перестаёт выглядеть сгенерённой."},
         "camera": "",
-        "text": "{outfit} swings a beat behind every step {character} takes, the hem lifting on the forward swing "
-                "and settling against the legs when the movement stops.",
-        "solo": "{outfit} swings a beat behind each step {character} takes, the hem lifting and then settling "
+        "text": "The {outfit} swings a beat behind every step {character} takes, the hem lifting on the forward "
+                "swing and settling against the legs when the movement stops.",
+        "solo": "The {outfit} swings a beat behind each step {character} takes, the hem lifting and then settling "
                 "against the legs as the movement stops.",
         "bracket": "",
         "physics": {"en": "Cloth never leads the body. If the hem moves first, the shot is wrong.",
@@ -5374,9 +5374,9 @@ MOTIONS: list[dict] = [
         "desc": {"en": "The last half second of any movement belongs to the clothes.",
                  "ru": "Последние полсекунды любого движения принадлежат одежде."},
         "camera": "",
-        "text": "After {character} stops, {outfit} keeps moving for a moment: the folds swing once, the sleeve "
+        "text": "After {character} stops, the {outfit} keeps moving for a moment: the folds swing once, the sleeve "
                 "drops and the fabric comes to rest against the body.",
-        "solo": "After {character} stops moving, {outfit} keeps going for a moment — the folds swing once, the "
+        "solo": "After {character} stops moving, the {outfit} keeps going for a moment — the folds swing once, the "
                 "sleeve drops, and the fabric comes to rest against the body.",
         "bracket": "",
         "physics": {"en": "The heavier the fabric, the longer the delay. Denim settles faster than a coat.",
@@ -6761,7 +6761,74 @@ def _valid_bracket(value: str) -> bool:
     return 0 < len(parts) <= 3 and all(p in MINIMAX_MOVES for p in parts)
 
 
+def examples_markdown(lang: str = "ru") -> str:
+    """Готовый markdown со всеми примерами — им наполняется раздел документации.
+
+    Документация НЕ хранит примеры текстом: разошедшийся пример учит
+    формулировке, которой в продукте уже нет. Перегенерация:
+    `python3 backend/prompts_library.py --examples > /tmp/x.md`."""
+    out: list[str] = []
+    for ex in EXAMPLES:
+        r = render_example(ex["key"], lang=lang)
+        if not r:
+            continue
+        board = _BOARD_BY_KEY[r["board"]]
+        parts = [f"### {r['label']}", ""]
+        chosen = [f"заготовка **{r['board']}**"]
+        if r["motion"]:
+            chosen.append(f"движение **{r['motion']}**")
+        if r["lights"]:
+            chosen.append("свет **" + "**, **".join(r["lights"]) + "**")
+        if r["script"]:
+            chosen.insert(0, f"сценарий **{r['script']}**")
+        parts.append("Выбрано: " + ", ".join(chosen) + ".")
+        parts.append("")
+        parts.append("Подставлено: " + ", ".join(
+            f"`{{{k}}}` = {v}" for k, v in r["slots_used"].items()) + ".")
+        parts.append("")
+        parts.append("```")
+        parts.append(f"shot_size   : {r['scene']['shot_size']}")
+        parts.append(f"camera_move : {r['scene']['camera_move']}")
+        parts.append(f"shot_note   : {r['scene']['shot_note']}")
+        for field, title in (("image_prompt", "image_prompt (первый кадр)"),
+                             ("image_prompt_last", "image_prompt_last (последний кадр)"),
+                             ("motion_prompt", "motion_prompt")):
+            parts.append("")
+            parts.append(f"{title}:")
+            parts.append(_wrap(r["scene"][field]))
+        parts.append("")
+        parts.append("negative (уходит отдельным каналом там, где он есть):")
+        parts.append(_wrap(r["negative"]))
+        parts.append("```")
+        parts.append("")
+        parts.append(f"Почему так: {r['why']}")
+        if board["needs_last"]:
+            parts.append("")
+            parts.append(f"На Grok эта сцена идёт вариантом `solo`: "
+                         f"`{render_example(ex['key'], lang=lang, engine='grok')['scene']['motion_prompt']}`")
+        parts.append("")
+        out.append("\n".join(parts))
+    return "\n".join(out)
+
+
+def _wrap(text: str, width: int = 76) -> str:
+    words, line, lines = text.split(), "", []
+    for w in words:
+        if len(line) + len(w) + 1 > width:
+            lines.append(line)
+            line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        lines.append(line)
+    return "\n".join("  " + x for x in lines)
+
+
 if __name__ == "__main__":
+    import sys
+    if "--examples" in sys.argv:
+        print(examples_markdown("ru"))
+        raise SystemExit(0)
     problems = validate()
     if problems:
         print("\n".join(problems))

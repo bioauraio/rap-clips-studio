@@ -278,8 +278,6 @@ def _reset_orphan_jobs() -> None:
 
 _reset_orphan_jobs()
 
-# С этого момента id внешней задачи попадает в журнал сразу.
-mediagen.set_task_hook(_task_hook)
 
 
 def _phys_key(path: str) -> str:
@@ -1240,6 +1238,11 @@ def _attach_task(db: Session, ref_type: str, ref_id: int, task_id: str,
     except Exception as e:  # noqa: BLE001
         db.rollback()
         log.warning("журнал токенов: не привязал задачу %s: %s", task_id, str(e)[:120])
+
+
+# Хук вешаем ЗДЕСЬ, а не на старте файла: _task_hook определён строкой выше,
+# а раньше вызов стоял до определения и ронял сервис на импорте.
+mediagen.set_task_hook(_task_hook)
 
 
 def _take_points(db: Session, user: User, points: int, what: str = "",
