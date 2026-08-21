@@ -115,6 +115,19 @@ def _load(lang: str) -> list[dict]:
                 "minutes": minutes,
                 "cover": str(meta.get("cover") or ""),
                 "tags": list(meta.get("tags") or []),
+                # АРТЕФАКТ УРОКА. Урок, после которого нечего нажать, — не урок,
+                # а статья. Эти четыре поля и есть кнопка «Открыть в студии»:
+                #   pack   — набор приёмов из prompts_library.PACKS;
+                #   preset — сюжетный каркас из prompts_catalog.CLIP_PRESETS;
+                #   styles — стили, отмеченные заранее;
+                #   mode   — режим студии (clip|ugc|series|mockup), frontend/nav.js.
+                # Валидируются они НЕ здесь: learn.py не имеет права зависеть от
+                # каталога промтов ради разбора маркдауна. Ссылки проверяет
+                # tools/check_learn_artifacts.py — один проход по обоим языкам.
+                "pack": str(meta.get("pack") or ""),
+                "preset": str(meta.get("preset") or ""),
+                "styles": list(meta.get("styles") or []),
+                "mode": str(meta.get("mode") or "clip"),
                 "body": body,
             })
     if not out:
@@ -162,6 +175,12 @@ def card(lesson: dict, *, plan_id: str = "free", is_admin: bool = False,
         "access": lesson["access"],
         "locked": not allowed(lesson["access"], plan_id, is_admin=is_admin),
         "done": bool(done),
+        # Карточка списка обязана знать, есть ли у урока артефакт: витрина
+        # рисует на ней метку «с набором», и без этого поля она бы грузила
+        # все уроки целиком только чтобы посмотреть фронтматтер.
+        "pack": lesson["pack"],
+        "preset": lesson["preset"],
+        "mode": lesson["mode"],
         "url": f"/learn/{lesson['slug']}/" if lesson["lang"] == "en"
                else f"/ru/learn/{lesson['slug']}/",
     }

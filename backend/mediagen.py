@@ -1147,6 +1147,19 @@ def video_engines_live() -> list[str]:
     return [k for k in VIDEO_ENGINES if video_engine_live(k)]
 
 
+def aspect_locked_by_frames(engine: str) -> bool:
+    """Движок, который при ДВУХ кадрах берёт пропорции с самих кадров.
+
+    Seedance на задаче «первый + последний кадр» принимает только
+    aspect_ratio="adaptive" (см. _body_seedance): с явным «9:16» он отвечает
+    «first-frame and first-last-frame tasks only support adaptive aspect
+    ratio» и падает. Интерфейс обязан знать об этом сам, иначе он показывает
+    выбор формата, которого в этом случае нет, — и человек платит за кадр,
+    выбрав пропорции, которые никуда не поехали."""
+    spec = VIDEO_ENGINES.get(engine) or {}
+    return spec.get("body") is _body_seedance
+
+
 def engine_versions(engine: str) -> list[str]:
     """Настоящие ВЕРСИИ движка — братья по одной и той же модели.
 

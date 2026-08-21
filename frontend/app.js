@@ -8387,13 +8387,15 @@ function chatRenderModelSelect() {
         o.textContent = t("chat.offline", { title: m.title });
         o.disabled = true;
       } else if (!m.allowed) {
-        // Закрытое тарифом ВИДНО с ценой и именем тарифа: молчаливый запрет
-        // читается как поломка, а видимый замок работает витриной.
+        // Закрытое тарифом ВИДНО с ценой и именем тарифа И ВЫБИРАЕТСЯ: замок
+        // работает витриной только тогда, когда на позицию можно нажать и
+        // прочитать карточку — что движок умеет и каким тарифом открывается.
+        // Заблокированная намертво строка витриной не работает, она читается
+        // как поломка. Отправку при этом держит mkBlockReason.
         o.textContent = t("chat.locked", {
           title: m.title, n: tNum(m.points), unit: chatUnit(m.points),
           plan: mkPlanName(m.plan),
         });
-        o.disabled = true;
       } else {
         o.textContent = t("chat.byEngine", { title: m.title, n: tNum(m.points), unit: chatUnit(m.points) });
       }
@@ -8401,8 +8403,11 @@ function chatRenderModelSelect() {
     }
     sel.appendChild(g);
   }
+  // Держим выбор, даже если движок закрыт тарифом: человек смотрит витрину.
+  // Не держим только мёртвое по ключам — там смотреть нечего и предлагать
+  // нечего, это состояние сервиса, а не тарифа.
   const wanted = chatModel(keep || chatDefaultModelId());
-  sel.value = (wanted && wanted.allowed && wanted.live) ? wanted.id : "";
+  sel.value = (wanted && wanted.live) ? wanted.id : "";
   if (!sel.value) {
     const first = chatState.models.find((m) => m.allowed && m.live);
     sel.value = first ? first.id : "";
@@ -9357,7 +9362,7 @@ function mkGroupModel(box) {
       // Закрытое тарифом ВИДНО — с ценой, замком и именем тарифа. Мёртвое по
       // ключам погашено, и причина написана текстом под группой, а не в
       // тултипе: тултипа не существует на телефоне.
-      const state = { disabled: !m.live || !m.allowed, lock: !m.allowed, locked: !m.allowed };
+      const state = { disabled: !m.live, lock: !m.allowed, locked: !m.allowed };
       mkChip(chips, m.title, tNum(m.points), on, () => {
         const sel = chatEl("cc-model");
         if (sel) sel.value = m.id;
@@ -9390,7 +9395,7 @@ function mkGroupVersion(box) {
   list.forEach((id) => {
     const m = chatModel(id);
     if (!m) return;
-    const state = { disabled: !m.live || !m.allowed, lock: !m.allowed, locked: !m.allowed };
+    const state = { disabled: !m.live, lock: !m.allowed, locked: !m.allowed };
     mkChip(chips, m.quality || m.title, tNum(m.points), m.id === model.id, () => {
       const sel = chatEl("cc-model");
       if (sel) sel.value = m.id;
@@ -9406,6 +9411,15 @@ function mkGroupAspect(box) {
   if (!list.length) {
     const g = mkGroup(box, "make.grpAspect", false, null);
     mkFactLine(g, t("make.aspectFixed"));
+    return;
+  }
+  // Второй кадр выбран, а движок при двух кадрах берёт пропорции С КАДРОВ —
+  // выбирать нечего, и честнее сказать это, чем оставить чипы, которые в
+  // этом случае ни на что не влияют (Seedance отвечает на явный формат
+  // ошибкой «only adaptive aspect ratio»).
+  if (model.aspect_from_frames && chatState.lastId) {
+    const g = mkGroup(box, "make.grpAspect", false, null);
+    mkFactLine(g, t("make.aspectFromFrames"));
     return;
   }
   const def = mkAspectDefault(model);
@@ -9490,12 +9504,19 @@ function mkGroupVariants(box) {
   for (let n = 1; n <= mkMaxVariants(); n += 1) {
     // Чип, который не влезает в остаток, гаснет и говорит почему: узнать про
     // нехватку из 402-й ошибки после нажатия — это узнать поздно.
-    const tooMuch = !mkAdmin() && each * n > have;
+    //
+    // ЕДИНИЦА НЕ ГАСНЕТ НИКОГДА. Один вариант — это не решение про варианты, а
+    // сама генерация: если не хватает даже на неё, это лечится деньгами, и об
+    // этом уже сказано красной ценой с кнопкой «Пополнить». Погашенный чип,
+    // который при этом выбран, — контрол, спорящий сам с собой.
+    const tooMuch = n > 1 && !mkAdmin() && each * n > have;
     mkChip(chips, String(n), "", n === cur, () => {
       chatState.variants = n;
       mkRefresh();
     }, { disabled: tooMuch });
-    if (tooMuch && !why) why = t("make.variantsShort", { n, need: tNum(each * n) });
+    if (tooMuch && !why) {
+      why = t("make.variantsShort", { n, each: tNum(each), need: tNum(each * n) });
+    }
   }
   mkWhy(g, why);
   if (cur > 1) {
@@ -9731,7 +9752,8 @@ function mkRenderBar() {
   const asp = chatEl("mk-aspect-btn");
   if (asp) {
     const list = (model && model.aspects) || [];
-    asp.classList.toggle("hidden", !list.length);
+    const byFrames = Boolean(model && model.aspect_from_frames && chatState.lastId);
+    asp.classList.toggle("hidden", !list.length || byFrames);
     asp.textContent = mkAspect(model);
     asp.title = t("make.grpAspect");
   }
@@ -9744,9 +9766,12 @@ function mkRenderBar() {
   }
   const enh = chatEl("mk-enhance");
   if (enh) {
+    const empty = !((chatEl("cc-text") || {}).value || "").trim();
     enh.textContent = "✨";
-    enh.title = t("make.enhanceTitle");
-    enh.disabled = !((chatEl("cc-text") || {}).value || "").trim();
+    // Погашенная кнопка обязана объяснять, ЧЕМ она погашена: «нечего
+    // улучшать» — это про пустое поле, а не про сломанный сервис.
+    enh.title = empty ? t("make.needPrompt") : t("make.enhanceTitle");
+    enh.disabled = empty;
   }
   const par = chatEl("mk-params");
   if (par) {

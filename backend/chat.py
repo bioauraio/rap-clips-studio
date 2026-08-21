@@ -361,6 +361,10 @@ def _models_payload(user: User) -> list[dict]:
             "quality": spec.get("resolution", "") or ("1080p" if spec.get("mode") == "pro" else ""),
             "points_by_duration": {str(d): _video_points(eid, d) for d in CHAT_VIDEO_DURATIONS},
             "points_by_resolution": {},
+            # С двумя кадрами Seedance берёт пропорции с самих кадров, а выбор
+            # формата игнорирует. Интерфейс обязан сказать это ДО запуска, а не
+            # показывать чипы, которые в этом случае ничего не решают.
+            "aspect_from_frames": mediagen.aspect_locked_by_frames(eid),
             "versions": [_model_id("video", v) for v in mediagen.engine_versions(eid)],
             "limit": CHAT_PROMPT_LIMIT,
         })
@@ -779,7 +783,9 @@ def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
         params["source"] = os.path.basename(source_path)
         if last_path:
             params["last"] = os.path.basename(last_path)
-        if _video_aspects(engine):
+        # Формат записываем, только если он реально уехал в движок: иначе
+        # строка меты у ролика хвасталась бы «9:16», которых движок не видел.
+        if _video_aspects(engine) and not (last_path and mediagen.aspect_locked_by_frames(engine)):
             params["aspect"] = aspect
         cost = _video_points(engine, duration)
     elif kind == "image":
