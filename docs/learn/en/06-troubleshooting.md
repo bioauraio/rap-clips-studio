@@ -144,9 +144,9 @@ scene comes back wrong three times in a row, the frame is wrong, not the engine.
 
 ### "Not enough credits" halfway through the run
 
-On the free plan, 120 credits is exactly one three-minute clip at 4 credits a
-scene, with nothing spare. A generated character model sheet (2) and a storyboard
-sheet (2) are enough to leave you a scene short.
+On the free plan, a three-minute clip is 120 credits at 4 credits a scene, out of
+the 150 you start with. That 30-credit margin covers the sheets and a few redos —
+but a long track plus a dozen re-animations will still run it out.
 
 Either use a shorter track for the free run — two minutes is 20 scenes, 80 credits
 — or skip the two optional images. Full arithmetic in

@@ -204,7 +204,16 @@ async function api(path, opts = {}) {
     if (!(window.TGA && TGA.active)) showLogin();
     throw new ApiError({ error: "unauthorized" }, 401);
   }
-  if (!res.ok) throw new ApiError(await res.json().catch(() => ({})), res.status);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    // Блокировку ловим ЗДЕСЬ, а не в каждой кнопке: заблокировать могут
+    // посреди сессии, и тогда человек увидит не экран с причиной, а
+    // случайную кнопку, которая «почему-то не работает».
+    if (res.status === 403 && body && body.error === "blocked") {
+      showBlocked(body.detail);
+    }
+    throw new ApiError(body, res.status);
+  }
   return res.status === 204 ? null : res.json();
 }
 
@@ -261,10 +270,27 @@ function renderRefBanner() {
 // Экранов теперь четыре: лендинг, вход, студия и чат. Гасим все разом, чтобы
 // добавление пятого не требовало править каждый переход по отдельности.
 function hideScreens() {
-  ["#welcome", "#login", "#app", "#chat"].forEach((sel) => {
+  ["#welcome", "#login", "#app", "#chat", "#blocked"].forEach((sel) => {
     const el = $(sel);
     if (el) el.classList.add("hidden");
   });
+}
+
+// Экран блокировки. Заблокированному отвечают 403 ВСЕ рабочие роуты, а
+// /api/me намеренно идёт мимо гварда (иначе вместе с приложением падал бы и
+// вход) — поэтому показать блокировку должен фронт, и показать ПРИЧИНУ:
+// «аккаунт заблокирован» без причины — это та же тишина, только вежливая.
+function showBlocked(reason) {
+  hideScreens();
+  const box = $("#blocked");
+  if (!box) return;
+  const why = $("#blocked-reason");
+  if (why) {
+    const text = String(reason || "").trim();
+    why.textContent = text;
+    why.classList.toggle("hidden", !text);
+  }
+  box.classList.remove("hidden");
 }
 
 function showWelcome() {
@@ -286,6 +312,13 @@ function showLogin() {
   });
 }
 function showApp() {
+  // Блокировку проверяем ДО показа студии, а не по первому упавшему запросу:
+  // иначе заблокированный успевает увидеть свои проекты и понажимать кнопки.
+  const who = me && me.user;
+  if (who && who.is_blocked) {
+    showBlocked(who.blocked_reason);
+    return;
+  }
   hideScreens();
   $("#app").classList.remove("hidden");
   renderUserBar();
@@ -563,8 +596,14 @@ function bindCopy(pane) {
 const ACC_TABS = [
   { key: "account" },
   { key: "plan" },
+  // «Файлы» — архив всего, что сгенерировано: сетка миниатюр с фильтрами по
+  // дате, виду и проекту. Не отдельная страница, а вкладка кабинета: открытый
+  // проект, поллинг и несохранённые поля остаются на месте.
+  { key: "files" },
   { key: "ref" },
   { key: "payouts", admin: true },
+  { key: "crm", admin: true },
+  { key: "broadcast", admin: true },
 ];
 
 const PAYOUT_STATUS = { new: "new", paid: "paid", rejected: "rejected" };
@@ -780,7 +819,8 @@ function openAccountModal(initial = "account") {
 
     const loaders = {
       account: renderAccountPane, plan: renderPlanPane,
-      ref: renderRefPane, payouts: renderPayoutsPane,
+      files: renderFilesPane, ref: renderRefPane, payouts: renderPayoutsPane,
+      crm: renderCrmPane, broadcast: renderBroadcastPane,
     };
     // Вкладка грузится один раз при первом открытии: лишних запросов нет,
     // а перерисовку после действий делают сами обработчики.
@@ -821,27 +861,95 @@ function payLine(a) {
 // дублирует строку оплаты. График строится по journalу очков (PointEvent) —
 // до него история расхода существовала только в логах контейнера.
 
+// ────────── графики: своя отрисовка, без библиотек ──────────
+// SVG, а не <div> с высотой в пикселях: столбик из вложенных div'ов не умеет
+// ни подписей осей, ни аккуратного стека, ни тултипа, а весь график — это
+// один узел вместо тридцати с сегментами внутри.
+
+/* Цвет вида работы. Берём из тех же CSS-переменных, что и легенда: второй
+   палитры в проекте быть не должно. */
+const KIND_FALLBACK = {
+  frames: "--gold", video: "--accent", chat: "", audio: "--ok",
+  story: "--accent-2", sheet: "", model: "", assemble: "", other: "",
+};
+const KIND_PLAIN = {
+  chat: "#7a9bd4", sheet: "#c58bd8", model: "#8fd0c0",
+  assemble: "#b4a08c", other: "rgba(45,33,26,.35)",
+};
+
+function kindColor(kind) {
+  const varName = KIND_FALLBACK[kind];
+  if (varName) {
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue(varName).trim();
+    if (v) return v;
+  }
+  return KIND_PLAIN[kind] || "rgba(45,33,26,.35)";
+}
+
+function svgEl(name, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, String(v)));
+  return el;
+}
+
+/* Столбики расхода по дням со стеком по видам работы. */
 function dashSpark(usage) {
+  const days = usage.daily || [];
+  const kinds = usage.kinds || [];
+  const W = 640, H = 140, gap = 2;
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`, class: "dash-svg", preserveAspectRatio: "none",
+    role: "img", "aria-label": t("dash.chart"),
+  });
+  const max = Math.max(1, ...days.map((d) => d.spent || 0));
+  const bw = Math.max(1, W / Math.max(1, days.length) - gap);
+  days.forEach((d, i) => {
+    const x = i * (bw + gap);
+    if (!d.spent) {
+      svg.appendChild(svgEl("rect", {
+        x, y: H - 2, width: bw, height: 2, rx: 1, fill: "rgba(45,33,26,.10)",
+      }));
+      return;
+    }
+    let y = H;
+    kinds.forEach((k) => {
+      if (!d[k]) return;
+      const h = Math.max(1, (d[k] / max) * (H - 6));
+      y -= h;
+      const r = svgEl("rect", { x, y, width: bw, height: h, fill: kindColor(k) });
+      r.appendChild(svgEl("title", {})).textContent =
+        `${d.date} · ${t("dash.kinds." + k) || k}: ${tNum(d[k])}`;
+      svg.appendChild(r);
+    });
+  });
   const box = document.createElement("div");
   box.className = "dash-bars";
-  const days = usage.daily || [];
-  const max = Math.max(1, ...days.map((d) => d.spent || 0));
-  days.forEach((d) => {
-    const bar = document.createElement("div");
-    bar.className = "dash-bar" + (d.spent ? "" : " is-empty");
-    bar.title = `${d.date}: ${tNum(d.spent || 0)}`;
-    if (d.spent) {
-      bar.style.height = Math.max(3, Math.round((d.spent / max) * 118)) + "px";
-      (usage.kinds || []).forEach((k) => {
-        if (!d[k]) return;
-        const seg = document.createElement("i");
-        seg.className = "dash-seg-" + k;
-        seg.style.height = Math.round((d[k] / d.spent) * 100) + "%";
-        bar.appendChild(seg);
-      });
-    }
-    box.appendChild(bar);
+  box.appendChild(svg);
+  return box;
+}
+
+/* Линии «выручка против себестоимости» — только для админской сводки. */
+function svgLines(rows, series, opts = {}) {
+  const W = 640, H = 150, pad = 4;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "dash-svg" });
+  const max = Math.max(1, ...rows.flatMap((r) => series.map((sr) => r[sr.key] || 0)));
+  const step = rows.length > 1 ? (W - pad * 2) / (rows.length - 1) : 0;
+  series.forEach((sr) => {
+    const pts = rows.map((r, i) => {
+      const x = pad + i * step;
+      const y = H - pad - ((r[sr.key] || 0) / max) * (H - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    svg.appendChild(svgEl("polyline", {
+      points: pts, fill: "none", stroke: sr.color, "stroke-width": 2,
+      "stroke-linejoin": "round", "stroke-linecap": "round",
+    }));
   });
+  const box = document.createElement("div");
+  box.className = "dash-bars";
+  if (opts.height) box.style.height = opts.height;
+  box.appendChild(svg);
   return box;
 }
 
@@ -989,9 +1097,75 @@ async function renderAccountPane(pane) {
     <div class="row acc-actions"></div>
     <span class="acc-msg status"></span>`;
 
+  // ── Рамка тарифа. Про потолок накопления (две месячные нормы) человек до
+  // сих пор не знал вообще, и это прямой источник обиды: накопил, оплатил,
+  // часть сгорела. Теперь он видит её заранее, а не постфактум.
+  const lim = usage && usage.limits;
+  if (lim) {
+    const box = document.createElement("div");
+    box.className = "lim-grid";
+    const pct = lim.norm ? Math.min(100, Math.round((lim.used / lim.norm) * 100)) : 0;
+    const cell = (cap, value, sub, extra = "") => `
+      <div class="lim-card"><span>${escHtml(cap)}</span><b>${escHtml(value)}</b>
+      <span class="lim-sub">${escHtml(sub)}</span>${extra}</div>`;
+    const parts = [
+      cell(t("lim.norm"), tNum(lim.norm),
+           t("lim.usedOf", { n: tNum(lim.used) }),
+           `<span class="lim-bar"><i class="${pct >= 100 ? "over" : ""}"
+             style="width:${pct}%"></i></span>`),
+      cell(t("lim.cap"), tNum(lim.cap), t("lim.capNote")),
+    ];
+    if (lim.drip_left) {
+      // Годовая подписка: очки капают помесячно. Без этой плашки годовой
+      // тариф выглядит обманом — заплатил за год, на счету одна норма.
+      parts.push(cell(t("lim.drip"), tNum(lim.drip_left * lim.drip_size),
+                      t("lim.dripNote", { n: lim.drip_left,
+                                          date: fmtDate(lim.drip_at) })));
+    }
+    if (lim.plan_until) {
+      parts.push(cell(t("lim.until"), fmtDate(lim.plan_until),
+                      lim.tier_next ? t("lim.tierNext", { tier: lim.tier_next })
+                                    : t("lim.period." + (lim.period || "month"))));
+    }
+    box.innerHTML = parts.join("");
+    $(".dash-cards", pane).insertAdjacentElement("afterend", box);
+
+    // Движки тарифа: «открыт тарифом» и «жив по ключам» — разные вещи, и
+    // кабинет обязан их различать. Раньше этого не было нигде, кроме
+    // /api/providers, который кабинет не спрашивал.
+    const eng = document.createElement("div");
+    eng.className = "lim-engines";
+    (lim.engines || []).forEach((e) => {
+      const chip = document.createElement("span");
+      chip.className = "lim-eng" + (e.live ? "" : " off");
+      chip.textContent = `${e.title} · ${tNum(e.scene_cost)}`;
+      chip.title = e.live ? t("lim.engLive") : t("lim.engDead");
+      eng.appendChild(chip);
+    });
+    if (eng.children.length) box.insertAdjacentElement("afterend", eng);
+  }
+
   const chart = $(".dash-chart", pane);
   if (usage && usage.spent) {
     chart.append(dashSpark(usage), dashLegend(usage));
+    // Вторая легенда — ПО ДВИЖКАМ. «Сколько куда потратилось» без неё
+    // отвечено наполовину: Kling 3.0 Pro и Seedance 2 Mini отличаются в
+    // цене на порядок, а в разбивке по видам работы оба просто «Видео».
+    if ((usage.by_engine || []).length) {
+      const head = document.createElement("p");
+      head.className = "dash-approx muted";
+      head.style.marginBottom = "4px";
+      head.textContent = t("dash.byEngine");
+      const legend = document.createElement("div");
+      legend.className = "dash-legend";
+      usage.by_engine.forEach((row) => {
+        const item = document.createElement("span");
+        item.textContent = `${engineTitle(row.engine)} · ${tNum(row.spent)}`
+          + ` (${tNum(row.ops)})`;
+        legend.appendChild(item);
+      });
+      chart.append(head, legend);
+    }
     if (usage.approx_before) {
       const note = document.createElement("p");
       note.className = "dash-approx muted";
@@ -1004,7 +1178,16 @@ async function renderAccountPane(pane) {
     empty.textContent = t("dash.chartEmpty");
     chart.appendChild(empty);
   }
-  $(".dash-recent-box", pane).appendChild(dashRecent(usage || {}));
+  const recentBox = $(".dash-recent-box", pane);
+  recentBox.appendChild(dashRecent(usage || {}));
+  // Двенадцати строк хватает на «что я сделал только что» и не хватает на
+  // «за что списали 154 очка в прошлый вторник». Полная лента — с фильтрами.
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = "ghost ev-more";
+  allBtn.textContent = t("dash.allEvents");
+  allBtn.addEventListener("click", () => openEventsModal());
+  recentBox.appendChild(allBtn);
 
   // Герой ведёт в кассу: это единственное действие, ради которого сюда
   // приходят, когда очки кончаются. Огонь — только на нём.
@@ -1057,6 +1240,865 @@ async function renderAccountPane(pane) {
       actions.appendChild(note);
     }
   }
+}
+
+// ────────── полная лента операций: фильтры и подгрузка ──────────
+// Курсор, а не «страница N»: пока человек листает, генерации продолжают
+// писать новые строки, и OFFSET начал бы их повторять и пропускать.
+
+const EV_FILTERS = ["", "spent", "granted", "refund"];
+
+function openEventsModal(userId = 0) {
+  openModal(t("dash.allEvents"), (body) => {
+    body.innerHTML = `
+      <div class="ev-filters"></div>
+      <div class="dash-recent ev-list"></div>
+      <span class="status ev-msg"></span>`;
+    const list = $(".ev-list", body);
+    const state = { only: "", kind: "", cursor: 0 };
+
+    const load = async (reset) => {
+      if (reset) { list.innerHTML = ""; state.cursor = 0; }
+      const qs = new URLSearchParams({ limit: "50" });
+      if (state.only) qs.set("only", state.only);
+      if (state.kind) qs.set("kind", state.kind);
+      if (state.cursor) qs.set("cursor", String(state.cursor));
+      if (userId) qs.set("user_id", String(userId));
+      let data;
+      try {
+        data = await api(`/api/account/events?${qs}`);
+      } catch (e) {
+        $(".ev-msg", body).textContent = errText(e);
+        return;
+      }
+      $$(".ev-more", body).forEach((b) => b.remove());
+      if (!data.items.length && !state.cursor) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = t("dash.recentEmpty");
+        list.appendChild(empty);
+        return;
+      }
+      data.items.forEach((e) => list.appendChild(eventRow(e)));
+      state.cursor = data.next_cursor || 0;
+      if (state.cursor) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "ghost ev-more";
+        more.textContent = t("common.loadMore");
+        more.addEventListener("click", () => load(false));
+        list.after(more);
+      }
+    };
+
+    const chips = $(".ev-filters", body);
+    EV_FILTERS.forEach((key) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "ev-chip" + (key === state.only ? " on" : "");
+      chip.textContent = t("dash.filter." + (key || "all"));
+      chip.addEventListener("click", () => {
+        state.only = key;
+        $$(".ev-chip", chips).forEach((x) => x.classList.toggle("on", x === chip));
+        load(true);
+      });
+      chips.appendChild(chip);
+    });
+    load(true);
+  }, { medium: true });
+}
+
+function eventRow(e) {
+  const row = document.createElement("div");
+  row.className = "dash-ev";
+  const kind = document.createElement("span");
+  kind.className = "dash-ev-kind";
+  kind.textContent = t("dash.kinds." + e.kind) || e.kind;
+  const what = document.createElement("span");
+  what.className = "dash-ev-what";
+  what.textContent = (e.what || "") + (e.engine ? ` · ${engineTitle(e.engine)}` : "");
+  // task_id приходит только админу: по нему разбирается спорная генерация
+  // («списали 154 → задача kie abc123 → упала → возврат строкой ниже»).
+  if (e.task_id) what.title = `task ${e.task_id}`;
+  const when = document.createElement("span");
+  when.className = "dash-ev-when";
+  when.textContent = fmtDate(e.at, true);
+  const delta = document.createElement("span");
+  delta.className = "dash-ev-delta " + (e.delta < 0 ? "minus" : "plus");
+  delta.textContent = (e.delta > 0 ? "+" : "") + tNum(e.delta);
+  row.append(kind, what, when, delta);
+  return row;
+}
+
+// ══════════════════════ ВКЛАДКА «ФАЙЛЫ»: архив ══════════════════════
+// «Папка со всеми файлами, рассортированная по датам, видам и проектам».
+//
+// ГЛАВНОЕ ОГРАНИЧЕНИЕ, из которого выросла вся раскладка: клип весит до
+// 1.5 ГБ, кадр — 15 МБ в 4К. Поэтому здесь НЕТ ни одного <video> и ни одного
+// оригинала: сетка живёт на /api/thumb (ffmpeg, 640px, кэш), а видео
+// показано постером первого кадра со значком ▶. Проигрывание и скачивание —
+// по клику, одним элементом на всю страницу.
+
+function fmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(1) + " GB";
+  if (v >= 1024 ** 2) return Math.round(v / 1024 ** 2) + " MB";
+  if (v >= 1024) return Math.round(v / 1024) + " KB";
+  return v + " B";
+}
+
+const ARC_STATE = { kind: "", project_id: 0, days: 0, sort: "date", cursor: "", user_id: 0 };
+
+async function renderFilesPane(pane) {
+  pane.innerHTML = `
+    <div class="arc-head">
+      <span class="arc-total"></span>
+      <span class="muted arc-sub"></span>
+    </div>
+    <div class="ev-filters arc-kinds"></div>
+    <div class="ev-filters arc-scope"></div>
+    <div class="arc-grid"></div>
+    <span class="status arc-msg"></span>`;
+  ARC_STATE.kind = "";
+  ARC_STATE.project_id = 0;
+  ARC_STATE.days = 0;
+  ARC_STATE.cursor = "";
+  await loadFiles(pane, true);
+}
+
+async function loadFiles(pane, reset) {
+  const grid = $(".arc-grid", pane);
+  if (reset) { grid.innerHTML = ""; ARC_STATE.cursor = ""; }
+  const qs = new URLSearchParams({ limit: "60", sort: ARC_STATE.sort });
+  if (ARC_STATE.kind) qs.set("kind", ARC_STATE.kind);
+  if (ARC_STATE.project_id) qs.set("project_id", String(ARC_STATE.project_id));
+  if (ARC_STATE.days) qs.set("days", String(ARC_STATE.days));
+  if (ARC_STATE.cursor) qs.set("cursor", ARC_STATE.cursor);
+  // Админ может смотреть архив конкретного клиента из его карточки в CRM.
+  if (ARC_STATE.user_id) qs.set("user_id", String(ARC_STATE.user_id));
+  let data;
+  try {
+    data = await api(`/api/files?${qs}`);
+  } catch (e) {
+    const msg = $(".arc-msg", pane);
+    if (msg) { msg.textContent = errText(e); msg.className = "status arc-msg error"; }
+    else accFail(pane, e);
+    return;
+  }
+  if (reset) {
+    // Сколько всего занято и чем: человек должен видеть, что клипы съели
+    // 40 ГБ, а кадры 300 МБ, — иначе непонятно, что вообще чистить.
+    $(".arc-total", pane).textContent =
+      t("files.total", { n: tNum(data.totals.count),
+                         word: tPlural(data.totals.count, tRaw("files.word")),
+                         size: fmtBytes(data.totals.bytes) });
+    $(".arc-sub", pane).textContent = (data.totals.by_kind || [])
+      .slice(0, 4)
+      .map((r) => `${t("files.kinds." + r.kind) || r.kind} ${fmtBytes(r.bytes)}`)
+      .join(" · ");
+    buildArcFilters(pane, data);
+  }
+  $$(".ev-more", pane).forEach((b) => b.remove());
+  if (!data.items.length && reset) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("files.empty");
+    grid.appendChild(empty);
+    return;
+  }
+  let lastDay = grid.dataset.lastDay || "";
+  data.items.forEach((f) => {
+    const day = (f.at || "").slice(0, 10);
+    if (day !== lastDay) {
+      lastDay = day;
+      const head = document.createElement("div");
+      head.className = "arc-day";
+      head.textContent = fmtDate(f.at);
+      grid.appendChild(head);
+    }
+    grid.appendChild(arcCell(f, pane));
+  });
+  grid.dataset.lastDay = lastDay;
+  ARC_STATE.cursor = data.next_cursor || "";
+  if (ARC_STATE.cursor) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "ghost ev-more";
+    more.textContent = t("common.loadMore");
+    more.addEventListener("click", () => loadFiles(pane, false));
+    grid.after(more);
+  }
+}
+
+function buildArcFilters(pane, data) {
+  const kinds = $(".arc-kinds", pane);
+  kinds.innerHTML = "";
+  const present = new Set((data.totals.by_kind || []).map((r) => r.kind));
+  [["", t("files.all")]].concat(
+    (data.kinds || []).filter((k) => present.has(k))
+      .map((k) => [k, t("files.kinds." + k) || k]),
+  ).forEach(([key, label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ev-chip" + (key === ARC_STATE.kind ? " on" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      ARC_STATE.kind = key;
+      $$(".ev-chip", kinds).forEach((x) => x.classList.toggle("on", x === chip));
+      $(".arc-grid", pane).dataset.lastDay = "";
+      loadFiles(pane, true);
+    });
+    kinds.appendChild(chip);
+  });
+
+  const scope = $(".arc-scope", pane);
+  scope.innerHTML = "";
+  const addChip = (label, on, apply) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ev-chip" + (on ? " on" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      apply();
+      $(".arc-grid", pane).dataset.lastDay = "";
+      loadFiles(pane, true).then(() => buildArcFilters(pane, data));
+    });
+    scope.appendChild(chip);
+  };
+  addChip(t("files.allTime"), !ARC_STATE.days, () => { ARC_STATE.days = 0; });
+  addChip(t("files.days7"), ARC_STATE.days === 7, () => { ARC_STATE.days = 7; });
+  addChip(t("files.days30"), ARC_STATE.days === 30, () => { ARC_STATE.days = 30; });
+  addChip(t("files.bySize"), ARC_STATE.sort === "size",
+          () => { ARC_STATE.sort = ARC_STATE.sort === "size" ? "date" : "size"; });
+  (data.projects || []).forEach((pr) => {
+    addChip(pr.name || `#${pr.id}`, ARC_STATE.project_id === pr.id,
+            () => { ARC_STATE.project_id = ARC_STATE.project_id === pr.id ? 0 : pr.id; });
+  });
+}
+
+function arcCell(f, pane) {
+  const cell = document.createElement("button");
+  cell.type = "button";
+  cell.className = "arc-cell";
+  if (f.thumb_url) {
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.alt = "";
+    img.src = f.thumb_url;
+    // Битая миниатюра не должна оставлять дыру в сетке.
+    img.addEventListener("error", () => { img.remove(); });
+    cell.appendChild(img);
+  }
+  const ph = document.createElement("span");
+  ph.className = "arc-ph";
+  ph.textContent = f.is_audio ? "♪" : f.is_video ? "▶" : "▦";
+  cell.appendChild(ph);
+  const tag = document.createElement("span");
+  tag.className = "arc-tag";
+  tag.textContent = t("files.kinds." + f.kind) || f.kind;
+  cell.appendChild(tag);
+  if (f.is_video && f.thumb_url) {
+    const play = document.createElement("span");
+    play.className = "arc-play";
+    play.textContent = "▶";
+    cell.appendChild(play);
+  }
+  const size = document.createElement("span");
+  size.className = "arc-size";
+  size.textContent = fmtBytes(f.size_bytes);
+  cell.appendChild(size);
+  cell.addEventListener("click", () => openFileModal(f, pane));
+  return cell;
+}
+
+function openFileModal(f, pane) {
+  openModal(t("files.kinds." + f.kind) || f.kind, (body) => {
+    // Оригинал грузится ТОЛЬКО здесь и только один — на весь экран, а не
+    // тридцать штук в сетке.
+    if (f.is_video) {
+      const v = document.createElement("video");
+      v.className = "arc-view";
+      v.src = f.url;
+      v.controls = true;
+      v.preload = "metadata";
+      v.poster = f.thumb_url || "";
+      body.appendChild(v);
+    } else if (f.is_audio) {
+      const a = document.createElement("audio");
+      a.src = f.url;
+      a.controls = true;
+      a.style.width = "100%";
+      body.appendChild(a);
+    } else {
+      const img = document.createElement("img");
+      img.className = "arc-view";
+      img.src = f.url;
+      img.alt = "";
+      img.decoding = "async";
+      body.appendChild(img);
+    }
+    const meta = document.createElement("p");
+    meta.className = "arc-meta";
+    meta.textContent = [
+      fmtDate(f.at, true), fmtBytes(f.size_bytes),
+      f.project_id ? t("files.inProject", { n: f.project_id }) : "",
+      f.scene_id ? t("files.inScene", { n: f.scene_id }) : "",
+    ].filter(Boolean).join(" · ");
+    body.appendChild(meta);
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const dl = document.createElement("button");
+    dl.type = "button";
+    dl.className = "primary";
+    dl.textContent = t("files.download");
+    dl.addEventListener("click", async () => {
+      dl.disabled = true;
+      try {
+        // Подписанная ссылка, а не /api/media: там нужна кука, и «скачать по
+        // ссылке с телефона» ломается.
+        const r = await api(`/api/files/link/${encodeURIComponent(f.filename)}`);
+        window.open(r.url, "_blank");
+      } catch (e) { fail(e); }
+      dl.disabled = false;
+    });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "danger";
+    del.textContent = t("common.del");
+    del.addEventListener("click", async () => {
+      if (!confirm(t("files.delConfirm"))) return;
+      try {
+        await api(`/api/files/${encodeURIComponent(f.filename)}`, { method: "DELETE" });
+      } catch (e) {
+        // 409 «файл используется» — это не ошибка, а ответ: говорим, где он
+        // занят, вместо того чтобы ломать сцену пустой ссылкой.
+        return fail(e);
+      }
+      closeModal();
+      $(".arc-grid", pane).dataset.lastDay = "";
+      loadFiles(pane, true);
+    });
+    row.append(dl, del);
+    body.appendChild(row);
+  }, { medium: true });
+}
+
+// ══════════════════════ ВКЛАДКА «КЛИЕНТЫ» (только админ) ══════════════════════
+// «Видеть клиентов и тех, кто зарегался, включать-отключать им подписки или
+// начислять токены». Каждое действие пишется дважды: движение очков — в
+// журнал очков (та же дверь, что у генераций), сам факт «кто и когда» — в
+// admin_actions. Иначе «кто включил человеку ULTRA руками» остаётся загадкой.
+
+const CRM_STATE = { q: "", plan: "", state: "", has: "", sort: "new", cursor: 0 };
+
+async function renderCrmPane(pane) {
+  pane.innerHTML = `
+    <div class="crm-stats"></div>
+    <div class="crm-search">
+      <input class="crm-q" type="search" />
+      <button type="button" class="crm-go primary"></button>
+    </div>
+    <div class="ev-filters crm-filters"></div>
+    <div class="crm-list"></div>
+    <span class="status crm-msg"></span>`;
+  $(".crm-q", pane).placeholder = t("crm.searchPh");
+  $(".crm-go", pane).textContent = t("crm.search");
+
+  let stats = null;
+  try { stats = await api("/api/admin/stats?days=30"); } catch (e) { return accFail(pane, e); }
+  const u = stats.users;
+  $(".crm-stats", pane).innerHTML = [
+    ["crm.total", tNum(u.total), t("crm.active7", { n: tNum(u.active7) })],
+    ["crm.paying", tNum(u.paying), t("crm.blockedN", { n: tNum(u.blocked) })],
+    ["crm.revenue", fmtUsdCents(stats.revenue_cents),
+     t("crm.cost", { v: fmtUsdCents(stats.cost_cents) })],
+    ["crm.storage", fmtBytes(stats.storage.bytes),
+     t("crm.files", { n: tNum(stats.storage.files),
+                      word: tPlural(stats.storage.files, tRaw("files.word")) })],
+    ["crm.contacts", `${tNum(u.with_email)} / ${tNum(u.with_tg)}`, t("crm.contactsNote")],
+  ].map(([key, val, sub]) => `
+    <div class="lim-card"><span>${escHtml(t(key))}</span><b>${escHtml(val)}</b>
+    <span class="lim-sub">${escHtml(sub)}</span></div>`).join("");
+
+  // Выручка против себестоимости по дням: до появления cost_cents маржа
+  // сервиса была неизвестна в принципе — мы знали, сколько нам заплатили, и
+  // не знали, сколько за это отдали kie.ai.
+  if ((stats.daily || []).some((d) => d.revenue_cents || d.cost_cents)) {
+    const chart = svgLines(stats.daily, [
+      { key: "revenue_cents", color: kindColor("audio") },
+      { key: "cost_cents", color: kindColor("video") },
+    ]);
+    const cap = document.createElement("p");
+    cap.className = "dash-approx muted";
+    cap.textContent = t("crm.chartNote");
+    $(".crm-stats", pane).after(chart);
+    chart.after(cap);
+  }
+
+  const filters = [
+    ["", "", t("crm.f.all")], ["plan", "paid", t("crm.f.paid")],
+    ["state", "active", t("crm.f.active")], ["state", "sleeping", t("crm.f.sleeping")],
+    ["state", "blocked", t("crm.f.blocked")], ["has", "email", t("crm.f.email")],
+    ["has", "tg", t("crm.f.tg")], ["has", "ambassador", t("crm.f.amb")],
+  ];
+  const fbox = $(".crm-filters", pane);
+  filters.forEach(([key, val, label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ev-chip" + ((!key && !CRM_STATE.plan && !CRM_STATE.state
+                                   && !CRM_STATE.has) ? " on" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      CRM_STATE.plan = CRM_STATE.state = CRM_STATE.has = "";
+      if (key) CRM_STATE[key] = val;
+      $$(".ev-chip", fbox).forEach((x) => x.classList.toggle("on", x === chip));
+      loadClients(pane, true);
+    });
+    fbox.appendChild(chip);
+  });
+
+  const go = () => { CRM_STATE.q = $(".crm-q", pane).value.trim(); loadClients(pane, true); };
+  $(".crm-go", pane).addEventListener("click", go);
+  $(".crm-q", pane).addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  await loadClients(pane, true);
+}
+
+function fmtUsdCents(cents) {
+  const v = (Number(cents) || 0) / 100;
+  return "$" + (v >= 100 ? Math.round(v) : v.toFixed(2));
+}
+
+async function loadClients(pane, reset) {
+  const list = $(".crm-list", pane);
+  if (reset) { list.innerHTML = ""; CRM_STATE.cursor = 0; }
+  const qs = new URLSearchParams({ limit: "40", sort: CRM_STATE.sort });
+  if (CRM_STATE.q) qs.set("q", CRM_STATE.q);
+  if (CRM_STATE.plan) qs.set("plan", CRM_STATE.plan);
+  if (CRM_STATE.state) qs.set("state", CRM_STATE.state);
+  if (CRM_STATE.has) qs.set("has", CRM_STATE.has);
+  if (CRM_STATE.cursor) qs.set("cursor", String(CRM_STATE.cursor));
+  let data;
+  try { data = await api(`/api/admin/users?${qs}`); } catch (e) { return accFail(pane, e); }
+  $$(".ev-more", pane).forEach((b) => b.remove());
+  if (!data.items.length && reset) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("crm.none");
+    list.appendChild(empty);
+    return;
+  }
+  data.items.forEach((row) => list.appendChild(clientRow(row, pane)));
+  CRM_STATE.cursor = data.next_cursor || 0;
+  if (CRM_STATE.cursor) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "ghost ev-more";
+    more.textContent = t("common.loadMore");
+    more.addEventListener("click", () => loadClients(pane, false));
+    list.after(more);
+  }
+}
+
+function clientRow(u, pane) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "crm-row" + (u.is_blocked ? " blocked" : "");
+  const who = document.createElement("span");
+  who.className = "crm-who";
+  const name = document.createElement("b");
+  name.textContent = (u.name || "").trim() || `#${u.id}`;
+  const contact = document.createElement("span");
+  contact.textContent = [u.email, u.tg && "@" + u.tg, u.login,
+                         u.last_seen_at ? t("crm.seen", { d: fmtDate(u.last_seen_at) })
+                                        : t("crm.neverSeen")]
+    .filter(Boolean).join(" · ");
+  who.append(name, contact);
+  const plan = document.createElement("span");
+  plan.className = "crm-plan" + (u.plan !== "free" ? " paid" : "");
+  plan.textContent = u.plan_title + (u.plan_tier ? " " + u.plan_tier.toUpperCase() : "");
+  const pts = document.createElement("span");
+  pts.className = "crm-pts";
+  pts.textContent = tNum(u.points) + " ⚡";
+  row.append(who, plan, pts);
+  row.addEventListener("click", () => openClientModal(u.id, pane));
+  return row;
+}
+
+async function openClientModal(uid, pane) {
+  let c;
+  try { c = await api(`/api/admin/users/${uid}`); } catch (e) { return fail(e); }
+  openModal((c.name || "").trim() || `#${c.id}`, (body) => {
+    const money = c.money || {};
+    body.innerHTML = `
+      <div class="crm-stats">
+        <div class="lim-card"><span>${escHtml(t("crm.plan"))}</span>
+          <b>${escHtml(c.plan_title + (c.plan_tier ? " " + c.plan_tier.toUpperCase() : ""))}</b>
+          <span class="lim-sub">${escHtml(c.plan_until ? fmtDate(c.plan_until) : t("crm.noUntil"))}</span></div>
+        <div class="lim-card"><span>${escHtml(t("crm.points"))}</span>
+          <b>${escHtml(tNum(c.points))}</b>
+          <span class="lim-sub">${escHtml(t("crm.spent", { n: tNum(money.spent_points || 0) }))}</span></div>
+        <div class="lim-card"><span>${escHtml(t("crm.paid"))}</span>
+          <b>${escHtml(fmtUsdCents(money.paid_cents || 0))}</b>
+          <span class="lim-sub">${escHtml(t("crm.margin", {
+            v: fmtUsdCents(money.margin_cents || 0) }))}</span></div>
+        <div class="lim-card"><span>${escHtml(t("crm.work"))}</span>
+          <b>${escHtml(tNum((c.work || {}).clips || 0))}</b>
+          <span class="lim-sub">${escHtml(t("crm.workNote", {
+            p: tNum((c.work || {}).projects || 0),
+            s: tNum((c.work || {}).scenes || 0),
+            f: fmtBytes((c.work || {}).bytes || 0) }))}</span></div>
+      </div>
+      <p class="crm-note"></p>
+      <label>${escHtml(t("crm.points"))}</label>
+      <div class="crm-acts">
+        <input class="cl-delta" type="number" value="500" />
+        <input class="cl-reason" type="text" />
+        <button type="button" class="cl-give primary"></button>
+      </div>
+      <label>${escHtml(t("crm.plan"))}</label>
+      <div class="crm-acts">
+        <select class="cl-plan"></select>
+        <select class="cl-tier"></select>
+        <input class="cl-days" type="number" value="30" />
+        <label class="approve-check"><input type="checkbox" class="cl-grant" />
+          <span>${escHtml(t("crm.grantNorm"))}</span></label>
+        <button type="button" class="cl-save primary"></button>
+      </div>
+      <div class="crm-acts">
+        <button type="button" class="cl-block danger"></button>
+        <button type="button" class="cl-events ghost"></button>
+        <button type="button" class="cl-files ghost"></button>
+      </div>
+      <span class="status cl-msg"></span>
+      <label>${escHtml(t("crm.history"))}</label>
+      <div class="dash-recent cl-actions"></div>`;
+
+    // Что кнопка «отключить» реально сделает. Без этой строки интерфейс
+    // обещал бы отменить списание там, где мы его не делаем.
+    // Текст берём по КОДУ источника оплаты, а не готовой фразой с сервера:
+    // сервер отвечает кодом, язык — дело интерфейса.
+    $(".crm-note", body).textContent = t("crm.cancelNote." + (c.pay_source || "none"));
+    $(".cl-reason", body).placeholder = t("crm.reasonPh");
+    $(".cl-give", body).textContent = t("crm.give");
+    $(".cl-save", body).textContent = t("crm.savePlan");
+    $(".cl-block", body).textContent = c.is_blocked ? t("crm.unblock") : t("crm.block");
+    $(".cl-events", body).textContent = t("crm.ledger");
+    $(".cl-files", body).textContent = t("crm.filesOf");
+
+    const planSel = $(".cl-plan", body);
+    (c.plans || []).forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = `${p.title} · ${tNum(p.points)}`;
+      planSel.appendChild(o);
+    });
+    planSel.value = c.plan;
+    const tierSel = $(".cl-tier", body);
+    const fillTiers = () => {
+      tierSel.innerHTML = "";
+      const list = planSel.value === "studio" ? (c.tiers || []) : [];
+      tierSel.classList.toggle("hidden", !list.length);
+      list.forEach((tr) => {
+        const o = document.createElement("option");
+        o.value = tr.id;
+        o.textContent = `${tr.id.toUpperCase()} · ${tNum(tr.points)}`;
+        tierSel.appendChild(o);
+      });
+      if (c.plan_tier) tierSel.value = c.plan_tier;
+    };
+    fillTiers();
+    planSel.addEventListener("change", fillTiers);
+
+    const msg = (text, cls = "") => {
+      const el = $(".cl-msg", body);
+      el.textContent = text;
+      el.className = "status cl-msg " + cls;
+    };
+    const reopen = () => { closeModal(); openClientModal(uid, pane); };
+
+    $(".cl-give", body).addEventListener("click", async () => {
+      const delta = Number($(".cl-delta", body).value) || 0;
+      if (!delta) return msg(t("crm.needDelta"), "error");
+      try {
+        const r = await api(`/api/admin/users/${uid}/points`, {
+          method: "POST",
+          body: { delta, reason: $(".cl-reason", body).value.trim() },
+        });
+        msg(t("crm.gaveDone", { n: tNum(r.points) }), "done");
+        if (pane) loadClients(pane, true);
+      } catch (e) { msg(errText(e), "error"); }
+    });
+
+    $(".cl-save", body).addEventListener("click", async () => {
+      try {
+        await api(`/api/admin/users/${uid}/plan`, {
+          method: "POST",
+          body: {
+            plan: planSel.value,
+            tier: tierSel.value || "",
+            days: Number($(".cl-days", body).value) || 0,
+            grant_points: $(".cl-grant", body).checked,
+          },
+        });
+        if (pane) loadClients(pane, true);
+        reopen();
+      } catch (e) { msg(errText(e), "error"); }
+    });
+
+    $(".cl-block", body).addEventListener("click", async () => {
+      const blocked = !c.is_blocked;
+      const reason = blocked ? (prompt(t("crm.blockWhy")) || "") : "";
+      if (blocked && reason === null) return;
+      try {
+        await api(`/api/admin/users/${uid}/block`, {
+          method: "POST", body: { blocked, reason },
+        });
+        if (pane) loadClients(pane, true);
+        reopen();
+      } catch (e) { msg(errText(e), "error"); }
+    });
+
+    $(".cl-events", body).addEventListener("click", () => openEventsModal(uid));
+    $(".cl-files", body).addEventListener("click", () => {
+      closeModal();
+      openModal(t("crm.filesOf"), (b2) => {
+        b2.innerHTML = `<div class="arc-head"><span class="arc-total"></span>
+          <span class="muted arc-sub"></span></div>
+          <div class="ev-filters arc-kinds"></div>
+          <div class="ev-filters arc-scope"></div>
+          <div class="arc-grid"></div><span class="status arc-msg"></span>`;
+        ARC_STATE.kind = "";
+        ARC_STATE.project_id = 0;
+        ARC_STATE.days = 0;
+        ARC_STATE.cursor = "";
+        ARC_STATE.user_id = uid;
+        loadFiles(b2, true).finally(() => { ARC_STATE.user_id = 0; });
+      }, { medium: true });
+    });
+
+    api(`/api/admin/users/${uid}/actions`).then((r) => {
+      const box = $(".cl-actions", body);
+      if (!r.items.length) {
+        box.innerHTML = `<p class="muted">${escHtml(t("crm.noHistory"))}</p>`;
+        return;
+      }
+      r.items.forEach((a) => {
+        const row = document.createElement("div");
+        row.className = "dash-ev";
+        const kind = document.createElement("span");
+        kind.className = "dash-ev-kind";
+        kind.textContent = t("crm.act." + a.action) || a.action;
+        const what = document.createElement("span");
+        what.className = "dash-ev-what";
+        what.textContent = a.payload;
+        const when = document.createElement("span");
+        when.className = "dash-ev-when";
+        when.textContent = fmtDate(a.at, true);
+        row.append(kind, what, when);
+        box.appendChild(row);
+      });
+    }).catch(() => { /* история действий не критична */ });
+  }, { medium: true });
+}
+
+// ══════════════════════ ВКЛАДКА «РАССЫЛКА» (только админ) ══════════════════════
+// Каналов три, и два из них могут быть не подключены. Интерфейс показывает
+// это словами («канал не подключён: нет BOT_TOKEN»), а не пустым списком:
+// молчащая кнопка «отправить» хуже честного отказа.
+
+const BC_STATE = { channel: "inapp", segment: "all" };
+
+async function renderBroadcastPane(pane) {
+  pane.innerHTML = `
+    <div class="bc-channels"></div>
+    <p class="bc-warn hidden"></p>
+    <label>${escHtml(t("bc.segment"))}</label>
+    <div class="bc-seg"></div>
+    <label>${escHtml(t("bc.subject"))}</label>
+    <input class="bc-subject" />
+    <label>${escHtml(t("bc.body"))}</label>
+    <textarea class="bc-body" rows="6"></textarea>
+    <p class="muted" style="font-size:11.5px">${escHtml(t("bc.vars"))}</p>
+    <div class="row">
+      <button type="button" class="bc-send primary"></button>
+      <button type="button" class="bc-test ghost"></button>
+      <label class="approve-check"><input type="checkbox" class="bc-trans" />
+        <span>${escHtml(t("bc.transactional"))}</span></label>
+    </div>
+    <span class="status bc-msg"></span>
+    <label>${escHtml(t("bc.history"))}</label>
+    <div class="bc-list"></div>`;
+  $(".bc-subject", pane).placeholder = t("bc.subjectPh");
+  $(".bc-body", pane).placeholder = t("bc.bodyPh");
+  $(".bc-send", pane).textContent = t("bc.send");
+  $(".bc-test", pane).textContent = t("bc.test");
+
+  let data;
+  try { data = await api("/api/admin/segments"); } catch (e) { return accFail(pane, e); }
+  const channels = data.channels || {};
+
+  const chanBox = $(".bc-channels", pane);
+  const warn = $(".bc-warn", pane);
+  const drawWarn = () => {
+    const st = channels[BC_STATE.channel] || {};
+    const off = !st.enabled;
+    warn.classList.toggle("hidden", !off && !st.note && !st.note_code);
+    // Чего не хватает: два РАВНОПРАВНЫХ пути (Resend или SMTP). Связку «или»
+    // пишем здесь, на языке интерфейса, — сервер отдаёт только имена
+    // переменных окружения.
+    const need = (st.missing || []).join(", ");
+    const alt = (st.missing_alt || []).join(" + ");
+    warn.textContent = off
+      ? t("bc.off", { what: alt ? t("bc.orAlt", { a: need, b: alt }) : need })
+      // Пояснение — по КОДУ канала; текст с сервера всегда по-русски и
+      // остаётся лишь запасным вариантом для канала без перевода.
+      : (tHas("bc.note." + st.note_code) ? t("bc.note." + st.note_code) : (st.note || ""));
+    $(".bc-send", pane).disabled = off;
+    $(".bc-test", pane).disabled = off;
+  };
+  ["inapp", "tg", "email"].forEach((key) => {
+    const st = channels[key] || {};
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "bc-chan" + (key === BC_STATE.channel ? " on" : "")
+      + (st.enabled ? "" : " off");
+    b.textContent = t("bc.chan." + key) + (st.enabled ? "" : " ✕");
+    b.addEventListener("click", () => {
+      BC_STATE.channel = key;
+      $$(".bc-chan", chanBox).forEach((x) => x.classList.toggle("on", x === b));
+      drawSegments();
+      drawWarn();
+    });
+    chanBox.appendChild(b);
+  });
+
+  const segBox = $(".bc-seg", pane);
+  const drawSegments = () => {
+    segBox.innerHTML = "";
+    (data.segments || []).forEach((sg) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "bc-seg-row" + (sg.id === BC_STATE.segment ? " on" : "");
+      const col = document.createElement("span");
+      col.style.minWidth = "0";
+      const b = document.createElement("b");
+      b.textContent = t("bc.seg." + sg.id) || sg.id;
+      const sub = document.createElement("span");
+      sub.style.display = "block";
+      // Определение сегмента — на языке интерфейса. sg.title с сервера всегда
+      // по-русски (SEGMENTS в crm.py), и в английском кабинете под английским
+      // названием висело русское объяснение. Серверное описание остаётся
+      // запасным вариантом: новый сегмент появится раньше своего перевода.
+      sub.textContent = tHas("bc.segNote." + sg.id) ? t("bc.segNote." + sg.id) : sg.title;
+      col.append(b, sub);
+      const n = document.createElement("span");
+      n.className = "bc-seg-n";
+      // Два числа, а не одно: «сегмент 900 человек» ничего не значит, если
+      // почты нет ни у кого. Второе — сколько из них мы физически достанем.
+      n.textContent = `${tNum(sg.count)} · ${tNum(sg.reach[BC_STATE.channel] || 0)} ✉`;
+      row.append(col, n);
+      row.addEventListener("click", () => {
+        BC_STATE.segment = sg.id;
+        $$(".bc-seg-row", segBox).forEach((x) => x.classList.toggle("on", x === row));
+      });
+      segBox.appendChild(row);
+    });
+  };
+  drawSegments();
+  drawWarn();
+
+  const msg = (text, cls = "") => {
+    const el = $(".bc-msg", pane);
+    el.textContent = text;
+    el.className = "status bc-msg " + cls;
+  };
+
+  const fire = async (test) => {
+    const bodyText = $(".bc-body", pane).value.trim();
+    if (!bodyText) return msg(t("bc.needBody"), "error");
+    try {
+      const c = await api("/api/admin/campaigns", {
+        method: "POST",
+        body: {
+          title: $(".bc-subject", pane).value.trim() || t("bc.untitled"),
+          channel: BC_STATE.channel, segment: BC_STATE.segment,
+          subject: $(".bc-subject", pane).value.trim(),
+          body: bodyText,
+          transactional: $(".bc-trans", pane).checked,
+        },
+      });
+      const r = await api(`/api/admin/campaigns/${c.id}/send${test ? "?test=1" : ""}`,
+                          { method: "POST" });
+      msg(t("bc.started", { n: tNum(r.total),
+                            word: tPlural(r.total, tRaw("bc.person")) }), "done");
+      setTimeout(() => loadCampaigns(pane), 1500);
+    } catch (e) { msg(errText(e), "error"); }
+  };
+  $(".bc-send", pane).addEventListener("click", () => {
+    if (!confirm(t("bc.confirm"))) return;
+    fire(false);
+  });
+  $(".bc-test", pane).addEventListener("click", () => fire(true));
+  await loadCampaigns(pane);
+}
+
+async function loadCampaigns(pane) {
+  const box = $(".bc-list", pane);
+  let data;
+  try { data = await api("/api/admin/campaigns"); } catch (e) { return; }
+  box.innerHTML = "";
+  if (!data.items.length) {
+    box.innerHTML = `<p class="muted">${escHtml(t("bc.none"))}</p>`;
+    return;
+  }
+  data.items.forEach((c) => {
+    const row = document.createElement("div");
+    row.className = "bc-item";
+    const title = document.createElement("b");
+    title.textContent = c.subject || c.title;
+    const stat = document.createElement("span");
+    stat.className = "muted";
+    stat.textContent = `${t("bc.chan." + c.channel)} · ${t("bc.seg." + c.segment) || c.segment}`
+      + ` · ${t("bc.result", { s: tNum(c.sent), f: tNum(c.failed), r: tNum(c.read) })}`;
+    const when = document.createElement("span");
+    when.className = "bc-when";
+    when.textContent = c.status === "sending" ? t("bc.sending") : fmtDate(c.at, true);
+    row.append(title, stat, when);
+    box.appendChild(row);
+  });
+}
+
+// ────────── входящие в приложении: плашка по каналу inapp ──────────
+// Канал, который работает без единого внешнего ключа. Для «у тебя осталось
+// 40 очков» это точнее письма и не требует ни DMARC, ни диалога с ботом.
+
+async function checkNotices() {
+  if (!me || !me.authed) return;
+  let data;
+  try { data = await api("/api/notices"); } catch (e) { return; }
+  const item = (data.items || [])[0];
+  if (!item || $(".notice-dock")) return;
+  const dock = document.createElement("div");
+  dock.className = "notice-dock";
+  const col = document.createElement("div");
+  const b = document.createElement("b");
+  b.textContent = item.title || "";
+  const p = document.createElement("p");
+  p.textContent = item.body || "";
+  col.append(b, p);
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "ghost";
+  close.textContent = "✕";
+  close.addEventListener("click", async () => {
+    dock.remove();
+    try { await api(`/api/notices/${item.id}/read`, { method: "POST" }); } catch (e) { /* прочитаем позже */ }
+    checkNotices();
+  });
+  dock.append(col, close);
+  document.body.appendChild(dock);
 }
 
 // ────────── витрина в звёздах (только внутри Telegram) ──────────
@@ -1671,6 +2713,8 @@ async function loadProject() {
   // Отложенный выбор с витрины промтов: трек мог появиться только сейчас.
   if (ldPending) await ldApplyPending();
   renderOnboarding();
+  // Входящие по каналу inapp: плашка показывается один раз за загрузку.
+  checkNotices();
 }
 
 function renderProjectBar() {
@@ -1831,20 +2875,161 @@ function sceneBusy(s) {
     midframesBusy(s);
 }
 
-function schedulePoll() {
-  clearTimeout(pollTimer);
-  const busy =
-    project.story_status === "queued" || project.story_status === "running" ||
-    // Сценарные документы живут в том же ответе /api/project и имеют тот же
-    // status/error — отдельного поллера им не нужно.
+// ═════════════ ПОЛЛИНГ: статусы отдельно от перерисовки ═════════════
+//
+// Было: пока хоть одна сцена в очереди, каждые три секунды загружался ВЕСЬ
+// проект (/api/me + /api/projects + /api/project), а потом render() сносил
+// #tracks целиком и собирал заново. На альбоме из десяти треков это около
+// 68 000 узлов и под тысячу медиа-элементов каждые три секунды — ровно то,
+// что человек называет «лагает пиздец».
+//
+// Стало: поллер дёргает /api/project/status (единицы килобайт: id и
+// статусы) и ТОЧЕЧНО правит статусные узлы. Полная перезагрузка — только
+// когда работа реально доделалась, то есть появился новый файл.
+
+let pollIdle = 0;               // сколько опросов подряд ничего не изменилось
+
+function projectBusy() {
+  return project.story_status === "queued" || project.story_status === "running" ||
+    // Сценарные документы живут в том же ответе и имеют тот же status/error.
     docsBusy() ||
     project.tracks.some(
       (t) => ["queued", "running"].includes(t.scenes_status) ||
         ["queued", "running"].includes(t.storyboard_status) ||
         ["queued", "running"].includes(t.clip_status) ||
+        ["queued", "running"].includes(t.supergen_status) ||
         (t.scenes || []).some(sceneBusy),
     );
-  if (busy) pollTimer = setTimeout(loadProject, 3000);
+}
+
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  if (!projectBusy()) { pollIdle = 0; return; }
+  // Пауза растёт, пока ничего не меняется: генерация видео идёт минутами, и
+  // долбить сервер каждые три секунды всё это время незачем.
+  const wait = Math.min(12000, 2500 + pollIdle * 700);
+  pollTimer = setTimeout(pollStatus, wait);
+}
+
+async function pollStatus() {
+  const st = await api(`/api/project/status?project_id=${activeProjectId}`)
+    .catch(() => null);
+  if (!st) { pollIdle += 1; schedulePoll(); return; }
+  if (applyStatus(st)) {
+    // Что-то доделалось — вот теперь нужна полная загрузка: появились новые
+    // файлы, ссылки и кнопки.
+    pollIdle = 0;
+    await loadProject();
+    return;
+  }
+  pollIdle += 1;
+  schedulePoll();
+}
+
+/* Разложить лёгкий ответ по DOM. Возвращает true, если нужна полная
+   перезагрузка: изменился состав файлов или работа ушла из очереди. */
+function applyStatus(st) {
+  let reload = false;
+  if (st.story_status !== project.story_status) {
+    project.story_status = st.story_status;
+    const el = $("#story-status");
+    if (el) {
+      const lab = statusLabel(st.story_status);
+      el.textContent = lab.text;
+      el.className = "status " + lab.cls;
+    }
+    if (!["queued", "running"].includes(st.story_status)) reload = true;
+  }
+  (st.docs || []).forEach((d) => {
+    const local = ((project.docs || []).find((x) => x.id === d.id));
+    if (local && local.status !== d.status) {
+      local.status = d.status;
+      local.error = d.error;
+      reload = true;                  // тело документа приезжает только целиком
+    }
+  });
+  (st.tracks || []).forEach((ts) => {
+    const tr = project.tracks.find((x) => x.id === ts.id);
+    if (!tr) { reload = true; return; }
+    const card = $(`.track-card[data-id="${ts.id}"]`);
+    reload = trackStatus(tr, ts, card) || reload;
+    (ts.scenes || []).forEach((ss) => {
+      const sc = sceneByIdIndex.get(ss.id);
+      if (!sc) { reload = true; return; }
+      reload = sceneStatus(sc, ss, card) || reload;
+    });
+    if ((ts.scenes || []).length !== (tr.scenes || []).length) reload = true;
+  });
+  return reload;
+}
+
+function paint(card, sel, status, doneWord) {
+  if (card) setStatus($(sel, card), status, doneWord);
+}
+
+function trackStatus(tr, ts, card) {
+  let reload = false;
+  const pairs = [
+    ["scenes_status", ".scenes-status"],
+    ["storyboard_status", ".sb-status"],
+    ["clip_status", ".clip-status"],
+  ];
+  const busy = (v) => ["queued", "running"].includes(v);
+  pairs.forEach(([key, sel]) => {
+    if (tr[key] === ts[key]) return;
+    // Полная перезагрузка нужна, только когда работа ВЫШЛА из очереди: тогда
+    // появился файл, ссылка и новые кнопки. Переход «в очереди → генерирую»
+    // ничего нового не создаёт — это просто другая подпись.
+    const finished = busy(tr[key]) && !busy(ts[key]);
+    tr[key] = ts[key];
+    paint(card, sel, ts[key]);
+    if (finished) reload = true;
+  });
+  if (tr.supergen_status !== ts.supergen_status) {
+    const finished = busy(tr.supergen_status) && !busy(ts.supergen_status);
+    tr.supergen_status = ts.supergen_status;
+    if (finished) reload = true;
+  }
+  if (card && tr.supergen_note !== ts.supergen_note) {
+    tr.supergen_note = ts.supergen_note;
+    const note = $(".supergen-note", card);
+    if (note) note.textContent = ts.supergen_note || "";
+  }
+  if (Boolean(tr.clip_url) !== Boolean(ts.clip_url)) reload = true;
+  if (Boolean(tr.storyboard_url) !== Boolean(ts.storyboard_url)) reload = true;
+  return reload;
+}
+
+function sceneStatus(sc, ss, card) {
+  let reload = false;
+  // Новый файл виден по флагам has_*: именно ради него и нужна полная
+  // перезагрузка — статуса мало, у кадра меняется картинка и кнопки.
+  if (Boolean(sc.image_url) !== ss.has_image
+      || Boolean(sc.image_last_url) !== ss.has_last
+      || Boolean(sc.video_url) !== ss.has_video
+      || (sc.midframes || []).length !== ss.mid) {
+    return true;
+  }
+  [["image_status", ".s-image-status"], ["video_status", ".s-video-status"]]
+    .forEach(([key, sel]) => {
+      if (sc[key] === ss[key]) return;
+      const wasBusy = ["queued", "running"].includes(sc[key]);
+      sc[key] = ss[key];
+      const holder = card ? $(`.scene-card[data-id="${sc.id}"]`, card) : null;
+      if (holder) setStatus($(sel, holder) || $(".s-anim-status", holder), ss[key]);
+      // Плитка сетки: точка статуса вместо строки текста.
+      const tile = card ? $(`.scene-tile[data-id="${sc.id}"]`, card) : null;
+      if (tile) {
+        const isAnim = key === "video_status";
+        const dot = $(".st-dot", tile);
+        if (dot) {
+          dot.className = "st-dot " + tileDotClass(
+            ss[key], isAnim ? Boolean(sc.video_url) : Boolean(sc.image_url));
+        }
+      }
+      if (wasBusy && !["queued", "running"].includes(ss[key])) reload = true;
+    });
+  return reload;
 }
 
 // ═════════════════════ автосборка клипа ═════════════════════
@@ -1942,6 +3127,20 @@ function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/* Проставить статус, НЕ потеряв опознавательный класс элемента.
+   Раньше здесь стояло el.className = "status " + cls — и первая же
+   отрисовка стирала с узла его собственный класс (.scenes-status, .sb-status,
+   .clip-status, .s-image-status). Дальше $(".scenes-status", card) находил
+   пустоту, и точечное обновление статуса было физически невозможно: любое
+   изменение требовало снести и собрать карточку заново. */
+function setStatus(el, status, doneWord) {
+  if (!el) return;
+  const own = (el.className || "").split(" ").find((c) => c && c !== "status") || "";
+  const lab = statusLabel(status, doneWord);
+  el.textContent = lab.text;
+  el.className = (own ? own + " " : "") + "status" + (lab.cls ? " " + lab.cls : "");
+}
+
 function statusLabel(status, doneWord) {
   if (status === "queued") return { text: t("status.queued"), cls: "" };
   if (status === "running") return { text: t("status.running"), cls: "" };
@@ -1993,7 +3192,26 @@ function applyMode() {
   }
 }
 
+// Индекс «сцена → трек». Строится один раз на перерисовку: без него каждая
+// карточка кадра искала свой трек линейным обходом всего проекта.
+let sceneTrackIndex = new Map();
+let sceneByIdIndex = new Map();
+
+function buildSceneIndex() {
+  sceneTrackIndex = new Map();
+  sceneByIdIndex = new Map();
+  ((project && project.tracks) || []).forEach((tr) => {
+    (tr.scenes || []).forEach((sc) => {
+      sceneTrackIndex.set(sc.id, tr);
+      sceneByIdIndex.set(sc.id, sc);
+    });
+  });
+}
+
+function sceneTrack(id) { return sceneTrackIndex.get(id) || null; }
+
 function render() {
+  buildSceneIndex();
   renderProjectBar();
   applyMode();
   renderDocs();
@@ -2296,6 +3514,9 @@ function activeStage(tr) {
 }
 
 function setStage(card, key) {
+  // Этап строится в момент первого показа: невидимые ленты рисовать незачем,
+  // а раньше рисовались обе плюс витрина клипа.
+  if (typeof card.__ensureStage === "function") card.__ensureStage(key);
   $$(".stage-tab", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
   $$(".stage-pane", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
 }
@@ -2720,27 +3941,24 @@ function renderTrack(tr) {
   superNote.textContent = tr.supergen_note || "";
   superNote.className = "status supergen-note " +
     (tr.supergen_status === "error" ? "error" : tr.supergen_status === "done" ? "done" : "");
-  if (superBusy && !window.__supergenPoll) {
-    window.__supergenPoll = setInterval(async () => {
-      const p = await api(`/api/project?project_id=${activeProjectId}`).catch(() => null);
-      const tr = p && (p.tracks || []).find((x) => ["queued", "running"].includes(x.supergen_status));
-      if (!tr) {
-        clearInterval(window.__supergenPoll);
-        window.__supergenPoll = null;
-      }
-      await loadProject();
-    }, 15000);
+  // Своего интервала у супергенерации больше нет: она попала в projectBusy(),
+  // и её ведёт общий лёгкий поллер. Раньше здесь крутился второй таймер,
+  // который каждые 15 секунд тянул ВЕСЬ проект и вызывал loadProject поверх
+  // работающего опроса — то есть две полные перерисовки вместо ноля.
+  if (window.__supergenPoll) {
+    clearInterval(window.__supergenPoll);
+    window.__supergenPoll = null;
   }
   const st = statusLabel(tr.scenes_status, t("track.scenesDone", { n: tr.scenes_count }));
   const stEl = $(".scenes-status", card);
-  stEl.textContent = st.text || (tr.scenes_count ? t("track.scenesCount", { n: tr.scenes_count }) : "");
-  stEl.className = "status " + st.cls;
+  setStatus(stEl, tr.scenes_status, t("track.scenesDone", { n: tr.scenes_count }));
+  if (!st.text) {
+    stEl.textContent = tr.scenes_count ? t("track.scenesCount", { n: tr.scenes_count }) : "";
+  }
 
   // Лист раскадровки: весь клип одной картинкой — до покадровой отрисовки.
   const sbStatus = statusLabel(tr.storyboard_status);
-  const sbStatusEl = $(".sb-status", card);
-  sbStatusEl.textContent = sbStatus.text;
-  sbStatusEl.className = "status " + sbStatus.cls;
+  setStatus($(".sb-status", card), tr.storyboard_status);
   const sbEmpty = $(".sb-empty", card);
   const sbOpenBtn = $(".sb-open", card);
   if (tr.storyboard_url) {
@@ -2764,30 +3982,29 @@ function renderTrack(tr) {
   sliceBtn.disabled = !tr.storyboard_url;
   sliceBtn.addEventListener("click", () => openCellsModal(tr));
 
-  // Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
+  // ── Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
+  //
+  // ЛЕНИВО И ПО ЭТАПАМ. Раньше renderTrack строил ОБЕ ленты и final-grid
+  // сразу, хотя CSS показывает ровно одну: тридцать сцен превращались в
+  // 6800 узлов и девяносто медиа-элементов, и всё это сносилось и
+  // собиралось заново каждые три секунды. Теперь строится только открытый
+  // этап, остальные — в момент первого переключения.
   const boardBox = $(".scenes-board", card);
   const animBox = $(".scenes-anim", card);
-  (tr.scenes || []).forEach((s) => {
-    boardBox.appendChild(renderScene(s, audioEl, "board"));
-    // В «Анимацию» карточка попадает только когда видео есть или генерится.
-    if (s.video_url || ["queued", "running", "error"].includes(s.video_status)) {
-      animBox.appendChild(renderScene(s, audioEl, "anim"));
-    }
-  });
-  if (!animBox.children.length) {
-    const hint = document.createElement("p");
-    hint.className = "muted";
-    hint.style.padding = "8px 4px";
-    hint.textContent = t("track.animEmpty");
-    animBox.appendChild(hint);
-  }
+  const built = new Set();
+  card.__ensureStage = (key) => {
+    if (built.has(key)) return;
+    built.add(key);
+    if (key === "board") fillScenes(boardBox, tr, "board", audioEl, card);
+    if (key === "anim") fillScenes(animBox, tr, "anim", audioEl, card);
+  };
+  card.__ensureStage(active);
+  bindSceneViews(card, tr, audioEl);
   $$(".strip-wrap", card).forEach(bindStrip);
 
   // ── витрина клипа внизу карточки: видна на любом этапе, всегда актуальна
   const clipStatus = statusLabel(tr.clip_status, t("track.clipDone"));
-  const clipStatusEl = $(".clip-status", card);
-  clipStatusEl.textContent = clipStatus.text;
-  clipStatusEl.className = "status " + clipStatus.cls;
+  setStatus($(".clip-status", card), tr.clip_status, t("track.clipDone"));
   $(".clip-title", card).textContent =
     t("track.clipTitle", { a: tr.approved_count, b: tr.scenes_count });
   const clipEmpty = $(".clip-empty", card);
@@ -2833,37 +4050,243 @@ function renderTrack(tr) {
     }
   }
 
+  // Витрина «все сцены клипа» — третья копия тех же видео. Строится ЛЕНИВО,
+  // по раскрытию <details>: раньше она собиралась на каждую перерисовку и
+  // добавляла ещё тридцать <video preload="metadata">, то есть тридцать
+  // Range-запросов за заголовками файлов каждые три секунды.
+  const finalDet = $(".final-scenes", card);
   const grid = $(".final-grid", card);
-  const withVideo = (tr.scenes || []).filter((s) => s.video_url);
-  if (!withVideo.length) {
-    const empty = document.createElement("span");
-    empty.className = "muted";
-    empty.textContent = t("track.finalEmpty");
-    grid.appendChild(empty);
+  const fillFinal = () => {
+    if (grid.dataset.built) return;
+    grid.dataset.built = "1";
+    const withVideo = (tr.scenes || []).filter((s) => s.video_url);
+    if (!withVideo.length) {
+      const empty = document.createElement("span");
+      empty.className = "muted";
+      empty.textContent = t("track.finalEmpty");
+      grid.appendChild(empty);
+      return;
+    }
+    withVideo.forEach((s) => {
+      const cell = document.createElement("div");
+      cell.className = "final-cell";
+      const v = document.createElement("video");
+      v.src = s.video_url;
+      v.controls = true;
+      v.loop = true;
+      // preload="none" + постер: браузер трогает файл только когда нажали ▶.
+      v.preload = "none";
+      v.poster = s.image_thumb_url || "";
+      const cap = document.createElement("span");
+      cap.className = "muted";
+      cap.textContent = t("scene.cap", { n: s.position, time: fmtTime(s.start_sec) })
+        + (s.approved ? t("scene.capApproved") : "");
+      cell.append(v, cap);
+      grid.appendChild(cell);
+    });
+  };
+  if (finalDet) {
+    finalDet.addEventListener("toggle", () => { if (finalDet.open) fillFinal(); });
+    if (finalDet.open) fillFinal();
   }
-  withVideo.forEach((s) => {
-    const cell = document.createElement("div");
-    cell.className = "final-cell";
-    const v = document.createElement("video");
-    v.src = s.video_url;
-    v.controls = true;
-    v.loop = true;
-    v.preload = "metadata";
-    const cap = document.createElement("span");
-    cap.className = "muted";
-    cap.textContent = t("scene.cap", { n: s.position, time: fmtTime(s.start_sec) })
-      + (s.approved ? t("scene.capApproved") : "");
-    cell.append(v, cap);
-    grid.appendChild(cell);
-  });
 
   return card;
 }
 
+// ═════════ ВИД ЛЕНТЫ КАДРОВ: сетка по умолчанию, лента по выбору ═════════
+//
+// «Обложку поменьше, покомпактнее, раскадровку по ширине сразу» — это две
+// правки: маленькая обложка (style.css) и вот эта сетка. Сетка ещё и дешевле
+// для браузера: в ней кадр рисуется ПЛИТКОЙ из двенадцати узлов, а полная
+// карточка (сто десять узлов, два <video>, <audio>, до 38 чипов движков)
+// открывается по клику в модалке — одна штука на экран вместо тридцати.
+//
+// Лента не убрана: под музыку, с подсветкой звучащего кадра, горизонтальная
+// прокрутка честно удобнее. Выбор запоминается по треку.
+
+const VIEW_KEY = "rc_sceneview";
+const GRID_FIRST = 12;          // сколько плиток показываем до «ещё N»
+const STRIP_FIRST = 30;         // лента и так прокручивается — режем только хвост
+
+function viewMap() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(VIEW_KEY) || "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch (e) {
+    return {};                  // приватный режим или мусор в ключе
+  }
+}
+
+function sceneView(trackId) {
+  return viewMap()[String(trackId)] === "strip" ? "strip" : "grid";
+}
+
+function setSceneView(trackId, view) {
+  const map = viewMap();
+  if (view === "strip") map[String(trackId)] = "strip";
+  else delete map[String(trackId)];
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(map)); } catch (e) { /* приватный режим */ }
+}
+
+// Сколько плиток трека уже развёрнуто. В памяти, а не в localStorage:
+// «показать ещё» — состояние сеанса, а не настройка.
+const scenesShown = new Map();
+
+function sceneRows(tr, mode) {
+  const all = tr.scenes || [];
+  if (mode !== "anim") return all;
+  // В «Анимацию» кадр попадает, только когда видео есть или генерится.
+  return all.filter((s) => s.video_url
+    || ["queued", "running", "error"].includes(s.video_status));
+}
+
+function fillScenes(box, tr, mode, audioEl, card) {
+  box.innerHTML = "";
+  const view = sceneView(tr.id);
+  const rows = sceneRows(tr, mode);
+  const wrap = box.closest(".strip-wrap");
+  box.classList.toggle("grid-view", view === "grid");
+  if (wrap) wrap.classList.toggle("is-grid", view === "grid");
+
+  if (!rows.length) {
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.style.padding = "8px 4px";
+    hint.textContent = mode === "anim" ? t("track.animEmpty") : t("track.boardEmpty");
+    box.appendChild(hint);
+    const moreBtn0 = $(mode === "anim" ? ".anim-more" : ".scenes-more:not(.anim-more)", card);
+    if (moreBtn0) moreBtn0.classList.add("hidden");
+    return;
+  }
+
+  const key = `${tr.id}:${mode}:${view}`;
+  const cap = view === "grid" ? GRID_FIRST : STRIP_FIRST;
+  const shown = Math.min(rows.length, scenesShown.get(key) || cap);
+  rows.slice(0, shown).forEach((sc) => {
+    box.appendChild(view === "grid"
+      ? renderSceneTile(sc, tr, mode, audioEl)
+      : renderScene(sc, audioEl, mode));
+  });
+
+  const moreBtn = $(mode === "anim" ? ".anim-more" : ".scenes-more:not(.anim-more)", card);
+  if (moreBtn) {
+    const left = rows.length - shown;
+    moreBtn.classList.toggle("hidden", left <= 0);
+    moreBtn.textContent = t("track.showMore", { n: left });
+    moreBtn.onclick = () => {
+      scenesShown.set(key, rows.length);
+      fillScenes(box, tr, mode, audioEl, card);
+    };
+  }
+  const count = $(".scenes-count", card);
+  if (count && mode === "board") {
+    count.textContent = t("track.shownOf", { a: shown, b: rows.length });
+  }
+}
+
+function bindSceneViews(card, tr, audioEl) {
+  const view = sceneView(tr.id);
+  $$(".view-btn", card).forEach((b) => {
+    b.classList.toggle("on", b.dataset.view === view);
+    b.addEventListener("click", () => {
+      setSceneView(tr.id, b.dataset.view);
+      $$(".view-btn", card).forEach((x) => x.classList.toggle("on", x === b));
+      // Перерисовываем ТОЛЬКО ленты этого трека, а не весь проект.
+      const boardBox = $(".scenes-board", card);
+      const animBox = $(".scenes-anim", card);
+      if (boardBox.children.length) fillScenes(boardBox, tr, "board", audioEl, card);
+      if (animBox.children.length) fillScenes(animBox, tr, "anim", audioEl, card);
+    });
+  });
+}
+
+/* Одна плитка кадра. Никаких <video> и <audio>: постер видео — та же
+   миниатюра первого кадра, которую отдаёт /api/thumb. Раньше каждая
+   перерисовка создавала до 91 медиа-элемента на трек, и браузер, упершись в
+   лимит одновременных медиа, просто переставал их грузить. */
+function renderSceneTile(s, tr, mode, audioEl) {
+  const tpl = $("#scene-tile-tpl").content.cloneNode(true);
+  const tile = tpl.querySelector(".scene-tile");
+  tile.dataset.id = s.id;
+  tile.dataset.start = s.start_sec;
+  tile.dataset.duration = s.duration_sec;
+  const img = $(".st-img", tile);
+  const poster = s.image_thumb_url || s.image_url || "";
+  if (poster) {
+    img.src = poster;
+    img.classList.remove("hidden");
+  } else {
+    $(".st-ph", tile).textContent = "▦";
+  }
+  if (mode === "anim" && s.video_url) $(".st-play", tile).classList.remove("hidden");
+  $(".st-no", tile).textContent = t("scene.pos", { n: s.position });
+  $(".st-time", tile).textContent = fmtTime(s.start_sec);
+
+  const status = mode === "anim" ? s.video_status : s.image_status;
+  const done = mode === "anim" ? Boolean(s.video_url) : Boolean(s.image_url);
+  const dot = $(".st-dot", tile);
+  dot.className = "st-dot " + tileDotClass(status, done);
+  if (mode === "anim" && s.approved) {
+    const ok = document.createElement("span");
+    ok.className = "st-ok";
+    ok.textContent = "✓";
+    $(".st-shot", tile).appendChild(ok);
+  }
+  tile.title = (s.shot_note || s.lyric_line || "").slice(0, 140);
+  tile.addEventListener("click", () => openSceneModal(s, tr, mode, audioEl));
+  return tile;
+}
+
+function tileDotClass(status, done) {
+  if (["queued", "running"].includes(status)) return "busy";
+  if (status === "error") return "error";
+  return done ? "done" : "";
+}
+
+/* Полная карточка кадра — в модалке. Тот же #scene-tpl и тот же renderScene:
+   второго набора полей и второй логики сохранения не заводим. */
+function openSceneModal(s, tr, mode, audioEl) {
+  openModal(t("scene.modalTitle", { n: s.position }), (body) => {
+    const holder = document.createElement("div");
+    holder.className = "scene-modal";
+    const card = renderScene(s, audioEl || document.createElement("audio"), mode);
+    holder.appendChild(card);
+    body.appendChild(holder);
+    // Сохранение и удаление ЗАКРЫВАЮТ модалку. Оба вызывают loadProject,
+    // после которого лента пересобрана, а открытая карточка остаётся висеть
+    // оторванной от проекта копией — человек смотрит на данные, которых уже
+    // нет. Перевешиваем обработчик клонированием узла: свой у кнопки один.
+    ["s-save", "s-del"].forEach((cls) => {
+      const btn = $("." + cls, card);
+      if (!btn) return;
+      const fresh = btn.cloneNode(true);
+      btn.replaceWith(fresh);
+      fresh.addEventListener("click", async () => {
+        fresh.disabled = true;
+        try {
+          if (cls === "s-save") await saveScene(s.id, card);
+          else await deleteScene(s.id);
+        } catch (e) {
+          fresh.disabled = false;
+          return fail(e);
+        }
+        closeModal();
+      });
+    });
+  }, { medium: true });
+}
+
 // Подсвечивает кадр под текущей секундой трека и без дёрганий скроллит его
 // в видимую область — плеер "листает" раскадровку сам, по факту звучания.
+// Подсветка висит на timeupdate — это четыре раза в секунду ВО ВРЕМЯ
+// проигрывания, и каждый раз здесь делался полный querySelectorAll по
+// карточке трека плюс scrollIntoView. Список кадров кэшируем на карточке и
+// пересобираем только когда он реально поменялся.
 function highlightActiveScene(trackCard, currentTime) {
-  const cards = $$(".scene-card", trackCard);
+  const now = Date.now();
+  if (trackCard.__hlAt && now - trackCard.__hlAt < 240) return;
+  trackCard.__hlAt = now;
+  const cards = $$(".scene-card, .scene-tile", trackCard);
   for (const sc of cards) {
     const start = Number(sc.dataset.start);
     const end = start + Number(sc.dataset.duration);
@@ -2967,9 +4390,7 @@ function renderScene(s, audioEl, mode = "board") {
 
   // Кадры сцены: первый и последний (Seedance интерполирует между ними).
   const imgStatus = statusLabel(s.image_status);
-  const imgStatusEl = $(".s-image-status", card);
-  imgStatusEl.textContent = imgStatus.text;
-  imgStatusEl.className = "status " + imgStatus.cls;
+  setStatus($(".s-image-status", card), s.image_status);
   if (s.image_url) {
     const p = $(".s-image-preview", card);
     // 4К-оригиналы по 15МБ сетка не тянет — превью с миниатюры, клик = оригинал.
@@ -3115,25 +4536,44 @@ function renderScene(s, audioEl, mode = "board") {
   // Умолчание задано на треке, здесь только исключение — и оно свёрнуто,
   // потому что на треке из тридцати сцен развёрнутые чипы занимали экран
   // тридцать раз подряд.
-  const trackOfScene = (project.tracks || []).find(
-    (x) => (x.scenes || []).some((y) => y.id === s.id)) || null;
+  // Индекс, а не поиск. Раньше здесь стоял find по всем трекам со сканом их
+  // сцен НА КАЖДУЮ сцену: альбом 10×30 = 300 сцен давал до 90 000 сравнений
+  // за перерисовку, и вдвое больше — потому что сцена рисовалась в двух
+  // лентах. Данные для карты лежат в том же project.
+  const trackOfScene = sceneTrack(s.id);
   const engLine = $(".s-engine-line", card);
   if (engLine && trackOfScene) paintSceneEngineLine(engLine, trackOfScene, s.id);
 
   const imgSeg = $(".s-image-seg", card);
+  // Чипы движков строятся ЛЕНИВО — по раскрытию «поменять для этого кадра».
+  // buildEngineTabs звался дважды на карточку (кадры и видео) и давал до 38
+  // узлов, которые в свёрнутом <details> никто никогда не видел.
+  const buildSceneEngines = () => {
+    if (card.dataset.engBuilt) return;
+    card.dataset.engBuilt = "1";
+    if (imgSeg) {
+      buildEngineTabs(imgSeg, liveImageEngines(), "",
+        (e) => e.frames_cost,
+        (id) => {
+          imgSeg.dataset.engine = id || "";
+          $$(".eng-chip", imgSeg).forEach((el) =>
+            el.classList.toggle("on", el.dataset.engine === id));
+        });
+    }
+    const seg = $(".s-provider-seg", card);
+    if (seg && card.__applyEngine) {
+      buildEngineTabs(seg, liveVideoEngines(), "", (e) => e.scene_cost,
+                      card.__applyEngine);
+    }
+  };
   if (imgSeg) {
     // По умолчанию подсвечен «По тарифу» — то есть НАСЛЕДОВАНИЕ от объекта, а
     // не «движок этой сцены». Иначе поменять движок сразу всему треку было бы
     // нельзя: каждая уже отрисованная сцена держала бы старый.
     imgSeg.dataset.engine = "";
-    buildEngineTabs(imgSeg, liveImageEngines(), "",
-      (e) => e.frames_cost,
-      (id) => {
-        imgSeg.dataset.engine = id || "";
-        $$(".eng-chip", imgSeg).forEach((el) =>
-          el.classList.toggle("on", el.dataset.engine === id));
-      });
   }
+  const engDet = $(".s-engine-override", card);
+  if (engDet) engDet.addEventListener("toggle", () => { if (engDet.open) buildSceneEngines(); });
 
   const provSel = $(".s-provider", card);
   const provSeg = $(".s-provider-seg", card);
@@ -3167,9 +4607,9 @@ function renderScene(s, audioEl, mode = "board") {
           el.classList.toggle("on", el.dataset.engine === id));
       }
     };
-    if (provSeg) {
-      buildEngineTabs(provSeg, engineList, "", (e) => e.scene_cost, applyEngine);
-    }
+    // Чипы соберутся при раскрытии «поменять для этого кадра» — здесь только
+    // запоминаем, чем их наполнять.
+    card.__applyEngine = applyEngine;
     applyEngine("");
   }
 
@@ -4179,14 +5619,14 @@ function openModelModal(c, onDone = null) {
 // перезаписывает (см. ldNormalizePricing) — здесь только запасной вариант.
 const LD_SCENE_COST = { grok: 4, seedance: 22, top: 154 };
 const LD_SCENES_PER_CLIP = 30;          // трёхминутный трек ≈ 30 сцен по 6 сек
-const LD_REF = { discount: 10, reward: 30 };  // REF_DISCOUNT_PCT / REF_REWARD_PCT
+const LD_REF = { discount: 10, reward: 10 };  // REF_DISCOUNT_PCT / REF_REWARD_PCT
 
 // Запасная витрина: лендинг обязан рисоваться, даже если ответ сервера не
 // приехал. Числа ДЕРЖИ СИНХРОННЫМИ с PLANS/TOPUP_PACKS бэкенда — этот блок
 // уже однажды протух (PRO 700 очков при живых 660, STUDIO 6000 при 10500,
 // пакеты по старым ценам), и заметить это было невозможно.
 const LD_PLANS_FALLBACK = [
-  { id: "free", points: 120, usd: 0 },
+  { id: "free", points: 150, usd: 0 },
   { id: "pro", points: 660, usd: 20 },
   { id: "pro_max", points: 3400, usd: 100 },
   { id: "studio", points: 10500, usd: 299 },

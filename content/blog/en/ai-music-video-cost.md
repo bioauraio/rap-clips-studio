@@ -97,7 +97,7 @@ On plans with Nano Banana Pro frames, add 13 credits to each line (15 instead of
 
 Multiply and you get the honest answer, which is not always the flattering one:
 
-- **FREE — 120 credits.** A Grok scene is 4. Thirty of them is 120: **one complete three-minute clip**, on the house, no card and no signup.
+- **FREE — 150 credits.** A Grok scene is 4. Thirty of them is 120: **one complete three-minute clip**, on the house, no card and no signup — and 30 credits left over for the storyboard sheet, a character model and a redo.
 - **PRO — $20, 660 credits.** A Seedance 2 Mini scene is 22. Thirty of them is 660: **one full clip a month** with real first-to-last-frame motion.
 - **PRO MAX — $100, 3,400 credits.** Enough for **about three clips** on Seedance 2 Mini, or **two** on Kling 3.0 Pro. A full clip on Seedance 2.5 at 720p does **not** fit — 3,400 credits buys 20 scenes of it, two thirds of a song. Use 2.5 for the shots that carry the video and a cheaper engine for the rest.
 - **STUDIO — $299, 10,500 credits.** **Two full clips** on Seedance 2.5 at 720p, or about six on Kling 3.0 Pro.
@@ -116,7 +116,7 @@ A clip built this way lands between $3 and $8 of engine cost instead of $62, and
 
 ## Try the arithmetic on your own track
 
-The free plan is a real one, not a watermark: 120 credits, one full three-minute clip, no signup for the first one. Upload an mp3, pick a style, and watch the credit counter move on every step — every action shows what it will cost before you press it.
+The free plan is a real one, not a watermark: 150 credits, one full three-minute clip with room to spare, no signup for the first one. Upload an mp3, pick a style, and watch the credit counter move on every step — every action shows what it will cost before you press it.
 
 [Open the studio →](/) · [See the plans and packs](/#ld-pricing) · [How the four steps work](/#ld-how)
 

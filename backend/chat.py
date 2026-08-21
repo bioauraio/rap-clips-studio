@@ -104,6 +104,10 @@ def current_user(request: Request, db: Session = Depends(db_session)) -> User:
     user = _ctx.resolve_user(request, db)
     if not user:
         raise HTTPException(401, "не авторизован")
+    # Блокировка — тот же гейт, что и в студии. Без этой строки заблокированный
+    # человек продолжал бы жечь платные движки через чат: чат разрешает
+    # сессию сам и до сих пор про блокировку ничего не знал.
+    _ctx.guard(user)
     return user
 
 
@@ -463,7 +467,7 @@ async def chat_upload(file: UploadFile, user: User = Depends(current_user),
     fname = f"chat_{uuid.uuid4().hex}{ext}"
     with open(os.path.join(_ctx.upload_dir, fname), "wb") as f:
         f.write(data)
-    _ctx.reg_file(db, fname, user.id)
+    _ctx.reg_file(db, fname, user.id, kind="chat")
     row = ChatFile(owner_id=user.id, filename=fname, position=0)
     db.add(row)
     db.commit()
@@ -563,7 +567,14 @@ def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
 
     # Списываем ДО создания строк: отказ по деньгам не должен оставлять в
     # ленте сообщение-призрак, на которое человек потом смотрит и не понимает.
-    _ctx.charge(db, user, cost, f"чат {chat.id}: {engine}")
+    # Вид и движок уезжают в журнал очков ЯВНО: без них кабинет не может
+    # разложить расход по движкам, а спорную генерацию не с чем сверить.
+    _ctx.charge(db, user, cost, f"чат {chat.id}: {engine}",
+                kind="chat", engine=engine, ref_type="chat", ref_id=chat.id,
+                cost_cents=_ctx.cost_cents(
+                    "video" if kind == "video" else ("image" if kind == "image" else "text"),
+                    engine, seconds=duration if kind == "video" else 0,
+                    resolution=CHAT_IMAGE_RESOLUTION if kind == "image" else ""))
 
     pos = (db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).count()) + 1
     ask = ChatMessage(chat_id=chat.id, position=pos, role="user", kind="text",
@@ -693,7 +704,9 @@ def _fail(message_id: int, err: str) -> None:
         chat = db.get(Chat, msg.chat_id)
         owner = db.get(User, chat.owner_id) if chat else None
         if owner and points > 0:
-            _ctx.refund(db, owner, points, f"чат {msg.chat_id}: {msg.engine}")
+            _ctx.refund(db, owner, points, f"чат {msg.chat_id}: {msg.engine}",
+                        kind="refund", engine=msg.engine or "",
+                        ref_type="chat_message", ref_id=msg.id)
             msg.points = 0
         db.commit()
     except Exception as e:  # noqa: BLE001
@@ -807,7 +820,7 @@ def _run_image(message_id: int, ref_paths: list[str]) -> None:
         msg = db.get(ChatMessage, message_id)
         msg.media_filename = fname
         msg.status = "done"
-        _ctx.reg_file(db, fname, owner_id)
+        _ctx.reg_file(db, fname, owner_id, kind="chat")
         db.commit()
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -843,7 +856,7 @@ def _run_video(message_id: int, first_path: str, duration: int) -> None:
         msg = db.get(ChatMessage, message_id)
         msg.media_filename = fname
         msg.status = "done"
-        _ctx.reg_file(db, fname, owner_id)
+        _ctx.reg_file(db, fname, owner_id, kind="chat")
         db.commit()
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -885,7 +898,8 @@ async def save_to_project(message_id: int, request: Request,
     # персонажа (та же логика, что у клонирования героев в студии).
     fname = f"char_{uuid.uuid4().hex}{ext}"
     shutil.copyfile(src, os.path.join(_ctx.upload_dir, fname))
-    _ctx.reg_file(db, fname, ch.project.owner_id)
+    _ctx.reg_file(db, fname, ch.project.owner_id, kind="photo",
+                  project_id=ch.project_id)
     max_pos = max((p.position for p in ch.photos), default=0)
     db.add(CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname,
                           kind=as_kind, pose_kind="3d" if as_kind == "model" else "",

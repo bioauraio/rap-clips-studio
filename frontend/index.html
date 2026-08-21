@@ -42,14 +42,14 @@
 "url":"https://qlolapp.art/",
 "description":"AI music video studio: story, storyboard, consistent characters, first-and-last-frame motion and assembly for your own track.",
 "offers":[
-{"@type":"Offer","name":"FREE","price":"0","priceCurrency":"USD","description":"120 credits — one three-minute clip on Grok"},
+{"@type":"Offer","name":"FREE","price":"0","priceCurrency":"USD","description":"150 credits — one three-minute clip on Grok"},
 {"@type":"Offer","name":"PRO","price":"20","priceCurrency":"USD","description":"660 credits a month — Seedance 2 Mini"},
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=56" />
-<link rel="stylesheet" href="/landing.css?v=56" />
-<link rel="stylesheet" href="/tg.css?v=56" />
+<link rel="stylesheet" href="/style.css?v=58" />
+<link rel="stylesheet" href="/landing.css?v=58" />
+<link rel="stylesheet" href="/tg.css?v=58" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -67,7 +67,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=56"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=58"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -302,6 +302,19 @@
   </form>
 </div>
 
+<!-- Экран блокировки. Нужен потому, что заблокированному человеку отвечают
+     403 ВСЕ рабочие роуты: без этого экрана он видит обычное приложение, в
+     котором молча не работает ни одна кнопка, и идёт в поддержку с «у вас
+     всё сломалось» вместо «за что меня заблокировали». -->
+<div id="blocked" class="login-screen hidden">
+  <div class="login-box blocked-box">
+    <h1 class="login-word">lolq<span class="brand-dot">.</span>ai</h1>
+    <p class="blocked-title" data-i18n="blocked.title"></p>
+    <p id="blocked-reason" class="blocked-reason"></p>
+    <p class="blocked-help" data-i18n="blocked.help"></p>
+  </div>
+</div>
+
 <div id="app" class="app hidden">
   <header class="topbar">
     <a id="brand" class="brand" href="/" data-i18n-title="top.brandTitle">
@@ -486,7 +499,7 @@
     <div class="track-head">
       <label class="cover-slot track-cover" data-i18n-title="track.coverTitle">
         <input type="file" class="t-cover-input hidden" accept="image/jpeg,image/png,image/webp" />
-        <img class="t-cover-img hidden" alt="" />
+        <img class="t-cover-img hidden" alt="" loading="lazy" decoding="async" />
         <span class="cover-ph"></span>
       </label>
       <span class="pos"></span>
@@ -604,7 +617,7 @@
           </div>
           <div class="storyboard-row">
             <div class="storyboard-box">
-              <img class="sb-preview hidden" />
+              <img class="sb-preview hidden" alt="" loading="lazy" decoding="async" />
               <span class="sb-empty muted" data-i18n="track.sheetEmpty"></span>
             </div>
             <div class="storyboard-acts">
@@ -614,11 +627,23 @@
             </div>
           </div>
         </div>
+        <!-- Вид ленты кадров. Сетка — по умолчанию: она и компактнее, и
+             дешевле для браузера (плитка = 12 узлов против 110 у карточки).
+             Лента остаётся: под музыку с подсветкой текущего кадра
+             горизонтальная прокрутка честно удобнее. -->
+        <div class="scenes-toolbar">
+          <div class="view-toggle" role="group">
+            <button type="button" class="view-btn" data-view="grid" data-i18n="track.viewGrid"></button>
+            <button type="button" class="view-btn" data-view="strip" data-i18n="track.viewStrip"></button>
+          </div>
+          <span class="scenes-count muted"></span>
+        </div>
         <div class="strip-wrap">
           <button class="strip-arrow strip-prev" type="button" data-i18n-aria="common.prev">‹</button>
           <div class="scenes scenes-board"></div>
           <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
         </div>
+        <button type="button" class="scenes-more ghost hidden"></button>
         <div class="row">
           <button class="add-scene" data-i18n="track.addScene"></button>
           <button class="gen-all-frames primary" data-i18n="track.allFrames"></button>
@@ -634,6 +659,7 @@
           <div class="scenes scenes-anim"></div>
           <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
         </div>
+        <button type="button" class="scenes-more anim-more ghost hidden"></button>
       </section>
     </div>
 
@@ -647,7 +673,7 @@
       </div>
       <div class="clip-dock-body">
         <div class="media-box clip-box">
-          <video class="clip-preview hidden" controls></video>
+          <video class="clip-preview hidden" controls preload="none"></video>
           <span class="clip-empty muted" data-i18n="track.clipEmpty"></span>
         </div>
         <div class="clip-dock-side">
@@ -728,6 +754,27 @@
   </div>
 </template>
 
+<!-- КОМПАКТНАЯ ПЛИТКА КАДРА. Двенадцать узлов вместо ста десяти у полной
+     карточки: миниатюра, номер, тайминг, точка статуса. Всё редактирование
+     (промпты, крупность, камера, движки, референсы) открывается по клику в
+     модалке тем же #scene-tpl — второго набора полей не заводим. Именно эта
+     плитка и делает раскадровку компактной, и она же снимает основную часть
+     тормозов: тридцать сцен — 360 узлов вместо 3300. -->
+<template id="scene-tile-tpl">
+  <button type="button" class="scene-tile">
+    <span class="st-shot">
+      <img class="st-img hidden" alt="" loading="lazy" decoding="async" />
+      <span class="st-ph"></span>
+      <span class="st-play hidden">▶</span>
+    </span>
+    <span class="st-meta">
+      <span class="st-no"></span>
+      <span class="st-time"></span>
+      <span class="st-dot"></span>
+    </span>
+  </button>
+</template>
+
 <template id="scene-tpl">
   <div class="scene-card">
     <div class="scene-head">
@@ -743,11 +790,11 @@
     <div class="board-only">
       <div class="s-thumbs">
         <div class="s-thumb" data-i18n-title="scene.firstFrame">
-          <img class="s-image-preview hidden" alt="" />
+          <img class="s-image-preview hidden" alt="" loading="lazy" decoding="async" />
           <span class="s-thumb-cap" data-i18n="scene.firstCap"></span>
         </div>
         <div class="s-thumb" data-i18n-title="scene.lastFrame">
-          <img class="s-image-last-preview hidden" alt="" />
+          <img class="s-image-last-preview hidden" alt="" loading="lazy" decoding="async" />
           <span class="s-thumb-cap" data-i18n="scene.lastCap"></span>
         </div>
       </div>
@@ -816,7 +863,7 @@
 
     <div class="anim-only">
       <div class="media-box s-video-box">
-        <video class="s-video-preview hidden" controls loop></video>
+        <video class="s-video-preview hidden" controls loop preload="none"></video>
       </div>
       <span class="s-anim-status status"></span>
       <label class="approve-check" data-i18n-title="scene.approveTitle">
@@ -899,8 +946,8 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=56"></script>
-<script src="/app.js?v=56"></script>
+<script src="/i18n.js?v=58"></script>
+<script src="/app.js?v=58"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -924,10 +971,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=56";
+  css.href = "/nav.css?v=58";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=56";
+  js.src = "/nav.js?v=58";
   document.body.appendChild(js);
 })();
 </script>

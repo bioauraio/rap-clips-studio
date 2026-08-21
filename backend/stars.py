@@ -496,7 +496,16 @@ async def stars_refund(request: Request):
         # объект отсоединён, и обращение к row.kind уже упадёт.
         row_kind = row.kind
         if points:
-            user.gen_points = max(0, int(user.gen_points or 0) - points)
+            # Через ЕДИНСТВЕННУЮ дверь к балансу (core._move_points): прямое
+            # присваивание gen_points здесь означало бы строку остатка, которую
+            # не объясняет ни одна запись журнала. Не уводим в минус: за
+            # звёздный платёж могли уже потратить больше, чем выдали.
+            take = min(points, int(user.gen_points or 0))
+            core._move_points(db, user, -take,
+                              f"возврат звёздного платежа {charge_id[:24]}",
+                              commit=False,
+                              kind="topup" if row_kind == "topup" else "plan",
+                              ref_type="payment", engine="stars")
         if row.kind == "plan":
             from datetime import timedelta  # noqa: PLC0415
             until = core._as_utc(user.plan_until)
@@ -523,14 +532,6 @@ async def stars_refund(request: Request):
             db.delete(ev)
         db.delete(row)
         db.commit()
-        # Журнал очков: возврат звёзд — это ПЯТАЯ точка, где меняется баланс.
-        # Без этой строки кабинет показывал бы остаток, которого не объясняет
-        # ни одна запись истории, и «куда делись очки» осталось бы без ответа.
-        if points:
-            core._log_points(db, user, -int(points),
-                             f"возврат звёздного платежа {charge_id[:24]}",
-                             kind="topup" if row_kind == "topup" else "plan",
-                             ref_type="payment", engine="stars")
         log.info("звёзды: возврат %s — юзер %s, −%s очков, тариф %s",
                  charge_id, user.id, points, core._plan_of(user))
         return {"ok": True, "user_id": user.id, "points": int(user.gen_points or 0),

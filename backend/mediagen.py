@@ -37,6 +37,30 @@ import uuid
 import logging
 
 import httpx
+import threading
+
+# ─────────────────────── id последней внешней задачи ───────────────────────
+# Списание очков происходит В МОМЕНТ постановки задачи (main.py), а taskId
+# у kie/seevio/kling появляется здесь, минутой позже и на несколько кадров
+# стека глубже. Протаскивать его обратно через сигнатуры пяти функций
+# незачем: генерация каждой сцены живёт в СВОЁМ треде (Thread + asyncio.run),
+# поэтому threading.local хранит ровно ту задачу, которую этот тред и завёл.
+# main.py забирает её через last_task_id() и дописывает в строку журнала —
+# так спорная генерация разбирается по цепочке «списание → задача → ошибка».
+_task_local = threading.local()
+
+
+def note_task(task_id) -> None:
+    _task_local.task_id = str(task_id or "")[:80]
+
+
+def last_task_id() -> str:
+    return getattr(_task_local, "task_id", "")
+
+
+def reset_task() -> None:
+    _task_local.task_id = ""
+
 
 IMAGE_GATEWAY_URL = os.environ.get("IMAGE_GATEWAY_URL", "http://172.18.0.1:8766") + "/generate"
 GROK_GATEWAY_URL = os.environ.get("GROK_GATEWAY_URL", "http://172.18.0.1:8767")
@@ -284,6 +308,7 @@ async def _kie_result_urls(model: str, payload_input: dict, *, timeout_s: float,
         task_id = inner.get("taskId") or inner.get("task_id") or data.get("taskId")
         if not task_id:
             raise MediaError(f"kie.ai: нет taskId ({str(data)[:200]})")
+        note_task(task_id)
 
         deadline = time.time() + timeout_s
         while time.time() < deadline:
@@ -561,6 +586,7 @@ async def _animate_seedance(
                    or inner.get("taskId") or inner.get("task_id") or inner.get("id"))
         if not task_id:
             raise MediaError(f"seevio: нет task_id в ответе ({str(data)[:200]})")
+        note_task(task_id)
 
         deadline = time.time() + SEEDANCE_TIMEOUT_S
         video_url = ""
@@ -984,6 +1010,7 @@ async def _animate_kling_official(prompt: str, first_path: str, last_path: str |
                    or data.get("task_id") or data.get("taskId"))
         if not task_id:
             raise MediaError(f"Kling: нет task_id ({str(data)[:200]})")
+        note_task(task_id)
 
         deadline = time.time() + KLING_TIMEOUT_S
         video_url = ""

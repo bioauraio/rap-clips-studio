@@ -26,7 +26,7 @@ the exact label on the screen.
 
 **[Your first clip, start to finish](00-first-clip.md)** · 8 min · free plan
 From an audio file to a downloadable mp4. Includes the honest arithmetic of the
-120 free credits and the three ways people burn them by accident.
+150 free credits and the three ways people burn them by accident.
 
 ## The craft
 

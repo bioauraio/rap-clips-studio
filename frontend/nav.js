@@ -233,10 +233,15 @@
 
   /* Кабинет — не режим. Это раздел с тем же вторым ярусом. */
   const ACCOUNT_STEPS = [
-    { id: "profile", num: 1, icon: "👤", title: "Аккаунт",    acc: "account" },
-    { id: "plan",    num: 2, icon: "⚡", title: "Тариф",      acc: "plan" },
-    { id: "ref",     num: 3, icon: "🤝", title: "Амбассадор", acc: "ref" },
-    { id: "payouts", num: 4, icon: "💸", title: "Выплаты",    acc: "payouts", admin: true },
+    { id: "profile", num: 1, icon: "👤", get title() { return T("account.tabs.account", "Аккаунт"); },    acc: "account" },
+    { id: "plan",    num: 2, icon: "⚡", get title() { return T("account.tabs.plan", "Тариф"); },          acc: "plan" },
+    // Архив файлов — такой же раздел кабинета, как тариф: он должен быть в
+    // рельсе, а не только вкладкой внутри модалки.
+    { id: "files",   num: 3, icon: "🗃", get title() { return T("account.tabs.files", "Файлы"); },         acc: "files" },
+    { id: "ref",     num: 4, icon: "🤝", get title() { return T("account.tabs.ref", "Амбассадор"); },      acc: "ref" },
+    { id: "payouts", num: 5, icon: "💸", get title() { return T("account.tabs.payouts", "Выплаты"); },     acc: "payouts", admin: true },
+    { id: "crm",     num: 6, icon: "👥", get title() { return T("account.tabs.crm", "Клиенты"); },         acc: "crm", admin: true },
+    { id: "bc",      num: 7, icon: "📣", get title() { return T("account.tabs.broadcast", "Рассылка"); },  acc: "broadcast", admin: true },
   ];
 
   const DRAWER_SEGS = [

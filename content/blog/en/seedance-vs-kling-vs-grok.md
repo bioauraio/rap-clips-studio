@@ -76,7 +76,7 @@ H3 sits high on the arenas, takes both frames, and lands at $0.48 — between th
 
 ## Grok: free, and honest about what free means
 
-Our Grok path runs through a gateway we already pay for, so it costs the service nothing and it costs you 2 credits a scene — 4 with frames. That is what makes the free plan a real plan: 120 credits, 30 scenes, one complete three-minute clip.
+Our Grok path runs through a gateway we already pay for, so it costs the service nothing and it costs you 2 credits a scene — 4 with frames. That is what makes the free plan a real plan: 150 credits, 30 scenes, one complete three-minute clip and change to spare.
 
 The trade is real and we do not hide it. No last frame, so the motion is "animate this picture" rather than "travel from here to there". Cuts are looser. Complex action does not survive.
 

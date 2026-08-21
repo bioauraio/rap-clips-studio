@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -123,10 +123,41 @@ def _resolve_user(request: Request, db: Session) -> User | None:
     return None
 
 
+# Как часто отмечаем «человек был». НЕ на каждый запрос: фронт поллит
+# /api/me раз в три секунды, база — SQLite, и UPDATE на каждый опрос дал бы
+# блокировки на ровном месте. Пять минут отвечают на вопрос «когда был»
+# ровно так же, а стоят в сто раз дешевле.
+LAST_SEEN_EVERY_S = int(os.environ.get("LAST_SEEN_EVERY_S", "300"))
+
+
+def _touch_seen(db: Session, user: User) -> None:
+    last = _as_utc(getattr(user, "last_seen_at", None))
+    if last and (now() - last).total_seconds() < LAST_SEEN_EVERY_S:
+        return
+    try:
+        user.last_seen_at = now()
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
+def _guard_user(user: User) -> User:
+    """Блокировку проверяем НА ВХОДЕ КАЖДОГО контура, а не в интерфейсе: иначе
+    она косметическая — заблокированный продолжает жечь наши деньги через
+    /api/scenes/*/generate-video или через чат."""
+    if getattr(user, "is_blocked", False):
+        raise ApiError(403, "blocked",
+                       (user.blocked_reason or "").strip()
+                       or "аккаунт заблокирован — напиши в поддержку")
+    return user
+
+
 def current_user(request: Request, db: Session = Depends(db_session)) -> User:
     user = _resolve_user(request, db)
     if not user:
         raise HTTPException(401, "не авторизован")
+    _guard_user(user)
+    _touch_seen(db, user)
     return user
 
 
@@ -182,12 +213,42 @@ def _bootstrap_users() -> None:
 _bootstrap_users()
 
 
-def _reg_file(db: Session, filename: str, owner_id: int | None) -> None:
-    """Каждый создаваемый файл приписывается владельцу (INSERT OR REPLACE):
-    без записи в FileOwner файл из /api/media увидит только админ."""
+def _reg_file(db: Session, filename: str, owner_id: int | None, *,
+              kind: str = "", project_id: int = 0, track_id: int = 0,
+              scene_id: int = 0) -> None:
+    """Каждый создаваемый файл приписывается владельцу: без записи в FileOwner
+    файл из /api/media увидит только админ.
+
+    Здесь же пишутся метаданные АРХИВА — дата, вид, проект/объект/кадр и
+    размер. Раньше в таблице было две колонки, и «папка со всеми файлами,
+    разложенная по датам, видам и проектам» строиться из неё не могла.
+
+    Обновляем ПОЛЯМИ, а не db.merge: merge подставляет пустые значения
+    остальных колонок, и повторная регистрация файла (та же сцена, второй
+    прогон) стирала бы его вид и привязку к проекту."""
     if not filename:
         return
-    db.merge(FileOwner(filename=filename, user_id=int(owner_id or 0)))
+    fname = os.path.basename(filename)
+    row = db.get(FileOwner, fname)
+    if row is None:
+        row = FileOwner(filename=fname, user_id=int(owner_id or 0), created_at=now())
+        db.add(row)
+    else:
+        row.user_id = int(owner_id or 0)
+    if kind:
+        row.kind = kind
+    if project_id:
+        row.project_id = int(project_id)
+    if track_id:
+        row.track_id = int(track_id)
+    if scene_id:
+        row.scene_id = int(scene_id)
+    row.deleted_at = None
+    if not row.size_bytes:
+        try:
+            row.size_bytes = os.path.getsize(os.path.join(UPLOAD_DIR, fname))
+        except OSError:
+            row.size_bytes = 0
 
 
 def _check_file_owner(db: Session, user: User, fname: str) -> None:
@@ -261,7 +322,11 @@ PLANS = {
         "priority": False, "badge": "",
         "note": "One full 3-minute clip on us — Grok engine",
         "features": [
-            "120 points — enough for one 3-minute clip",
+            # 150, а не 120: витрина обязана называть ту же цифру, которую
+            # человек увидит на счётчике. Ровно на этой строке обещание и
+            # ломалось — «120 очков, одного клипа хватит» при клипе ценой
+            # ровно 120 и листе раскадровки сверху.
+            "150 points — a full 3-minute clip, with room to redo a scene",
             "Grok engine: animates the first frame of every scene",
             "Story, storyboard, characters and one-click assembly",
         ],
@@ -753,11 +818,17 @@ async def _not_enough_points_handler(request: Request, exc: NotEnoughPoints) -> 
 # поэтому кабинет не мог показать ни расход по дням, ни «на что ушло», ни
 # возвраты — строить было не из чего.
 #
-# Точек записи пять, и все они известны поимённо: _take_points (расход),
-# _refund (возврат), _grant_payment (оплата), _points_drip_pass (месячный
-# транш годовой подписки) и stars.stars_refund (откат звёздного платежа).
-# Писать журнал где-то ещё нельзя: тогда сумма журнала перестанет объяснять
-# остаток, а именно ради этого он и заводился.
+# ОДНА ДВЕРЬ. Раньше контракт «каждое движение очков попадает в журнал»
+# держался ДИСЦИПЛИНОЙ, а не кодом: пять мест мутировали user.gen_points
+# напрямую и рядом вручную звали _log_points. Следующая правка про это
+# забыла бы, и журнал перестал бы объяснять остаток — молча, а обнаружилось
+# бы это через квартал. Теперь право менять user.gen_points есть ТОЛЬКО у
+# _move_points, а сторож tools/check_ledger.sh валит сборку, если в коде
+# появилось прямое присваивание мимо неё.
+#
+# Третий уровень защиты — инвариант: /api/admin/ledger/audit сверяет
+# SUM(point_events.delta) с фактическим балансом каждого человека. Дыру он
+# показывает за сутки, а не через квартал.
 
 # Метка расхода по человеческому описанию операции. Так журнал не требует
 # протаскивать лишний параметр через полсотни вызовов _charge, а разбор
@@ -780,21 +851,110 @@ def _guess_kind(what: str) -> str:
     return "other"
 
 
+def _cost_cents(kind: str, engine: str, *, count: int = 1,
+                seconds: int = SCENE_SEC, resolution: str = "") -> int:
+    """СЕБЕСТОИМОСТЬ операции в центах — сколько мы за неё платим kie.ai.
+
+    Считается из того же прайса движков, из которого выведена цена в очках
+    (mediagen.*_engine_usd), поэтому маржа не может разъехаться с реальностью.
+    Шлюзовые движки честно дают ноль: они идут по подписке владельца.
+
+    Наружу это число НЕ отдаётся ни при каких условиях — из него
+    восстанавливается наша наценка."""
+    try:
+        if kind == "video":
+            usd = mediagen.video_engine_usd(engine, seconds or SCENE_SEC)
+        elif kind == "frames":
+            usd = 2 * mediagen.image_engine_usd(engine, resolution)
+        elif kind in ("sheet", "model", "midframe", "image"):
+            usd = mediagen.image_engine_usd(engine, resolution)
+        else:
+            usd = 0.0
+    except Exception:  # noqa: BLE001
+        usd = 0.0
+    return max(0, int(round(usd * max(1, int(count or 1)) * 100)))
+
+
 def _log_points(db: Session, user: User, delta: int, what: str, *,
                 kind: str = "", ref_type: str = "", ref_id: int = 0,
-                engine: str = "") -> None:
-    """Строка журнала. Никогда не роняет операцию: деньги уже списаны, и
-    упавший INSERT в историю — не повод отменять оплаченную генерацию."""
+                engine: str = "", cost_cents: int = 0, project_id: int = 0,
+                track_id: int = 0, task_id: str = "", commit: bool = True) -> int:
+    """Строка журнала; возвращает её id (0 — не записалась).
+
+    По этому id воркер потом дописывает task_id внешней задачи: списание
+    происходит В МОМЕНТ постановки, а taskId у kie появляется позже.
+
+    commit=False — строка едет ОДНОЙ транзакцией с вызывающим кодом. Так
+    оплата (выдача тарифа + отметка о платеже + приход в журнал) остаётся
+    атомарной: раньше журнал коммитил сам, и падение между коммитами
+    оставляло платёж наполовину выданным."""
     try:
-        db.add(PointEvent(
+        ev = PointEvent(
             user_id=user.id, delta=int(delta), kind=kind or _guess_kind(what),
             what=str(what or "")[:200], ref_type=ref_type, ref_id=int(ref_id or 0),
             engine=str(engine or "")[:60], balance_after=int(user.gen_points or 0),
-        ))
+            cost_cents=int(cost_cents or 0), project_id=int(project_id or 0),
+            track_id=int(track_id or 0), task_id=str(task_id or "")[:80],
+        )
+        db.add(ev)
+        if not commit:
+            return 0
         db.commit()
+        return int(ev.id or 0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("журнал очков: строка не записалась (%s): %s", what, str(e)[:150])
+        return 0
+
+
+def _move_points(db: Session, user: User, delta: int, what: str, *,
+                 commit: bool = True, **meta) -> int:
+    """ЕДИНСТВЕННОЕ место, где меняется user.gen_points. Возвращает id строки
+    журнала.
+
+    Всё, что двигает очки — списание, возврат, оплата, месячный транш,
+    админский грант, откат звёздного платежа — проходит здесь. Ни один вызов
+    не может «забыть» журнал, потому что журнал и есть эта функция."""
+    delta = int(delta or 0)
+    if not delta:
+        return 0
+    user.gen_points = int(user.gen_points or 0) + delta  # ledger-ok: единственная дверь
+    try:
+        return _log_points(db, user, delta, what, commit=commit, **meta)
+    except Exception as e:  # noqa: BLE001
+        # Журнал не должен отменять уже принятое решение о деньгах: если
+        # строка не пишется, очки всё равно двигаем и жалуемся в лог.
+        db.rollback()
+        log.warning("журнал очков упал, двигаю очки без строки (%s): %s",
+                    what, str(e)[:150])
+        fresh = db.get(User, user.id)
+        if fresh is not None:
+            fresh.gen_points = int(fresh.gen_points or 0) + delta  # ledger-ok
+            db.commit()
+        return 0
+
+
+def _attach_task(db: Session, ref_type: str, ref_id: int, task_id: str,
+                 kind: str = "") -> None:
+    """Дописать id внешней задачи к последней строке списания за этот объект.
+
+    Списание идёт ДО постановки задачи, taskId приходит из mediagen позже —
+    поэтому не параметр, а второй шаг. Это то, чем разбирается спор:
+    «списали 154 очка → задача kie abc123 → упала → возврат строкой ниже»."""
+    if not task_id or not ref_id:
+        return
+    try:
+        q = (db.query(PointEvent)
+             .filter(PointEvent.ref_type == ref_type, PointEvent.ref_id == int(ref_id),
+                     PointEvent.delta < 0, PointEvent.task_id == ""))
+        if kind:
+            q = q.filter(PointEvent.kind == kind)
+        row = q.order_by(PointEvent.id.desc()).first()
+        if row:
+            row.task_id = str(task_id)[:80]
+            db.commit()
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        log.warning("журнал очков: строка не записалась (%s): %s", what, str(e)[:150])
+        log.warning("журнал очков: не привязал задачу %s: %s", task_id, str(e)[:120])
 
 
 def _take_points(db: Session, user: User, points: int, what: str = "",
@@ -805,23 +965,25 @@ def _take_points(db: Session, user: User, points: int, what: str = "",
         return True
     if int(user.gen_points or 0) < points:
         return False
-    user.gen_points = int(user.gen_points) - points
-    db.commit()
-    _log_points(db, user, -int(points), what or "генерация", **meta)
+    _move_points(db, user, -int(points), what or "генерация", **meta)
     return True
 
 
-def _charge(db: Session, user: User, points: int, what: str, **meta) -> None:
+def _charge(db: Session, user: User, points: int, what: str, **meta) -> int:
     """Списание очков генерации В МОМЕНТ постановки задачи (не в треде):
-    генерации идут через подписки владельца, лимит защищает его кошелёк."""
+    генерации идут через подписки владельца, лимит защищает его кошелёк.
+
+    Возвращает id строки журнала — по нему потом привязывается внешняя задача."""
     if user.is_admin or points <= 0:
-        return
-    if not _take_points(db, user, points, what, **meta):
+        return 0
+    if int(user.gen_points or 0) < points:
         raise NotEnoughPoints(points, int(user.gen_points or 0), _plan_of(user), what)
+    ev = _move_points(db, user, -int(points), what, **meta)
     log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
+    return ev
 
 
-def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> None:
+def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> int:
     """Вернуть очки за НЕсостоявшуюся работу.
 
     До чата возврата не было нигде: у сцены упавшая генерация оставляла
@@ -829,17 +991,33 @@ def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> Non
     запросы одиночные — молча съеденные за упавший Seedance 154 очка человек
     видит сразу и справедливо считает это воровством."""
     if user.is_admin or points <= 0:
-        return
-    user.gen_points = int(user.gen_points or 0) + int(points)
-    db.commit()
+        return 0
     meta.setdefault("kind", "refund")
-    _log_points(db, user, int(points), what or "возврат за неудачную генерацию", **meta)
+    # Возврат ничего нам не стоит — себестоимость возвращённой работы уже
+    # записана строкой списания, и второй раз её считать нельзя.
+    meta.pop("cost_cents", None)
+    ev = _move_points(db, user, int(points),
+                      what or "возврат за неудачную генерацию", **meta)
     log.info("user %s: +%s очков возврата за %s (стало %s)",
              user.id, points, what or "неудачную генерацию", user.gen_points)
+    return ev
+
+
+def _scene_meta(scene: "Scene") -> dict:
+    """Привязка строки журнала к проекту и объекту. Денормализация ради
+    отчёта «сколько ушло на этот проект»: иначе на каждой строке join
+    scenes→tracks→projects."""
+    try:
+        track = scene.track
+        return {"ref_type": "scene", "ref_id": scene.id,
+                "track_id": track.id if track else 0,
+                "project_id": track.project_id if track else 0}
+    except Exception:  # noqa: BLE001
+        return {"ref_type": "scene", "ref_id": scene.id}
 
 
 def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str,
-                  *, kind: str = "", engine: str = "") -> None:
+                  *, kind: str = "", engine: str = "", cost_cents: int = 0) -> int:
     """Списать за КАЖДЫЙ платный вызов движка.
 
     Раньше перегенерация уже оплаченной сцены была бесплатной: считалось, что
@@ -849,15 +1027,19 @@ def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str,
     Теперь платим за вызов: сколько раз запустил движок — столько и списано.
     Бесплатные шлюзовые движки по-прежнему стоят символические 2 очка."""
     if cost <= 0:
-        return
-    _charge(db, user, cost, what, kind=kind,
-            ref_type="scene", ref_id=scene.id, engine=engine)
+        return 0
+    ev = _charge(db, user, cost, what, kind=kind, engine=engine,
+                 cost_cents=cost_cents or _cost_cents(kind, engine,
+                                                      seconds=scene.duration_sec),
+                 **_scene_meta(scene))
     scene.charged_points = int(scene.charged_points or 0) + cost
     db.commit()
+    return ev
 
 
 def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str,
-                   *, kind: str = "", engine: str = "", track_id: int = 0) -> int:
+                   *, kind: str = "", engine: str = "", track_id: int = 0,
+                   project_id: int = 0) -> int:
     """То же для пачки сцен: одно списание на весь пакет (и один отказ, если
     очков не хватило), потом отметки на сценах."""
     rows, total = [], 0
@@ -868,7 +1050,9 @@ def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str,
             rows.append((s, cost))
     if total:
         _charge(db, user, total, what, kind=kind, engine=engine,
-                ref_type="track" if track_id else "", ref_id=track_id)
+                cost_cents=_cost_cents(kind, engine, count=len(rows)),
+                ref_type="track" if track_id else "", ref_id=track_id,
+                track_id=track_id, project_id=project_id)
     for s, cost in rows:
         s.charged_points = int(s.charged_points or 0) + cost
     if rows:
@@ -1114,7 +1298,15 @@ def _user_dict(user: User) -> dict:
             # Онбординг «первый клип»: чеклист живёт на сервере, а не в
             # localStorage — человек начинает на десктопе, продолжает с телефона.
             "onboarding": [s for s in (user.onboarding or "").split(",") if s],
-            "onboarding_done": bool(user.onboarding_done)}
+            "onboarding_done": bool(user.onboarding_done),
+            # Блокировка едет в /api/me, потому что увидеть её должен САМ
+            # заблокированный. current_user отвечает 403 на каждый рабочий
+            # роут, но /api/me намеренно идёт мимо гварда (иначе экран входа
+            # падал бы вместе с приложением) — и без этих двух полей человек
+            # видел не «вы заблокированы, вот причина», а приложение, в
+            # котором молча не работает ни одна кнопка.
+            "is_blocked": bool(getattr(user, "is_blocked", False)),
+            "blocked_reason": (getattr(user, "blocked_reason", "") or "").strip()}
 
 
 def _session_response(user: User) -> JSONResponse:
@@ -1805,8 +1997,9 @@ def _onboarding_state(db: Session, user: User) -> dict:
             "scene": scene_cost, "clip_scenes": CLIP_SCENES,
             "clip_total": scene_cost * CLIP_SCENES,
         },
-        # Хватает ли остатка на целый клип. На FREE 120 очков = ровно 30 сцен
-        # по 4, то есть впритык и без запаса: врать тут нельзя.
+        # Хватает ли остатка на целый клип. Сам клип на FREE стоит 120 (30 сцен
+        # по 4) при норме 150, то есть запас — 30 очков: лист раскадровки,
+        # моделька и одна переделка. Врать тут нельзя.
         "enough": points >= scene_cost * CLIP_SCENES,
     }
 
@@ -1909,6 +2102,52 @@ def get_project(project_id: int | None = None, user: User = Depends(current_user
     return project_dict(project, with_scenes=True, docs=_project_docs(db, project))
 
 
+# ─────────────────── лёгкий поллинг: ТОЛЬКО статусы ───────────────────
+# Пока хотя бы одна сцена генерится, фронт каждые три секунды тянул ВЕСЬ
+# проект: scene_dict отдаёт промпты кадра, анимации и последнего кадра —
+# порядка 3 КБ текста на сцену, то есть под мегабайт JSON на альбом каждые
+# три секунды, при том что меняются в нём два поля статуса. И на каждый
+# такой ответ фронт сносил и пересобирал весь DOM.
+#
+# Здесь — единицы килобайт: id и статусы. Полную перезагрузку фронт делает
+# только когда статус реально перешёл в done/error, то есть появился новый
+# файл.
+
+@app.get("/api/project/status")
+def project_status(project_id: int | None = None, user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    project = get_or_create_project(db, user, project_id)
+    docs = _project_docs(db, project)
+    return {
+        "id": project.id,
+        "story_status": project.story_status,
+        "docs": [{"id": d.id, "kind": d.kind, "track_id": d.track_id or 0,
+                  "status": d.status, "error": d.error} for d in docs],
+        "tracks": [{
+            "id": t.id,
+            "scenes_status": t.scenes_status,
+            "storyboard_status": t.storyboard_status,
+            "storyboard_url": (f"/api/media/{t.storyboard_filename}"
+                               if t.storyboard_filename else ""),
+            "clip_status": t.clip_status,
+            "clip_url": f"/api/media/{t.clip_filename}" if t.clip_filename else "",
+            "supergen_status": t.supergen_status,
+            "supergen_note": t.supergen_note or "",
+            "scenes_count": len(t.scenes),
+            "approved_count": sum(1 for s in t.scenes if s.approved),
+            "scenes": [{
+                "id": s.id,
+                "image_status": s.image_status, "image_error": s.image_error,
+                "video_status": s.video_status, "video_error": s.video_error,
+                "has_image": bool(s.image_filename),
+                "has_last": bool(s.image_last_filename),
+                "has_video": bool(s.video_filename),
+                "mid": len(_midframes(s)),
+            } for s in t.scenes],
+        } for t in project.tracks],
+    }
+
+
 @app.patch("/api/project")
 async def update_project(request: Request, project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
     body = await request.json()
@@ -1967,7 +2206,9 @@ def generate_story(project_id: int | None = None, user: User = Depends(current_u
     project = get_or_create_project(db, user, project_id)
     if not project.tracks:
         raise HTTPException(400, "сначала загрузи хотя бы один трек")
-    _charge(db, user, COST_STORY, "сюжет проекта")
+    _charge(db, user, COST_STORY, "сюжет проекта",
+            kind="story", ref_type="project", ref_id=project.id,
+            project_id=project.id)
     project.story_status = "queued"
     db.commit()
     Thread(target=_run_story_generation, args=(project.id,), daemon=True).start()
@@ -2228,14 +2469,16 @@ async def generate_bible(project_id: int, request: Request,
     if catalog == "series":
         episodes = max(2, min(24, int(body.get("episodes") or 8)))
         _charge(db, user, COST_STORY, f"библия сезона проекта {project.id}",
-                kind="story", ref_type="project", ref_id=project.id)
+                kind="story", ref_type="project", ref_id=project.id,
+                project_id=project.id)
         _doc_status(project.id, _BIBLE_DOCS, "queued")
         Thread(target=_run_series_bible, args=(project.id, idea, episodes),
                daemon=True).start()
         return {"ok": True, "episodes": episodes}
     if catalog == "ugc":
         _charge(db, user, COST_STORY, f"персона блогера проекта {project.id}",
-                kind="story", ref_type="project", ref_id=project.id)
+                kind="story", ref_type="project", ref_id=project.id,
+                project_id=project.id)
         _doc_status(project.id, ("persona", "location"), "queued")
         Thread(target=_run_ugc_persona, args=(project.id, idea), daemon=True).start()
         return {"ok": True}
@@ -2298,7 +2541,8 @@ async def generate_beatsheet_route(project_id: int, request: Request,
     if not _find_doc(db, project.id, "logline"):
         raise HTTPException(400, "сначала собери библию сезона")
     _charge(db, user, COST_STORY, f"поэпизодный план проекта {project.id}",
-            kind="story", ref_type="project", ref_id=project.id)
+            kind="story", ref_type="project", ref_id=project.id,
+            project_id=project.id)
     _doc_status(project.id, ("beatsheet",), "queued")
     Thread(target=_run_beatsheet, args=(project.id, episodes), daemon=True).start()
     return {"ok": True, "episodes": episodes}
@@ -2423,7 +2667,8 @@ def generate_script(track_id: int, user: User = Depends(current_user),
     if not _find_doc(db, track.project_id, "logline"):
         raise HTTPException(400, "сначала собери библию сезона")
     _charge(db, user, COST_STORY, f"сценарий серии {track.id}",
-            kind="story", ref_type="track", ref_id=track.id)
+            kind="story", ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id)
     _put_doc(db, track.project_id, "script", track_id=track.id,
              status="queued", error="")
     Thread(target=_run_episode_script, args=(track_id,), daemon=True).start()
@@ -2523,7 +2768,8 @@ async def create_track(
         with open(path, "wb") as f:
             f.write(data)
         track.audio_filename = fname
-        _reg_file(db, fname, project.owner_id)
+        _reg_file(db, fname, project.owner_id, kind="audio",
+                  project_id=project.id, track_id=track.id)
         track.audio_duration_sec = _ffprobe_duration(path)
         try:
             track.audio_profile = _audio_profile(path, track.audio_duration_sec)
@@ -2813,7 +3059,8 @@ async def upload_project_cover(project_id: int, cover: UploadFile, user: User = 
     project = _own_project(db, user, project_id)
     old = project.cover_filename
     project.cover_filename = await _save_cover_file(cover)
-    _reg_file(db, project.cover_filename, project.owner_id)
+    _reg_file(db, project.cover_filename, project.owner_id, kind="cover",
+              project_id=project.id)
     db.commit()
     db.refresh(project)
     # Старый файл убираем только ПОСЛЕ commit: если запись не прошла,
@@ -2827,7 +3074,8 @@ async def upload_track_cover(track_id: int, cover: UploadFile, user: User = Depe
     track = _own_track(db, user, track_id)
     old = track.cover_filename
     track.cover_filename = await _save_cover_file(cover)
-    _reg_file(db, track.cover_filename, track.project.owner_id)
+    _reg_file(db, track.cover_filename, track.project.owner_id, kind="cover",
+              project_id=track.project_id, track_id=track.id)
     db.commit()
     db.refresh(track)
     _remove_media(old)
@@ -3030,7 +3278,9 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
             Doc.body != "").count()
         if not has_script:
             raise HTTPException(400, "сначала сгенерируй сценарий серии")
-    _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}")
+    _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}",
+            kind="story", ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id)
     track.scenes_status = "queued"
     db.commit()
     Thread(target=_run_scene_generation, args=(track_id,), daemon=True).start()
@@ -3089,7 +3339,9 @@ async def add_scene_ref(scene_id: int, photo: UploadFile, user: User = Depends(c
         f.write(await photo.read())
     max_pos = max((r.position for r in scene.refs), default=0)
     db.add(SceneRef(scene_id=scene.id, position=max_pos + 1, filename=fname))
-    _reg_file(db, fname, scene.track.project.owner_id)
+    _reg_file(db, fname, scene.track.project.owner_id, kind="ref",
+              project_id=scene.track.project_id, track_id=scene.track_id,
+              scene_id=scene.id)
     db.commit()
     # scene.refs загружен ДО вставки — без refresh ответ отстаёт на один реф.
     db.refresh(scene)
@@ -3207,7 +3459,8 @@ def _run_storyboard(track_id: int) -> None:
         # ровно по ней, а не пересчитывать заново.
         _c, _r = sheet_grid(len(track.scenes))
         track.storyboard_grid = f"{_c}x{_r}"
-        _reg_file(db, track.storyboard_filename, track.project.owner_id)
+        _reg_file(db, track.storyboard_filename, track.project.owner_id,
+                  kind="storyboard", project_id=track.project_id, track_id=track.id)
         track.storyboard_status = "done"
         db.commit()
         _remove_media(old)
@@ -3274,7 +3527,8 @@ def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Sess
         )
         if r.returncode != 0 or not os.path.exists(dst):
             continue
-        _reg_file(db, fname, track.project.owner_id)
+        _reg_file(db, fname, track.project.owner_id, kind="frame",
+                  project_id=track.project_id, track_id=track.id)
         cells.append({"index": i + 1, "filename": fname,
                       "url": f"/api/media/{fname}", "thumb_url": f"/api/thumb/{fname}"})
     db.commit()
@@ -3311,7 +3565,8 @@ async def apply_cells(track_id: int, request: Request, user: User = Depends(curr
         scene.image_filename = new_name
         scene.image_status = "done"
         scene.image_error = ""
-        _reg_file(db, new_name, track.project.owner_id)
+        _reg_file(db, new_name, track.project.owner_id, kind="frame",
+                  project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         db.commit()
         _remove_media(old)
         applied += 1
@@ -3351,7 +3606,8 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
         sc.image_filename = fname
         sc.image_status = "done"
         sc.image_error = ""
-        _reg_file(db, fname, track.project.owner_id)
+        _reg_file(db, fname, track.project.owner_id, kind="frame",
+                  project_id=track.project_id, track_id=track.id, scene_id=sc.id)
         db.commit()
         _remove_media(old)
         done += 1
@@ -3364,7 +3620,11 @@ def generate_storyboard(track_id: int, user: User = Depends(current_user), db: S
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку трека")
-    _charge(db, user, _image_cost(user), f"лист раскадровки трека {track.id}")
+    sheet_engine = _plan_image_engine(user)
+    _charge(db, user, _image_cost(user), f"лист раскадровки трека {track.id}",
+            kind="sheet", engine=sheet_engine, ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id,
+            cost_cents=_cost_cents("sheet", sheet_engine))
     track.storyboard_status = "queued"
     db.commit()
     Thread(target=_run_storyboard, args=(track_id,), daemon=True).start()
@@ -3655,6 +3915,7 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
         db.commit()
         track = scene.track
         import asyncio
+        mediagen.reset_task()
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
         # Раньше здесь стояло `engine = _plan_image_engine(owner)` — переданный
         # параметр молча затирался дефолтом тарифа, и выбор движка в интерфейсе
@@ -3690,17 +3951,21 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
             native_4k = native_4k or res["native_4k"]
             scene.image_engine = res["engine"]
 
+        _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "frames")
         old_first, old_last = scene.image_filename, scene.image_last_filename
         old_video, old_audio = scene.video_filename, scene.audio_filename
         old_mids = [m.get("filename", "") for m in _midframes(scene)]
         if first_data is not None:
             scene.image_filename = _save_image(first_data, first_mime, upscale=not native_4k)
-            _reg_file(db, scene.image_filename, track.project.owner_id)
+            _reg_file(db, scene.image_filename, track.project.owner_id, kind="frame",
+                      project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         else:
             old_first = ""  # первый кадр не пересобирали — оставляем как есть
         if last_data is not None:
             scene.image_last_filename = _save_image(last_data, last_mime, upscale=not native_4k)
-            _reg_file(db, scene.image_last_filename, track.project.owner_id)
+            _reg_file(db, scene.image_last_filename, track.project.owner_id,
+                      kind="frame_last", project_id=track.project_id,
+                      track_id=track.id, scene_id=scene.id)
         else:
             old_last = ""
         scene.image_status = "done"
@@ -3785,7 +4050,8 @@ def _run_midframes(scene_id: int) -> None:
                       f"{first} → {last}, style unchanged")
             data, mime = asyncio.run(mediagen.generate_image(prompt, reference_path=ref))
             fname = _save_image(data, mime)
-            _reg_file(db, fname, track.project.owner_id)
+            _reg_file(db, fname, track.project.owner_id, kind="midframe",
+                      project_id=track.project_id, track_id=track.id, scene_id=scene.id)
             done.append({"filename": fname, "prompt": prompt})
             scene.midframes_json = json.dumps(done, ensure_ascii=False)
             db.commit()
@@ -3810,7 +4076,8 @@ def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Se
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
     # Промежуточные кадры — тоже кадры этой сцены: входят в её цену.
     _scene_charge(db, user, scene, _frames_cost(user, scene),
-                  f"промежуточные кадры сцены {scene.id}")
+                  f"промежуточные кадры сцены {scene.id}",
+                  kind="frames", engine=scene.image_engine or _plan_image_engine(user))
     Thread(target=_run_midframes, args=(scene_id,), daemon=True).start()
     return {"ok": True, "count": total}
 
@@ -3833,6 +4100,7 @@ def _run_scene_video(scene_id: int) -> None:
             if scene.image_last_filename else None
         )
         import asyncio
+        mediagen.reset_task()
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
         # Семейство знает фронт, конкретную модель выбирает тариф — и она
         # уже записана на сцене при списании, чтобы движок не «переехал»
@@ -3844,9 +4112,13 @@ def _run_scene_video(scene_id: int) -> None:
             seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
             engine=engine,
         ))
+        # Задача внешнего движка — в строку списания: «списали 154 очка →
+        # задача kie abc123». Без неё спорную генерацию разобрать нечем.
+        _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "video")
         old_video = scene.video_filename
         scene.video_filename = fname
-        _reg_file(db, fname, track.project.owner_id)
+        _reg_file(db, fname, track.project.owner_id, kind="video",
+                  project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         scene.video_status = "done"
 
         # Отрезок трека ровно под эту сцену — слушаем видео с его музыкой.
@@ -3856,7 +4128,9 @@ def _run_scene_video(scene_id: int) -> None:
             try:
                 scene.audio_filename = mediagen.slice_audio(
                     audio_src, scene.start_sec, scene.duration_sec)
-                _reg_file(db, scene.audio_filename, track.project.owner_id)
+                _reg_file(db, scene.audio_filename, track.project.owner_id,
+                          kind="audio", project_id=track.project_id,
+                          track_id=track.id, scene_id=scene.id)
             except Exception as e:  # noqa: BLE001
                 log.warning("нарезка аудио сцены %s не удалась: %s", scene_id, e)
                 old_audio = ""  # старый отрезок не трогаем, если новый не вышел
@@ -3901,7 +4175,9 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
         # он и правда ничего нам не стоит.
         _charge(db, user, max(0, cost - _frames_cost(user, scene)),
                 f"перерендер видео сцены {scene.id} ({engine})",
-                kind="video", ref_type="scene", ref_id=scene.id, engine=engine)
+                kind="video", engine=engine,
+                cost_cents=_cost_cents("video", engine, seconds=scene.duration_sec),
+                **_scene_meta(scene))
     else:
         _scene_charge(db, user, scene, cost, f"видео сцены {scene.id} ({engine})",
                       kind="video", engine=engine)
@@ -3941,7 +4217,8 @@ def _run_assemble(track_id: int) -> None:
         old = track.clip_filename
         track.clip_filename = mediagen.assemble_clip(
             videos, _track_audio_path(track), film_grain=track.film_grain)
-        _reg_file(db, track.clip_filename, track.project.owner_id)
+        _reg_file(db, track.clip_filename, track.project.owner_id, kind="clip",
+                  project_id=track.project_id, track_id=track.id)
         track.clip_status = "done"
         db.commit()
         _remove_media(old)
@@ -3999,19 +4276,34 @@ def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) ->
             left -= 1  # эту сцену закрывает предоплата
         else:
             need += per_scene - int(s.charged_points or 0)
+    # Добор — это сцены, которые МЫ РЕАЛЬНО СГЕНЕРИМ, то есть живые деньги
+    # движку. Без cost_cents они падали в журнал с себестоимостью 0, и на
+    # длинных треках (там, где добор и случается) маржа выглядела тем выше,
+    # чем сильнее оценка промахнулась мимо реальности.
+    # Движок выводим ТЕМ ЖЕ путём, что и на списании предоплаты (см.
+    # supergen_start), иначе себестоимость посчиталась бы по чужому прайсу.
+    eng = _resolve_video_engine(
+        owner, track,
+        _allowed_provider(owner, "seedance" if mediagen.seedance_available() else "grok")
+    ) if owner else ""
     if need and owner and not _take_points(
             db, owner, need, f"супергенерация трека {track.id}: добор по факту",
-            kind="video", ref_type="track", ref_id=track.id):
+            kind="video", engine=eng, ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id,
+            cost_cents=_cost_cents("video", eng,
+                                   count=max(1, need // max(1, per_scene)))):
         return (f"не хватило {need} очков: трек длиннее оценки "
                 f"({len(scenes)} сцен). Пополни баланс и запусти ещё раз")
     for s in unpaid:
         s.charged_points = per_scene
     if left and owner:
         # Оценка была щедрее реальности — неиспользованное возвращаем.
-        owner.gen_points = int(owner.gen_points or 0) + left * per_scene
-        _log_points(db, owner, left * per_scene,
-                    f"возврат предоплаты супергенерации трека {track.id}",
-                    kind="refund", ref_type="track", ref_id=track.id)
+        # Через ту же дверь, что и всё остальное: прямое присваивание
+        # gen_points здесь однажды уже увело журнал в сторону от баланса.
+        _move_points(db, owner, left * per_scene,
+                     f"возврат предоплаты супергенерации трека {track.id}",
+                     kind="refund", ref_type="track", ref_id=track.id,
+                     track_id=track.id, project_id=track.project_id)
         log.info("супергенерация трека %s: вернули %s очков за %s лишних сцен",
                  track.id, left * per_scene, left)
     db.commit()
@@ -4164,7 +4456,9 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
     per_scene = _scene_cost(user, prov, engine=vid_engine)
     scenes = list(track.scenes)
     if not (track.project.story or "").strip():
-        _charge(db, user, COST_STORY, f"сюжет проекта {track.project.id}")
+        _charge(db, user, COST_STORY, f"сюжет проекта {track.project.id}",
+                kind="story", ref_type="project", ref_id=track.project_id,
+                project_id=track.project_id)
     prepaid = 0
     if scenes:
         # Сцены уже есть: платим только за ту работу, которую конвейер реально
@@ -4179,7 +4473,8 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
 
         _scenes_charge(db, user, scenes, _sg_cost,
                        f"супергенерация трека {track.id} ({vid_engine})",
-                       kind="video", engine=vid_engine, track_id=track.id)
+                       kind="video", engine=vid_engine, track_id=track.id,
+                       project_id=track.project_id)
     else:
         # Сцен ещё нет — объём оцениваем по длительности трека (~6 сек на сцену).
         # Прежняя оценка упиралась в потолок 30 сцен: четырёхминутный трек
@@ -4189,7 +4484,9 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
         prepaid = _est_scenes(_track_duration(track))
         _charge(db, user, COST_SCENES + per_scene * prepaid,
                 f"супергенерация трека {track.id} ({vid_engine}, ~{prepaid} сцен)",
-                kind="video", ref_type="track", ref_id=track.id, engine=vid_engine)
+                kind="video", ref_type="track", ref_id=track.id, engine=vid_engine,
+                track_id=track.id, project_id=track.project_id,
+                cost_cents=_cost_cents("video", vid_engine, count=prepaid))
     track.supergen_status = "queued"
     track.supergen_note = "старт…"
     db.commit()
@@ -4443,7 +4740,7 @@ async def clone_character(request: Request, project_id: int | None = None, user:
         ext = os.path.splitext(ph.filename)[1] or ".jpg"
         fname = f"char_{uuid.uuid4().hex}{ext}"
         shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
-        _reg_file(db, fname, project.owner_id)
+        _reg_file(db, fname, project.owner_id, kind="photo", project_id=project.id)
         # kind переносим вместе с файлом: иначе клон терял свой разворот и
         # его кадры снова опирались бы на селфи.
         db.add(CharacterPhoto(character_id=clone.id, position=i, filename=fname,
@@ -4465,7 +4762,7 @@ async def clone_character(request: Request, project_id: int | None = None, user:
             ext = os.path.splitext(ph.filename)[1] or ".jpg"
             fname = f"attr_{uuid.uuid4().hex}{ext}"
             shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
-            _reg_file(db, fname, project.owner_id)
+            _reg_file(db, fname, project.owner_id, kind="attr", project_id=project.id)
             db.add(AttributePhoto(attribute_id=attr_clone.id, position=i, filename=fname))
     db.commit()
     # clone.photos закэширован ДО вставки фото — без refresh ответ уйдёт пустым.
@@ -4533,7 +4830,7 @@ async def add_character_photo(char_id: int, photo: UploadFile, user: User = Depe
         f.write(await photo.read())
     # Без записи владельца /api/media прячет файл от всех, кроме админа —
     # человек загружал фото и видел на его месте дырку.
-    _reg_file(db, fname, ch.project.owner_id)
+    _reg_file(db, fname, ch.project.owner_id, kind="photo", project_id=ch.project_id)
     max_pos = max((p.position for p in ch.photos), default=0)
     ph = CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname,
                         kind="photo")
@@ -4728,7 +5025,10 @@ async def generate_character_model(char_id: int, request: Request,
     # за разрешение, которого движок не даёт, незачем.
     resolution = "4K" if "4K" in (spec.get("resolutions") or ()) else ""
     cost = _image_cost(user, engine, resolution)
-    _charge(db, user, cost, f"разворот персонажа {ch.id}")
+    _charge(db, user, cost, f"разворот персонажа {ch.id}",
+            kind="model", engine=engine, ref_type="character", ref_id=ch.id,
+            project_id=ch.project_id,
+            cost_cents=_cost_cents("model", engine, resolution=resolution))
 
     paths = [os.path.join(UPLOAD_DIR, p.filename) for p in photos]
     owner_id = ch.project.owner_id
@@ -4768,7 +5068,7 @@ async def generate_character_model(char_id: int, request: Request,
             _remove_media(collage)
 
     fname = _save_image(data, mime, upscale=False)
-    _reg_file(db, fname, owner_id)
+    _reg_file(db, fname, owner_id, kind="model", project_id=ch.project_id)
     max_pos = max((p.position for p in ch.photos), default=0)
     db.add(CharacterPhoto(
         character_id=ch.id, position=max_pos + 1, filename=fname,
@@ -4956,7 +5256,8 @@ def generate_all_frames(track_id: int, engine: str = "",
     eng = _resolve_image_engine(user, track, engine)
     _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng),
                    f"кадры всех сцен трека {track.id} ({eng})",
-                   kind="frames", engine=eng, track_id=track.id)
+                   kind="frames", engine=eng, track_id=track.id,
+                   project_id=track.project_id)
     for s in todo:
         s.image_status = "queued"
     db.commit()
@@ -4999,7 +5300,8 @@ def generate_all_videos(track_id: int, provider: str = "", engine: str = "",
     eng = _resolve_video_engine(user, track, prov, engine)
     _scenes_charge(db, user, todo, lambda sc: _scene_cost(user, prov, sc, eng),
                    f"видео всех сцен трека {track.id} ({eng})",
-                   kind="video", engine=eng, track_id=track.id)
+                   kind="video", engine=eng, track_id=track.id,
+                   project_id=track.project_id)
     for s in todo:
         s.video_provider = prov
         s.video_engine = eng
@@ -5070,8 +5372,9 @@ def _pay_key(provider: str, payment_id: str) -> str:
     return f"{provider}:{pid}" if pid else ""
 
 
-def _add_points(user: User, grant: int) -> int:
-    """Прибавить очки с потолком в две МЕСЯЧНЫЕ нормы этого начисления.
+def _grant_cap(user: User, grant: int) -> int:
+    """Сколько очков РЕАЛЬНО ляжет на счёт при начислении: потолок — две
+    МЕСЯЧНЫЕ нормы этого начисления.
 
     ПРИБАВЛЯЕМ к остатку, а не перезаписываем. Раньше стояло
     max(остаток, норма): экономный человек, у которого осталось 590 из 600,
@@ -5081,11 +5384,25 @@ def _add_points(user: User, grant: int) -> int:
     Опускать баланс потолок не имеет права: сверху могли лежать докупленные
     пакеты, за них заплачено отдельно и они не сгорают."""
     cur = int(user.gen_points or 0)
-    user.gen_points = max(cur, min(cur + int(grant), 2 * int(grant)))
-    return int(user.gen_points) - cur
+    return max(cur, min(cur + int(grant), 2 * int(grant))) - cur
 
 
-def _grant_plan_points(user: User, plan_id: str, period: str, tier: str = "") -> int:
+def _add_points(db: Session, user: User, grant: int, what: str, **meta) -> int:
+    """Начислить очки с потолком и записать это в журнал. Возвращает,
+    сколько реально начислено (потолок мог срезать часть).
+
+    commit=False: начисление обязано ехать ОДНОЙ транзакцией с выдачей
+    тарифа и отметкой о платеже — иначе падение между коммитами оставляет
+    человека без тарифа при взятых деньгах."""
+    got = _grant_cap(user, grant)
+    if got:
+        meta.setdefault("kind", "plan")
+        _move_points(db, user, got, what, commit=False, **meta)
+    return got
+
+
+def _grant_plan_points(db: Session, user: User, plan_id: str, period: str,
+                       tier: str = "", what: str = "", provider: str = "") -> int:
     """Начислить очки за оплаченный период.
 
     ГОД НАЧИСЛЯЕТСЯ ПОМЕСЯЧНО. Раньше period="year" клал норму ×12 разом при
@@ -5106,7 +5423,8 @@ def _grant_plan_points(user: User, plan_id: str, period: str, tier: str = "") ->
         user.points_drip_left = 0
         user.points_drip_size = 0
         user.points_drip_at = None
-    return _add_points(user, norm)
+    return _add_points(db, user, norm, what or f"тариф {plan_id}",
+                       kind="plan", ref_type="payment", engine=provider)
 
 
 def _points_drip_pass(db: Session) -> int:
@@ -5119,7 +5437,6 @@ def _points_drip_pass(db: Session) -> int:
             .filter(User.points_drip_left > 0, User.points_drip_at.isnot(None),
                     User.points_drip_at <= now()).all())
     done = 0
-    dripped: list[tuple[User, int]] = []
     for u in rows:
         # Тариф кончился раньше срока (отмена, возврат) — капли прекращаем:
         # очки годовой подписки не должны пережить саму подписку.
@@ -5128,22 +5445,19 @@ def _points_drip_pass(db: Session) -> int:
             u.points_drip_size = 0
             u.points_drip_at = None
             continue
-        got = _add_points(u, int(u.points_drip_size or 0))
+        # Строки журнала едут ОДНОЙ транзакцией со всем проходом (commit=False
+        # внутри _add_points): иначе полсотни капель = полсотни коммитов.
+        _add_points(db, u, int(u.points_drip_size or 0),
+                    "месячный транш годовой подписки",
+                    kind="drip", ref_type="plan")
         u.points_drip_left = int(u.points_drip_left) - 1
         u.points_drip_at = (_as_utc(u.points_drip_at) or now()) + timedelta(days=PLAN_DAYS)
         if u.points_drip_left <= 0:
             u.points_drip_left = 0
             u.points_drip_at = None
-        dripped.append((u, got))
         done += 1
     if rows:
         db.commit()
-    # Журнал пишем ПОСЛЕ общего коммита: _log_points коммитит сам, и вызов
-    # изнутри цикла резал бы проход на полсотни отдельных транзакций.
-    for u, got in dripped:
-        if got:
-            _log_points(db, u, int(got), "месячный транш годовой подписки",
-                        kind="drip", ref_type="plan")
     return done
 
 
@@ -5227,7 +5541,11 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
         # Пакет считаем ПО СВОЕЙ таблице, а не по числу из metadata: metadata
         # ездит через чужой сервис, а прайс живёт здесь.
         points = int(pack["points"])
-        user.gen_points = int(user.gen_points or 0) + points
+        # Пакет потолком НЕ режется (за него заплачено отдельно), но едет
+        # через ту же дверь: строка журнала попадает в ту же транзакцию, что
+        # и отметка о платеже.
+        _move_points(db, user, points, f"пакет очков {pack_id}", commit=False,
+                     kind="topup", ref_type="payment", engine=provider)
     else:
         if plan_id not in PLANS or PLANS[plan_id]["usd_cents"] <= 0:
             log.warning("платёж %s: неизвестный тариф %r", key, plan_id)
@@ -5247,7 +5565,8 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
             tier = ""
             user.plan_tier = ""
             user.plan_tier_next = ""
-        points = _grant_plan_points(user, plan_id, period, tier)
+        points = _grant_plan_points(db, user, plan_id, period, tier,
+                                    what=f"тариф {plan_id}", provider=provider)
         user.plan = plan_id
         user.plan_period = period
         until = _as_utc(user.plan_until)
@@ -5276,13 +5595,11 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
         db.rollback()
         log.info("платёж %s уже обработан — пропускаем", key)
         return False
-    # Приход в журнал очков — той же строкой, что и расход: кабинет обязан
-    # объяснять, откуда взялся баланс, а не только куда он делся.
-    if points:
-        _log_points(db, user, int(points),
-                    f"{'пакет очков' if kind == 'topup' else 'тариф'} {plan_id or pack_id}",
-                    kind="topup" if kind == "topup" else "plan",
-                    ref_type="payment", engine=provider)
+    # Приход в журнал очков поехал ТОЙ ЖЕ транзакцией, что и выдача (см.
+    # _move_points/_add_points с commit=False выше): кабинет обязан объяснять,
+    # откуда взялся баланс, а не только куда он делся. Раньше строка писалась
+    # здесь, после коммита — и при откате по IntegrityError журнал оставался
+    # с приходом, которого не было.
     log.info("выдано по платежу %s: юзер %s, %s %s, +%s очков", key, user.id, kind,
              plan_id or pack_id, points)
     return True
@@ -6339,6 +6656,12 @@ def account_usage(days: int = 30, user: User = Depends(current_user),
         daily[d] = {"date": d, "spent": 0, "granted": 0,
                     **{k: 0 for k in USAGE_KINDS}}
     spent = granted = 0
+    # Разбивка по ДВИЖКАМ — второй вопрос кабинета после «сколько всего».
+    # Kling 3.0 Pro и Seedance 2 Mini отличаются в цене на порядок, и без
+    # этой строки «куда потратилось» отвечено только наполовину.
+    by_engine: dict[str, dict] = {}
+    by_kind: dict[str, dict] = {}
+    cost_cents = 0
     for e in rows:
         d = (_as_utc(e.created_at) or now()).date().isoformat()
         cell = daily.get(d)
@@ -6347,7 +6670,16 @@ def account_usage(days: int = 30, user: User = Depends(current_user),
         if e.delta < 0:
             cell["spent"] += -e.delta
             spent += -e.delta
-            cell[e.kind if e.kind in USAGE_KINDS else "other"] += -e.delta
+            kind = e.kind if e.kind in USAGE_KINDS else "other"
+            cell[kind] += -e.delta
+            k = by_kind.setdefault(kind, {"kind": kind, "spent": 0, "ops": 0})
+            k["spent"] += -e.delta
+            k["ops"] += 1
+            eng = (e.engine or "").strip() or "—"
+            row = by_engine.setdefault(eng, {"engine": eng, "spent": 0, "ops": 0})
+            row["spent"] += -e.delta
+            row["ops"] += 1
+            cost_cents += int(e.cost_cents or 0)
         else:
             cell["granted"] += e.delta
             granted += e.delta
@@ -6370,24 +6702,491 @@ def account_usage(days: int = 30, user: User = Depends(current_user),
               .filter(PointEvent.user_id == user.id,
                       PointEvent.ref_type == "backfill").scalar())
 
-    return {
+    out = {
         "days": days,
         "daily": list(daily.values()),
         "kinds": list(USAGE_KINDS),
         "spent": spent, "granted": granted,
+        "by_kind": sorted(by_kind.values(), key=lambda r: -r["spent"]),
+        "by_engine": sorted(by_engine.values(), key=lambda r: -r["spent"]),
         "burn_day": round(burn_day, 1),
         "burn_week": burn_week,
         "points": points,
         "forecast_date": forecast,
         "approx_before": _as_utc(approx).isoformat() if approx else "",
-        "recent": [
-            {"id": e.id, "at": (_as_utc(e.created_at) or now()).isoformat(),
-             "delta": e.delta, "kind": e.kind, "what": e.what,
-             "engine": e.engine, "ref_type": e.ref_type, "ref_id": e.ref_id,
-             "balance_after": e.balance_after}
-            for e in rows[:12]
-        ],
+        "limits": _plan_limits(db, user),
+        "recent": [_event_dict(e) for e in rows[:12]],
     }
+    if user.is_admin:
+        # Себестоимость — ТОЛЬКО админу: из неё восстанавливается наша
+        # наценка, а прайс построен именно на ней (POINT_USD).
+        out["cost_cents"] = cost_cents
+    return out
+
+
+def _plan_limits(db: Session, user: User) -> dict:
+    """Рамка тарифа: норма, потолок накопления, что уже израсходовано в
+    текущем периоде и когда следующее начисление.
+
+    Про ПОТОЛОК человек сегодня не знает вообще, и это прямой источник обиды:
+    накопил, оплатил, часть сгорела. Норма ×2 — ровно то, что делает
+    _grant_cap, и кабинет обязан это показывать заранее, а не постфактум."""
+    plan_id = _plan_of(user)
+    tier = _tier_of_user(user)
+    norm = _plan_points(plan_id, tier)
+    # Начало периода = ПОСЛЕДНЕЕ начисление, а не «месяц назад»: у годовой
+    # подписки очки капают раз в PLAN_DAYS, и календарный месяц врал бы.
+    last_grant = (db.query(func.max(PointEvent.created_at))
+                  .filter(PointEvent.user_id == user.id,
+                          PointEvent.kind.in_(("plan", "drip", "topup"))).scalar())
+    start = _as_utc(last_grant) or _as_utc(user.created_at) or (now() - timedelta(days=30))
+    used = int(db.query(func.coalesce(func.sum(-PointEvent.delta), 0))
+               .filter(PointEvent.user_id == user.id, PointEvent.delta < 0,
+                       PointEvent.created_at >= start).scalar() or 0)
+    engines = []
+    plan_costs = _plan_engines(plan_id)
+    for eid in _plan_engine_ids(plan_id):
+        spec = mediagen.VIDEO_ENGINES.get(eid) or {}
+        engines.append({
+            "id": eid, "title": spec.get("title") or eid,
+            "scene_cost": plan_costs.get(eid, 0),
+            # «Открыт тарифом» и «жив по ключам» — разные вещи, и кабинет
+            # обязан различать их: ключа kie нет — движок в прайсе есть,
+            # а нажать на него нельзя.
+            "live": mediagen.video_engine_live(eid),
+        })
+    return {
+        "plan": plan_id, "plan_title": PLANS[plan_id]["title"], "tier": tier,
+        "period": user.plan_period or "month",
+        "norm": norm, "cap": norm * 2, "used": used,
+        "period_start": start.isoformat(),
+        "plan_until": _as_utc(user.plan_until).isoformat() if user.plan_until else "",
+        "tier_next": user.plan_tier_next or "",
+        # Очки годовой подписки, которые ещё НЕ выданы: «на счету 660, ещё
+        # 7260 придут по месяцам» — иначе годовой тариф выглядит обманом.
+        "drip_left": int(user.points_drip_left or 0),
+        "drip_size": int(user.points_drip_size or 0),
+        "drip_at": _as_utc(user.points_drip_at).isoformat() if user.points_drip_at else "",
+        "image_engine": _plan_image_engine(user),
+        "engines": engines,
+    }
+
+
+def _event_dict(e: PointEvent, admin: bool = False) -> dict:
+    row = {"id": e.id, "at": (_as_utc(e.created_at) or now()).isoformat(),
+           "delta": e.delta, "kind": e.kind, "what": e.what,
+           "engine": e.engine, "ref_type": e.ref_type, "ref_id": e.ref_id,
+           "project_id": e.project_id, "track_id": e.track_id,
+           "balance_after": e.balance_after}
+    if admin:
+        # task_id и себестоимость наружу не идут: первое — внутренняя кухня
+        # движков, второе раскрывает наценку.
+        row["task_id"] = e.task_id or ""
+        row["cost_cents"] = int(e.cost_cents or 0)
+    return row
+
+
+# ─────────────────── лента операций: фильтры и курсор ───────────────────
+# Дашборд показывает 12 последних строк — этого хватает «что я сделал только
+# что» и не хватает «за что списали 154 очка в прошлый вторник». Здесь та же
+# история целиком, с фильтрами и курсором. Курсор по id, а не OFFSET:
+# OFFSET на растущей таблице пропускает строки при добавлении новых.
+
+@app.get("/api/account/events")
+def account_events(kind: str = "", engine: str = "", project_id: int = 0,
+                   only: str = "", cursor: int = 0, limit: int = 50,
+                   user_id: int = 0, user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    limit = max(1, min(200, int(limit or 50)))
+    owner_id = user.id
+    if user_id and user.is_admin:
+        owner_id = int(user_id)      # админ смотрит чужую ленту из CRM
+    q = db.query(PointEvent).filter(PointEvent.user_id == owner_id)
+    if kind:
+        q = q.filter(PointEvent.kind.in_([k for k in kind.split(",") if k]))
+    if engine:
+        q = q.filter(PointEvent.engine == engine)
+    if project_id:
+        q = q.filter(PointEvent.project_id == int(project_id))
+    # «Только возвраты» отдельным фильтром: сегодня они тонут в общем приходе
+    # вместе с оплатами, а это ровно та строка, ради которой открывают журнал.
+    if only == "refund":
+        q = q.filter(PointEvent.kind == "refund")
+    elif only == "spent":
+        q = q.filter(PointEvent.delta < 0)
+    elif only == "granted":
+        q = q.filter(PointEvent.delta > 0)
+    if cursor:
+        q = q.filter(PointEvent.id < int(cursor))
+    rows = q.order_by(PointEvent.id.desc()).limit(limit + 1).all()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "items": [_event_dict(e, user.is_admin) for e in rows],
+        "next_cursor": rows[-1].id if (more and rows) else 0,
+        "engines": sorted({r[0] for r in db.query(PointEvent.engine)
+                           .filter(PointEvent.user_id == owner_id).distinct().all()
+                           if r[0]}),
+    }
+
+
+# ═══════════════════════ ФАЙЛОВЫЙ АРХИВ ═══════════════════════
+# «Папка со всеми файлами, рассортированная по датам, видам и проектам».
+# Индекс — таблица file_owners: она и так регистрирует каждый созданный файл
+# ради приватности (/api/media отдаёт чужое только админу), поэтому второго
+# места правды не заводим. Метаданные пишет _reg_file, пробелы добирает
+# _files_sweep.
+#
+# КЛЮЧЕВОЕ ОГРАНИЧЕНИЕ: клип весит до 1.5 ГБ, кадр — 15 МБ в 4К. Поэтому
+# страница архива НИКОГДА не грузит оригиналы: сетка живёт на /api/thumb
+# (ffmpeg, 640px, кэш), видео показывается ПОСТЕРОМ, а не <video>.
+
+FILE_KINDS = ("frame", "frame_last", "midframe", "ref", "video", "clip",
+              "storyboard", "cover", "model", "photo", "attr", "audio",
+              "chat", "other")
+# Что считаем видео — по нему решается, брать ли постер и показывать ▶.
+VIDEO_KINDS = ("video", "clip")
+IMAGE_KINDS = ("frame", "frame_last", "midframe", "ref", "storyboard",
+               "cover", "model", "photo", "attr")
+
+
+def _kind_by_name(fname: str) -> str:
+    """Вид осиротевшего файла — по имени и расширению. Имена у нас
+    префиксные (char_, attr_, refjoin_, chat_), этого хватает."""
+    low = fname.lower()
+    ext = os.path.splitext(low)[1]
+    if low.startswith("chat_"):
+        return "chat"
+    if low.startswith("char_"):
+        return "photo"
+    if low.startswith("attr_"):
+        return "attr"
+    if ext in (".mp4", ".mov", ".webm"):
+        return "video"
+    if ext in (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
+        return "audio"
+    if ext in (".png", ".jpg", ".jpeg", ".webp"):
+        return "other"
+    return "other"
+
+
+def _file_dict(f: FileOwner) -> dict:
+    is_video = f.kind in VIDEO_KINDS or f.filename.lower().endswith((".mp4", ".mov", ".webm"))
+    is_audio = f.kind == "audio" and not is_video
+    return {
+        "filename": f.filename,
+        "kind": f.kind or "other",
+        "at": (_as_utc(f.created_at) or now()).isoformat(),
+        "size_bytes": int(f.size_bytes or 0),
+        "project_id": int(f.project_id or 0),
+        "track_id": int(f.track_id or 0),
+        "scene_id": int(f.scene_id or 0),
+        "url": f"/api/media/{f.filename}",
+        # Аудио миниатюры не имеет — ffmpeg соберёт из него чёрный кадр,
+        # и сетка заполнится квадратами пустоты.
+        "thumb_url": "" if is_audio else f"/api/thumb/{f.filename}",
+        "is_video": is_video,
+        "is_audio": is_audio,
+    }
+
+
+def _file_in_use(db: Session, fname: str) -> str:
+    """Ссылается ли на файл живая сущность. Пустая строка — не ссылается.
+
+    Удалять файл, на который смотрит сцена, нельзя: сцена без image_filename
+    ломает половину кнопок карточки, и человек получает пустое место вместо
+    оплаченной генерации. Поэтому вместо удаления говорим, где он занят."""
+    sc = (db.query(Scene)
+          .filter((Scene.image_filename == fname) | (Scene.image_last_filename == fname)
+                  | (Scene.video_filename == fname) | (Scene.audio_filename == fname))
+          .first())
+    if sc:
+        return f"scene:{sc.id}"
+    tr = (db.query(Track)
+          .filter((Track.audio_filename == fname) | (Track.cover_filename == fname)
+                  | (Track.storyboard_filename == fname) | (Track.clip_filename == fname))
+          .first())
+    if tr:
+        return f"track:{tr.id}"
+    pr = db.query(Project).filter(Project.cover_filename == fname).first()
+    if pr:
+        return f"project:{pr.id}"
+    if db.query(CharacterPhoto).filter(CharacterPhoto.filename == fname).first():
+        return "character"
+    if db.query(AttributePhoto).filter(AttributePhoto.filename == fname).first():
+        return "attribute"
+    if db.query(SceneRef).filter(SceneRef.filename == fname).first():
+        return "ref"
+    return ""
+
+
+@app.get("/api/files")
+def list_files(kind: str = "", project_id: int = 0, track_id: int = 0,
+               days: int = 0, sort: str = "date", cursor: str = "",
+               limit: int = 60, user_id: int = 0,
+               user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Метаданные файлов человека. Оригиналы отсюда не едут никогда —
+    только имена, размеры и ссылки."""
+    limit = max(1, min(200, int(limit or 60)))
+    owner_id = int(user_id) if (user_id and user.is_admin) else user.id
+    q = (db.query(FileOwner)
+         .filter(FileOwner.user_id == owner_id, FileOwner.deleted_at.is_(None)))
+    if kind:
+        q = q.filter(FileOwner.kind.in_([k for k in kind.split(",") if k]))
+    if project_id:
+        q = q.filter(FileOwner.project_id == int(project_id))
+    if track_id:
+        q = q.filter(FileOwner.track_id == int(track_id))
+    if days:
+        q = q.filter(FileOwner.created_at >= now() - timedelta(days=int(days)))
+
+    # Итоги считаем ДО пагинации: человек должен видеть, что клипы съели
+    # 40 ГБ, а кадры 300 МБ, — иначе непонятно, что вообще чистить.
+    totals_q = q.with_entities(FileOwner.kind,
+                               func.count(FileOwner.filename),
+                               func.coalesce(func.sum(FileOwner.size_bytes), 0))
+    by_kind = [{"kind": k or "other", "count": int(c), "bytes": int(b)}
+               for k, c, b in totals_q.group_by(FileOwner.kind).all()]
+
+    if sort == "size":
+        if cursor:
+            c_size, _, c_name = cursor.partition("|")
+            try:
+                c_size_i = int(c_size)
+            except ValueError:
+                c_size_i = 0
+            q = q.filter((FileOwner.size_bytes < c_size_i)
+                         | ((FileOwner.size_bytes == c_size_i)
+                            & (FileOwner.filename < c_name)))
+        q = q.order_by(FileOwner.size_bytes.desc(), FileOwner.filename.desc())
+    else:
+        # Курсор по паре (дата, имя), а не OFFSET: пока человек листает,
+        # генерации продолжают писать новые файлы, и OFFSET начал бы
+        # повторять и пропускать строки.
+        if cursor:
+            c_at, _, c_name = cursor.partition("|")
+            dt = _as_utc(_parse_iso(c_at))
+            if dt:
+                q = q.filter((FileOwner.created_at < dt)
+                             | ((FileOwner.created_at == dt)
+                                & (FileOwner.filename < c_name)))
+        q = q.order_by(FileOwner.created_at.desc(), FileOwner.filename.desc())
+
+    rows = q.limit(limit + 1).all()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    nxt = ""
+    if more and rows:
+        last = rows[-1]
+        nxt = (f"{int(last.size_bytes or 0)}|{last.filename}" if sort == "size"
+               else f"{(_as_utc(last.created_at) or now()).isoformat()}|{last.filename}")
+    projects = [{"id": p.id, "name": p.name, "kind": p.kind}
+                for p in db.query(Project).filter(Project.owner_id == owner_id)
+                .order_by(Project.id.desc()).limit(100).all()]
+    return {
+        "items": [_file_dict(f) for f in rows],
+        "next_cursor": nxt,
+        "totals": {"count": sum(r["count"] for r in by_kind),
+                   "bytes": sum(r["bytes"] for r in by_kind),
+                   "by_kind": sorted(by_kind, key=lambda r: -r["bytes"])},
+        "projects": projects,
+        "kinds": list(FILE_KINDS),
+    }
+
+
+@app.get("/api/files/link/{filename}")
+def file_link(filename: str, user: User = Depends(current_user),
+              db: Session = Depends(db_session)):
+    """Подписанная ссылка на скачивание.
+
+    Не /api/media: там нужна кука, и «скачать по ссылке с телефона» ломается.
+    Токен живёт PUBFILE_TTL_S и подделке не поддаётся."""
+    fname = os.path.basename(filename)
+    if not os.path.exists(os.path.join(UPLOAD_DIR, fname)):
+        raise HTTPException(404, "файл не найден")
+    _check_file_owner(db, user, fname)
+    return {"url": f"/pub/{pub_file_token(fname)}", "ttl_s": PUBFILE_TTL_S}
+
+
+@app.delete("/api/files/{filename}")
+def delete_file(filename: str, user: User = Depends(current_user),
+                db: Session = Depends(db_session)):
+    """Мягкое удаление: файл уходит из архива сразу, с диска — отложенным
+    проходом. Занятый живой сценой файл не удаляем и честно говорим, где он."""
+    fname = os.path.basename(filename)
+    _check_file_owner(db, user, fname)
+    row = db.get(FileOwner, fname)
+    if not row:
+        raise HTTPException(404, "файл не найден")
+    used = _file_in_use(db, fname)
+    if used:
+        raise ApiError(409, "file_in_use",
+                       "файл используется — сначала отвяжи его", used=used)
+    row.deleted_at = now()
+    db.commit()
+    return {"ok": True, "filename": fname}
+
+
+def _parse_iso(value: str):
+    """Разбор ISO-строки из курсора. Кривой курсор — не ошибка 500,
+    а просто первая страница."""
+    try:
+        from datetime import datetime as _dt  # noqa: PLC0415
+        return _dt.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _files_sweep() -> None:
+    """Достроить индекс архива: вид, проект, объект, кадр, размер и дата.
+
+    Работает как _backfill_point_events — по тому, что осталось в базе. Файл
+    регистрировался в file_owners с самого начала, но только именем и
+    владельцем, поэтому «разложить по датам, видам и проектам» было нечем.
+
+    Проход самоисчерпывающийся: трогает только строки без вида."""
+    from sqlalchemy import text as _sqltext
+    from db import engine as _engine
+    # (SQL, вид) — одним UPDATE на связь, а не построчным обходом: строк
+    # десятки тысяч, и ORM-цикл занял бы старт сервиса.
+    plan = [
+        ("""UPDATE file_owners SET kind='frame', scene_id=(
+                SELECT s.id FROM scenes s WHERE s.image_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT image_filename FROM scenes WHERE image_filename != '')"""),
+        ("""UPDATE file_owners SET kind='frame_last', scene_id=(
+                SELECT s.id FROM scenes s WHERE s.image_last_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT image_last_filename FROM scenes WHERE image_last_filename != '')"""),
+        ("""UPDATE file_owners SET kind='video', scene_id=(
+                SELECT s.id FROM scenes s WHERE s.video_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT video_filename FROM scenes WHERE video_filename != '')"""),
+        ("""UPDATE file_owners SET kind='audio', scene_id=(
+                SELECT s.id FROM scenes s WHERE s.audio_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT audio_filename FROM scenes WHERE audio_filename != '')"""),
+        ("""UPDATE file_owners SET kind='ref', scene_id=(
+                SELECT r.scene_id FROM scene_refs r WHERE r.filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT filename FROM scene_refs)"""),
+        ("""UPDATE file_owners SET kind='clip', track_id=(
+                SELECT t.id FROM tracks t WHERE t.clip_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT clip_filename FROM tracks WHERE clip_filename != '')"""),
+        ("""UPDATE file_owners SET kind='storyboard', track_id=(
+                SELECT t.id FROM tracks t WHERE t.storyboard_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT storyboard_filename FROM tracks WHERE storyboard_filename != '')"""),
+        ("""UPDATE file_owners SET kind='audio', track_id=(
+                SELECT t.id FROM tracks t WHERE t.audio_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT audio_filename FROM tracks WHERE audio_filename != '')"""),
+        ("""UPDATE file_owners SET kind='cover', track_id=(
+                SELECT t.id FROM tracks t WHERE t.cover_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT cover_filename FROM tracks WHERE cover_filename != '')"""),
+        ("""UPDATE file_owners SET kind='cover', project_id=(
+                SELECT p.id FROM projects p WHERE p.cover_filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT cover_filename FROM projects WHERE cover_filename != '')"""),
+        ("""UPDATE file_owners SET kind=(
+                SELECT CASE WHEN cp.kind='model' THEN 'model' ELSE 'photo' END
+                FROM character_photos cp WHERE cp.filename = file_owners.filename)
+            WHERE kind='' AND filename IN (SELECT filename FROM character_photos)"""),
+        ("""UPDATE file_owners SET kind='attr'
+            WHERE kind='' AND filename IN (SELECT filename FROM attribute_photos)"""),
+        ("""UPDATE file_owners SET kind='chat'
+            WHERE kind='' AND filename IN (SELECT media_filename FROM chat_messages WHERE media_filename != '')"""),
+        ("""UPDATE file_owners SET kind='chat'
+            WHERE kind='' AND filename IN (SELECT filename FROM chat_files)"""),
+        # Проект и объект по сцене — вторым проходом, когда scene_id уже стоит.
+        ("""UPDATE file_owners SET track_id = (
+                SELECT s.track_id FROM scenes s WHERE s.id = file_owners.scene_id)
+            WHERE scene_id != 0 AND track_id = 0"""),
+        ("""UPDATE file_owners SET project_id = (
+                SELECT t.project_id FROM tracks t WHERE t.id = file_owners.track_id)
+            WHERE track_id != 0 AND project_id = 0"""),
+    ]
+    try:
+        with _engine.begin() as conn:
+            todo = conn.execute(_sqltext(
+                "SELECT COUNT(*) FROM file_owners WHERE kind = ''")).scalar() or 0
+            if not todo:
+                return
+            for sql in plan:
+                conn.execute(_sqltext(sql))
+            # Всё, что не нашлось ни в одной связи, — по имени файла.
+            rest = conn.execute(_sqltext(
+                "SELECT filename FROM file_owners WHERE kind = ''")).fetchall()
+            for (fname,) in rest:
+                conn.execute(_sqltext(
+                    "UPDATE file_owners SET kind=:k WHERE filename=:f"),
+                    {"k": _kind_by_name(fname), "f": fname})
+        # Размер и дата — с диска: в базе их взять неоткуда, а без них архив
+        # не умеет ни «по дате», ни «сколько занято». Лимит большой намеренно:
+        # это ОДИН стартовый проход, и оставить половину файлов без даты
+        # значит уронить курсорную пагинацию на них (сравнение с NULL всегда
+        # ложно, и такие строки просто выпали бы из ленты).
+        _files_stat_pass(limit=200000)
+        log.info("архив файлов: разложено %s записей по видам", todo)
+    except Exception as e:  # noqa: BLE001
+        log.warning("архив файлов: разбор не прошёл: %s", str(e)[:200])
+
+
+def _files_stat_pass(limit: int = 20000) -> int:
+    """Проставить размер и дату файлам, у которых их нет (легаси-строки).
+    Дата берётся из mtime — другой у нас про эти файлы просто нет."""
+    from sqlalchemy import text as _sqltext
+    from db import engine as _engine
+    done = 0
+    try:
+        with _engine.begin() as conn:
+            rows = conn.execute(_sqltext(
+                "SELECT filename FROM file_owners "
+                "WHERE size_bytes = 0 OR created_at IS NULL LIMIT :n"),
+                {"n": limit}).fetchall()
+            for (fname,) in rows:
+                path = os.path.join(UPLOAD_DIR, fname)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    # Файла нет на диске — строка мусорная, помечаем удалённой,
+                    # чтобы архив не показывал битые плитки.
+                    conn.execute(_sqltext(
+                        "UPDATE file_owners SET deleted_at = :t WHERE filename = :f"),
+                        {"t": now(), "f": fname})
+                    continue
+                conn.execute(_sqltext(
+                    "UPDATE file_owners SET size_bytes = :s, "
+                    "created_at = COALESCE(created_at, :t) WHERE filename = :f"),
+                    {"s": int(st.st_size), "t": datetime.fromtimestamp(
+                        st.st_mtime, tz=timezone.utc), "f": fname})
+                done += 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("архив файлов: не собрал размеры: %s", str(e)[:200])
+    return done
+
+
+def _files_purge_pass() -> int:
+    """Физически стереть то, что помечено удалённым больше суток назад.
+    Сутки — окно на «ой, не то нажал»."""
+    db = SessionLocal()
+    gone = 0
+    try:
+        rows = (db.query(FileOwner)
+                .filter(FileOwner.deleted_at.isnot(None),
+                        FileOwner.deleted_at <= now() - timedelta(days=1))
+                .limit(500).all())
+        for row in rows:
+            _remove_media(row.filename)
+            thumb = os.path.join(THUMB_DIR, row.filename + ".jpg")
+            if os.path.exists(thumb):
+                try:
+                    os.remove(thumb)
+                except OSError:
+                    pass
+            db.delete(row)
+            gone += 1
+        if gone:
+            db.commit()
+            log.info("архив файлов: стёрто с диска %s удалённых файлов", gone)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("архив файлов: уборка не прошла: %s", str(e)[:200])
+    finally:
+        db.close()
+    return gone
 
 
 def _backfill_point_events() -> None:
@@ -6446,6 +7245,21 @@ def _backfill_point_events() -> None:
 
 
 _backfill_point_events()
+# Индекс архива: вид/проект/объект/размер для всего, что уже лежит на диске.
+_files_sweep()
+
+
+def _files_worker() -> None:
+    """Суточный проход архива: дочитать размеры новых файлов и физически
+    стереть то, что удалено больше суток назад. Тот же паттерн демон-треда,
+    что у подписок и ретенции чата — своего планировщика в проекте нет."""
+    while True:
+        try:
+            time.sleep(6 * 3600)
+            _files_stat_pass(limit=5000)
+            _files_purge_pass()
+        except Exception as e:  # noqa: BLE001
+            log.warning("архив файлов: суточный проход упал: %s", str(e)[:200])
 
 
 @app.get("/api/health")
@@ -6500,6 +7314,8 @@ chat_module.configure(
     gateway_points=GATEWAY_POINTS,
     charge=_charge,
     refund=_refund,
+    cost_cents=_cost_cents,
+    guard=_guard_user,
     reg_file=_reg_file,
     save_image=_save_image,
     remove_media=_remove_media,
@@ -6515,6 +7331,8 @@ app.include_router(chat_module.router)
 # Фоновая проверка подписок: раз в час смотрим, кому пора продлить.
 from threading import Thread as _Thread  # noqa: E402
 _Thread(target=_subscription_worker, daemon=True).start()
+# Архив файлов: размеры новых файлов и уборка удалённых.
+_Thread(target=_files_worker, daemon=True).start()
 # Ретенция медиа чатов: суточный проход, тот же паттерн демон-треда.
 chat_module.start_worker()
 
@@ -6528,10 +7346,13 @@ chat_module.start_worker()
 # всё, что зарегистрировано после неё, и POST /internal/… начинает отвечать
 # 405 Method Not Allowed, молча и совершенно непонятно.
 import bot_api  # noqa: E402
+import crm  # noqa: E402
 import stars  # noqa: E402
 import tg_app  # noqa: E402
 
 bot_api.mount(app)
+# CRM и рассылки: клиенты, админские действия, сегменты, кампании, отписка.
+crm.mount(app)
 stars.mount(app)
 tg_app.mount(app)
 

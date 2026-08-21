@@ -40,7 +40,13 @@ class User(Base):
     # Очки генераций: защита кошелька владельца — генерации идут через его
     # подписки. Гость стартует с месячной нормы плана free (держи это число
     # равным PLANS["free"]["points"] в main.py), админ — с бесконечностью.
-    gen_points = Column(Integer, nullable=False, default=120)
+    #
+    # 150, а не 120: норму FREE подняли до 150 в main.py, а СТАРТОВОЕ значение
+    # осталось прежним — и каждый новый гость получал 120 очков вместо
+    # обещанных 150. Ровно те 30 очков, которых не хватало на последнюю сцену
+    # трёхминутного клипа, то есть обещание «первый клип за наш счёт»
+    # не выполнялось. Теперь оба числа в одном месте правды.
+    gen_points = Column(Integer, nullable=False, default=150)
     # Тариф: free — видео только через Grok (наша подписка, бесплатно),
     # pro — открывается Seedance (платные кредиты владельца сервиса).
     plan = Column(String, nullable=False, default="free")
@@ -106,6 +112,22 @@ class User(Base):
     ref_paid_kopeks = Column(Integer, nullable=False, default=0)
     payout_details = Column(Text, nullable=False, default="")
 
+    # ─── CRM: активность, блокировка, согласия на рассылку ───
+    # last_seen_at пишется НЕ на каждый запрос: фронт поллит /api/me раз в
+    # три секунды, а база — SQLite, и UPDATE на каждый опрос означал бы
+    # блокировки на ровном месте. Обновляем не чаще раза в LAST_SEEN_EVERY_S
+    # (см. main.py), поэтому колонка отвечает на «когда был», а не «сейчас».
+    last_seen_at = Column(DateTime, nullable=True, index=True)
+    # Блокировка проверяется в current_user, а не только в интерфейсе: иначе
+    # заблокированный продолжал бы жечь наши деньги через generate-video.
+    is_blocked = Column(Boolean, nullable=False, default=False)
+    blocked_reason = Column(String, nullable=False, default="")
+    # Отписки от рассылок по каналам. Транзакционные сообщения (оплата
+    # прошла, подписка истекает) ими НЕ глушатся — только маркетинговые.
+    unsub_email = Column(Boolean, nullable=False, default=False)
+    unsub_tg = Column(Boolean, nullable=False, default=False)
+    unsub_all = Column(Boolean, nullable=False, default=False)
+
 
 class RefEvent(Base):
     """Событие партнёрки: приход реферала и каждый его платёж.
@@ -170,10 +192,32 @@ class ProcessedPayment(Base):
 
 class FileOwner(Base):
     """Владелец каждого файла в UPLOAD_DIR: /api/media отдаёт чужие файлы
-    только админу, чтобы приватные кадры/треки никуда не утекали."""
+    только админу, чтобы приватные кадры/треки никуда не утекали.
+
+    Это же — ИНДЕКС АРХИВА. Раньше в таблице было две колонки (имя и
+    владелец), и «папка со всеми файлами, разложенная по датам, видам и
+    проектам» строиться из неё не могла в принципе: ни даты, ни вида, ни
+    связи с проектом здесь не лежало. Собирать архив обходом
+    scenes/tracks/characters/chat_messages значило бы шесть запросов на
+    страницу и полное отсутствие сортировки по дате.
+
+    Метаданные проставляет _reg_file в момент создания файла, пробелы
+    (легаси и то, что регистрируется без контекста) добирает _files_sweep."""
     __tablename__ = "file_owners"
     filename = Column(String, primary_key=True)
     user_id = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=now, index=True)
+    # frame | frame_last | midframe | ref | video | clip | storyboard |
+    # cover | model | photo | attr | audio | chat | other
+    kind = Column(String, nullable=False, default="", index=True)
+    project_id = Column(Integer, nullable=False, default=0, index=True)
+    track_id = Column(Integer, nullable=False, default=0)
+    scene_id = Column(Integer, nullable=False, default=0)
+    size_bytes = Column(Integer, nullable=False, default=0)
+    # Мягкое удаление: файл исчезает из архива сразу, с диска — отложенным
+    # проходом. Живой файл, на который ссылается сцена, удалить нельзя —
+    # сцена без image_filename ломает половину кнопок карточки.
+    deleted_at = Column(DateTime, nullable=True)
 
 
 class Project(Base):
@@ -546,6 +590,81 @@ class PointEvent(Base):
     ref_id = Column(Integer, nullable=False, default=0)
     engine = Column(String, nullable=False, default="")
     balance_after = Column(Integer, nullable=False, default=0)
+    # СЕБЕСТОИМОСТЬ вызова в центах. Без неё маржа сервиса неизвестна в
+    # принципе: выручка лежит в processed_payments, а расход — нигде.
+    # Считается в момент списания из mediagen.*_engine_usd, то есть из того
+    # же прайса, из которого выведена цена в очках. НАРУЖУ НЕ ОТДАЁТСЯ:
+    # из неё восстанавливается наша наценка (см. /api/account/usage).
+    cost_cents = Column(Integer, nullable=False, default=0)
+    # id внешней задачи (kie/seevio/kling). Списание происходит ДО постановки
+    # задачи, поэтому пишется вторым шагом — UPDATE по id строки. Это то,
+    # чем разбирается спор: «списали 154 → задача abc123 → упала → возврат».
+    task_id = Column(String, nullable=False, default="")
+    # Денормализация ради отчёта «сколько ушло на этот проект»: иначе на
+    # каждой строке нужен join scenes→tracks→projects.
+    project_id = Column(Integer, nullable=False, default=0, index=True)
+    track_id = Column(Integer, nullable=False, default=0)
+
+
+class AdminAction(Base):
+    """Что админ сделал руками. Журнал очков покрывает ТОЛЬКО очки: смена
+    тарифа, блокировка и продление в него не ложатся, а знать, кто и когда
+    включил человеку ULTRA руками, нужно ровно так же."""
+    __tablename__ = "admin_actions"
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, nullable=False, default=0, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    action = Column(String, nullable=False, default="")   # points | plan | block | campaign
+    payload_json = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=now, index=True)
+
+
+class Campaign(Base):
+    """Рассылка: кому (сегмент), чем (канал), что (текст) и что из этого вышло.
+
+    segment_json — ИМЯ сегмента и его параметры, а не готовый список id:
+    список считается в момент отправки. Сохранённый список за неделю
+    протухает, и рассылка «новичкам без генераций» уходила бы тем, кто уже
+    сделал первый клип."""
+    __tablename__ = "campaigns"
+    id = Column(Integer, primary_key=True)
+    title = Column(String, nullable=False, default="")
+    channel = Column(String, nullable=False, default="inapp")  # inapp | tg | email
+    segment = Column(String, nullable=False, default="all")
+    segment_json = Column(Text, nullable=False, default="")
+    subject = Column(String, nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    # transactional=1 — сообщение по делу (оплата, конец подписки): отписки
+    # его не глушат. Маркетинговые рассылки по умолчанию 0.
+    transactional = Column(Boolean, nullable=False, default=False)
+    status = Column(String, nullable=False, default="draft")  # draft | sending | done | error
+    error = Column(Text, nullable=False, default="")
+    total = Column(Integer, nullable=False, default=0)
+    sent = Column(Integer, nullable=False, default=0)
+    failed = Column(Integer, nullable=False, default=0)
+    read = Column(Integer, nullable=False, default=0)
+    created_by = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=now, index=True)
+    finished_at = Column(DateTime, nullable=True)
+
+
+class CampaignRecipient(Base):
+    """Одна строка на человека в рассылке. Она же — ВХОДЯЩЕЕ сообщение для
+    канала inapp: отдельного ящика заводить не надо, статус и read_at и есть
+    «доставлено / прочитано».
+
+    UNIQUE(campaign_id, user_id) — не украшение: воркер перезапустится, и без
+    него половина базы получит письмо дважды."""
+    __tablename__ = "campaign_recipients"
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    address = Column(String, nullable=False, default="")   # email / tg_id / ''
+    status = Column(String, nullable=False, default="queued")  # queued|sent|failed|skipped
+    error = Column(String, nullable=False, default="")
+    sent_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=now)
 
 
 # ─────────────────────────── чат с переключением моделей ───────────────────────────
@@ -645,3 +764,26 @@ def init_db() -> None:
                 conn.execute(sqltext(
                     f'ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype}{default}'
                 ))
+        # СОСТАВНЫЕ индексы. Одиночные index=True на user_id и created_at
+        # SQLite не складывает: он возьмёт ОДИН из них, и лента кабинета за
+        # 30 дней у активного человека пойдёт частичным сканом. Индекс на
+        # engine сознательно НЕ заводим: кардинальность 13, фильтровать после
+        # выборки по времени дешевле, чем держать ещё одно дерево.
+        for name, ddl in (
+            ("ix_pe_user_time", "point_events(user_id, created_at DESC)"),
+            ("ix_pe_proj_time", "point_events(project_id, created_at)"),
+            ("ix_pe_kind_time", "point_events(kind, created_at)"),
+            ("ix_pe_task", "point_events(task_id)"),
+            ("ix_fo_user_time", "file_owners(user_id, created_at DESC)"),
+            ("ix_fo_user_kind", "file_owners(user_id, kind)"),
+            ("ix_cr_camp_user", "campaign_recipients(campaign_id, user_id)"),
+        ):
+            try:
+                uniq = "UNIQUE " if name == "ix_cr_camp_user" else ""
+                conn.execute(sqltext(
+                    f"CREATE {uniq}INDEX IF NOT EXISTS {name} ON {ddl}"))
+            except Exception:  # noqa: BLE001, PERF203
+                # Уникальный индекс не встанет, если в старой таблице уже
+                # лежат дубли. Это не повод не стартовать: рассылка сама
+                # проверяет дубль перед вставкой.
+                pass

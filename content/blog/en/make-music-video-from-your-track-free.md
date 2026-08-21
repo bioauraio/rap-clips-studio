@@ -18,7 +18,7 @@ It is doable. It has limits, and they are specific rather than vague. Both are b
 
 ## What "free" covers, exactly
 
-The free plan on lolq.ai is 120 credits and no signup for the first clip — you land in the studio as a guest and your project follows you if you decide to make an account later.
+The free plan on lolq.ai is 150 credits and no signup for the first clip — you land in the studio as a guest and your project follows you if you decide to make an account later.
 
 Credits are pinned to what generation actually costs, so the arithmetic is short:
 
@@ -32,7 +32,7 @@ Credits are pinned to what generation actually costs, so the arithmetic is short
 | Animating one scene (Grok) | 2 |
 | Assembling the clip | **0** |
 
-A scene therefore costs **4 credits**, and a three-minute song is about **30 scenes** — 120 credits, one complete clip. Text steps are free because they run on a subscription we already pay for, so the entire creative half of the process costs nothing.
+A scene therefore costs **4 credits**, and a three-minute song is about **30 scenes** — 120 credits, one complete clip, with 30 credits still in hand for the sheets and a couple of redos. Text steps are free because they run on a subscription we already pay for, so the entire creative half of the process costs nothing.
 
 Two things to know before you start: the optional sketch sheet and the optional character model sheet are 2 credits each, and the balance in the header updates before every action, so nothing gets spent without you seeing the number first.
 
@@ -82,7 +82,7 @@ Approved scenes are glued to **your own audio** — the file you uploaded, untou
 
 Everything is 9:16 from step one, so the clip goes into Reels, Shorts or TikTok without reframing and without bars.
 
-## Getting the most out of 120 credits
+## Getting the most out of 150 credits
 
 Five things that consistently pay for themselves:
 

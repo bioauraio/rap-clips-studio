@@ -114,9 +114,9 @@ wide shots, texture — and put the interpolated scenes on faces and on movement
 
 A three-minute clip is about 30 scenes.
 
-**FREE · 120 credits.** Grok only, gateway frames. One three-minute clip, exactly,
-with nothing left over. See [Your first clip](00-first-clip.md) for how to spend
-it without hitting the wall.
+**FREE · 150 credits.** Grok only, gateway frames. One three-minute clip is 120
+of that, so you have a small margin for sheets and redos. See
+[Your first clip](00-first-clip.md) for how to spend it without hitting the wall.
 
 **PRO · 660 credits.** Adds Seedance 2 Mini. One full clip on Seedance, or two to
 three if you mix in Grok.

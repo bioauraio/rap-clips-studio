@@ -462,7 +462,9 @@ def _build_preview(track_id: int, clip: str, duration: int) -> None:
         try:
             track = db.get(core.Track, track_id)
             owner = track.project.owner_id if track and track.project else None
-            core._reg_file(db, dst_name, owner)
+            core._reg_file(db, dst_name, owner, kind="clip",
+                           project_id=track.project_id if track else 0,
+                           track_id=track_id)
             db.commit()
         finally:
             db.close()

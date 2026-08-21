@@ -1,6 +1,6 @@
 ---
 title: "Your first clip, start to finish"
-description: "The free plan gives you 120 credits — exactly one three-minute clip. Here is the route that gets you there, and the three ways people lose the credits on the way."
+description: "The free plan gives you 150 credits — a three-minute clip costs 120, so you start with a margin. Here is the route, and the three ways people lose the credits on the way."
 slug: first-clip
 translationKey: first-clip
 lang: en
@@ -23,9 +23,9 @@ One note before we start: the left navigation rail is still in Russian while the
 rest of the interface is translated. The step names are, in order: story,
 characters, tracks, storyboard, animation, final cut.
 
-## The 120 credits, honestly
+## The 150 credits, honestly
 
-The free plan gives you **120 credits**. Credits are the unit of work — the
+The free plan gives you **150 credits**. Credits are the unit of work — the
 counter sits in the top bar and says *credits left*.
 
 On the free plan a scene costs **4 credits**: 2 for the pair of frames and 2 for
@@ -33,17 +33,19 @@ the Grok animation. A three-minute track is cut into roughly **30 scenes**.
 
 > 30 scenes × 4 credits = **120 credits.**
 
-That is the whole balance, to the credit. The free plan does deliver one full
-three-minute clip, but there is no slack in it. Everything below is written
-around that fact.
+The clip itself is 120 of your 150. The remaining **30 credits** are the margin,
+and it is a deliberate one: a storyboard sheet (2), a character model sheet (2)
+and five or six redone scenes fit inside it. The plan used to be 120 exactly,
+which meant a single sheet left you a scene short of the end — that is fixed, but
+the margin is still small enough to plan around. Everything below assumes it.
 
 Two things cost nothing and are worth knowing early:
 
 - **Text steps are free.** The story and the cutting of the track into scenes
   cost 0 credits. Regenerate them as often as you like.
 - **Redrawing a frame is free.** Once a scene has been paid for, redrawing its
-  first or last frame costs nothing at all. This is the lever that makes 120
-  credits workable: get all the frames, fix them until they are right, and only
+  first or last frame costs nothing at all. This is the lever that makes the
+  free plan workable: get all the frames, fix them until they are right, and only
   then spend on animation.
 
 What does cost extra: the storyboard sheet (2), a generated character model sheet
