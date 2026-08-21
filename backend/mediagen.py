@@ -50,8 +50,26 @@ import threading
 _task_local = threading.local()
 
 
+# Хук «задача заведена». main.py вешает сюда запись в журнал, чтобы id внешней
+# задачи попадал в базу СРАЗУ, а не после возврата результата: перезапуск
+# сервиса во время генерации терял id, и забрать уже оплаченный ролик было
+# нечем — движок его дорисовал, а мы не знали, где он лежит.
+_on_task = None
+
+
+def set_task_hook(fn) -> None:
+    global _on_task
+    _on_task = fn
+
+
 def note_task(task_id) -> None:
-    _task_local.task_id = str(task_id or "")[:80]
+    tid = str(task_id or "")[:80]
+    _task_local.task_id = tid
+    if tid and _on_task:
+        try:
+            _on_task(tid)
+        except Exception:  # noqa: BLE001 — журнал не должен ронять генерацию
+            pass
 
 
 def last_task_id() -> str:

@@ -12,6 +12,7 @@ import math
 import os
 import re
 import secrets
+import threading
 import shutil
 import subprocess
 import time
@@ -276,6 +277,9 @@ def _reset_orphan_jobs() -> None:
 
 
 _reset_orphan_jobs()
+
+# С этого момента id внешней задачи попадает в журнал сразу.
+mediagen.set_task_hook(_task_hook)
 
 
 def _phys_key(path: str) -> str:
@@ -1186,6 +1190,32 @@ def _move_points(db: Session, user: User, delta: int, what: str, *,
             fresh.gen_points = int(fresh.gen_points or 0) + delta  # ledger-ok
             db.commit()
         return 0
+
+
+# Регистрация задачи В МОМЕНТ ЗАВЕДЕНИЯ, а не по возврату результата.
+# Тред генерации кладёт сюда id, как только внешний движок его выдал; если
+# сервис в этот момент перезапустится, id останется в базе и ролик можно будет
+# забрать. Контекст (какая сцена) держим в том же threading.local, что и
+# mediagen: у каждой генерации свой тред.
+_task_ctx = threading.local()
+
+
+def _set_task_ctx(ref_type: str, ref_id: int, kind: str) -> None:
+    _task_ctx.ref = (ref_type, int(ref_id or 0), kind)
+
+
+def _task_hook(task_id: str) -> None:
+    ref = getattr(_task_ctx, "ref", None)
+    if not ref or not task_id:
+        return
+    ref_type, ref_id, kind = ref
+    db = SessionLocal()
+    try:
+        _attach_task(db, ref_type, ref_id, task_id, kind)
+    except Exception as e:  # noqa: BLE001 — журнал не роняет генерацию
+        log.warning("не смог записать задачу %s: %s", task_id, e)
+    finally:
+        db.close()
 
 
 def _attach_task(db: Session, ref_type: str, ref_id: int, task_id: str,
@@ -5172,6 +5202,7 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
         track = scene.track
         import asyncio
         mediagen.reset_task()
+        _set_task_ctx("scene", scene.id, "video")
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
         # Раньше здесь стояло `engine = _plan_image_engine(owner)` — переданный
         # параметр молча затирался дефолтом тарифа, и выбор движка в интерфейсе

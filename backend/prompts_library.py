@@ -2272,6 +2272,10 @@ def validate() -> list[str]:
     if len(SHOT_KEYS) != len(SHOTS):
         err.append("дублирующиеся ключи приёмов")
 
+    # Новые слои базы промтов проверяются своей функцией: она длинная и
+    # относится к другим данным, но ошибка должна приезжать одним списком.
+    err += _validate_v2()
+
     for p in PACKS:
         for ref in p["shots"]:
             if ref not in _BY_KEY:
@@ -2321,6 +2325,4442 @@ def validate() -> list[str]:
     return err
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#                    БАЗА ПРОМТОВ: ЧЕТЫРЕ НОВЫЕ СУЩНОСТИ
+#
+# Выше в этом файле лежат ПРИЁМЫ (SHOTS) — минимальная единица «как снята одна
+# сцена». Ниже — четыре слоя, которые владелец просил отдельно, и они не
+# заменяют приём, а стоят вокруг него:
+#
+#   SCRIPTS   сюжет ЦЕЛИКОМ: логлайн, акты, роль героя, сквозной мотив.
+#             Уезжает в Project.story и Track.director_note — то есть в тот же
+#             конвейер, что и закрытые каркасы prompts_catalog._SEEDS.
+#   BOARDS    ГОТОВАЯ СЦЕНА: заполняет shot_size, camera_move, image_prompt,
+#             image_prompt_last, motion_prompt и shot_note РАЗОМ.
+#   MOTIONS   только движение: камера, тело, физика, склейка. Подменяет
+#             motion_prompt на уже собранной сцене, не трогая кадры.
+#   LIGHTS    свет и цвет: дописка в конец обоих кадров. Стиль главнее — см.
+#             ниже про `level`.
+#
+# ЧЕМ BOARDS ОТЛИЧАЮТСЯ ОТ SHOTS, И ПОЧЕМУ ЭТО НЕ ДУБЛЬ.
+# Приём отвечает на вопрос «какой здесь операторский ход» — он назван по ходу
+# (наезд, контровой, склейка на движении) и разложен по оси «что настраивает».
+# Заготовка отвечает на вопрос «какая это сцена в клипе» — она названа по
+# драматургической функции (открывающая, проход, портрет, финал, переход между
+# локациями) и несёт три поля, которых у приёма нет и не должно быть:
+#   note     — shot_note, человеческая подпись сцены в раскадровке;
+#   solo     — вариант motion для Grok, который оживляет ТОЛЬКО первый кадр;
+#   bracket  — команда камеры в скобках для MiniMax, который читает только их.
+# Приём — это ремесло, заготовка — это готовая строка раскадровки. Слить их в
+# один список значило бы либо потерять ось «функция в клипе», либо навсегда
+# смешать «наезд» и «открывающий кадр» в одном фильтре.
+#
+# ЯЗЫК. Тексты промптов английские — они уезжают в модель. Подписи, описания и
+# режиссёрские заметки русские и английские. Единственное исключение — поле
+# `story` у сценария: claude.py требует сюжет ПО-РУССКИ (SCENES_SYSTEM), и
+# английский seed там просто не сработает. Тот же порядок, что у закрытых
+# _SEEDS в prompts_catalog.
+#
+# ПЛЕЙСХОЛДЕРЫ те же и словарь тот же — SLOTS выше. Витрина показывает русские
+# подписи ({персонаж}, {локация}, {предмет}, {время суток}), в тексте промпта
+# стоят английские ключи ({character}, {location}, {prop}, {time}). Второго
+# словаря подстановок в файле нет и быть не может.
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: Черты карточки — контролируемый словарь для МИКСОВАНИЯ. Свободные строки
+#: здесь запрещены по той же причине, что свободные слоты: через полгода
+#: «night», «nighttime» и «dark» стали бы тремя несовместимыми осями.
+TRAITS = {
+    "locked":       {"en": "locked-off camera",  "ru": "камера неподвижна"},
+    "moving_camera":{"en": "camera moves",       "ru": "камера едет"},
+    "handheld":     {"en": "handheld",           "ru": "с рук"},
+    "close":        {"en": "tight framing",      "ru": "тесная крупность"},
+    "wide_frame":   {"en": "wide framing",       "ru": "общий план"},
+    "fast":         {"en": "fast",               "ru": "быстро"},
+    "slow":         {"en": "slow",               "ru": "медленно"},
+    "night":        {"en": "night",              "ru": "ночь"},
+    "daylight":     {"en": "daylight",           "ru": "день"},
+    "interior":     {"en": "interior",           "ru": "интерьер"},
+    "exterior":     {"en": "exterior",           "ru": "натура"},
+    "crowd":        {"en": "crowd in frame",     "ru": "толпа в кадре"},
+    "solo":         {"en": "one person",         "ru": "герой один"},
+    "hard_light":   {"en": "hard light",         "ru": "жёсткий свет"},
+    "soft_light":   {"en": "soft light",         "ru": "мягкий свет"},
+    "low_key":      {"en": "low key",            "ru": "низкий ключ"},
+    "high_key":     {"en": "high key",           "ru": "высокий ключ"},
+    "hero_face":    {"en": "face carries it",    "ru": "держит лицо"},
+    "object":       {"en": "object carries it",  "ru": "держит предмет"},
+    "weather":      {"en": "weather in frame",   "ru": "погода в кадре"},
+}
+
+#: Пары черт, которые нельзя ставить в одну сцену. Это и есть машинная часть
+#: правил миксования: check_mix() не спрашивает автора карточки, конфликтует ли
+#: его комбинация, — он считает по этим парам.
+#: Почему именно они: каждая пара — взаимоисключающее физическое условие.
+#: «Камера стоит» и «камера едет» не бывают одновременно; «полдень» и «ночь»
+#: тоже. Модель на противоречии не выбирает одно — она портит кадр целиком.
+CONFLICT_PAIRS = (
+    ("locked", "moving_camera"),
+    ("locked", "handheld"),
+    ("fast", "slow"),
+    ("night", "daylight"),
+    ("interior", "exterior"),
+    ("close", "wide_frame"),
+    ("hard_light", "soft_light"),
+    ("low_key", "high_key"),
+    ("crowd", "solo"),
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. СЦЕНАРНЫЕ ПРОМТЫ — 17 штук.
+#
+# Единица: ВЕСЬ КЛИП. Карточка отвечает на пять вопросов, на которые стиль и
+# приём не отвечают никогда: про что это, кто герой, что повторяется, чем
+# открывается и чем заканчивается.
+#
+# Поля:
+#   key           — адрес /prompts/scripts/<key>
+#   tier          — free | pro, как у приёмов: закрыт ровно `story`
+#   label         — подпись, два языка
+#   music         — ДЛЯ КАКОЙ МУЗЫКИ. Не «для рэпа», а темп, плотность, подача
+#   bpm / cut     — рабочий диапазон и средняя длина плана (slow|mid|fast)
+#   logline       — одна фраза, по которой человек выбирает
+#   hero          — РОЛЬ героя: что он делает в этой истории, а не кто он
+#   motif         — сквозной мотив: предмет, композиция или жест, который
+#                   возвращается. Без него клип рассыпается на красивые кадры
+#   opens/closes  — чем открывается и чем заканчивается, словами
+#   acts          — структура по актам: доля хронометража, крупность, что
+#                   происходит, и КАКИЕ ЗАГОТОВКИ сюда ложатся (ключи BOARDS)
+#   scenes        — сколько сцен типично (мин/типовое/макс)
+#   open_board /
+#   close_board   — конкретная заготовка на первую и последнюю сцену
+#   styles_fit    — стили prompts_catalog, с которыми это дружит
+#   preset        — родственный каркас prompts_catalog, если есть
+#   story         — СЕЙД СЮЖЕТА, по-русски, уезжает в Project.story
+#   dnote         — режиссёрская заметка, уезжает в Track.director_note
+#   slots_hint    — что человек заполняет один раз на весь клип
+#   tags          — из prompts_catalog.TAGS
+#
+# `share` актов в сумме равна 1.0 — проверяется машинно, как у каркасов.
+# ─────────────────────────────────────────────────────────────────────────────
+SCRIPTS: list[dict] = [
+    {
+        "key": "night_shift",
+        "tier": "free",
+        "label": {"en": "Night Shift", "ru": "Ночная смена"},
+        "music": {
+            "en": "Slow rap and cloud rap, 70-95 BPM, sparse beat, tired delivery.",
+            "ru": "Медленный рэп и клауд, 70–95 BPM, разреженный бит, усталая подача.",
+        },
+        "bpm": [70, 95], "cut": "slow",
+        "logline": {
+            "en": "He works while the city sleeps and goes home when it wakes. Nothing happens except the hours.",
+            "ru": "Он работает, пока город спит, и уходит домой, когда город просыпается. Не происходит ничего, кроме часов.",
+        },
+        "hero": {
+            "en": "A worker, not a star: he is the only moving thing in a place built for crowds.",
+            "ru": "Работник, а не звезда: единственное движущееся в месте, рассчитанном на толпу.",
+        },
+        "motif": {
+            "en": "The same clock or the same lamp comes back three times, later each time.",
+            "ru": "Одни и те же часы или один и тот же фонарь возвращаются трижды, каждый раз позже.",
+        },
+        "opens": {"en": "An empty lit space before anyone enters it.",
+                  "ru": "Пустое освещённое пространство до того, как в него кто-то вошёл."},
+        "closes": {"en": "First light on the same space, now switched off.",
+                   "ru": "Первый свет на том же пространстве, уже выключенном."},
+        "acts": [
+            {"key": "in", "share": 0.2, "shot": "establishing",
+             "label": {"en": "Coming on shift", "ru": "Заступает"},
+             "en": "The place is shown before the person: lights on, nobody there yet.",
+             "ru": "Место показано раньше человека: свет горит, людей ещё нет.",
+             "boards": ["open_empty_place", "interior_doorframe", "travel_corridor_push"]},
+            {"key": "work", "share": 0.35, "shot": "medium",
+             "label": {"en": "The hours", "ru": "Часы"},
+             "en": "The same action repeated at three different framings. Repetition is the content.",
+             "ru": "Одно и то же действие в трёх разных крупностях. Повтор и есть содержание.",
+             "boards": ["detail_hands_work", "portrait_hold_still", "interior_table_sit"]},
+            {"key": "crack", "share": 0.25, "shot": "close-up",
+             "label": {"en": "The one break", "ru": "Единственный сбой"},
+             "en": "One small thing goes wrong or one look lands. The only emotional peak.",
+             "ru": "Одна мелочь ломается или один взгляд попадает. Единственный эмоциональный пик.",
+             "boards": ["portrait_breath_break", "detail_object_pickup", "night_screen_face"]},
+            {"key": "out", "share": 0.2, "shot": "wide",
+             "label": {"en": "Going home", "ru": "Домой"},
+             "en": "Outside, first light, the shift is over and nothing was resolved.",
+             "ru": "Улица, первый свет, смена кончилась и ничего не решилось.",
+             "boards": ["travel_walk_away", "final_pull_to_wide"]},
+        ],
+        "scenes": {"min": 14, "typ": 28, "max": 40},
+        "open_board": "open_empty_place", "close_board": "final_pull_to_wide",
+        "styles_fit": ["cinema", "noir", "dreamclad", "longheads", "katsumi"],
+        "preset": "one_day",
+        "story": "Ночная смена героя от захода до рассвета. Драматургии в привычном смысле нет: конфликт заменён "
+                 "временем, и это осознанно. Первый акт показывает место без человека — освещённый цех, склад, кухня "
+                 "или зал, где ещё никого нет. Второй акт повторяет одно и то же рабочее действие минимум трижды, "
+                 "каждый раз другой крупностью: общий, средний, макро на руках. Третий акт — единственный сбой: "
+                 "разбитое, пролитое, чужой взгляд, звонок; ровно один пик и никакого объяснения. Четвёртый акт "
+                 "выводит героя наружу в первый свет, где город только начинает жить. Сквозной мотив — часы или "
+                 "лампа, попадающие в кадр трижды: в начале смены, на сбое и в финале. Финальный кадр повторяет "
+                 "композицию первого, но свет уже дневной и помещение выключено.",
+        "dnote": "Планы длинные, монтаж не гонится за битом. Камера почти неподвижна, движение только внутри кадра. "
+                 "Ни одной улыбки и ни одного кадра, объясняющего, кем герой работает.",
+        "slots_hint": ["character", "location", "prop", "time"],
+        "tags": ["melancholy", "muted", "night"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "two_rooms",
+        "tier": "free",
+        "label": {"en": "Two Rooms", "ru": "Две комнаты"},
+        "music": {
+            "en": "Duets, answer verses, sung hooks, 85-110 BPM. Any track with two voices or two moods.",
+            "ru": "Дуэты, ответные куплеты, спетые припевы, 85–110 BPM. Любой трек с двумя голосами или двумя настроениями.",
+        },
+        "bpm": [85, 110], "cut": "mid",
+        "logline": {
+            "en": "Two people, two rooms, one wall. They never meet and the whole clip is about the wall.",
+            "ru": "Двое, две комнаты, одна стена. Они не встречаются, и весь клип про стену.",
+        },
+        "hero": {
+            "en": "Two heroes with equal screen time. Neither is a guest in the other's story.",
+            "ru": "Два героя с равным экранным временем. Ни один не гость в истории другого.",
+        },
+        "motif": {
+            "en": "The same object exists in both rooms in a different state.",
+            "ru": "Один и тот же предмет есть в обеих комнатах, но в разном состоянии.",
+        },
+        "opens": {"en": "One room, empty, with the sound of the other implied by a shared wall.",
+                  "ru": "Одна комната, пустая, — вторая только подразумевается общей стеной."},
+        "closes": {"en": "Both rooms in one frame at last, still separated.",
+                   "ru": "Обе комнаты наконец в одном кадре и по-прежнему разделены."},
+        "acts": [
+            {"key": "left", "share": 0.3, "shot": "medium",
+             "label": {"en": "Room one", "ru": "Комната первая"},
+             "en": "Establish the first person entirely: their light, their objects, their rhythm.",
+             "ru": "Полностью заявляем первого: его свет, его предметы, его ритм.",
+             "boards": ["interior_window_light", "portrait_hold_still", "detail_object_pickup"]},
+            {"key": "right", "share": 0.3, "shot": "medium",
+             "label": {"en": "Room two", "ru": "Комната вторая"},
+             "en": "The mirrored version: same framings, opposite light, opposite tempo.",
+             "ru": "Зеркальная версия: те же крупности, противоположный свет, противоположный темп.",
+             "boards": ["interior_table_sit", "portrait_profile_to_front", "night_screen_face"]},
+            {"key": "wall", "share": 0.25, "shot": "close-up",
+             "label": {"en": "The wall", "ru": "Стена"},
+             "en": "Cut them together tighter and tighter until the pattern is unmistakable.",
+             "ru": "Сводим их всё теснее, пока рифма не станет очевидной.",
+             "boards": ["bridge_match_shape", "detail_texture_macro", "interior_mirror"]},
+            {"key": "one", "share": 0.15, "shot": "wide",
+             "label": {"en": "One frame", "ru": "Один кадр"},
+             "en": "A single wide holding both rooms — and the wall still between them.",
+             "ru": "Один общий, где помещаются обе комнаты, — и стена по-прежнему между ними.",
+             "boards": ["final_pull_to_wide"]},
+        ],
+        "scenes": {"min": 16, "typ": 30, "max": 42},
+        "open_board": "interior_window_light", "close_board": "final_pull_to_wide",
+        "styles_fit": ["cinema", "katsumi", "longheads", "flat2d", "clay"],
+        "preset": "two_worlds",
+        "story": "Две комнаты, разделённые одной стеной, и два героя, которые не встречаются ни в одном кадре. "
+                 "Первый акт целиком отдан первому герою: его свет, его предметы, его темп. Второй акт зеркалит "
+                 "первый — те же крупности и те же композиции, но противоположные по свету и ритму: если у первого "
+                 "мягкий боковой свет и медленные движения, у второго жёсткий верхний и рваные. Третий акт сводит их "
+                 "монтажом всё теснее, склейка за склейкой, пока рифма не станет очевидной зрителю. Финал — один общий "
+                 "план, в который помещаются обе комнаты сразу, и стена всё ещё между ними. Сквозной мотив — один и "
+                 "тот же предмет, существующий в обеих комнатах в разном состоянии: целый и разбитый, полный и пустой.",
+        "dnote": "Крупности во втором акте обязаны повторять первый акт кадр в кадр. Ни одного кадра, где герои "
+                 "видят друг друга. Стена должна попасть в кадр не меньше четырёх раз.",
+        "slots_hint": ["character", "location", "prop", "accent"],
+        "tags": ["melancholy", "cold", "deadpan"],
+        "needs_lyrics": True,
+    },
+    {
+        "key": "the_return",
+        "tier": "free",
+        "label": {"en": "The Return", "ru": "Возвращение"},
+        "music": {
+            "en": "Mid-tempo storytelling rap, 85-100 BPM, verse-heavy, small chorus.",
+            "ru": "Среднетемповый повествовательный рэп, 85–100 BPM, много куплета, маленький припев.",
+        },
+        "bpm": [85, 100], "cut": "mid",
+        "logline": {
+            "en": "He comes back to the block he left. Everything is in place; he is not.",
+            "ru": "Он возвращается в район, который покинул. Всё на месте — не на месте он.",
+        },
+        "hero": {
+            "en": "A visitor in his own history: he knows every corner and belongs to none of them.",
+            "ru": "Гость в собственной истории: он знает каждый угол и не принадлежит ни одному.",
+        },
+        "motif": {
+            "en": "One doorway shot three times: from far, from close, from inside.",
+            "ru": "Один дверной проём, снятый трижды: издалека, вплотную, изнутри.",
+        },
+        "opens": {"en": "Arrival shot from behind, face withheld.",
+                  "ru": "Приезд, снятый со спины: лицо не показываем."},
+        "closes": {"en": "Leaving by the same road, the light colder.",
+                   "ru": "Уезжает по той же дороге, свет холоднее."},
+        "acts": [
+            {"key": "arrive", "share": 0.2, "shot": "wide",
+             "label": {"en": "Arrival", "ru": "Приезд"},
+             "en": "The place first, the face later. Withhold the character for three scenes.",
+             "ru": "Сначала место, лицо позже. Держим героя закрытым три сцены.",
+             "boards": ["open_door_out", "travel_car_window", "open_detail_first"]},
+            {"key": "same", "share": 0.3, "shot": "medium",
+             "label": {"en": "Everything in place", "ru": "Всё на месте"},
+             "en": "Familiar geography filmed like a foreign country.",
+             "ru": "Знакомая география, снятая как чужая страна.",
+             "boards": ["travel_side_track", "interior_doorframe", "crowd_queue_line"]},
+            {"key": "mismatch", "share": 0.3, "shot": "close-up",
+             "label": {"en": "The mismatch", "ru": "Несовпадение"},
+             "en": "Old friends, old rooms, new distance. Nobody says it out loud.",
+             "ru": "Старые друзья, старые комнаты, новая дистанция. Вслух этого не говорят.",
+             "boards": ["portrait_two_shot", "interior_table_sit", "portrait_breath_break"]},
+            {"key": "leave", "share": 0.2, "shot": "establishing",
+             "label": {"en": "Leaving", "ru": "Отъезд"},
+             "en": "He goes back the way he came. The rhyme is the point.",
+             "ru": "Он уезжает тем же путём. Рифма и есть смысл.",
+             "boards": ["final_rhyme_open", "final_walk_out_frame"]},
+        ],
+        "scenes": {"min": 16, "typ": 30, "max": 44},
+        "open_board": "open_door_out", "close_board": "final_rhyme_open",
+        "styles_fit": ["cinema", "longheads", "punkrf", "noir", "dreamclad"],
+        "preset": "homecoming",
+        "story": "Герой возвращается в район, из которого уехал, проводит там один день и уезжает обратно. Первый акт "
+                 "снимает приезд со спины и не показывает лицо первые три сцены: сначала место, потом человек. Второй "
+                 "акт проходит по знакомой географии — двор, лестница, магазин, — но снимает её как чужую страну: "
+                 "широкие статичные планы, герой мелкий в кадре. Третий акт даёт встречи: старые друзья, старая "
+                 "кухня, новая дистанция, которую никто не называет словами; конфликт держится молчанием и "
+                 "крупностью, а не репликами. Финал — отъезд тем же путём, что и приезд, кадр в кадр с первым актом, "
+                 "но свет холоднее. Сквозной мотив — один дверной проём, показанный трижды: издалека, вплотную и "
+                 "изнутри.",
+        "dnote": "Никаких флешбэков и никаких надписей с датами. Разница времён показывается только светом и тем, "
+                 "насколько мелким герой выглядит в кадре.",
+        "slots_hint": ["character", "location", "outfit", "time"],
+        "tags": ["nostalgic", "muted", "street"],
+        "needs_lyrics": True,
+    },
+    {
+        "key": "run_the_block",
+        "tier": "free",
+        "label": {"en": "Run the Block", "ru": "Забег по кварталу"},
+        "music": {
+            "en": "Fast drill and hard trap, 130-160 BPM, dense hi-hats, aggressive delivery.",
+            "ru": "Быстрый дрилл и жёсткий трэп, 130–160 BPM, плотные хэты, агрессивная подача.",
+        },
+        "bpm": [130, 160], "cut": "fast",
+        "logline": {
+            "en": "One run through one neighbourhood, cut to the hats, and it never slows down.",
+            "ru": "Один забег по одному кварталу, нарезанный под хэты, и он не сбавляет.",
+        },
+        "hero": {
+            "en": "A body in motion. The face matters less than the momentum.",
+            "ru": "Тело в движении. Лицо здесь важно меньше, чем инерция.",
+        },
+        "motif": {
+            "en": "The same corner is passed three times, faster each time.",
+            "ru": "Один и тот же угол проходится трижды, каждый раз быстрее.",
+        },
+        "opens": {"en": "Already mid-run: no setup, no establishing.",
+                  "ru": "Уже на бегу: без завязки и без заявочного плана."},
+        "closes": {"en": "A dead stop, breathing, holding the frame.",
+                   "ru": "Резкая остановка, дыхание, кадр держится."},
+        "acts": [
+            {"key": "go", "share": 0.25, "shot": "medium",
+             "label": {"en": "Go", "ru": "Побежал"},
+             "en": "In medias res. Short locked frames with fast motion inside them.",
+             "ru": "С места в карьер. Короткие статичные кадры с быстрым движением внутри.",
+             "boards": ["open_mid_action", "action_run_toward", "travel_stairs_down"]},
+            {"key": "block", "share": 0.3, "shot": "wide",
+             "label": {"en": "The block", "ru": "Квартал"},
+             "en": "Geography at speed: fences, stairs, courtyards, one after another.",
+             "ru": "География на скорости: заборы, лестницы, дворы — одно за другим.",
+             "boards": ["travel_side_track", "bridge_body_wipe", "crowd_part_for_hero"]},
+            {"key": "peak", "share": 0.3, "shot": "close-up",
+             "label": {"en": "Peak", "ru": "Пик"},
+             "en": "Shortest scenes of the clip. Impact, jump, landing, faces.",
+             "ru": "Самые короткие сцены клипа. Удар, прыжок, приземление, лица.",
+             "boards": ["action_jump_land", "action_impact_stop", "crowd_hands_up"]},
+            {"key": "stop", "share": 0.15, "shot": "extreme close-up",
+             "label": {"en": "Dead stop", "ru": "Стоп"},
+             "en": "Everything stops at once. Let the last frame breathe.",
+             "ru": "Всё останавливается разом. Дать последнему кадру продышаться.",
+             "boards": ["final_last_look"]},
+        ],
+        "scenes": {"min": 24, "typ": 40, "max": 60},
+        "open_board": "open_mid_action", "close_board": "final_last_look",
+        "styles_fit": ["punkrf", "spike", "munir", "noir", "cinema"],
+        "preset": "",
+        "story": "Один непрерывный забег героя через один квартал, снятый как погоня без преследователя. Клип "
+                 "открывается уже на бегу: ни завязки, ни заявочного плана, первый кадр застаёт движение в середине. "
+                 "Второй акт проходит географию на скорости — лестницы, заборы, дворы, подворотни, — и каждая "
+                 "локация держится ровно столько, чтобы её успели прочитать. Третий акт даёт пик: прыжок, "
+                 "приземление, удар в стену, лица встречных, самые короткие сцены во всём клипе. Финал — резкая "
+                 "полная остановка и один длинный кадр дыхания после неё, вдвое длиннее всех остальных. Сквозной "
+                 "мотив — один и тот же угол или проём, который герой проходит трижды, каждый раз быстрее.",
+        "dnote": "Быстрый монтаж не терпит движущейся камеры: на пиковых сценах камера стоит, а бежит герой. Движение "
+                 "камеры оставь второму акту.",
+        "slots_hint": ["character", "location", "crowd", "time"],
+        "tags": ["menacing", "saturated", "street"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "cold_call",
+        "tier": "free",
+        "label": {"en": "The Call", "ru": "Звонок"},
+        "music": {
+            "en": "Dark mid-tempo, 90-115 BPM, one hook repeated, tension over melody.",
+            "ru": "Тёмный средний темп, 90–115 BPM, один повторяющийся хук, напряжение вместо мелодии.",
+        },
+        "bpm": [90, 115], "cut": "mid",
+        "logline": {
+            "en": "One phone call splits the night into before and after.",
+            "ru": "Один звонок делит ночь на до и после.",
+        },
+        "hero": {
+            "en": "The one who answers. Everything is measured against his face before and after.",
+            "ru": "Тот, кто взял трубку. Всё меряется его лицом до и после.",
+        },
+        "motif": {
+            "en": "The lit phone screen returns in every act, dimmer each time.",
+            "ru": "Светящийся экран телефона возвращается в каждом акте, каждый раз тусклее.",
+        },
+        "opens": {"en": "An ordinary frame that will be re-read after the call.",
+                  "ru": "Обычный кадр, который после звонка прочитается иначе."},
+        "closes": {"en": "The same ordinary frame, nothing changed except him.",
+                   "ru": "Тот же обычный кадр: не изменилось ничего, кроме него."},
+        "acts": [
+            {"key": "before", "share": 0.25, "shot": "medium",
+             "label": {"en": "Before", "ru": "До"},
+             "en": "Calm, warm, unremarkable. Earn the contrast.",
+             "ru": "Спокойно, тепло, ничем не примечательно. Заработать контраст.",
+             "boards": ["interior_table_sit", "detail_hands_work", "portrait_hold_still"]},
+            {"key": "call", "share": 0.2, "shot": "extreme close-up",
+             "label": {"en": "The call", "ru": "Звонок"},
+             "en": "Screen, hand, face. Three scenes, no more.",
+             "ru": "Экран, рука, лицо. Три сцены, не больше.",
+             "boards": ["night_screen_face", "detail_pocket_reveal", "portrait_breath_break"]},
+            {"key": "after", "share": 0.35, "shot": "wide",
+             "label": {"en": "After", "ru": "После"},
+             "en": "He goes out. The same city reads hostile with no change of location.",
+             "ru": "Он выходит. Тот же город читается враждебно без смены локации.",
+             "boards": ["night_lamp_pass", "night_headlights", "travel_walk_away"]},
+            {"key": "return", "share": 0.2, "shot": "medium",
+             "label": {"en": "Back", "ru": "Обратно"},
+             "en": "Return to the opening frame, changed. Say nothing about what was said.",
+             "ru": "Возврат в первый кадр, изменившимся. О содержании звонка не говорим.",
+             "boards": ["final_rhyme_open", "interior_window_light"]},
+        ],
+        "scenes": {"min": 14, "typ": 28, "max": 38},
+        "open_board": "interior_table_sit", "close_board": "final_rhyme_open",
+        "styles_fit": ["noir", "cinema", "dreamclad", "katsumi", "longheads"],
+        "preset": "",
+        "story": "Один телефонный звонок делит ночь героя на до и после, и содержание звонка зрителю не сообщается "
+                 "никогда. Первый акт намеренно скучный и тёплый: кухня, руки, чай, обычный вечер — этот акт "
+                 "существует только для того, чтобы заработать контраст. Второй акт занимает три сцены: экран, рука, "
+                 "лицо. Третий акт выводит героя на улицу, и та же самая ночная география, снятая теми же ракурсами, "
+                 "должна читаться враждебно — меняется не место, а свет, крупность и скорость. Финал возвращает "
+                 "первый кадр первого акта: та же кухня, та же композиция, тот же свет, изменился только человек в "
+                 "ней. Сквозной мотив — светящийся экран телефона, возвращающийся в каждом акте и каждый раз тусклее.",
+        "dnote": "Ни одного кадра с собеседником и ни одной надписи на экране. Всё, что зритель знает о звонке, он "
+                 "читает по лицу и по тому, как изменился темп монтажа.",
+        "slots_hint": ["character", "location", "prop", "time"],
+        "tags": ["menacing", "cold", "night"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "last_train",
+        "tier": "free",
+        "label": {"en": "Last Train", "ru": "Последний поезд"},
+        "music": {
+            "en": "Melodic rap and sung hooks, 75-100 BPM, reverb-heavy, sad but not slow.",
+            "ru": "Мелодичный рэп и спетые хуки, 75–100 BPM, много реверба, грустно, но не медленно.",
+        },
+        "bpm": [75, 100], "cut": "mid",
+        "logline": {
+            "en": "A journey with no destination stated. He rides until the line ends.",
+            "ru": "Поездка без объявленной цели. Он едет, пока не кончится ветка.",
+        },
+        "hero": {
+            "en": "A passenger — the only role where doing nothing reads as a decision.",
+            "ru": "Пассажир — единственная роль, в которой бездействие читается как решение.",
+        },
+        "motif": {
+            "en": "The window: the same framing, a different landscape, four times.",
+            "ru": "Окно: одна и та же рамка, другой пейзаж, четыре раза.",
+        },
+        "opens": {"en": "The platform, empty, before the train.",
+                  "ru": "Платформа, пустая, до поезда."},
+        "closes": {"en": "The last station, doors open, he does not get off.",
+                   "ru": "Конечная, двери открыты, он не выходит."},
+        "acts": [
+            {"key": "board", "share": 0.2, "shot": "wide",
+             "label": {"en": "Boarding", "ru": "Посадка"},
+             "en": "Platform, doors, choosing a seat. Establish the geometry.",
+             "ru": "Платформа, двери, выбор места. Заявляем геометрию.",
+             "boards": ["open_empty_place", "crowd_queue_line", "interior_doorframe"]},
+            {"key": "ride", "share": 0.35, "shot": "medium",
+             "label": {"en": "The ride", "ru": "Дорога"},
+             "en": "Window, reflection, other passengers. The rhythm of the carriage.",
+             "ru": "Окно, отражение, другие пассажиры. Ритм вагона.",
+             "boards": ["travel_car_window", "interior_mirror", "crowd_one_still"]},
+            {"key": "empty", "share": 0.3, "shot": "close-up",
+             "label": {"en": "Emptying out", "ru": "Пустеет"},
+             "en": "Passengers leave one by one until he is alone. Nobody comments on it.",
+             "ru": "Пассажиры выходят один за другим, пока он не остаётся один. Это не комментируется.",
+             "boards": ["portrait_hold_still", "portrait_profile_to_front", "detail_texture_macro"]},
+            {"key": "end", "share": 0.15, "shot": "establishing",
+             "label": {"en": "End of line", "ru": "Конечная"},
+             "en": "Doors open onto nothing in particular and stay open.",
+             "ru": "Двери открываются в никуда и остаются открытыми.",
+             "boards": ["final_walk_out_frame", "final_pull_to_wide"]},
+        ],
+        "scenes": {"min": 14, "typ": 26, "max": 36},
+        "open_board": "open_empty_place", "close_board": "final_pull_to_wide",
+        "styles_fit": ["shinkai", "cinema", "katsumi", "longheads", "dreamclad"],
+        "preset": "long_drive",
+        "story": "Герой садится в поезд и едет до конечной, и цель поездки зрителю не сообщается. Первый акт заявляет "
+                 "геометрию: пустая платформа, двери, выбор места — всё общими и средними планами. Второй акт живёт "
+                 "ритмом вагона: окно с меняющимся пейзажем, отражение героя в стекле поверх этого пейзажа, чужие "
+                 "пассажиры, которых мы никогда не показываем крупно. Третий акт медленно опустошает вагон — люди "
+                 "выходят по одному, и это никак не комментируется, пока герой не остаётся один. Финал: конечная "
+                 "станция, двери открыты, за ними ничего примечательного, герой не выходит. Сквозной мотив — окно: "
+                 "одна и та же рамка кадра с четырьмя разными пейзажами, от города к пустоте.",
+        "dnote": "Окно снимай ровно одной и той же композицией все четыре раза, иначе мотив не прочитается. "
+                 "Пассажиров держи в расфокусе и не давай им лиц.",
+        "slots_hint": ["character", "location", "crowd", "time"],
+        "tags": ["melancholy", "cold", "nostalgic"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "the_offer",
+        "tier": "pro",
+        "label": {"en": "The Offer", "ru": "Предложение"},
+        "music": {
+            "en": "Menacing mid-tempo, 90-110 BPM, low end, sparse arrangement, spoken-word feel.",
+            "ru": "Угрожающий средний темп, 90–110 BPM, низ, разреженная аранжировка, почти речитатив.",
+        },
+        "bpm": [90, 110], "cut": "mid",
+        "logline": {
+            "en": "Someone offers him something. The clip never shows what, only the price.",
+            "ru": "Ему что-то предлагают. Клип не показывает что — только цену.",
+        },
+        "hero": {
+            "en": "The one being tested. He is looked at more than he looks.",
+            "ru": "Тот, кого испытывают. На него смотрят чаще, чем смотрит он.",
+        },
+        "motif": {
+            "en": "An outstretched hand, three times, never taken in frame.",
+            "ru": "Протянутая рука, трижды, и ни разу не пожатая в кадре.",
+        },
+        "opens": {"en": "Two chairs, one occupied.",
+                  "ru": "Два стула, занят один."},
+        "closes": {"en": "One chair pushed back, the room empty.",
+                   "ru": "Отодвинутый стул, комната пустая."},
+        "acts": [
+            {"key": "room", "share": 0.2, "shot": "wide",
+             "label": {"en": "The room", "ru": "Комната"},
+             "en": "Symmetry and ceremony. The space does the threatening.",
+             "ru": "Симметрия и церемония. Угрожает пространство.",
+             "boards": ["open_empty_place", "interior_doorframe", "interior_table_sit"]},
+            {"key": "offer", "share": 0.3, "shot": "close-up",
+             "label": {"en": "The offer", "ru": "Предложение"},
+             "en": "Hands, objects, the other party seen only in fragments.",
+             "ru": "Руки, предметы, вторая сторона — только фрагментами.",
+             "boards": ["detail_object_pickup", "detail_pocket_reveal", "portrait_two_shot"]},
+            {"key": "weigh", "share": 0.3, "shot": "extreme close-up",
+             "label": {"en": "Weighing it", "ru": "Взвешивает"},
+             "en": "The longest scenes in the clip. Nothing moves except the face.",
+             "ru": "Самые длинные сцены клипа. Не двигается ничего, кроме лица.",
+             "boards": ["portrait_hold_still", "portrait_breath_break", "interior_mirror"]},
+            {"key": "answer", "share": 0.2, "shot": "medium",
+             "label": {"en": "The answer", "ru": "Ответ"},
+             "en": "He leaves or he stays. Do not show which by dialogue — show it by light.",
+             "ru": "Он уходит или остаётся. Показать это не репликой, а светом.",
+             "boards": ["final_walk_out_frame", "final_last_look"]},
+        ],
+        "scenes": {"min": 12, "typ": 24, "max": 34},
+        "open_board": "open_empty_place", "close_board": "final_walk_out_frame",
+        "styles_fit": ["noir", "cinema", "munir", "fanuel", "longheads"],
+        "preset": "the_trial",
+        "story": "Герою делают предложение, и зритель никогда не узнаёт какое: клип показывает не суть сделки, а её "
+                 "цену. Первый акт заявляет комнату — симметричную, церемониальную, слишком большую для двоих; "
+                 "угрожает здесь пространство, а не человек. Второй акт даёт саму сделку через руки и предметы: "
+                 "вторая сторона существует только фрагментами — плечо, манжета, ладонь, — и лицо её не показывается "
+                 "ни разу. Третий акт целиком про взвешивание: самые длинные планы клипа, где не двигается ничего, "
+                 "кроме лица героя. Финал — ответ, показанный не репликой и не жестом, а сменой света в комнате и "
+                 "тем, остаётся ли герой в кадре. Сквозной мотив — протянутая рука, появляющаяся трижды и ни разу не "
+                 "пожатая в кадре.",
+        "dnote": "Второй персонаж не должен получить ни одного узнаваемого кадра лица — это ломает приём. Камера "
+                 "почти неподвижна во всех актах, кроме финального.",
+        "slots_hint": ["character", "location", "prop", "emotion"],
+        "tags": ["menacing", "muted", "deadpan"],
+        "needs_lyrics": True,
+    },
+    {
+        "key": "market_day",
+        "tier": "free",
+        "label": {"en": "Market Day", "ru": "Базарный день"},
+        "music": {
+            "en": "Warm, sample-driven, 90-105 BPM, brass or strings in the loop, upbeat but not hyper.",
+            "ru": "Тёплое семплированное, 90–105 BPM, духовые или струнные в петле, бодро, но не разгонно.",
+        },
+        "bpm": [90, 105], "cut": "mid",
+        "logline": {
+            "en": "One day at a crowded market, told through hands and goods rather than faces.",
+            "ru": "Один день на рынке, рассказанный руками и товаром, а не лицами.",
+        },
+        "hero": {
+            "en": "Part of the crowd, not above it. The clip earns his close-up only once.",
+            "ru": "Часть толпы, а не над ней. Крупный план он получает ровно один раз.",
+        },
+        "motif": {
+            "en": "Money changing hands, shot the same way each time.",
+            "ru": "Деньги переходят из рук в руки, снятые каждый раз одинаково.",
+        },
+        "opens": {"en": "Empty stalls before opening.",
+                  "ru": "Пустые прилавки до открытия."},
+        "closes": {"en": "The same stalls, packed up, litter on the ground.",
+                   "ru": "Те же прилавки, свёрнутые, мусор на земле."},
+        "acts": [
+            {"key": "setup", "share": 0.2, "shot": "establishing",
+             "label": {"en": "Setting up", "ru": "Разворачиваются"},
+             "en": "Before the crowd: crates, tarpaulins, first light.",
+             "ru": "До толпы: ящики, тенты, первый свет.",
+             "boards": ["open_empty_place", "detail_hands_work", "interior_doorframe"]},
+            {"key": "peak", "share": 0.35, "shot": "medium",
+             "label": {"en": "Full flow", "ru": "Поток"},
+             "en": "Crowd density as the subject. Cut on movement, not on faces.",
+             "ru": "Плотность толпы как содержание. Режем по движению, а не по лицам.",
+             "boards": ["crowd_part_for_hero", "crowd_one_still", "travel_side_track"]},
+            {"key": "trade", "share": 0.25, "shot": "close-up",
+             "label": {"en": "The trade", "ru": "Сделка"},
+             "en": "Goods, hands, money, weight. One close-up of the hero, and only one.",
+             "ru": "Товар, руки, деньги, вес. Один крупный план героя — и только один.",
+             "boards": ["detail_object_pickup", "detail_texture_macro", "portrait_hold_still"]},
+            {"key": "after", "share": 0.2, "shot": "wide",
+             "label": {"en": "After", "ru": "После"},
+             "en": "The same wide as the opening, emptied.",
+             "ru": "Тот же общий, что в начале, только опустевший.",
+             "boards": ["final_rhyme_open", "final_pull_to_wide"]},
+        ],
+        "scenes": {"min": 16, "typ": 30, "max": 42},
+        "open_board": "open_empty_place", "close_board": "final_rhyme_open",
+        "styles_fit": ["ghibli", "cinema", "clay", "longheads", "katsumi"],
+        "preset": "",
+        "story": "Один день на большом рынке от разворачивания прилавков до вывоза мусора, рассказанный руками и "
+                 "товаром, а не лицами. Первый акт снимает рынок до толпы: ящики, тенты, первый свет, единичные "
+                 "фигуры в огромном пустом пространстве. Второй акт живёт плотностью: толпа как главный герой, "
+                 "монтаж режется по движению внутри кадра, а не по лицам, ни одного портрета. Третий акт спускается "
+                 "к сделке — товар, руки, вес, деньги — и здесь герой получает свой единственный крупный план за "
+                 "весь клип, ровно один. Финал повторяет композицию первого акта: те же прилавки, свёрнутые, тот же "
+                 "ракурс, мусор на земле. Сквозной мотив — деньги, переходящие из рук в руки, снятые каждый раз "
+                 "одинаковым кадром.",
+        "dnote": "Ни одного кадра толпы с числом людей меньше десяти: разреженная массовка убивает приём. Лица в "
+                 "толпе держи в расфокусе.",
+        "slots_hint": ["character", "location", "crowd", "object"],
+        "tags": ["warm", "playful", "crowd"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "factory_hymn",
+        "tier": "pro",
+        "label": {"en": "Factory Hymn", "ru": "Гимн цеха"},
+        "music": {
+            "en": "Industrial, phonk, hard electronic, 100-140 BPM, mechanical loop, little melody.",
+            "ru": "Индастриал, фонк, жёсткая электроника, 100–140 BPM, механическая петля, мало мелодии.",
+        },
+        "bpm": [100, 140], "cut": "fast",
+        "logline": {
+            "en": "Machines set the tempo and the human keeps up. Then he stops keeping up.",
+            "ru": "Темп задают машины, человек успевает. Потом перестаёт успевать.",
+        },
+        "hero": {
+            "en": "One human among mechanisms — the only thing in frame that can get tired.",
+            "ru": "Один человек среди механизмов — единственное в кадре, что умеет уставать.",
+        },
+        "motif": {
+            "en": "One repeating mechanical movement, four times, at four framings.",
+            "ru": "Одно повторяющееся движение механизма, четыре раза, в четырёх крупностях.",
+        },
+        "opens": {"en": "A machine part in extreme close-up, moving on its own.",
+                  "ru": "Деталь механизма макро, движется сама."},
+        "closes": {"en": "The machine still moving, the human gone from frame.",
+                   "ru": "Механизм ещё движется, человека в кадре уже нет."},
+        "acts": [
+            {"key": "machine", "share": 0.25, "shot": "extreme close-up",
+             "label": {"en": "The machine", "ru": "Механизм"},
+             "en": "Mechanisms before people. Establish the tempo the clip will obey.",
+             "ru": "Сначала механизмы, потом люди. Заявляем темп, которому подчинится клип.",
+             "boards": ["detail_texture_macro", "detail_hands_work", "open_detail_first"]},
+            {"key": "keeping", "share": 0.3, "shot": "medium",
+             "label": {"en": "Keeping up", "ru": "Успевает"},
+             "en": "Human motion matched to machine rhythm. Cutting on the beat is allowed here.",
+             "ru": "Движение человека подогнано под ритм машины. Здесь резать в долю можно.",
+             "boards": ["action_impact_stop", "portrait_hold_still", "travel_corridor_push"]},
+            {"key": "falling", "share": 0.3, "shot": "close-up",
+             "label": {"en": "Falling behind", "ru": "Отстаёт"},
+             "en": "The human slows, the machine does not. Contrast in speed, not in cutting.",
+             "ru": "Человек замедляется, машина нет. Контраст в скорости, а не в монтаже.",
+             "boards": ["portrait_breath_break", "action_fall_back", "night_screen_face"]},
+            {"key": "on", "share": 0.15, "shot": "wide",
+             "label": {"en": "It keeps going", "ru": "Оно продолжает"},
+             "en": "Empty station, machine still running.",
+             "ru": "Пустое рабочее место, машина работает.",
+             "boards": ["final_walk_out_frame"]},
+        ],
+        "scenes": {"min": 20, "typ": 34, "max": 48},
+        "open_board": "open_detail_first", "close_board": "final_walk_out_frame",
+        "styles_fit": ["punkrf", "noir", "munir", "cinema", "spike"],
+        "preset": "",
+        "story": "Клип о человеке, который держит темп механизма, пока не перестаёт его держать. Первый акт "
+                 "показывает только механизмы, без людей: детали макро, повторяющиеся движения, шестерни, ленты — "
+                 "здесь задаётся темп, которому подчинится весь монтаж. Второй акт вводит человека и подгоняет его "
+                 "движения под ритм машины: именно в этом акте разрешено резать ровно в долю, потому что "
+                 "механичность и есть смысл. Третий акт разводит их скорости — человек замедляется, машина нет; "
+                 "контраст создаётся не темпом монтажа, а движением внутри кадра. Финал: пустое рабочее место, "
+                 "механизм продолжает работать сам. Сквозной мотив — одно повторяющееся движение механизма, снятое "
+                 "четыре раза в четырёх разных крупностях.",
+        "dnote": "Ни одного кадра, где видно лицо и механизм одновременно резко: либо человек, либо машина в фокусе. "
+                 "Никакой символики протеста, только физика усталости.",
+        "slots_hint": ["character", "location", "prop", "accent"],
+        "tags": ["menacing", "cold", "grain"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "sea_line",
+        "tier": "free",
+        "label": {"en": "Sea Line", "ru": "До моря"},
+        "music": {
+            "en": "Warm melodic, sung chorus, 80-105 BPM, open arrangement, hopeful.",
+            "ru": "Тёплое мелодичное, спетый припев, 80–105 BPM, открытая аранжировка, светлое.",
+        },
+        "bpm": [80, 105], "cut": "slow",
+        "logline": {
+            "en": "A road that ends at water. The destination is known from the first frame.",
+            "ru": "Дорога, которая кончается водой. Пункт назначения известен с первого кадра.",
+        },
+        "hero": {
+            "en": "A traveller who is already sure. No doubt, no obstacle — only distance.",
+            "ru": "Путник, который уже уверен. Ни сомнения, ни препятствия — только расстояние.",
+        },
+        "motif": {
+            "en": "The horizon line sits at the same height in every wide shot.",
+            "ru": "Линия горизонта стоит на одной высоте во всех общих планах.",
+        },
+        "opens": {"en": "A road sign or a road, and nothing else.",
+                  "ru": "Дорога или указатель — и больше ничего."},
+        "closes": {"en": "Water filling the frame, the character small at the edge.",
+                   "ru": "Вода на весь кадр, герой мелкий у края."},
+        "acts": [
+            {"key": "leave", "share": 0.25, "shot": "wide",
+             "label": {"en": "Setting out", "ru": "Выезд"},
+             "en": "Leaving the built-up world. Every scene has more sky than the last.",
+             "ru": "Выход из застроенного мира. В каждой сцене неба больше, чем в предыдущей.",
+             "boards": ["open_door_out", "travel_car_window", "travel_walk_away"]},
+            {"key": "road", "share": 0.3, "shot": "establishing",
+             "label": {"en": "The road", "ru": "Дорога"},
+             "en": "Distance as content. Long scenes, slow moves, empty space.",
+             "ru": "Расстояние как содержание. Длинные сцены, медленные движения, пустота.",
+             "boards": ["travel_side_track", "bridge_light_to_dark", "portrait_profile_to_front"]},
+            {"key": "near", "share": 0.25, "shot": "medium",
+             "label": {"en": "Getting close", "ru": "Ближе"},
+             "en": "Signs of water before water: wind, light, salt, birds.",
+             "ru": "Признаки воды до воды: ветер, свет, соль, птицы.",
+             "boards": ["detail_texture_macro", "portrait_hold_still", "night_rain_reflect"]},
+            {"key": "water", "share": 0.2, "shot": "establishing",
+             "label": {"en": "Water", "ru": "Вода"},
+             "en": "The arrival, held longer than comfortable.",
+             "ru": "Прибытие, которое держится дольше, чем удобно.",
+             "boards": ["final_pull_to_wide", "final_walk_out_frame"]},
+        ],
+        "scenes": {"min": 12, "typ": 24, "max": 34},
+        "open_board": "open_door_out", "close_board": "final_pull_to_wide",
+        "styles_fit": ["shinkai", "ghibli", "cinema", "dreamclad", "clay"],
+        "preset": "long_drive",
+        "story": "Дорога героя до моря, где цель известна с первого кадра и препятствий нет вообще: драматургия "
+                 "держится расстоянием, а не конфликтом. Первый акт выводит героя из застроенного мира, и в каждой "
+                 "следующей сцене неба в кадре больше, чем в предыдущей — это правило соблюдается буквально. Второй "
+                 "акт про расстояние: длинные планы, медленные движения камеры, пустое пространство, минимум "
+                 "событий. Третий акт даёт признаки воды до самой воды — ветер в траве, изменившийся свет, соль на "
+                 "стекле, птицы, — и герой начинает торопиться. Финал — приезд, снятый одним планом, который "
+                 "держится дольше, чем комфортно. Сквозной мотив — линия горизонта, стоящая на одной и той же высоте "
+                 "во всех общих планах клипа.",
+        "dnote": "Никакой драмы в дороге: ни поломок, ни погони, ни сомнений. Единственный источник напряжения — "
+                 "сколько ещё осталось.",
+        "slots_hint": ["character", "location", "vehicle", "time"],
+        "tags": ["nostalgic", "warm", "nature"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "yard_saints",
+        "tier": "pro",
+        "label": {"en": "Saints of the Yard", "ru": "Святые двора"},
+        "music": {
+            "en": "Soulful boom bap or gospel-sampled rap, 85-95 BPM, choir in the hook.",
+            "ru": "Душевный бумбап или рэп с госпел-семплом, 85–95 BPM, хор в припеве.",
+        },
+        "bpm": [85, 95], "cut": "mid",
+        "logline": {
+            "en": "The courtyard of childhood shot with the reverence usually reserved for churches.",
+            "ru": "Двор детства, снятый с почтением, которое обычно оставляют для храмов.",
+        },
+        "hero": {
+            "en": "A witness. He remembers the place; the place does not remember him.",
+            "ru": "Свидетель. Он помнит место, место его — нет.",
+        },
+        "motif": {
+            "en": "Light through a gap — a stairwell window, a gate, branches — repeated as a rhyme.",
+            "ru": "Свет в проёме — окно подъезда, арка, ветки — повторяется рифмой.",
+        },
+        "opens": {"en": "A low shot of a doorway with light behind it.",
+                  "ru": "Нижний кадр проёма со светом за ним."},
+        "closes": {"en": "The same doorway with nobody in it.",
+                   "ru": "Тот же проём, и в нём никого."},
+        "acts": [
+            {"key": "place", "share": 0.25, "shot": "wide",
+             "label": {"en": "The yard", "ru": "Двор"},
+             "en": "Symmetry and centred composition. Treat concrete as architecture.",
+             "ru": "Симметрия и центр. Обращайся с бетоном как с архитектурой.",
+             "boards": ["open_empty_place", "interior_doorframe", "bridge_light_to_dark"]},
+            {"key": "people", "share": 0.3, "shot": "medium",
+             "label": {"en": "The people", "ru": "Люди"},
+             "en": "Portraits of everyone else, held longer than portraits of the hero.",
+             "ru": "Портреты всех остальных, и они держатся дольше портретов героя.",
+             "boards": ["portrait_two_shot", "crowd_one_still", "portrait_profile_to_front"]},
+            {"key": "then", "share": 0.25, "shot": "close-up",
+             "label": {"en": "What is gone", "ru": "Чего нет"},
+             "en": "Absence filmed as presence: worn steps, marks, empty benches.",
+             "ru": "Отсутствие, снятое как присутствие: стёртые ступени, метки, пустые скамейки.",
+             "boards": ["detail_written_trace", "detail_texture_macro", "interior_mirror"]},
+            {"key": "amen", "share": 0.2, "shot": "establishing",
+             "label": {"en": "Amen", "ru": "Аминь"},
+             "en": "The opening frame again, empty, with the light moved.",
+             "ru": "Первый кадр снова, пустой, свет сместился.",
+             "boards": ["final_rhyme_open"]},
+        ],
+        "scenes": {"min": 14, "typ": 28, "max": 38},
+        "open_board": "open_empty_place", "close_board": "final_rhyme_open",
+        "styles_fit": ["fanuel", "cinema", "longheads", "munir", "embroidery"],
+        "preset": "",
+        "story": "Двор детства героя, снятый с почтением, которое обычно оставляют для храмов: симметрия, центр, "
+                 "нижние ракурсы, свет в проёмах. Первый акт заявляет место как архитектуру — бетон, лестницы, арки "
+                 "и трансформаторные будки снимаются фронтально и симметрично, без иронии и без чернухи. Второй акт "
+                 "отдан портретам всех остальных: соседи, дети, старики, и каждый такой портрет держится в монтаже "
+                 "дольше, чем портрет самого героя. Третий акт снимает отсутствие как присутствие — стёртые ступени, "
+                 "процарапанные метки, пустые скамейки, — и здесь становится ясно, что герой помнит место, а место "
+                 "его нет. Финал повторяет первый кадр, но в проёме уже никого и свет сместился. Сквозной мотив — "
+                 "свет в проёме: окно подъезда, арка, ветки над головой.",
+        "dnote": "Ни одного кадра сверху вниз на людей — только фронтально или снизу. Ни одной надписи и ни одного "
+                 "документального «социального» ракурса.",
+        "slots_hint": ["character", "location", "crowd", "detail"],
+        "tags": ["sacred", "nostalgic", "warm"],
+        "needs_lyrics": True,
+    },
+    {
+        "key": "black_car",
+        "tier": "pro",
+        "label": {"en": "Black Car", "ru": "Чёрная машина"},
+        "music": {
+            "en": "Cold trap, 120-140 BPM, sub bass, few elements, threatening space.",
+            "ru": "Холодный трэп, 120–140 BPM, саб, мало элементов, угрожающее пространство.",
+        },
+        "bpm": [120, 140], "cut": "mid",
+        "logline": {
+            "en": "A car follows him all night. It never catches up and never leaves.",
+            "ru": "Машина едет за ним всю ночь. Она не догоняет и не отстаёт.",
+        },
+        "hero": {
+            "en": "The pursued, who refuses to run. His pace is the whole performance.",
+            "ru": "Преследуемый, который отказывается бежать. Его шаг и есть вся игра.",
+        },
+        "motif": {
+            "en": "Headlights entering the frame from behind, three times, closer each time.",
+            "ru": "Свет фар входит в кадр сзади трижды, каждый раз ближе.",
+        },
+        "opens": {"en": "An empty street with headlights far away.",
+                  "ru": "Пустая улица, фары далеко."},
+        "closes": {"en": "The car stopped, the doors closed, nobody gets out.",
+                   "ru": "Машина остановилась, двери закрыты, из неё никто не выходит."},
+        "acts": [
+            {"key": "notice", "share": 0.25, "shot": "wide",
+             "label": {"en": "Noticing", "ru": "Замечает"},
+             "en": "He is not sure yet. Keep the car out of focus and out of the centre.",
+             "ru": "Он ещё не уверен. Держим машину в расфокусе и не в центре.",
+             "boards": ["night_lamp_pass", "travel_walk_away", "night_headlights"]},
+            {"key": "sure", "share": 0.3, "shot": "medium",
+             "label": {"en": "Certain", "ru": "Убедился"},
+             "en": "Now he knows. Same route, tighter framings, faster steps.",
+             "ru": "Теперь он знает. Тот же маршрут, теснее кадры, быстрее шаг.",
+             "boards": ["travel_stairs_down", "bridge_body_wipe", "portrait_breath_break"]},
+            {"key": "test", "share": 0.25, "shot": "close-up",
+             "label": {"en": "Testing it", "ru": "Проверяет"},
+             "en": "He stops on purpose. The car stops too. Hold both stills.",
+             "ru": "Он нарочно останавливается. Машина тоже. Держим обе статики.",
+             "boards": ["portrait_hold_still", "action_impact_stop", "night_rain_reflect"]},
+            {"key": "still", "share": 0.2, "shot": "extreme close-up",
+             "label": {"en": "Nobody gets out", "ru": "Никто не выходит"},
+             "en": "The threat stays unresolved on purpose.",
+             "ru": "Угроза намеренно остаётся неразрешённой.",
+             "boards": ["final_last_look", "final_pull_to_wide"]},
+        ],
+        "scenes": {"min": 16, "typ": 30, "max": 42},
+        "open_board": "night_lamp_pass", "close_board": "final_pull_to_wide",
+        "styles_fit": ["noir", "dreamclad", "cinema", "punkrf", "munir"],
+        "preset": "",
+        "story": "Всю ночь за героем едет машина: она не догоняет и не отстаёт, и клип ни разу не показывает, кто "
+                 "внутри. Первый акт держит неопределённость: машина в расфокусе, не в центре кадра, герой ещё не "
+                 "уверен, что она за ним. Второй акт снимает тот же маршрут теснее и быстрее — крупности "
+                 "сокращаются, шаг ускоряется, но герой не бежит ни разу за весь клип. Третий акт — проверка: герой "
+                 "нарочно останавливается, машина останавливается тоже, и две статики держатся рядом дольше, чем "
+                 "комфортно. Финал: машина стоит, двери закрыты, из неё никто не выходит, угроза намеренно остаётся "
+                 "неразрешённой. Сквозной мотив — свет фар, входящий в кадр из-за спины героя трижды и каждый раз "
+                 "ближе.",
+        "dnote": "Ни одного кадра салона и ни одного лица водителя. Герой не бежит: как только он побежал, приём "
+                 "сломался и клип стал обычной погоней.",
+        "slots_hint": ["character", "location", "vehicle", "time"],
+        "tags": ["menacing", "night", "cold"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "stage_and_after",
+        "tier": "free",
+        "label": {"en": "Stage and After", "ru": "Сцена и после"},
+        "music": {
+            "en": "Live-energy tracks, 95-125 BPM, big hook, crowd-ready.",
+            "ru": "Треки с концертной энергией, 95–125 BPM, большой хук, под толпу.",
+        },
+        "bpm": [95, 125], "cut": "fast",
+        "logline": {
+            "en": "Twenty minutes of being everything, then a corridor where nobody looks at you.",
+            "ru": "Двадцать минут быть всем — и коридор, где на тебя никто не смотрит.",
+        },
+        "hero": {
+            "en": "The performer, filmed twice: as a silhouette on stage and as a person after.",
+            "ru": "Артист, снятый дважды: силуэтом на сцене и человеком после.",
+        },
+        "motif": {
+            "en": "A towel, a bottle or a jacket carried through both halves.",
+            "ru": "Полотенце, бутылка или куртка, проходящие через обе половины.",
+        },
+        "opens": {"en": "The dark before the first light cue.",
+                  "ru": "Темнота до первой засветки."},
+        "closes": {"en": "An empty room with the sound still in his ears.",
+                   "ru": "Пустое помещение, звук ещё в ушах."},
+        "acts": [
+            {"key": "dark", "share": 0.15, "shot": "extreme close-up",
+             "label": {"en": "Before", "ru": "До"},
+             "en": "Hands, breath, dark. Two or three scenes at most.",
+             "ru": "Руки, дыхание, темнота. Две-три сцены максимум.",
+             "boards": ["open_from_black", "detail_hands_work"]},
+            {"key": "on", "share": 0.35, "shot": "wide",
+             "label": {"en": "On stage", "ru": "На сцене"},
+             "en": "Backlight, crowd, silhouettes. The shortest cuts of the clip.",
+             "ru": "Контровой, толпа, силуэты. Самые короткие склейки клипа.",
+             "boards": ["crowd_hands_up", "night_neon_wall", "action_run_toward"]},
+            {"key": "off", "share": 0.3, "shot": "medium",
+             "label": {"en": "Off stage", "ru": "За сценой"},
+             "en": "Corridors and flat light. Everything slows to half speed.",
+             "ru": "Коридоры и ровный свет. Всё замедляется вдвое.",
+             "boards": ["travel_corridor_push", "portrait_breath_break", "interior_mirror"]},
+            {"key": "empty", "share": 0.2, "shot": "establishing",
+             "label": {"en": "Empty room", "ru": "Пустой зал"},
+             "en": "The same wide as the show, with nobody in it.",
+             "ru": "Тот же общий, что и на концерте, и в нём никого.",
+             "boards": ["final_pull_to_wide", "final_walk_out_frame"]},
+        ],
+        "scenes": {"min": 18, "typ": 34, "max": 46},
+        "open_board": "open_from_black", "close_board": "final_pull_to_wide",
+        "styles_fit": ["cinema", "punkrf", "noir", "spike", "munir"],
+        "preset": "from_the_crowd",
+        "story": "Клип из двух неравных половин: концерт и то, что сразу после него. Первый акт — темнота перед "
+                 "выходом: руки, дыхание, две-три сцены, ни одного общего плана. Второй акт снимает сцену только "
+                 "контровым светом и только через толпу: артист существует силуэтом, лицо почти не читается, "
+                 "склейки самые короткие во всём клипе. Третий акт выключает музыку визуально — коридоры, ровный "
+                 "служебный свет, полотенце, вода, зеркало в гримёрке, — и всё замедляется вдвое, планы удлиняются. "
+                 "Финал: тот же общий план зала, что был на концерте, только пустой. Сквозной мотив — один предмет "
+                 "(полотенце, бутылка, куртка), проходящий через обе половины клипа.",
+        "dnote": "На сцене — ни одного чистого портрета артиста: только силуэт и фрагменты. Все портреты отдай "
+                 "третьему акту, там они и сработают.",
+        "slots_hint": ["character", "location", "crowd", "prop"],
+        "tags": ["epic", "neon", "crowd"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "mirror_year",
+        "tier": "pro",
+        "label": {"en": "A Year in the Mirror", "ru": "Год в зеркале"},
+        "music": {
+            "en": "Reflective mid-tempo, 80-100 BPM, verse-driven, one repeated line.",
+            "ru": "Рефлексивный средний темп, 80–100 BPM, куплетный, одна повторяющаяся строка.",
+        },
+        "bpm": [80, 100], "cut": "slow",
+        "logline": {
+            "en": "The same mirror, four seasons, one person changing in it.",
+            "ru": "Одно зеркало, четыре сезона, один человек, который в нём меняется.",
+        },
+        "hero": {
+            "en": "Both the subject and the observer — he is the only witness of his own change.",
+            "ru": "И объект, и наблюдатель: он единственный свидетель собственной перемены.",
+        },
+        "motif": {
+            "en": "The mirror frame is identical in every act; only what is in it changes.",
+            "ru": "Рамка зеркала одинакова во всех актах; меняется только то, что в ней.",
+        },
+        "opens": {"en": "The mirror empty, the room behind it lit.",
+                  "ru": "Зеркало пустое, комната за ним освещена."},
+        "closes": {"en": "The mirror empty again, the room dark.",
+                   "ru": "Зеркало снова пустое, комната тёмная."},
+        "acts": [
+            {"key": "first", "share": 0.25, "shot": "medium",
+             "label": {"en": "First look", "ru": "Первый взгляд"},
+             "en": "Establish the exact framing that will be repeated three more times.",
+             "ru": "Заявляем ту самую композицию, которая повторится ещё трижды.",
+             "boards": ["interior_mirror", "interior_window_light", "detail_hands_work"]},
+            {"key": "change", "share": 0.3, "shot": "close-up",
+             "label": {"en": "Changing", "ru": "Меняется"},
+             "en": "Same frame, different hair, different light, different posture.",
+             "ru": "Тот же кадр, другие волосы, другой свет, другая осанка.",
+             "boards": ["portrait_profile_to_front", "detail_texture_macro", "portrait_hold_still"]},
+            {"key": "break", "share": 0.25, "shot": "extreme close-up",
+             "label": {"en": "The break", "ru": "Слом"},
+             "en": "The one act where he cannot look at himself.",
+             "ru": "Единственный акт, где он не может на себя смотреть.",
+             "boards": ["portrait_breath_break", "detail_written_trace", "night_screen_face"]},
+            {"key": "last", "share": 0.2, "shot": "medium",
+             "label": {"en": "Last look", "ru": "Последний взгляд"},
+             "en": "Same frame, empty. He walked out of it.",
+             "ru": "Тот же кадр, пустой. Он из него вышел.",
+             "boards": ["final_walk_out_frame", "final_rhyme_open"]},
+        ],
+        "scenes": {"min": 12, "typ": 24, "max": 32},
+        "open_board": "interior_mirror", "close_board": "final_rhyme_open",
+        "styles_fit": ["cinema", "katsumi", "longheads", "dreamclad", "clay"],
+        "preset": "one_character",
+        "story": "Год жизни героя, показанный через одно и то же зеркало в одной и той же комнате. Первый акт "
+                 "заявляет композицию, которая повторится ещё трижды кадр в кадр: рамка зеркала, положение камеры и "
+                 "точка съёмки фиксируются раз и навсегда. Второй акт повторяет эту композицию с изменениями — "
+                 "другая длина волос, другой свет из окна, другая осанка, другая одежда, — и зритель считывает время "
+                 "именно по разнице, а не по подписи. Третий акт ломает приём ровно один раз: герой не может на себя "
+                 "смотреть, и зеркало снимается со спины или отражает пустую комнату. Финал возвращает исходную "
+                 "композицию пустой: он из неё вышел. Сквозной мотив — сама рамка зеркала, неизменная во всех "
+                 "четырёх актах.",
+        "dnote": "Композиция зеркала обязана совпадать пиксель в пиксель во всех актах — это единственное, что "
+                 "держит клип. Никаких календарей, дат и надписей.",
+        "slots_hint": ["character", "location", "outfit", "time"],
+        "tags": ["melancholy", "muted", "deadpan"],
+        "needs_lyrics": True,
+    },
+    {
+        "key": "three_wishes",
+        "tier": "pro",
+        "label": {"en": "Three Wishes", "ru": "Три желания"},
+        "music": {
+            "en": "Playful or surreal production, 95-120 BPM, unusual samples, punchline-driven.",
+            "ru": "Игровая или сюрреальная продакшн-подача, 95–120 BPM, необычные семплы, панчи.",
+        },
+        "bpm": [95, 120], "cut": "fast",
+        "logline": {
+            "en": "Three things he asks for arrive, and each arrives wrong.",
+            "ru": "Три вещи, которые он просит, приходят — и каждая приходит криво.",
+        },
+        "hero": {
+            "en": "The one who asks. He reacts more than he acts, and that is the joke.",
+            "ru": "Тот, кто просит. Он больше реагирует, чем действует, — в этом и шутка.",
+        },
+        "motif": {
+            "en": "The same gesture of asking, repeated before each wish.",
+            "ru": "Один и тот же жест просьбы, повторённый перед каждым желанием.",
+        },
+        "opens": {"en": "An absolutely ordinary frame, deliberately boring.",
+                  "ru": "Абсолютно обычный кадр, нарочито скучный."},
+        "closes": {"en": "The ordinary frame again, with one impossible detail left in it.",
+                   "ru": "Тот же обычный кадр, и в нём осталась одна невозможная деталь."},
+        "acts": [
+            {"key": "ask1", "share": 0.25, "shot": "medium",
+             "label": {"en": "First wish", "ru": "Первое желание"},
+             "en": "Ordinary world, one impossible thing, played straight.",
+             "ru": "Обычный мир, одна невозможная вещь, сыграно всерьёз.",
+             "boards": ["open_direct_look", "detail_object_pickup", "interior_table_sit"]},
+            {"key": "ask2", "share": 0.25, "shot": "wide",
+             "label": {"en": "Second wish", "ru": "Второе желание"},
+             "en": "Bigger, and the cost starts showing in the background.",
+             "ru": "Больше, и цена начинает проступать на фоне.",
+             "boards": ["crowd_part_for_hero", "bridge_match_shape", "action_throw_away"]},
+            {"key": "ask3", "share": 0.3, "shot": "close-up",
+             "label": {"en": "Third wish", "ru": "Третье желание"},
+             "en": "The biggest and the worst. Reaction, not spectacle.",
+             "ru": "Самое большое и самое неудачное. Реакция, а не аттракцион.",
+             "boards": ["portrait_breath_break", "action_fall_back", "bridge_door_through"]},
+            {"key": "left", "share": 0.2, "shot": "medium",
+             "label": {"en": "What is left", "ru": "Что осталось"},
+             "en": "Back to the boring frame with one thing that should not be there.",
+             "ru": "Возврат в скучный кадр, где осталось одно лишнее.",
+             "boards": ["final_rhyme_open", "final_last_look"]},
+        ],
+        "scenes": {"min": 16, "typ": 30, "max": 40},
+        "open_board": "open_direct_look", "close_board": "final_rhyme_open",
+        "styles_fit": ["clay", "pixar", "flat2d", "dreamclad", "katsumi"],
+        "preset": "randoms",
+        "story": "Герой трижды получает то, что просил, и каждый раз получает это криво. Первый акт держит мир "
+                 "абсолютно обычным и вводит ровно одну невозможную вещь, сыгранную всерьёз: никакой иронии в "
+                 "подаче, чем серьёзнее, тем смешнее. Второй акт увеличивает масштаб желания и начинает показывать "
+                 "цену — не репликой, а тем, что происходит на фоне, пока герой радуется. Третий акт даёт самое "
+                 "большое и самое неудачное желание, и снимается он через реакцию героя, а не через аттракцион: "
+                 "крупные планы лица, а не спецэффект в общем плане. Финал возвращает скучный первый кадр, в котором "
+                 "осталась одна невозможная деталь, и никто её не комментирует. Сквозной мотив — один и тот же жест "
+                 "просьбы, повторяющийся перед каждым желанием.",
+        "dnote": "Невозможное показывай ровно по одному предмету на сцену: два чуда в одном кадре читаются как "
+                 "мусор. Реакция важнее эффекта — держи камеру на лице.",
+        "slots_hint": ["character", "location", "prop", "accent"],
+        "tags": ["playful", "saturated", "handmade"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "unpacking",
+        "tier": "pro",
+        "label": {"en": "Unpacking", "ru": "Распаковка"},
+        "music": {
+            "en": "Clean commercial-friendly beats, 100-120 BPM, no profanity, hook in the first 5 seconds.",
+            "ru": "Чистые коммерческие биты, 100–120 BPM, без мата, хук в первые 5 секунд.",
+        },
+        "bpm": [100, 120], "cut": "fast",
+        "logline": {
+            "en": "A product arrives, is opened and is used. The ritual is the story.",
+            "ru": "Товар приезжает, вскрывается и работает. Ритуал и есть сюжет.",
+        },
+        "hero": {
+            "en": "Hands, mostly. The face appears twice and both times on purpose.",
+            "ru": "В основном руки. Лицо появляется дважды, и оба раза намеренно.",
+        },
+        "motif": {
+            "en": "The object returns to the same surface between every act.",
+            "ru": "Предмет возвращается на одну и ту же поверхность между актами.",
+        },
+        "opens": {"en": "The sealed object alone in frame.",
+                  "ru": "Запечатанный предмет один в кадре."},
+        "closes": {"en": "The object in use, the packaging gone.",
+                   "ru": "Предмет в работе, упаковки нет."},
+        "acts": [
+            {"key": "arrive", "share": 0.2, "shot": "close-up",
+             "label": {"en": "Arrival", "ru": "Приехало"},
+             "en": "Sealed, untouched, lit like a portrait.",
+             "ru": "Запечатано, нетронуто, снято как портрет.",
+             "boards": ["open_detail_first", "detail_texture_macro"]},
+            {"key": "open", "share": 0.3, "shot": "extreme close-up",
+             "label": {"en": "Opening", "ru": "Вскрытие"},
+             "en": "Hands only. Every scene is one gesture.",
+             "ru": "Только руки. Каждая сцена — один жест.",
+             "boards": ["detail_hands_work", "detail_object_pickup", "detail_pocket_reveal"]},
+            {"key": "use", "share": 0.3, "shot": "medium",
+             "label": {"en": "In use", "ru": "В деле"},
+             "en": "The object in the world, with the person, in real light.",
+             "ru": "Предмет в мире, с человеком, в реальном свете.",
+             "boards": ["interior_window_light", "portrait_hold_still", "travel_side_track"]},
+            {"key": "hero", "share": 0.2, "shot": "close-up",
+             "label": {"en": "Hero frame", "ru": "Герой-кадр"},
+             "en": "One frontal frame worth freezing as a cover.",
+             "ru": "Один фронтальный кадр, годный на обложку.",
+             "boards": ["final_last_look", "final_pull_to_wide"]},
+        ],
+        "scenes": {"min": 10, "typ": 20, "max": 30},
+        "open_board": "open_detail_first", "close_board": "final_last_look",
+        "styles_fit": ["cinema", "clay", "flat2d", "katsumi", "longheads"],
+        "preset": "product_ritual",
+        "story": "Товар приезжает, вскрывается и начинает работать — и весь клип держится на ритуале, а не на "
+                 "сюжете. Первый акт снимает запечатанный предмет как портрет: один объект в кадре, вокруг воздух, "
+                 "свет поставлен на фактуру упаковки. Второй акт — только руки: каждая сцена содержит ровно один "
+                 "жест, и жесты идут в физически правильном порядке, без пропусков. Третий акт выводит предмет в мир "
+                 "и в реальный свет, рядом с человеком, и здесь впервые появляется лицо. Финал — один фронтальный "
+                 "симметричный кадр, годный на обложку и на карточку товара. Сквозной мотив — предмет возвращается "
+                 "на одну и ту же поверхность между актами, и она узнаётся.",
+        "dnote": "Никаких надписей и логотипов крупным планом: модели пишут с ошибками. Лицо ровно дважды за клип, "
+                 "остальное — руки и предмет.",
+        "slots_hint": ["object", "surface", "character", "accent"],
+        "tags": ["clean", "luxury", "daylight"],
+        "needs_lyrics": False,
+    },
+    {
+        "key": "paper_trail",
+        "tier": "free",
+        "label": {"en": "Paper Trail", "ru": "Бумажный след"},
+        "music": {
+            "en": "Storytelling rap, 85-100 BPM, dense lyrics, small or no chorus.",
+            "ru": "Повествовательный рэп, 85–100 BPM, плотный текст, маленький припев или без него.",
+        },
+        "bpm": [85, 100], "cut": "mid",
+        "logline": {
+            "en": "A stack of papers tells a story the hero refuses to tell.",
+            "ru": "Стопка бумаг рассказывает историю, которую герой рассказывать отказывается.",
+        },
+        "hero": {
+            "en": "The one who owes or is owed. He is defined by documents, not dialogue.",
+            "ru": "Тот, кто должен или кому должны. Его определяют документы, а не реплики.",
+        },
+        "motif": {
+            "en": "The same envelope or folder moves through every act.",
+            "ru": "Один и тот же конверт или папка проходит через все акты.",
+        },
+        "opens": {"en": "Paper on a table, no hands yet.",
+                  "ru": "Бумага на столе, рук ещё нет."},
+        "closes": {"en": "The same paper, torn or burnt or filed.",
+                   "ru": "Та же бумага — порванная, сожжённая или подшитая."},
+        "acts": [
+            {"key": "arrive", "share": 0.25, "shot": "close-up",
+             "label": {"en": "It arrives", "ru": "Приходит"},
+             "en": "The object first, the person second. Never show readable text.",
+             "ru": "Сначала предмет, потом человек. Читаемого текста не показываем.",
+             "boards": ["open_detail_first", "detail_pocket_reveal", "interior_doorframe"]},
+            {"key": "carry", "share": 0.3, "shot": "medium",
+             "label": {"en": "Carrying it", "ru": "Носит с собой"},
+             "en": "It goes everywhere he goes, always in frame, never discussed.",
+             "ru": "Оно ездит с ним везде, всегда в кадре и никогда не обсуждается.",
+             "boards": ["travel_walk_away", "travel_car_window", "interior_table_sit"]},
+            {"key": "read", "share": 0.25, "shot": "extreme close-up",
+             "label": {"en": "Reading it", "ru": "Читает"},
+             "en": "Face, hands, paper edge. What is written stays unknown.",
+             "ru": "Лицо, руки, край бумаги. Что написано — остаётся неизвестным.",
+             "boards": ["detail_written_trace", "portrait_breath_break", "night_screen_face"]},
+            {"key": "end", "share": 0.2, "shot": "medium",
+             "label": {"en": "Disposal", "ru": "Развязка"},
+             "en": "One physical action decides it: tear, burn, sign, file.",
+             "ru": "Решает одно физическое действие: порвать, сжечь, подписать, подшить.",
+             "boards": ["action_throw_away", "final_walk_out_frame"]},
+        ],
+        "scenes": {"min": 14, "typ": 26, "max": 36},
+        "open_board": "open_detail_first", "close_board": "final_walk_out_frame",
+        "styles_fit": ["noir", "cinema", "longheads", "dreamclad", "katsumi"],
+        "preset": "unsent_letter",
+        "story": "Через весь клип проходит одна бумага — конверт, папка, повестка или письмо, — и она рассказывает "
+                 "историю, которую герой рассказывать отказывается. Первый акт показывает предмет раньше человека: "
+                 "бумага на столе, рук в кадре ещё нет. Второй акт возит её везде: она попадает в кадр в каждой "
+                 "локации, лежит на приборной панели, торчит из кармана, но её никто не обсуждает. Третий акт — "
+                 "чтение: лицо, руки, край листа, и содержание остаётся неизвестным зрителю до конца. Финал решается "
+                 "одним физическим действием: порвать, сжечь, подписать или подшить, — и именно оно, а не текст, "
+                 "объясняет всё. Сквозной мотив — сам предмет, проходящий через все акты в одном и том же состоянии "
+                 "до самого финала.",
+        "dnote": "Читаемого текста в кадре быть не должно вообще: модели врут в надписях, и одна кривая строчка "
+                 "убивает сцену. Держи бумагу под углом, в расфокусе или обрезанной рамкой.",
+        "slots_hint": ["character", "location", "prop", "detail"],
+        "tags": ["melancholy", "muted", "grain"],
+        "needs_lyrics": True,
+    },
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. РАСКАДРОВОЧНЫЕ ПРОМТЫ — 47 готовых сцен.
+#
+# Единица: ОДНА СЦЕНА РАСКАДРОВКИ. Карточка заполняет шесть полей сцены разом:
+# shot_size, camera_move, image_prompt, image_prompt_last, motion_prompt и
+# shot_note. Это и просил владелец: не абзац текста, а готовая строка.
+#
+# Ось рубрикации — ФУНКЦИЯ В КЛИПЕ, а не операторский приём. Приёмы уже
+# разложены выше по оси «что настраивает», и вторая копия той же оси сделала бы
+# фильтр лотереей: человек, которому нужен «финальный кадр», не должен
+# перебирать «наезды».
+#
+# Поля, которых нет у приёма, и почему они здесь:
+#   note     — shot_note. Человеческая подпись сцены в раскадровке: по ней
+#              ориентируется автор, а не модель. Слотов в ней нет намеренно —
+#              подставленное английское значение внутри русской подписи читается
+#              как брак.
+#   solo     — motion для Grok. Grok оживляет ТОЛЬКО первый кадр (mediagen:
+#              first_last=False), и «движение между кадрами» ему бессмысленно.
+#              Без этого поля половина каталога на нём не работает вообще.
+#   bracket  — команда камеры в квадратных скобках для MiniMax H3: он читает
+#              их буквально и игнорирует словесное описание движения. Seedance
+#              и Kling скобок не понимают и утащат их в кадр как текст, поэтому
+#              приклеивает их только рендер и только для minimax.
+#   negative — отдельный канал запретов. Kling 3.0 ждёт их отдельным полем, а
+#              не текстом в промпте; там, где канала нет, значение просто не
+#              отправляется.
+#   traits   — черты для миксования, см. TRAITS и CONFLICT_PAIRS.
+#
+# ЧЕГО В ТЕКСТАХ НЕТ. Ни грейда, ни плёнки, ни палитры, ни зерна: их ставит
+# стиль трека, и дублирование ломало картинку — это уже чинилось. Проверяется
+# машинно списком _BAN_GRADE. Свет здесь есть, но только ГЕОМЕТРИЕЙ: откуда
+# идёт, куда падает, что в тени.
+# ─────────────────────────────────────────────────────────────────────────────
+BOARD_GROUPS = [
+    {"key": "opening",  "label": {"en": "Opening shots", "ru": "Открывающие кадры"},
+     "hint": {"en": "The first three seconds decide whether the rest is watched.",
+              "ru": "Первые три секунды решают, досмотрят ли остальное."}},
+    {"key": "travel",   "label": {"en": "Travelling and movement", "ru": "Проходы и движение"},
+     "hint": {"en": "Scenes that make a track feel like it is going somewhere.",
+              "ru": "Сцены, от которых трек начинает казаться идущим куда-то."}},
+    {"key": "portrait", "label": {"en": "Portraits and emotion", "ru": "Портреты и эмоция"},
+     "hint": {"en": "A face held long enough to be believed.",
+              "ru": "Лицо, которое держат достаточно долго, чтобы поверить."}},
+    {"key": "detail",   "label": {"en": "Details and objects", "ru": "Детали и предметы"},
+     "hint": {"en": "The cheapest scenes to generate and the ones that sell the world.",
+              "ru": "Самые дешёвые в генерации сцены — и те, что продают мир."}},
+    {"key": "action",   "label": {"en": "Action", "ru": "Действие и экшен"},
+     "hint": {"en": "Movement that has to stay readable at two seconds.",
+              "ru": "Движение, которое обязано читаться за две секунды."}},
+    {"key": "crowd",    "label": {"en": "Crowds", "ru": "Толпа и массовка"},
+     "hint": {"en": "Mass as a character. Never count people — models cannot.",
+              "ru": "Масса как персонаж. Людей не считаем: модели не умеют."}},
+    {"key": "interior", "label": {"en": "Interiors", "ru": "Интерьеры"},
+     "hint": {"en": "Rooms where the light source is visible in frame.",
+              "ru": "Комнаты, где источник света виден в кадре."}},
+    {"key": "night",    "label": {"en": "Night and light", "ru": "Ночь и свет"},
+     "hint": {"en": "Night is not darkness — it is a small number of sources.",
+              "ru": "Ночь — это не темнота, а малое число источников."}},
+    {"key": "final",    "label": {"en": "Closing shots", "ru": "Финальные кадры"},
+     "hint": {"en": "How a clip ends decides what it was about.",
+              "ru": "То, чем клип кончается, решает, о чём он был."}},
+    {"key": "bridge",   "label": {"en": "Location bridges", "ru": "Переходы между локациями"},
+     "hint": {"en": "Pairs of scenes: half the feel of a clip lives at the cut.",
+              "ru": "Пары сцен: половина ощущения от клипа живёт на склейке."}},
+]
+
+BOARDS: list[dict] = [
+
+    # ══════════════ ОТКРЫВАЮЩИЕ КАДРЫ ══════════════
+    {
+        "key": "open_door_out",
+        "group": "opening", "tier": "free",
+        "label": {"en": "Out of the door", "ru": "Выход из двери"},
+        "desc": {"en": "The character leaves a doorway with their back to us. The face is withheld.",
+                 "ru": "Герой выходит из проёма спиной к нам. Лицо придерживаем."},
+        "shot": "wide", "camera": "static, low angle",
+        "first": "Wide shot from outside {location}: {character} stands in a lit doorway with their back to the "
+                 "camera, one hand still on the door, the street dark and empty in front of them at {time}. "
+                 "Vertical framing, the doorway occupying the upper centre, wet ground in the lower third.",
+        "last": "The same {character} in the same doorway of the same {location} at the same {time}, now two steps "
+                "out on the street with the door swinging shut behind them, still seen from behind, same clothing "
+                "and same light from the doorway.",
+        "motion": "{character} takes two steps forward away from the camera and the door falls shut behind them; "
+                  "the light from the doorway narrows to a line and the figure settles into the darker street.",
+        "solo": "{character} steps forward away from the camera, the door swings shut behind them, and the movement "
+                "comes to rest as they stop on the pavement. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Exit from the doorway, seen from behind", "ru": "Выход из проёма, со спины"},
+        "negative": "face visible, camera shake, duplicated door, warped hands, text on the wall",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "wide_frame", "exterior", "solo", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_pull_open", "m_coat_inertia", "l_practical_only", "l_blue_hour"],
+        "conflicts_with": ["l_harsh_noon", "m_handheld_drift"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "punkrf", "longheads"],
+        "tags": ["melancholy", "night", "street"],
+    },
+    {
+        "key": "open_empty_place",
+        "group": "opening", "tier": "free",
+        "label": {"en": "The place before anyone", "ru": "Место до людей"},
+        "desc": {"en": "An establishing shot with no character in it at all. The location is the first character.",
+                 "ru": "Заявочный план вообще без героя. Первый персонаж — место."},
+        "shot": "establishing", "camera": "static, eye level",
+        "first": "Establishing wide of {location} at {time}, completely empty of people, composed symmetrically with "
+                 "the vanishing point in the centre of the vertical frame, {weather} visible in the air, every "
+                 "light source in the scene switched on.",
+        "last": "The same empty {location} from the same camera position at the same {time} with the same lights on: "
+                "only {weather} has moved through the frame and one distant light has gone out.",
+        "motion": "Nothing enters the frame. Only the air moves: {weather} drifts across the space, one distant "
+                  "light dies, and the shot holds on the empty place.",
+        "solo": "Hold the empty {location} and let only the air move through it — {weather} drifting across the "
+                "frame for six seconds until it settles. The camera stays locked off.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Establishing: the location alone", "ru": "Заявочный: только локация"},
+        "negative": "people, animals, moving vehicles, camera drift, warped architecture",
+        "slots": ["location", "time", "weather"],
+        "traits": ["locked", "wide_frame", "exterior", "slow"],
+        "needs_last": False, "engines": _ANY,
+        "fits_with": ["m_smoke_curl", "m_pan_link", "l_blue_hour", "l_deep_night", "l_first_light"],
+        "conflicts_with": ["m_handheld_drift", "m_arc_quarter"],
+        "styles_fit": ["cinema", "shinkai", "ghibli", "noir", "longheads"],
+        "tags": ["deadpan", "muted", "street"],
+    },
+    {
+        "key": "open_detail_first",
+        "group": "opening", "tier": "free",
+        "label": {"en": "Detail before face", "ru": "Деталь до лица"},
+        "desc": {"en": "Open on an extreme close-up of one object. The person arrives in the next scene.",
+                 "ru": "Открываемся макро на одном предмете. Человек появится следующей сценой."},
+        "shot": "extreme close-up", "camera": "static, macro",
+        "first": "Extreme close-up of {prop} lying on a surface in {location}, filling most of the vertical frame, "
+                 "lit from one side so the texture reads, shallow depth of field, no person in shot.",
+        "last": "The same {prop} on the same surface in the same {location} with the same side light, now with a "
+                "hand entering the lower edge of the frame and touching it; the framing and focus are unchanged.",
+        "motion": "A hand enters from the bottom edge of the frame and comes to rest on {prop}. Nothing else moves "
+                  "and the camera holds its position.",
+        "solo": "A hand slides into the bottom of the frame and stops on {prop}; the fingers settle and the shot "
+                "holds. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Macro on the object, hand enters", "ru": "Макро на предмете, входит рука"},
+        "negative": "full body, face, second hand, readable text, warped fingers",
+        "slots": ["prop", "location"],
+        "traits": ["locked", "close", "object", "interior"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_rack_focus", "m_hand_raise", "l_hard_single", "l_window_motivated"],
+        "conflicts_with": ["m_crane_rise", "m_steadi_follow"],
+        "styles_fit": ["cinema", "noir", "clay", "katsumi", "longheads"],
+        "tags": ["deadpan", "muted", "clean"],
+    },
+    {
+        "key": "open_direct_look",
+        "group": "opening", "tier": "free",
+        "label": {"en": "Straight into the lens", "ru": "Прямо в объектив"},
+        "desc": {"en": "The hardest hook in vertical: a person looking directly at the viewer on the first beat.",
+                 "ru": "Самый жёсткий хук вертикали: человек смотрит прямо на зрителя с первой доли."},
+        "shot": "close-up", "camera": "static, eye level",
+        "first": "Close-up of {character} in {location} facing the camera dead on, eyes directly in the lens, head "
+                 "in the upper centre of the vertical frame, {emotion}, shoulders squared, background falling away "
+                 "out of focus behind them.",
+        "last": "The same {character} in the same {location} in the same light, framing unchanged, still looking "
+                "into the lens but now half a step closer to the camera, {emotion} settled into stillness.",
+        "motion": "{character} leans a fraction closer to the lens and stops; the eyes never leave the camera and "
+                  "the shot holds on that stillness.",
+        "solo": "{character} holds the look into the lens, blinks once, leans a fraction closer and stops. The "
+                "camera stays where it is.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Direct look into the lens", "ru": "Прямой взгляд в объектив"},
+        "negative": "looking away, crossed eyes, warped iris, second person in frame, camera shake",
+        "slots": ["character", "location", "emotion"],
+        "traits": ["locked", "close", "hero_face", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_eyes_to_lens", "m_head_snap", "l_rim_back", "l_screen_glow"],
+        "conflicts_with": ["m_steadi_follow", "m_crane_rise"],
+        "styles_fit": ["cinema", "punkrf", "noir", "spike", "munir"],
+        "tags": ["menacing", "deadpan", "street"],
+    },
+    {
+        "key": "open_from_black",
+        "group": "opening", "tier": "free",
+        "label": {"en": "Out of the dark", "ru": "Из темноты"},
+        "desc": {"en": "The frame starts almost black and resolves into an image. Buys two seconds of attention.",
+                 "ru": "Кадр начинается почти чёрным и проявляется в изображение. Покупает две секунды внимания."},
+        "shot": "close-up", "camera": "static, slow reveal",
+        "first": "Close-up in {location} at {time} where almost the whole vertical frame is in darkness: only a "
+                 "narrow edge of {character}'s face and shoulder catches a weak light from one side, everything "
+                 "else unlit and unreadable.",
+        "last": "The same {character} in the same {location} at the same {time} from the same angle, now clearly "
+                "lit across the face by the same single source, the surrounding darkness unchanged.",
+        "motion": "The light on {character} strengthens until the face reads clearly, then holds. Nothing else in "
+                  "the frame moves and the camera stays still.",
+        "solo": "The single light on {character}'s face strengthens over four seconds until the face reads, then "
+                "settles. The camera holds its position and the darkness around stays.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Emerging out of darkness", "ru": "Проявление из темноты"},
+        "negative": "flat even lighting, second light source, camera movement, background detail",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "close", "low_key", "hero_face", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_blur_resolve", "m_breath_fog", "l_chiaroscuro", "l_hard_single"],
+        "conflicts_with": ["l_harsh_noon", "l_overcast_flat"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "munir", "fanuel"],
+        "tags": ["menacing", "monochrome", "night"],
+    },
+    {
+        "key": "open_mid_action",
+        "group": "opening", "tier": "free",
+        "label": {"en": "Already running", "ru": "Уже на бегу"},
+        "desc": {"en": "No setup at all: the first frame catches the action at its middle.",
+                 "ru": "Без завязки: первый кадр застаёт действие в середине."},
+        "shot": "medium", "camera": "static, low, subject crosses frame",
+        "first": "Medium shot in {location} at {time}: {character} caught mid-stride running across the frame from "
+                 "left to right, both feet off the ground, body leaning forward, motion blur on the arms, the "
+                 "background compressed behind them.",
+        "last": "The same {character} in the same {location} at the same {time}, same clothing and same light, now "
+                "on the right edge of the frame with the leading foot planted and the body upright.",
+        "motion": "{character} completes the stride across the frame and plants the leading foot, the body coming "
+                  "upright as the movement stops at the edge of the shot.",
+        "solo": "{character} finishes the running stride across the frame, plants the front foot and comes to a "
+                "stop at the edge. The camera holds still while they cross it.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Opening on a run already in progress", "ru": "Открываемся посреди бега"},
+        "negative": "slow motion, floating feet, sliding feet, warped legs, empty frame",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "fast", "exterior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_weight_step", "m_whip_out", "m_dust_bloom", "l_hard_single"],
+        "conflicts_with": ["m_pull_open", "l_soft_wrap"],
+        "styles_fit": ["punkrf", "spike", "cinema", "munir", "noir"],
+        "tags": ["epic", "saturated", "street"],
+    },
+
+    # ══════════════ ПРОХОДЫ И ДВИЖЕНИЕ ══════════════
+    {
+        "key": "travel_walk_away",
+        "group": "travel", "tier": "free",
+        "label": {"en": "Walking away", "ru": "Уход от камеры"},
+        "desc": {"en": "The character walks away down the vertical of the frame. The street does the composing.",
+                 "ru": "Герой уходит вглубь по вертикали кадра. Композицию строит улица."},
+        "shot": "wide", "camera": "steadicam follow from behind, lowering to waist height",
+        "first": "Wide shot from behind: {character} steps off the kerb into a narrow street in {location} at "
+                 "{time}, shoulders up, hands in pockets, street lamps receding into the distance along the "
+                 "vertical of the frame, puddles holding their reflections, plenty of headroom.",
+        "last": "The same {character} in the same street in {location} at the same {time}, same clothing and same "
+                "lamps, now framed from the waist up and much closer, passing directly under one lamp so the light "
+                "falls on the shoulders from above.",
+        "motion": "The camera follows from behind at walking pace and lowers to waist height as {character} walks "
+                  "away, then settles as they pass under the lamp; the coat swings a beat behind the step.",
+        "solo": "{character} walks away from the camera down the street; the camera follows at the same pace and "
+                "lowers slightly, then settles as they reach the lamp. The coat swings a beat behind each step.",
+        "bracket": "[Tracking shot]",
+        "note": {"en": "Walking away, camera follows", "ru": "Уход по улице, камера следом"},
+        "negative": "face turning back, foot sliding, background shifting, extra pedestrians, camera jitter",
+        "slots": ["character", "location", "time"],
+        "traits": ["moving_camera", "wide_frame", "exterior", "solo", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_steadi_follow", "m_coat_inertia", "l_practical_only", "l_deep_night"],
+        "conflicts_with": ["m_freeze_settle", "l_harsh_noon"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "shinkai", "punkrf"],
+        "tags": ["melancholy", "night", "street"],
+    },
+    {
+        "key": "travel_side_track",
+        "group": "travel", "tier": "free",
+        "label": {"en": "Alongside", "ru": "Сбоку, вровень"},
+        "desc": {"en": "The camera travels beside the character at their own speed. The background moves, they do not.",
+                 "ru": "Камера едет рядом с героем на его скорости. Движется фон, а не он."},
+        "shot": "medium", "camera": "tracking alongside, matched speed",
+        "first": "Medium shot of {character} walking through {location} at {time}, seen from the side at their own "
+                 "height, held in the same place in the frame, the background already streaked by the movement, "
+                 "foreground posts sweeping past close to the lens.",
+        "last": "The same {character} in the same {location} at the same {time}, same posture and same clothing, "
+                "held in the same place in the frame, but the background behind them is now a different part of "
+                "the street.",
+        "motion": "The camera trucks sideways at walking pace, keeping {character} fixed in the frame while the "
+                  "background sweeps past, then settles as the pace steadies.",
+        "solo": "The camera trucks sideways at walking pace beside {character}, holding them in the same place in "
+                "frame while the background sweeps past, then settles into a steady glide.",
+        "bracket": "[Truck left]",
+        "note": {"en": "Side tracking at walking pace", "ru": "Тревеллинг сбоку на шаге"},
+        "negative": "subject drifting in frame, foot sliding, background stuttering, morphing buildings",
+        "slots": ["character", "location", "time"],
+        "traits": ["moving_camera", "exterior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_truck_side", "m_weight_step", "l_golden_hour", "l_overcast_flat"],
+        "conflicts_with": ["m_arc_quarter", "m_rack_focus"],
+        "styles_fit": ["cinema", "longheads", "ghibli", "katsumi", "punkrf"],
+        "tags": ["deadpan", "street", "daylight"],
+    },
+    {
+        "key": "travel_stairs_down",
+        "group": "travel", "tier": "free",
+        "label": {"en": "Down the stairs", "ru": "Лестница вниз"},
+        "desc": {"en": "A stairwell is a vertical corridor — the one geometry made for a 9:16 frame.",
+                 "ru": "Лестница — вертикальный коридор, единственная геометрия, придуманная под 9:16."},
+        "shot": "medium", "camera": "handheld descent, slightly behind",
+        "first": "Medium shot inside a stairwell in {location} at {time}: {character} descending, seen from half a "
+                 "flight above and behind, the railing running down the left of the vertical frame, light coming "
+                 "from a window on the landing below.",
+        "last": "The same {character} in the same stairwell of {location} at the same {time}, same clothing and "
+                "same railing, now a full flight lower and standing on the landing in the window light.",
+        "motion": "The camera descends behind {character} at the pace of the steps, one flight, and settles when "
+                  "they stop on the landing; a small handheld sway stays in the move.",
+        "solo": "{character} walks down one flight of stairs away from the camera, which descends behind them at "
+                "the same pace and settles when they reach the landing.",
+        "bracket": "[Pedestal down]",
+        "note": {"en": "Descending a stairwell", "ru": "Спуск по лестнице"},
+        "negative": "floating steps, warped railing, duplicated landings, face to camera, jitter",
+        "slots": ["character", "location", "time"],
+        "traits": ["handheld", "moving_camera", "interior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_handheld_drift", "m_pedestal_down", "l_window_motivated", "l_practical_only"],
+        "conflicts_with": ["m_crane_rise", "l_harsh_noon"],
+        "styles_fit": ["noir", "cinema", "punkrf", "dreamclad", "longheads"],
+        "tags": ["menacing", "muted", "night"],
+    },
+    {
+        "key": "travel_car_window",
+        "group": "travel", "tier": "free",
+        "label": {"en": "Through the window", "ru": "Через окно"},
+        "desc": {"en": "The world runs past outside while the character stays still inside. Cheap, and it never fails.",
+                 "ru": "Мир бежит снаружи, герой внутри неподвижен. Дёшево и не подводит никогда."},
+        "shot": "medium", "camera": "static inside the vehicle",
+        "first": "Medium shot inside {vehicle} in {location} at {time}: {character} sits by the window seen from "
+                 "the side, face half turned to the glass, the landscape outside already blurred by speed, the "
+                 "window frame cutting the vertical shot in two.",
+        "last": "The same {character} in the same {vehicle} at the same {time}, same seat and same window frame, "
+                "now with the head resting against the glass and a completely different landscape outside.",
+        "motion": "The landscape outside the window streams past while {character} slowly lets the head rest "
+                  "against the glass and stops there; the camera inside does not move.",
+        "solo": "The landscape outside the window streams past and {character} slowly lowers the head against the "
+                "glass and stops. The camera inside the {vehicle} stays locked off.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Seated by a moving window", "ru": "У окна на ходу"},
+        "negative": "camera shake, warped reflections, duplicated window frame, readable signs outside",
+        "slots": ["character", "vehicle", "location", "time"],
+        "traits": ["locked", "interior", "solo", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_rack_focus", "m_hair_lag", "l_window_motivated", "l_blue_hour"],
+        "conflicts_with": ["m_steadi_follow", "m_arc_quarter"],
+        "styles_fit": ["shinkai", "cinema", "katsumi", "dreamclad", "longheads"],
+        "tags": ["melancholy", "nostalgic", "night"],
+    },
+    {
+        "key": "travel_corridor_push",
+        "group": "travel", "tier": "pro",
+        "label": {"en": "Down the corridor", "ru": "По коридору"},
+        "desc": {"en": "A corridor gives the frame its own perspective lines. The camera only has to go straight.",
+                 "ru": "Коридор сам даёт кадру перспективу. Камере остаётся только ехать прямо."},
+        "shot": "wide", "camera": "slow push-in along the corridor",
+        "first": "Wide shot down a long corridor in {location} at {time}: {character} stands far away at the end of "
+                 "it, small and centred, the ceiling lights running away in two converging lines above them, the "
+                 "floor reflecting each light as a stripe.",
+        "last": "The same {character} in the same corridor of {location} at the same {time}, same lights and same "
+                "clothing, now framed from the chest up and close to the camera, the corridor collapsed to a "
+                "shallow band behind them.",
+        "motion": "The camera pushes straight down the corridor toward {character} at a steady speed and settles "
+                  "when the face fills the frame; {character} does not walk toward the camera.",
+        "solo": "The camera pushes slowly straight down the corridor toward {character}, who stands still at the "
+                "far end, and settles once they fill the frame.",
+        "bracket": "[Push in]",
+        "note": {"en": "Push down a corridor", "ru": "Наезд по коридору"},
+        "negative": "subject walking toward camera, warped perspective, duplicated doors, camera roll",
+        "slots": ["character", "location", "time"],
+        "traits": ["moving_camera", "interior", "solo", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_breath_fog", "l_practical_only", "l_chiaroscuro"],
+        "conflicts_with": ["m_truck_side", "l_golden_hour"],
+        "styles_fit": ["noir", "cinema", "munir", "dreamclad", "fanuel"],
+        "tags": ["menacing", "cold", "night"],
+    },
+
+    # ══════════════ ПОРТРЕТЫ И ЭМОЦИЯ ══════════════
+    {
+        "key": "portrait_hold_still",
+        "group": "portrait", "tier": "free",
+        "label": {"en": "The held portrait", "ru": "Держим портрет"},
+        "desc": {"en": "A face doing almost nothing for six seconds. The hardest scene to write and the one that lands.",
+                 "ru": "Лицо, которое шесть секунд почти ничего не делает. Самая трудная сцена — и та, что попадает."},
+        "shot": "close-up", "camera": "static, eye level",
+        "first": "Close-up of {character} in {location}, head and shoulders filling the vertical frame, lit from one "
+                 "side so half the face falls into shadow, {emotion}, eyes fixed on something just past the lens, "
+                 "background dark and unreadable.",
+        "last": "The same {character} in the same {location} with the same single-side light and the same framing, "
+                "the head turned a few degrees further into the light, {emotion} unchanged.",
+        "motion": "{character} turns the head a few degrees into the light, blinks once and stops; nothing else in "
+                  "the frame moves and the camera holds.",
+        "solo": "{character} blinks once, turns the head a few degrees into the light and stops. The camera does "
+                "not move and the background stays dark.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Held close-up, minimal movement", "ru": "Крупный план, минимум движения"},
+        "negative": "smiling, exaggerated expression, head bobbing, warped eyes, second face",
+        "slots": ["character", "location", "emotion"],
+        "traits": ["locked", "close", "hero_face", "solo", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_shoulder_drop", "l_rim_back", "l_hard_single", "l_soft_wrap"],
+        "conflicts_with": ["m_whip_out", "m_crane_rise"],
+        "styles_fit": ["cinema", "noir", "longheads", "katsumi", "fanuel"],
+        "tags": ["melancholy", "muted", "deadpan"],
+    },
+    {
+        "key": "portrait_turn_to_lens",
+        "group": "portrait", "tier": "free",
+        "label": {"en": "Turning to the lens", "ru": "Поворот к камере"},
+        "desc": {"en": "Starts as an unaware profile, ends as eye contact. One move, whole meaning.",
+                 "ru": "Начинается неосознанным профилем, заканчивается зрительным контактом. Одно движение — весь смысл."},
+        "shot": "close-up", "camera": "static, eye level",
+        "first": "Close-up of {character} in {location} in profile, facing left out of the frame, unaware of the "
+                 "camera, lit from the front-left so the near cheek is bright and the far side is in shadow, "
+                 "{emotion}.",
+        "last": "The same {character} in the same {location} in the same light and framing, now turned fully to "
+                "face the camera with the eyes directly in the lens, {emotion}.",
+        "motion": "{character} turns the head from profile to the lens in one continuous move and stops there, "
+                  "eyes settling on the camera; the hair follows a beat behind the turn.",
+        "solo": "{character} turns from profile toward the camera, the hair trailing a beat behind, and stops with "
+                "the eyes in the lens. The camera stays still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Profile turning into eye contact", "ru": "Профиль поворачивается в контакт"},
+        "negative": "head rotating past the camera, neck stretching, warped ear, blinking out of sync, jitter",
+        "slots": ["character", "location", "emotion"],
+        "traits": ["locked", "close", "hero_face", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_turn_to_lens", "m_hair_lag", "l_rim_back", "l_window_motivated"],
+        "conflicts_with": ["m_truck_side", "m_body_wipe"],
+        "styles_fit": ["cinema", "katsumi", "noir", "dreamclad", "shinkai"],
+        "tags": ["melancholy", "deadpan", "muted"],
+    },
+    {
+        "key": "portrait_breath_break",
+        "group": "portrait", "tier": "pro",
+        "label": {"en": "The break", "ru": "Слом"},
+        "desc": {"en": "The face holds, then stops holding. One scene carries the emotional peak of a whole clip.",
+                 "ru": "Лицо держится — и перестаёт держаться. Одна сцена тянет эмоциональный пик всего клипа."},
+        "shot": "extreme close-up", "camera": "static, slightly low",
+        "first": "Extreme close-up of {character}'s face in {location}, jaw set and mouth closed, {emotion}, lit by "
+                 "one hard source from the side, the eyes dry and fixed forward, breath held.",
+        "last": "The same {character} in the same {location} under the same hard side light, same framing, now with "
+                "the jaw loosened, the mouth slightly open and the shoulders dropped after a long exhale.",
+        "motion": "{character} holds the breath, then releases it: the jaw loosens, the shoulders drop, and the "
+                  "face settles into the exhale without any other movement.",
+        "solo": "{character} holds a breath for three seconds, then exhales; the jaw loosens and the shoulders drop "
+                "as the face settles. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Held breath released", "ru": "Задержанное дыхание отпускается"},
+        "negative": "crying, theatrical grimace, head turning away, warped mouth, camera movement",
+        "slots": ["character", "location", "emotion"],
+        "traits": ["locked", "close", "hero_face", "solo", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_shoulder_drop", "m_breath_fog", "l_hard_single", "l_chiaroscuro"],
+        "conflicts_with": ["m_whip_out", "l_high_key_bounce"],
+        "styles_fit": ["cinema", "noir", "fanuel", "longheads", "munir"],
+        "tags": ["melancholy", "monochrome", "deadpan"],
+    },
+    {
+        "key": "portrait_profile_to_front",
+        "group": "portrait", "tier": "free",
+        "label": {"en": "Profile to front", "ru": "Профиль в фас"},
+        "desc": {"en": "Not a head turn but a body turn: the whole person squares up to the camera.",
+                 "ru": "Поворот не головы, а корпуса: человек разворачивается к камере целиком."},
+        "shot": "medium", "camera": "static, chest level",
+        "first": "Medium shot of {character} in {location} standing in profile, weight on the back foot, arms "
+                 "loose, seen from the side against a plain wall, one light source behind them tracing the edge of "
+                 "the shoulder and jaw.",
+        "last": "The same {character} in the same {location} against the same wall with the same light behind them, "
+                "now squared up to the camera with the weight settled on both feet and the shoulders level.",
+        "motion": "{character} turns the whole body from profile to face the camera, the weight transferring from "
+                  "the back foot to both feet, and stops squared to the lens.",
+        "solo": "{character} turns the whole body from profile toward the camera, transferring weight from the back "
+                "foot to both, and stops facing the lens. The camera holds still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Body turn to face camera", "ru": "Разворот корпусом к камере"},
+        "negative": "feet sliding, hips detaching, warped shoulders, background shifting, extra arm",
+        "slots": ["character", "location"],
+        "traits": ["locked", "hero_face", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_weight_step", "m_turn_to_lens", "l_rim_back", "l_three_point"],
+        "conflicts_with": ["m_handheld_drift", "m_crane_rise"],
+        "styles_fit": ["cinema", "munir", "spike", "punkrf", "longheads"],
+        "tags": ["epic", "deadpan", "street"],
+    },
+    {
+        "key": "portrait_two_shot",
+        "group": "portrait", "tier": "pro",
+        "label": {"en": "Two people, one frame", "ru": "Двое в одном кадре"},
+        "desc": {"en": "The distance between them is the subject. Nobody has to say anything.",
+                 "ru": "Тема кадра — расстояние между ними. Говорить никому не нужно."},
+        "shot": "medium", "camera": "static, eye level, symmetrical",
+        "first": "Medium two-shot in {location} at {time}: {character} on the left of the vertical frame and a "
+                 "second person on the right, a clear gap of empty space between them, both facing forward rather "
+                 "than at each other, one light source between them lighting the gap.",
+        "last": "The same two people in the same {location} at the same {time} in the same light and framing, now "
+                "with one of them turned toward the other while the second still faces forward; the gap between "
+                "them is unchanged.",
+        "motion": "One of the two turns toward the other and stops; the second does not react, and the empty space "
+                  "between them holds the frame.",
+        "solo": "One of the two people turns toward the other and stops; the other does not move at all. The camera "
+                "holds the gap between them.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Two-shot with a gap between them", "ru": "Двое с разрывом между ними"},
+        "negative": "characters merging, identical faces, touching, warped limbs, camera drift",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "interior", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_turn_to_lens", "m_shoulder_drop", "l_practical_only", "l_soft_wrap"],
+        "conflicts_with": ["m_arc_quarter", "m_whip_out"],
+        "styles_fit": ["cinema", "katsumi", "longheads", "clay", "noir"],
+        "tags": ["melancholy", "deadpan", "muted"],
+    },
+
+    # ══════════════ ДЕТАЛИ И ПРЕДМЕТЫ ══════════════
+    {
+        "key": "detail_hands_work",
+        "group": "detail", "tier": "free",
+        "label": {"en": "Hands working", "ru": "Руки работают"},
+        "desc": {"en": "No face at all. Hands are the cheapest believable performance a model can give you.",
+                 "ru": "Без лица вообще. Руки — самая дешёвая правдоподобная игра, которую даёт модель."},
+        "shot": "close-up", "camera": "static, high angle over the hands",
+        "first": "Close-up looking down at a pair of hands in {location} working on {prop} on a worn surface, "
+                 "sleeves pushed up, one hard light from the left throwing the shadows of the fingers across the "
+                 "surface, no face in the frame.",
+        "last": "The same hands on the same surface in the same {location} under the same hard left light, {prop} "
+                "now finished and set down flat, the fingers withdrawn to the edge of the frame.",
+        "motion": "The hands complete the work on {prop}, set it down and withdraw to the edge of the frame, where "
+                  "the movement stops; the camera stays overhead.",
+        "solo": "The hands finish working on {prop}, set it down flat and withdraw to the edge of the frame, then "
+                "stop. The camera stays overhead and does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Hands only, working an object", "ru": "Только руки, работа с предметом"},
+        "negative": "face in frame, six fingers, warped knuckles, third hand, readable text",
+        "slots": ["prop", "location"],
+        "traits": ["locked", "close", "object", "interior"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_hand_raise", "m_rack_focus", "l_hard_single", "l_window_motivated"],
+        "conflicts_with": ["m_crane_rise", "m_steadi_follow"],
+        "styles_fit": ["cinema", "clay", "ghibli", "longheads", "katsumi"],
+        "tags": ["cozy", "warm", "handmade"],
+    },
+    {
+        "key": "detail_object_pickup",
+        "group": "detail", "tier": "free",
+        "label": {"en": "Picking it up", "ru": "Берёт предмет"},
+        "desc": {"en": "An object on a surface, then in a hand. The smallest complete action there is.",
+                 "ru": "Предмет на поверхности — и в руке. Самое маленькое законченное действие."},
+        "shot": "close-up", "camera": "static, low, level with the surface",
+        "first": "Close-up level with {surface} in {location}: {prop} sits alone in the centre of the vertical "
+                 "frame, lit from behind so its outline separates from the darker background, with empty space "
+                 "around it.",
+        "last": "The same {prop} in the same {location} in the same backlight, now lifted off {surface} and held in "
+                "a hand at the top of the frame, the empty surface visible below it.",
+        "motion": "A hand enters, closes around {prop} and lifts it clear of {surface}, then stops with the object "
+                  "held still in the upper frame.",
+        "solo": "A hand enters the frame, closes around {prop}, lifts it off {surface} and stops with it held "
+                "still. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Object lifted off the surface", "ru": "Предмет поднимают с поверхности"},
+        "negative": "object floating, hand passing through the object, duplicated object, warped fingers",
+        "slots": ["prop", "surface", "location"],
+        "traits": ["locked", "close", "object"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_hand_raise", "m_rack_focus", "l_rim_back", "l_hard_single"],
+        "conflicts_with": ["m_truck_side", "m_handheld_drift"],
+        "styles_fit": ["cinema", "noir", "clay", "flat2d", "longheads"],
+        "tags": ["deadpan", "clean", "muted"],
+    },
+    {
+        "key": "detail_texture_macro",
+        "group": "detail", "tier": "free",
+        "label": {"en": "Texture macro", "ru": "Макро фактуры"},
+        "desc": {"en": "So close the subject becomes an abstraction. Buys texture the wide shots never show.",
+                 "ru": "Так близко, что предмет становится абстракцией. Даёт фактуру, которой нет на общих."},
+        "shot": "extreme close-up", "camera": "static macro, shallow focus",
+        "first": "Extreme macro of the surface of {object} in {location}, filling the whole vertical frame, raking "
+                 "light from one side revealing every fibre and scratch of the material, depth of field so shallow "
+                 "that only a narrow band is sharp.",
+        "last": "The same surface of the same {object} in the same {location} under the same raking light, the "
+                "sharp band of focus now sitting further across the material and a drop of moisture forming at "
+                "the edge.",
+        "motion": "The plane of focus travels slowly across the surface of {object} and comes to rest, a single "
+                  "drop of moisture gathering at the edge as it stops.",
+        "solo": "The plane of focus drifts slowly across the surface of {object} and settles, while a drop of "
+                "moisture gathers at the edge. The camera stays fixed.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Macro on material", "ru": "Макро по материалу"},
+        "negative": "whole object visible, flat lighting, duplicated texture, readable branding",
+        "slots": ["object", "location"],
+        "traits": ["locked", "close", "object", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_rack_focus", "m_water_drip", "l_hard_single", "l_window_motivated"],
+        "conflicts_with": ["m_crane_rise", "m_steadi_follow"],
+        "styles_fit": ["cinema", "clay", "embroidery", "longheads", "katsumi"],
+        "tags": ["clean", "luxury", "handmade"],
+    },
+    {
+        "key": "detail_pocket_reveal",
+        "group": "detail", "tier": "free",
+        "label": {"en": "Out of the pocket", "ru": "Из кармана"},
+        "desc": {"en": "An object appears from clothing. Reveals a plot point without a single word.",
+                 "ru": "Предмет появляется из одежды. Сюжетный поворот без единого слова."},
+        "shot": "close-up", "camera": "static, chest level",
+        "first": "Close-up on the chest and hands of {character} in {location} wearing {outfit}, one hand halfway "
+                 "into a pocket, the fabric pulled taut around the wrist, the face cropped out above the top edge "
+                 "of the frame.",
+        "last": "The same {character} in the same {outfit} in the same {location} and the same light, the hand now "
+                "out of the pocket and holding {prop} in front of the chest, the fabric fallen loose again.",
+        "motion": "The hand comes out of the pocket holding {prop} and stops in front of the chest; the fabric of "
+                  "{outfit} falls loose a beat after the wrist stops moving.",
+        "solo": "The hand pulls {prop} out of the pocket and stops with it in front of the chest, the fabric of "
+                "{outfit} settling a beat later. The camera holds still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Object drawn from a pocket", "ru": "Предмет достают из кармана"},
+        "negative": "face in frame, object morphing, extra hand, warped fabric, readable text",
+        "slots": ["character", "outfit", "prop", "location"],
+        "traits": ["locked", "close", "object", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_hand_raise", "m_hem_settle", "l_hard_single", "l_practical_only"],
+        "conflicts_with": ["m_crane_rise", "m_arc_quarter"],
+        "styles_fit": ["noir", "cinema", "punkrf", "munir", "longheads"],
+        "tags": ["menacing", "muted", "street"],
+    },
+    {
+        "key": "detail_written_trace",
+        "group": "detail", "tier": "pro",
+        "label": {"en": "The mark left behind", "ru": "Оставленный след"},
+        "desc": {"en": "A scratch, a stain, a worn step: history without text. Models spell badly — marks they draw well.",
+                 "ru": "Царапина, пятно, стёртая ступень: история без текста. Надписи модель врёт, следы — рисует."},
+        "shot": "extreme close-up", "camera": "static, angled across the surface",
+        "first": "Extreme close-up of {detail} on a worn surface in {location}, shot at a steep angle across the "
+                 "material so the light rakes it, dust caught in the recesses, no lettering and no signage "
+                 "anywhere in the frame.",
+        "last": "The same {detail} on the same surface in the same {location}, the same angle and the same raking "
+                "light, now with a finger tracing along it and dust lifted where it passed.",
+        "motion": "A fingertip traces slowly along {detail} and stops at the end of it, lifting a thin line of "
+                  "dust that settles behind the movement.",
+        "solo": "A fingertip traces slowly along {detail} and stops at the end, lifting a thin line of dust that "
+                "settles behind it. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Tracing a mark on a surface", "ru": "Палец ведёт по следу"},
+        "negative": "letters, numbers, signage, warped finger, flat lighting, duplicated marks",
+        "slots": ["detail", "location"],
+        "traits": ["locked", "close", "object", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_rack_focus", "m_dust_bloom", "l_hard_single", "l_chiaroscuro"],
+        "conflicts_with": ["m_whip_out", "l_overcast_flat"],
+        "styles_fit": ["cinema", "fanuel", "longheads", "noir", "embroidery"],
+        "tags": ["nostalgic", "sacred", "muted"],
+    },
+
+    # ══════════════ ДЕЙСТВИЕ И ЭКШЕН ══════════════
+    {
+        "key": "action_run_toward",
+        "group": "action", "tier": "free",
+        "label": {"en": "Running at the camera", "ru": "Бег на камеру"},
+        "desc": {"en": "The subject grows in frame without the camera moving. Safest action scene there is.",
+                 "ru": "Герой растёт в кадре без движения камеры. Самая безопасная экшен-сцена."},
+        "shot": "wide", "camera": "static, low",
+        "first": "Wide low shot in {location} at {time}: {character} far away at the end of the frame, already "
+                 "running toward the camera, both arms driving, the ground stretching between them and the lens.",
+        "last": "The same {character} in the same {location} at the same {time}, same clothing, now filling the "
+                "frame from the knees up, one foot planted hard in the foreground and the body braked.",
+        "motion": "{character} runs straight at the camera and brakes hard in the foreground, planting one foot; "
+                  "the body pitches forward and settles as the run stops.",
+        "solo": "{character} runs straight toward the camera and brakes hard close to the lens, planting a foot and "
+                "coming to a stop. The camera stays low and still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Run toward camera, hard stop", "ru": "Бег на камеру, резкая остановка"},
+        "negative": "sliding feet, floating body, motion blur on the background, warped legs, jitter",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "fast", "exterior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_weight_step", "m_dust_bloom", "l_hard_single", "l_rim_back"],
+        "conflicts_with": ["m_push_settle", "l_soft_wrap"],
+        "styles_fit": ["punkrf", "spike", "cinema", "munir", "noir"],
+        "tags": ["epic", "saturated", "street"],
+    },
+    {
+        "key": "action_impact_stop",
+        "group": "action", "tier": "pro",
+        "label": {"en": "Impact", "ru": "Удар"},
+        "desc": {"en": "The frame lands on a beat because something in it hits something else.",
+                 "ru": "Кадр попадает в долю, потому что внутри него что-то во что-то ударяет."},
+        "shot": "medium", "camera": "static, chest level",
+        "first": "Medium shot in {location}: {character} with the arm drawn fully back and the shoulder loaded, "
+                 "body coiled toward a solid surface at the edge of the frame, dust already hanging in the light "
+                 "from the side.",
+        "last": "The same {character} in the same {location} in the same side light, same clothing, now with the "
+                "hand flat against that surface, the shoulder collapsed forward and dust knocked loose into the "
+                "air around the contact point.",
+        "motion": "{character} drives the arm forward into the surface and stops dead on contact; dust bursts away "
+                  "from the point of impact and settles.",
+        "solo": "{character} drives the arm forward into the surface and stops dead on contact, dust bursting away "
+                "from the impact and settling. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Strike and dead stop on contact", "ru": "Удар и мёртвая остановка"},
+        "negative": "arm passing through the wall, rubber limbs, blood, warped hand, camera shake",
+        "slots": ["character", "location"],
+        "traits": ["locked", "fast", "solo", "hard_light"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_freeze_settle", "m_dust_bloom", "l_hard_single", "l_chiaroscuro"],
+        "conflicts_with": ["m_push_settle", "l_soft_wrap"],
+        "styles_fit": ["punkrf", "noir", "spike", "munir", "cinema"],
+        "tags": ["menacing", "saturated", "street"],
+    },
+    {
+        "key": "action_jump_land",
+        "group": "action", "tier": "free",
+        "label": {"en": "Jump and landing", "ru": "Прыжок и приземление"},
+        "desc": {"en": "Two phases of one movement: airborne and grounded. The pair does all the work.",
+                 "ru": "Две фазы одного движения: в воздухе и на земле. Всю работу делает пара."},
+        "shot": "medium", "camera": "static, low",
+        "first": "Medium low shot in {location} at {time}: {character} in mid-air above the ground, knees tucked, "
+                 "arms out for balance, nothing but sky and rooftops behind them in the vertical frame.",
+        "last": "The same {character} in the same {location} at the same {time}, same clothing, now landed in a "
+                "deep crouch with both hands touching the ground and dust pushed outward around the feet.",
+        "motion": "{character} drops out of the air into a deep crouch, both hands reaching the ground, and the "
+                  "body settles as the dust pushes outward from the landing.",
+        "solo": "{character} drops down into a deep crouch, hands touching the ground, and the body settles while "
+                "dust pushes outward around the feet. The camera holds low and still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Airborne to landing crouch", "ru": "Из воздуха в присед"},
+        "negative": "floating landing, feet through the ground, rubber legs, cape physics, jitter",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "fast", "exterior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_weight_step", "m_dust_bloom", "m_freeze_settle", "l_rim_back"],
+        "conflicts_with": ["m_push_settle", "m_rack_focus"],
+        "styles_fit": ["spike", "punkrf", "cinema", "munir", "pixar"],
+        "tags": ["epic", "saturated", "street"],
+    },
+    {
+        "key": "action_throw_away",
+        "group": "action", "tier": "free",
+        "label": {"en": "Throwing it away", "ru": "Бросок"},
+        "desc": {"en": "A decision made physical. The object leaves the hand and the frame keeps going.",
+                 "ru": "Решение, ставшее физическим. Предмет покидает руку, а кадр продолжается."},
+        "shot": "medium", "camera": "static, eye level",
+        "first": "Medium shot of {character} in {location} at {time} holding {prop} out at arm's length, the arm "
+                 "fully extended and the fingers already opening, the body turned away from the direction of the "
+                 "throw.",
+        "last": "The same {character} in the same {location} at the same {time} in the same light, the hand now "
+                "empty and dropping, {prop} gone from the frame entirely and the eyes following it out.",
+        "motion": "{character} releases {prop} and lets the arm fall; the object leaves the frame and the hand "
+                  "comes to rest against the thigh.",
+        "solo": "{character} opens the hand, lets {prop} go out of frame and drops the arm to rest against the "
+                "thigh. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Release and the arm falls", "ru": "Отпускает, рука падает"},
+        "negative": "object multiplying, object returning, warped arm, slow motion, camera pan",
+        "slots": ["character", "prop", "location", "time"],
+        "traits": ["locked", "solo", "exterior"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_hand_raise", "m_paper_scatter", "l_overcast_flat", "l_golden_hour"],
+        "conflicts_with": ["m_rack_focus", "m_body_wipe"],
+        "styles_fit": ["cinema", "punkrf", "longheads", "katsumi", "clay"],
+        "tags": ["melancholy", "street", "muted"],
+    },
+    {
+        "key": "action_fall_back",
+        "group": "action", "tier": "pro",
+        "label": {"en": "Falling backwards", "ru": "Падение назад"},
+        "desc": {"en": "Loss of control shown by physics rather than by acting.",
+                 "ru": "Потеря контроля через физику, а не через игру."},
+        "shot": "medium", "camera": "static, low",
+        "first": "Medium low shot of {character} in {location} at the moment balance goes: heels off the ground, "
+                 "arms starting to rise, the torso already past vertical, one hard light from above throwing the "
+                 "shadow down the wall behind.",
+        "last": "The same {character} in the same {location} under the same hard light from above, same clothing, "
+                "now flat on the ground with the arms out to the sides and the hair spread against the floor.",
+        "motion": "{character} loses balance and falls backwards, the arms lifting and then dropping to the sides "
+                  "as the body comes to rest flat on the ground.",
+        "solo": "{character} loses balance and falls backwards out of the standing pose, the arms rising and then "
+                "dropping as the body comes to rest on the ground. The camera stays low and still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Balance lost, body settles flat", "ru": "Потеря равновесия, тело ложится"},
+        "negative": "bouncing, rubber spine, floating hair, blood, camera shake",
+        "slots": ["character", "location"],
+        "traits": ["locked", "fast", "solo", "hard_light"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_hair_lag", "m_freeze_settle", "l_hard_single", "l_chiaroscuro"],
+        "conflicts_with": ["m_steadi_follow", "l_soft_wrap"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "munir", "punkrf"],
+        "tags": ["menacing", "monochrome", "night"],
+    },
+
+    # ══════════════ ТОЛПА И МАССОВКА ══════════════
+    {
+        "key": "crowd_part_for_hero",
+        "group": "crowd", "tier": "pro",
+        "label": {"en": "The crowd parts", "ru": "Толпа расступается"},
+        "desc": {"en": "Status shown by other people's behaviour instead of by props.",
+                 "ru": "Статус, показанный поведением других людей, а не реквизитом."},
+        "shot": "wide", "camera": "static, chest level, subject moves toward camera",
+        "first": "Wide shot in {location} at {time}: a dense crowd of {crowd} fills the frame edge to edge, packed "
+                 "and facing away, with {character} just visible deep inside it and no clear path through.",
+        "last": "The same dense crowd of {crowd} in the same {location} at the same {time} under the same light, "
+                "now opened into a corridor down the centre of the frame with {character} standing in the gap, "
+                "closer to the camera.",
+        "motion": "The crowd opens outward from the centre and {character} moves forward into the gap, stopping "
+                  "when the corridor is clear; the crowd settles into its new shape.",
+        "solo": "The crowd shifts outward from the centre, opening a corridor, and {character} steps forward into "
+                "it and stops. The camera stays where it is.",
+        "bracket": "[Static shot]",
+        "note": {"en": "A path opens through the crowd", "ru": "В толпе открывается коридор"},
+        "negative": "counted people, duplicated faces, merging bodies, warped limbs, empty background",
+        "slots": ["crowd", "character", "location", "time"],
+        "traits": ["locked", "crowd", "wide_frame"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_body_wipe", "l_rim_back", "l_practical_only"],
+        "conflicts_with": ["m_rack_focus", "l_chiaroscuro"],
+        "styles_fit": ["cinema", "munir", "spike", "punkrf", "fanuel"],
+        "tags": ["epic", "crowd", "saturated"],
+    },
+    {
+        "key": "crowd_one_still",
+        "group": "crowd", "tier": "free",
+        "label": {"en": "Everyone moves, he does not", "ru": "Все движутся, он стоит"},
+        "desc": {"en": "One motionless figure in a moving mass. Reads instantly at thumbnail size.",
+                 "ru": "Одна неподвижная фигура в движущейся массе. Читается сразу в размере превью."},
+        "shot": "wide", "camera": "static, slightly high",
+        "first": "Wide shot of {location} at {time} filled with a dense stream of {crowd} moving through the frame "
+                 "in both directions, {character} standing motionless in the middle of the stream facing the "
+                 "camera, everyone else blurred by their own movement.",
+        "last": "The same {location} at the same {time} with the same dense stream of {crowd} and the same light, "
+                "{character} still motionless in the same spot while the people around them are in completely "
+                "different positions.",
+        "motion": "The crowd streams past in both directions while {character} stays completely still; the flow "
+                  "thins for a moment around them and then settles back.",
+        "solo": "The crowd streams past in both directions around {character}, who stays completely still; the flow "
+                "thins for a moment and then settles. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Still figure in a moving crowd", "ru": "Неподвижный в потоке"},
+        "negative": "hero moving, counted people, duplicated faces, morphing coats, camera drift",
+        "slots": ["crowd", "character", "location", "time"],
+        "traits": ["locked", "crowd", "wide_frame"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_freeze_settle", "l_overcast_flat", "l_practical_only"],
+        "conflicts_with": ["m_steadi_follow", "m_arc_quarter"],
+        "styles_fit": ["cinema", "longheads", "katsumi", "noir", "flat2d"],
+        "tags": ["deadpan", "crowd", "muted"],
+    },
+    {
+        "key": "crowd_hands_up",
+        "group": "crowd", "tier": "free",
+        "label": {"en": "Hands up", "ru": "Руки вверх"},
+        "desc": {"en": "The concert frame. Shot from inside the crowd, never from the stage.",
+                 "ru": "Концертный кадр. Снимается изнутри толпы и никогда со сцены."},
+        "shot": "medium", "camera": "handheld, held above head height",
+        "first": "Medium shot from inside a dense crowd of {crowd} in {location} at {time}, camera held above head "
+                 "height: forearms and raised hands fill the lower half of the vertical frame, a strong light "
+                 "source behind the crowd turning everyone into silhouettes.",
+        "last": "The same dense crowd of {crowd} in the same {location} at the same {time} with the same backlight, "
+                "the arms now dropped to shoulder height and the silhouettes packed closer together.",
+        "motion": "The raised arms drop together to shoulder height and the crowd presses forward a step, then "
+                  "settles; a small handheld sway stays in the shot.",
+        "solo": "The raised arms drop together to shoulder height and the crowd presses forward a step and settles. "
+                "A slight handheld sway stays in the frame.",
+        "bracket": "[Shake]",
+        "note": {"en": "Raised arms inside the crowd", "ru": "Поднятые руки изнутри толпы"},
+        "negative": "stage view, counted people, warped fingers, readable banners, clean tripod look",
+        "slots": ["crowd", "location", "time"],
+        "traits": ["handheld", "crowd", "night"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_handheld_drift", "m_freeze_settle", "l_rim_back", "l_screen_glow"],
+        "conflicts_with": ["m_push_settle", "l_overcast_flat"],
+        "styles_fit": ["punkrf", "cinema", "spike", "munir", "noir"],
+        "tags": ["epic", "neon", "crowd"],
+    },
+    {
+        "key": "crowd_queue_line",
+        "group": "crowd", "tier": "free",
+        "label": {"en": "The queue", "ru": "Очередь"},
+        "desc": {"en": "A crowd arranged in a line reads as order, waiting and rules.",
+                 "ru": "Толпа, выстроенная в линию, читается как порядок, ожидание и правила."},
+        "shot": "wide", "camera": "static, low, along the line",
+        "first": "Wide shot along a queue of {crowd} standing in {location} at {time}, the line running away from "
+                 "the camera along the vertical of the frame, everyone facing the same direction, {character} "
+                 "somewhere in the middle of it and indistinguishable from the rest.",
+        "last": "The same queue of {crowd} in the same {location} at the same {time} in the same light, the whole "
+                "line shifted forward by one place so {character} now stands nearer the front.",
+        "motion": "The whole line shuffles forward one place and stops together; only feet and shoulders move and "
+                  "the shot settles as the line closes up.",
+        "solo": "The whole line shuffles forward one place and stops together, feet and shoulders moving and then "
+                "settling. The camera stays low and still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Queue moves up one place", "ru": "Очередь сдвинулась на шаг"},
+        "negative": "counted people, duplicated faces, readable signage, crowd dispersing, camera pan",
+        "slots": ["crowd", "character", "location", "time"],
+        "traits": ["locked", "crowd", "wide_frame", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_pan_link", "m_weight_step", "l_overcast_flat", "l_practical_only"],
+        "conflicts_with": ["m_arc_quarter", "m_whip_out"],
+        "styles_fit": ["longheads", "cinema", "katsumi", "flat2d", "noir"],
+        "tags": ["deadpan", "crowd", "muted"],
+    },
+
+    # ══════════════ ИНТЕРЬЕРЫ ══════════════
+    {
+        "key": "interior_window_light",
+        "group": "interior", "tier": "free",
+        "label": {"en": "By the window", "ru": "У окна"},
+        "desc": {"en": "One window, one person, one direction of light. The most reliable interior there is.",
+                 "ru": "Одно окно, один человек, одно направление света. Самый надёжный интерьер."},
+        "shot": "medium", "camera": "static, eye level",
+        "first": "Medium shot inside {location} at {time}: {character} stands beside a tall window in profile, lit "
+                 "entirely from the window on one side while the rest of the room falls into shadow, dust visible "
+                 "in the shaft of light, the window filling the left of the vertical frame.",
+        "last": "The same {character} beside the same window in the same {location} at the same {time}, same light "
+                "direction, now turned toward the window with the forehead almost touching the glass and the face "
+                "fully in the light.",
+        "motion": "{character} turns toward the window and leans until the forehead nearly touches the glass, then "
+                  "stops; the dust in the light drifts on undisturbed.",
+        "solo": "{character} turns toward the window and leans in until the forehead nearly touches the glass, then "
+                "stops. Dust drifts in the shaft of light and the camera stays still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Window light on one side", "ru": "Свет из окна с одной стороны"},
+        "negative": "second light source, flat exposure, warped window frame, readable view outside, camera drift",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "interior", "solo", "soft_light", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_breath_fog", "l_window_motivated", "l_soft_wrap"],
+        "conflicts_with": ["m_steadi_follow", "l_deep_night"],
+        "styles_fit": ["cinema", "katsumi", "ghibli", "shinkai", "longheads"],
+        "tags": ["melancholy", "warm", "cozy"],
+    },
+    {
+        "key": "interior_doorframe",
+        "group": "interior", "tier": "free",
+        "label": {"en": "Framed by the doorway", "ru": "В дверном проёме"},
+        "desc": {"en": "A frame inside the frame. Costs nothing and makes any room look composed.",
+                 "ru": "Рамка внутри рамки. Не стоит ничего и делает любую комнату выстроенной."},
+        "shot": "wide", "camera": "static, centred on the doorway",
+        "first": "Wide shot from a dark room in {location} at {time} looking through an open doorway into a lit "
+                 "space beyond: the doorway sits centred in the vertical frame, the near room black and empty, "
+                 "{character} standing in the bright rectangle beyond, small and centred.",
+        "last": "The same doorway in the same {location} at the same {time} with the same lit space beyond, now "
+                "with {character} standing right in the opening, filling most of the bright rectangle.",
+        "motion": "{character} walks from the far side of the lit room to the doorway and stops in the opening, "
+                  "the silhouette growing until it fills the rectangle.",
+        "solo": "{character} walks toward the camera through the lit room, stops in the doorway and stands still, "
+                "filling the bright rectangle. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Doorway as a frame within the frame", "ru": "Проём как рамка в кадре"},
+        "negative": "light in the near room, warped doorframe, second figure, camera drift, duplicate doors",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "interior", "low_key", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_enter_frame", "l_chiaroscuro", "l_practical_only"],
+        "conflicts_with": ["m_handheld_drift", "l_overcast_flat"],
+        "styles_fit": ["noir", "cinema", "fanuel", "dreamclad", "munir"],
+        "tags": ["menacing", "monochrome", "night"],
+    },
+    {
+        "key": "interior_table_sit",
+        "group": "interior", "tier": "free",
+        "label": {"en": "At the table", "ru": "За столом"},
+        "desc": {"en": "The most ordinary interior scene, which is exactly why it earns the contrast later.",
+                 "ru": "Самая обычная интерьерная сцена — именно поэтому она зарабатывает контраст дальше."},
+        "shot": "medium", "camera": "static, table height",
+        "first": "Medium shot at table height inside {location} at {time}: {character} sits at a table with {prop} "
+                 "in front of them, elbows down, one practical lamp above the table lighting only the tabletop and "
+                 "the face, the rest of the room dark.",
+        "last": "The same {character} at the same table in the same {location} at the same {time} under the same "
+                "lamp, now leaned back away from the table with the hands off it and {prop} left untouched.",
+        "motion": "{character} leans back from the table, taking the hands off it, and stops there; {prop} stays "
+                  "exactly where it was and the lamp above does not move.",
+        "solo": "{character} leans back from the table, lifting the hands off it, and stops. {prop} stays exactly "
+                "where it is and the camera holds still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Seated at a lit table", "ru": "Сидит за освещённым столом"},
+        "negative": "overhead room light, second person, warped tabletop, readable print, camera pan",
+        "slots": ["character", "prop", "location", "time"],
+        "traits": ["locked", "interior", "solo", "low_key"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_shoulder_drop", "m_hand_raise", "l_practical_only", "l_hard_single"],
+        "conflicts_with": ["m_crane_rise", "l_harsh_noon"],
+        "styles_fit": ["cinema", "noir", "longheads", "katsumi", "clay"],
+        "tags": ["melancholy", "warm", "cozy"],
+    },
+    {
+        "key": "interior_mirror",
+        "group": "interior", "tier": "pro",
+        "label": {"en": "In the mirror", "ru": "В зеркале"},
+        "desc": {"en": "Two versions of the same person in one frame without any effect at all.",
+                 "ru": "Две версии одного человека в кадре вообще без эффектов."},
+        "shot": "medium", "camera": "static, slightly off-axis to the glass",
+        "first": "Medium shot inside {location} at {time}: {character} stands in front of a mirror seen slightly "
+                 "from the side, so both the back of the head and the reflected face are in the vertical frame, "
+                 "one lamp beside the mirror lighting the reflection more than the person.",
+        "last": "The same {character} in front of the same mirror in the same {location} at the same {time} with "
+                "the same lamp, now leaned in close to the glass so the reflected face fills most of the frame and "
+                "the real head is cropped at the edge.",
+        "motion": "{character} leans in toward the mirror until the reflection fills the frame, then stops; the "
+                  "reflection moves exactly with the body and nothing else changes.",
+        "solo": "{character} leans in toward the mirror until the reflection fills the frame and stops. The "
+                "reflection moves exactly with the body and the camera stays still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Person and reflection in one frame", "ru": "Человек и отражение в одном кадре"},
+        "negative": "reflection out of sync, camera visible in mirror, doubled room, warped glass, extra person",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "interior", "solo", "hero_face"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_push_settle", "m_turn_to_lens", "l_practical_only", "l_screen_glow"],
+        "conflicts_with": ["m_arc_quarter", "m_steadi_follow"],
+        "styles_fit": ["cinema", "noir", "dreamclad", "katsumi", "longheads"],
+        "tags": ["melancholy", "muted", "deadpan"],
+    },
+
+    # ══════════════ НОЧЬ И СВЕТ ══════════════
+    {
+        "key": "night_lamp_pass",
+        "group": "night", "tier": "free",
+        "label": {"en": "Under the lamp", "ru": "Под фонарём"},
+        "desc": {"en": "Night is a sequence of lit islands. Walking between two of them is a whole scene.",
+                 "ru": "Ночь — это цепочка освещённых островов. Пройти между двумя из них — уже целая сцена."},
+        "shot": "medium", "camera": "static, low, subject walks into the light",
+        "first": "Medium shot in {location} at {time}: {character} walks in near darkness between two street "
+                 "lamps, only the outline of the shoulders catching the light from behind, the pool of lamp light "
+                 "waiting empty in the lower part of the vertical frame.",
+        "last": "The same {character} in the same street in {location} at the same {time}, same clothing and the "
+                "same two lamps, now standing inside the pool of light with the face lit hard from directly above "
+                "and the eye sockets in shadow.",
+        "motion": "{character} walks forward into the pool of lamp light and stops inside it; the light from above "
+                  "hardens across the face as the movement settles.",
+        "solo": "{character} walks forward into the pool of lamp light and stops inside it, the overhead light "
+                "hardening across the face. The camera stays low and still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Walking into the lamp light", "ru": "Входит в пятно фонаря"},
+        "negative": "even street lighting, second light source, warped face, camera movement, daylight",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "night", "exterior", "solo", "hard_light"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_weight_step", "m_breath_fog", "l_practical_only", "l_deep_night"],
+        "conflicts_with": ["l_harsh_noon", "l_overcast_flat"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "punkrf", "longheads"],
+        "tags": ["menacing", "night", "street"],
+    },
+    {
+        "key": "night_headlights",
+        "group": "night", "tier": "free",
+        "label": {"en": "Headlights across the wall", "ru": "Фары по стене"},
+        "desc": {"en": "Time passing inside a still frame: light moves, nothing else has to.",
+                 "ru": "Время внутри статичного кадра: движется свет, больше ничему двигаться не нужно."},
+        "shot": "medium", "camera": "static, facing the wall",
+        "first": "Medium shot in {location} at {time}: {character} stands with their back against a bare wall in "
+                 "near darkness, only a weak spill of light on the shoulders, the wall beside them unlit and "
+                 "empty in the vertical frame.",
+        "last": "The same {character} against the same wall in the same {location} at the same {time}, now with a "
+                "hard beam of vehicle light crossing the wall behind them and their shadow thrown long and sharp "
+                "along it.",
+        "motion": "A beam of vehicle light sweeps across the wall from one side to the other, dragging the shadow "
+                  "of {character} along it, and the darkness settles back as it passes.",
+        "solo": "A beam of vehicle light sweeps across the wall behind {character}, dragging their shadow with it, "
+                "and the darkness settles back once it passes. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Headlights sweep the wall", "ru": "Фары проходят по стене"},
+        "negative": "visible car, even lighting, flickering, warped shadow, camera pan",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "night", "exterior", "solo", "hard_light"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_freeze_settle", "m_smoke_curl", "l_deep_night", "l_chiaroscuro"],
+        "conflicts_with": ["l_harsh_noon", "l_golden_hour"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "munir", "punkrf"],
+        "tags": ["menacing", "night", "monochrome"],
+    },
+    {
+        "key": "night_screen_face",
+        "group": "night", "tier": "free",
+        "label": {"en": "Lit by a screen", "ru": "Свет от экрана"},
+        "desc": {"en": "The most contemporary light there is, and the cheapest to describe: one source, from below.",
+                 "ru": "Самый современный свет и самый дешёвый в описании: один источник, снизу."},
+        "shot": "close-up", "camera": "static, eye level",
+        "first": "Close-up of {character} in {location} at {time} with the face lit only from below by a small "
+                 "screen held out of frame, the light cold and moving slightly, everything above the eyebrows "
+                 "falling away into darkness, {emotion}.",
+        "last": "The same {character} in the same {location} at the same {time}, lit by the same screen from "
+                "below, now with the head lifted so the light falls on the throat and jaw instead of the eyes, "
+                "{emotion}.",
+        "motion": "The screen light flickers as its content changes while {character} lifts the head away from it "
+                  "and stops, leaving the eyes in darkness.",
+        "solo": "The screen light flickers as its content changes and {character} slowly lifts the head away from "
+                "it and stops, the eyes falling into darkness. The camera stays still.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Face lit by a screen from below", "ru": "Лицо от экрана снизу"},
+        "negative": "visible phone screen content, readable text, second light source, warped eyes, camera drift",
+        "slots": ["character", "location", "time", "emotion"],
+        "traits": ["locked", "night", "close", "solo", "hero_face"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_shoulder_drop", "m_breath_fog", "l_screen_glow", "l_deep_night"],
+        "conflicts_with": ["l_harsh_noon", "l_golden_hour"],
+        "styles_fit": ["cinema", "noir", "dreamclad", "katsumi", "longheads"],
+        "tags": ["melancholy", "cold", "night"],
+    },
+    {
+        "key": "night_neon_wall",
+        "group": "night", "tier": "pro",
+        "label": {"en": "Against the signs", "ru": "У вывесок"},
+        "desc": {"en": "Coloured practicals in frame do the work a lighting rig would otherwise do.",
+                 "ru": "Цветные источники прямо в кадре делают работу, ради которой иначе нужен был бы свет."},
+        "shot": "medium", "camera": "static, eye level",
+        "first": "Medium shot of {character} standing with their back to a wall of glowing signs in {location} at "
+                 "{time}, the signs out of focus behind them, their light falling on one side of the face and "
+                 "leaving the other in shadow, {accent} dominating the glow.",
+        "last": "The same {character} against the same wall of signs in the same {location} at the same {time}, "
+                "same {accent} glow, now turned so the lit side of the face is away from the camera and the "
+                "shadowed side is toward it.",
+        "motion": "{character} turns in place so the lit and shadowed halves of the face swap, then stops; the "
+                  "signs behind keep their steady glow.",
+        "solo": "{character} turns in place so the lit and shadowed halves of the face swap, then stops. The signs "
+                "behind keep glowing steadily and the camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Turning against lit signs", "ru": "Разворот у светящихся вывесок"},
+        "negative": "readable signage, flickering strobe, even lighting, warped face, camera pan",
+        "slots": ["character", "location", "time", "accent"],
+        "traits": ["locked", "night", "exterior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_turn_to_lens", "m_hair_lag", "l_one_accent", "l_deep_night"],
+        "conflicts_with": ["l_harsh_noon", "l_overcast_flat"],
+        "styles_fit": ["dreamclad", "noir", "punkrf", "cinema", "munir"],
+        "tags": ["neon", "night", "menacing"],
+    },
+    {
+        "key": "night_rain_reflect",
+        "group": "night", "tier": "free",
+        "label": {"en": "Rain and reflections", "ru": "Дождь и отражения"},
+        "desc": {"en": "Wet ground doubles every light source. Free production value in one word.",
+                 "ru": "Мокрая земля удваивает каждый источник света. Бесплатный продакшн в одном слове."},
+        "shot": "wide", "camera": "static, very low, close to the ground",
+        "first": "Wide shot from ground level in {location} at {time} during {weather}: the wet surface fills the "
+                 "lower half of the vertical frame and holds the reflection of every light, {character} standing "
+                 "far off in the upper half, small between the lights.",
+        "last": "The same {location} at the same {time} in the same {weather} from the same ground-level angle, the "
+                "reflections unchanged, now with {character} much nearer the camera and their reflection stretched "
+                "toward the lens across the wet surface.",
+        "motion": "{character} walks toward the camera across the wet ground and stops; the reflection stretches "
+                  "toward the lens and the rings from the rain settle around their feet.",
+        "solo": "{character} walks toward the camera across the wet ground and stops, their reflection stretching "
+                "toward the lens while rain rings settle around their feet. The camera stays low.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Low angle on wet ground", "ru": "Нижний ракурс по мокрому"},
+        "negative": "dry ground, mismatched reflection, warped puddles, umbrella, camera shake",
+        "slots": ["character", "location", "time", "weather"],
+        "traits": ["locked", "night", "exterior", "weather", "wide_frame"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_water_drip", "m_weight_step", "l_deep_night", "l_practical_only"],
+        "conflicts_with": ["l_harsh_noon", "l_golden_hour"],
+        "styles_fit": ["noir", "dreamclad", "cinema", "shinkai", "punkrf"],
+        "tags": ["melancholy", "neon", "night"],
+    },
+
+    # ══════════════ ФИНАЛЬНЫЕ КАДРЫ ══════════════
+    {
+        "key": "final_pull_to_wide",
+        "group": "final", "tier": "free",
+        "label": {"en": "Pull back to nothing", "ru": "Отъезд в пустоту"},
+        "desc": {"en": "The character becomes small. The oldest ending in the book and it still works.",
+                 "ru": "Герой становится маленьким. Древнейший финал на свете — и он работает."},
+        "shot": "medium", "camera": "slow pull-back to wide",
+        "first": "Medium shot of {character} standing still in {location} at {time}, framed from the waist up, "
+                 "facing the camera, the background reading only as texture behind them.",
+        "last": "The same {character} in the same {location} at the same {time} in the same light, now tiny and "
+                "off-centre in the lower third of a very wide frame, the whole space open around them.",
+        "motion": "The camera retreats in a straight line until the space opens out around {character}, then "
+                  "settles; the figure stays exactly where it is and does not walk away.",
+        "solo": "The camera retreats in a straight line away from {character}, opening the space around them, and "
+                "settles when the frame is wide. {character} stays exactly where they are.",
+        "bracket": "[Pull out]",
+        "note": {"en": "Pull back until the hero is small", "ru": "Отъезд, пока герой не станет мелким"},
+        "negative": "subject walking away, zoom artefacts, warped background, camera roll, cut",
+        "slots": ["character", "location", "time"],
+        "traits": ["moving_camera", "wide_frame", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_pull_open", "m_coat_inertia", "l_blue_hour", "l_overcast_flat"],
+        "conflicts_with": ["m_push_settle", "m_whip_out"],
+        "styles_fit": ["cinema", "shinkai", "longheads", "noir", "ghibli"],
+        "tags": ["melancholy", "muted", "epic"],
+    },
+    {
+        "key": "final_walk_out_frame",
+        "group": "final", "tier": "free",
+        "label": {"en": "Leaving the empty frame", "ru": "Пустой кадр после ухода"},
+        "desc": {"en": "The person leaves and the camera stays. The last second is a place with nobody in it.",
+                 "ru": "Человек уходит, камера остаётся. Последняя секунда — место, в котором никого."},
+        "shot": "wide", "camera": "static, eye level",
+        "first": "Wide static shot of {location} at {time} with {character} standing in the centre of the vertical "
+                 "frame, facing away, the space around them composed and symmetrical.",
+        "last": "The identical frame of the same {location} at the same {time} with the same light and the same "
+                "composition, now completely empty: {character} has left the shot and nothing has been rearranged.",
+        "motion": "{character} walks out of the frame at one side and the camera holds on the empty space until "
+                  "the movement is gone and only the place remains.",
+        "solo": "{character} walks out of frame to one side while the camera holds still, and the shot rests on "
+                "the empty place after they are gone.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Character exits, empty frame holds", "ru": "Герой выходит, кадр остаётся пустым"},
+        "negative": "camera following, second person entering, changed background, warped architecture",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "wide_frame", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_coat_inertia", "m_smoke_curl", "l_blue_hour", "l_practical_only"],
+        "conflicts_with": ["m_steadi_follow", "m_push_settle"],
+        "styles_fit": ["cinema", "longheads", "noir", "katsumi", "shinkai"],
+        "tags": ["melancholy", "deadpan", "muted"],
+    },
+    {
+        "key": "final_rhyme_open",
+        "group": "final", "tier": "pro",
+        "label": {"en": "Rhyme with the opening", "ru": "Рифма с первым кадром"},
+        "desc": {"en": "The same composition as scene one, with one thing changed. Makes a clip feel written.",
+                 "ru": "Та же композиция, что в первой сцене, с одним изменением. От этого клип кажется написанным."},
+        "shot": "establishing", "camera": "static, matching the opening angle",
+        "first": "Establishing shot of {location} at {time} repeating the exact composition of the opening scene: "
+                 "same camera position, same symmetry, same vanishing point, with {character} standing where the "
+                 "clip began and the light now coming from the opposite side.",
+        "last": "The same composition of the same {location} at the same {time} from the same camera position, "
+                "with the same opposite-side light, now with {character} gone and only the place left standing.",
+        "motion": "{character} steps out of the composition and the frame holds, matching the opening shot exactly "
+                  "except that the light comes from the other side; the shot settles empty.",
+        "solo": "{character} steps out of the composition while the camera holds the exact opening framing, and "
+                "the shot settles on the place with the light coming from the other side.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Closing frame rhyming with the opening", "ru": "Финал рифмуется с открытием"},
+        "negative": "different angle, different lens, new objects, camera movement, warped architecture",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "wide_frame", "slow"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_pull_open", "m_smoke_curl", "l_first_light", "l_blue_hour"],
+        "conflicts_with": ["m_handheld_drift", "m_whip_out"],
+        "styles_fit": ["cinema", "shinkai", "longheads", "fanuel", "ghibli"],
+        "tags": ["nostalgic", "muted", "epic"],
+    },
+    {
+        "key": "final_last_look",
+        "group": "final", "tier": "free",
+        "label": {"en": "The last look", "ru": "Последний взгляд"},
+        "desc": {"en": "Eye contact on the final bar, then darkness. The most direct ending available.",
+                 "ru": "Зрительный контакт на последнем такте — и темнота. Самый прямой финал из возможных."},
+        "shot": "extreme close-up", "camera": "static, eye level",
+        "first": "Extreme close-up of {character}'s face in {location}, eyes looking slightly off the lens, "
+                 "{emotion}, one hard light from the side leaving half the face dark, the background completely "
+                 "unreadable behind.",
+        "last": "The same {character} in the same {location} under the same hard side light and the same framing, "
+                "the eyes now looking directly into the lens and the face otherwise unchanged, {emotion}.",
+        "motion": "The eyes of {character} come round to the lens and stop there; nothing else moves and the "
+                  "shot holds on the look.",
+        "solo": "The eyes of {character} come round to the lens and stop there, holding the look while nothing "
+                "else in the frame moves.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Eyes find the lens and hold", "ru": "Глаза находят объектив и держат"},
+        "negative": "smiling, blinking repeatedly, head turning, warped iris, camera movement",
+        "slots": ["character", "location", "emotion"],
+        "traits": ["locked", "close", "hero_face", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_eyes_to_lens", "m_freeze_settle", "l_hard_single", "l_rim_back"],
+        "conflicts_with": ["m_steadi_follow", "m_crane_rise"],
+        "styles_fit": ["cinema", "noir", "punkrf", "munir", "fanuel"],
+        "tags": ["menacing", "deadpan", "monochrome"],
+    },
+
+    # ══════════════ ПЕРЕХОДЫ МЕЖДУ ЛОКАЦИЯМИ ══════════════
+    {
+        "key": "bridge_body_wipe",
+        "group": "bridge", "tier": "pro",
+        "label": {"en": "Wiped by a body", "ru": "Перекрытие телом"},
+        "desc": {"en": "Something crosses the lens and hides the cut. Two locations become one movement.",
+                 "ru": "Что-то проходит перед объективом и прячет склейку. Две локации становятся одним движением."},
+        "shot": "medium", "camera": "static, subject crosses close to the lens",
+        "first": "Medium shot in {location} at {time}: {character} stands in the middle distance while a dark "
+                 "shape — a passing figure — enters the very close foreground at one edge, already blurred by its "
+                 "own speed.",
+        "last": "The same framing in the same {location} at the same {time} with the same light, now completely "
+                "filled edge to edge by that dark blurred shape, {character} no longer visible behind it.",
+        "motion": "The dark shape crosses the lens and fills the frame completely, then stops filling it, leaving "
+                  "the shot dark and unreadable at the end.",
+        "solo": "A dark blurred shape crosses close to the lens, fills the whole frame and holds there, leaving "
+                "the shot dark and unreadable. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Foreground body wipes the frame", "ru": "Тело закрывает кадр"},
+        "negative": "clean visible cut, sharp foreground, recognisable second face, camera pan, flicker",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "fast"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_body_wipe", "m_whip_out", "l_practical_only", "l_deep_night"],
+        "conflicts_with": ["m_push_settle", "m_rack_focus"],
+        "styles_fit": ["cinema", "noir", "punkrf", "munir", "spike"],
+        "tags": ["menacing", "street", "night"],
+    },
+    {
+        "key": "bridge_match_shape",
+        "group": "bridge", "tier": "pro",
+        "label": {"en": "Same shape, other place", "ru": "Та же форма, другое место"},
+        "desc": {"en": "End one location on a shape, open the next on the same shape. The cut disappears.",
+                 "ru": "Заканчиваем локацию формой и открываем следующую той же формой. Склейка исчезает."},
+        "shot": "close-up", "camera": "static, centred on the shape",
+        "first": "Close-up in {location} at {time} of a bright circular shape dead centre of the vertical frame — "
+                 "a lamp, a ring, a hole in a wall — with the rest of the frame dark and unreadable around it.",
+        "last": "The same circular shape in the same position and the same size in the centre of the frame in the "
+                "same {location} at the same {time}, now read as a different object entirely, with a hand of "
+                "{character} entering beside it.",
+        "motion": "The bright circular shape holds dead centre while everything around it shifts and a hand enters "
+                  "beside it; the shape does not move and the frame settles around it.",
+        "solo": "The bright circular shape holds dead centre while the surroundings shift around it and a hand of "
+                "{character} enters beside it, then everything settles.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Matching shape across the cut", "ru": "Совпадение формы на склейке"},
+        "negative": "shape moving off centre, size change, duplicated shapes, camera drift, readable text",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "close", "object"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_rack_focus", "m_blur_resolve", "l_chiaroscuro", "l_hard_single"],
+        "conflicts_with": ["m_steadi_follow", "m_arc_quarter"],
+        "styles_fit": ["cinema", "flat2d", "noir", "katsumi", "dreamclad"],
+        "tags": ["deadpan", "monochrome", "night"],
+    },
+    {
+        "key": "bridge_door_through",
+        "group": "bridge", "tier": "free",
+        "label": {"en": "Through the door", "ru": "Через дверь"},
+        "desc": {"en": "Enter one place, come out somewhere else. The cheapest teleport in film.",
+                 "ru": "Вошёл в одном месте, вышел в другом. Самая дешёвая телепортация в кино."},
+        "shot": "medium", "camera": "static, behind the character",
+        "first": "Medium shot from behind {character} in {location} at {time} as they reach for the handle of a "
+                 "closed door that fills the upper half of the vertical frame, the light around them coming from "
+                 "behind the camera.",
+        "last": "The same {character} seen from behind in the same {location} at the same {time}, same clothing, "
+                "the door now open in front of them and a completely different space beyond it, brighter than the "
+                "room they are standing in.",
+        "motion": "{character} pulls the door open and light from the space beyond spills over them; they stop on "
+                  "the threshold without stepping through.",
+        "solo": "{character} pulls the door open, light from beyond spills over them, and they stop on the "
+                "threshold without stepping through. The camera stays behind them.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Door opens onto a new space", "ru": "Дверь открывается в другое пространство"},
+        "negative": "face visible, warped door, duplicate handles, dark space beyond, camera movement",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "interior", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_enter_frame", "m_hand_raise", "l_chiaroscuro", "l_window_motivated"],
+        "conflicts_with": ["m_arc_quarter", "m_truck_side"],
+        "styles_fit": ["cinema", "noir", "ghibli", "dreamclad", "clay"],
+        "tags": ["nostalgic", "warm", "night"],
+    },
+    {
+        "key": "bridge_light_to_dark",
+        "group": "bridge", "tier": "free",
+        "label": {"en": "Out of light into dark", "ru": "Из света в темноту"},
+        "desc": {"en": "The exposure change carries the cut. Works between any two locations.",
+                 "ru": "Склейку тянет перепад экспозиции. Работает между любыми двумя локациями."},
+        "shot": "medium", "camera": "static, subject walks away from the light",
+        "first": "Medium shot in {location} at {time}: {character} stands in a bright patch of open light with the "
+                 "mouth of a dark passage directly behind them in the vertical frame, the boundary between the two "
+                 "cutting the shot in half.",
+        "last": "The same {character} in the same {location} at the same {time}, same clothing, now inside the "
+                "dark passage with only the outline of the shoulders and hair catching the light left behind.",
+        "motion": "{character} walks backwards out of the bright patch into the dark passage until only the "
+                  "outline is left, then stops; the light behind stays exactly as it was.",
+        "solo": "{character} walks away from the camera out of the bright patch into the dark passage until only "
+                "an outline is left, then stops. The camera does not move.",
+        "bracket": "[Static shot]",
+        "note": {"en": "Crossing from light into shadow", "ru": "Переход из света в тень"},
+        "negative": "even exposure, fill light in the passage, warped silhouette, camera follow, flicker",
+        "slots": ["character", "location", "time"],
+        "traits": ["locked", "low_key", "solo"],
+        "needs_last": True, "engines": _CHEAP,
+        "fits_with": ["m_blur_resolve", "m_coat_inertia", "l_chiaroscuro", "l_hard_single"],
+        "conflicts_with": ["l_overcast_flat", "l_soft_wrap"],
+        "styles_fit": ["noir", "cinema", "dreamclad", "munir", "fanuel"],
+        "tags": ["menacing", "monochrome", "night"],
+    },
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. ПРОМТЫ ДВИЖЕНИЯ — 32 карточки.
+#
+# Единица: ТОЛЬКО motion_prompt. Кадры карточка не трогает — она кладётся на
+# уже собранную сцену и отвечает на один вопрос: что происходит между первым и
+# последним кадром.
+#
+# Три текста в каждой карточке, и это не избыточность, а три разных движка:
+#   text     — пара кадров (Seedance, Kling, MiniMax). Описывает РАЗНИЦУ.
+#   solo     — Grok. Он оживляет только первый кадр, поэтому фраза обязана быть
+#              самодостаточной: «она поворачивается к камере и замирает», а не
+#              «между кадрами она поворачивается».
+#   bracket  — MiniMax H3 читает команды камеры в квадратных скобках буквально
+#              и по описанию словами их не восстанавливает.
+#
+# ЖЁСТКИЕ ПРАВИЛА, зашитые в тексты и проверяемые машинно:
+#   • ОДНО движение камеры на карточку. Два движения модели не исполняют — они
+#     смешивают их в кашу. Поэтому «наезд с облётом» здесь не существует.
+#   • У каждого движения ЕСТЬ КОНЕЦ: settles / stops / holds / comes to rest.
+#     Движение без конечного состояния подвешивает генерацию и даёт дрейф.
+#   • Орбита — не больше четверти оборота на сцену 5-6 секунд. Полный облёт
+#     разваливает геометрию лица, это видно уже на трети.
+#   • Никаких ссылок на соседние сцены. Модель анимирует кадр изолированно.
+#   • Никаких градусов и метров: «на четверть оборота» модель понимает, «на 84°»
+#     игнорирует.
+#
+# `physics` — не украшение карточки, а её содержание: вторичное движение (ткань,
+# волосы, пыль, дыхание) это то, из-за чего кадр читается снятым, а не собранным.
+# Модель почти всегда сама его не добавит.
+# ─────────────────────────────────────────────────────────────────────────────
+MOTION_GROUPS = [
+    {"key": "camera",     "label": {"en": "Camera", "ru": "Камера"},
+     "hint": {"en": "One move per scene. Amplitude in words, never in degrees.",
+              "ru": "Одно движение на сцену. Амплитуда словами, никаких градусов."}},
+    {"key": "body",       "label": {"en": "The body", "ru": "Тело"},
+     "hint": {"en": "What the person does when the camera does nothing.",
+              "ru": "Что делает человек, когда камера не делает ничего."}},
+    {"key": "physics",    "label": {"en": "Physics", "ru": "Физика"},
+     "hint": {"en": "Secondary motion: cloth, hair, dust, smoke, water, breath.",
+              "ru": "Вторичное движение: ткань, волосы, пыль, дым, вода, дыхание."}},
+    {"key": "transition", "label": {"en": "Transitions", "ru": "Переходы"},
+     "hint": {"en": "Motion whose job is to hide or land a cut.",
+              "ru": "Движение, работа которого — спрятать склейку или посадить её."}},
+]
+
+MOTIONS: list[dict] = [
+
+    # ══════════════ КАМЕРА ══════════════
+    {
+        "key": "m_push_settle", "group": "camera", "tier": "free",
+        "label": {"en": "Push in and settle", "ru": "Наезд с остановкой"},
+        "desc": {"en": "The frame closes on the subject and stops. No zoom — the camera actually travels.",
+                 "ru": "Кадр смыкается на герое и останавливается. Не зум: камера действительно едет."},
+        "camera": "slow push-in",
+        "text": "The camera moves steadily closer along one axis and settles. {character} does not move toward the "
+                "camera; only the distance between them shrinks, and the framing comes to rest tighter than it began.",
+        "solo": "Slow push-in on {character} over six seconds: the framing tightens, they hold still and blink "
+                "once, and the move settles without any pan or roll.",
+        "bracket": "[Push in]",
+        "physics": {"en": "Perspective changes as the camera travels — the background grows behind the subject.",
+                    "ru": "Перспектива меняется, потому что камера едет: фон за героем растёт."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "slow"],
+        "fits_with": ["portrait_hold_still", "travel_corridor_push", "interior_doorframe"],
+        "conflicts_with": ["m_pull_open", "m_whip_out"],
+    },
+    {
+        "key": "m_pull_open", "group": "camera", "tier": "free",
+        "label": {"en": "Pull back and open", "ru": "Отъезд с раскрытием"},
+        "desc": {"en": "The space opens around the subject. The scene explains itself backwards.",
+                 "ru": "Пространство раскрывается вокруг героя. Сцена объясняет себя задом наперёд."},
+        "camera": "slow pull-back",
+        "text": "The camera retreats in a straight line and settles, opening more of the space every second. "
+                "{character} stays exactly where they are and does not walk away from the lens.",
+        "solo": "Slow pull-back away from {character} over six seconds, opening the space around them until the "
+                "move settles. They stay where they are and do not follow the camera.",
+        "bracket": "[Pull out]",
+        "physics": {"en": "Foreground edges enter the frame as the camera retreats — they sell the movement.",
+                    "ru": "По краям входит передний план — именно он продаёт движение."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "slow", "wide_frame"],
+        "fits_with": ["final_pull_to_wide", "open_empty_place", "final_rhyme_open"],
+        "conflicts_with": ["m_push_settle", "m_dolly_zoom"],
+    },
+    {
+        "key": "m_truck_side", "group": "camera", "tier": "free",
+        "label": {"en": "Truck sideways", "ru": "Тревеллинг вбок"},
+        "desc": {"en": "The camera slides across the scene at walking pace. Depth for free.",
+                 "ru": "Камера едет поперёк сцены на скорости шага. Глубина бесплатно."},
+        "camera": "truck right at walking pace",
+        "text": "The camera trucks sideways at walking pace, holding {character} in the same place in the frame "
+                "while the background sweeps past, and settles once the pace steadies.",
+        "solo": "The camera trucks sideways past {character} at walking pace, foreground objects sweeping close to "
+                "the lens, and settles into a steady glide.",
+        "bracket": "[Truck left]",
+        "physics": {"en": "Near objects sweep fast, far ones crawl — that difference is the whole effect.",
+                    "ru": "Близкое проносится, дальнее ползёт — вся суть приёма в этой разнице."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera"],
+        "fits_with": ["travel_side_track", "crowd_queue_line", "crowd_queue_line"],
+        "conflicts_with": ["m_push_settle", "m_arc_quarter"],
+    },
+    {
+        "key": "m_pedestal_down", "group": "camera", "tier": "free",
+        "label": {"en": "Pedestal down", "ru": "Камера опускается"},
+        "desc": {"en": "The camera loses height without tilting. Status drains out of the frame.",
+                 "ru": "Камера теряет высоту, не наклоняясь. Из кадра утекает статус."},
+        "camera": "pedestal down to waist height",
+        "text": "The camera lowers from head height to waist height in one smooth move and settles, keeping "
+                "{character} the same size in the frame throughout.",
+        "solo": "The camera lowers from head height to waist height on {character} in one smooth move and settles, "
+                "keeping them the same size in the frame.",
+        "bracket": "[Pedestal down]",
+        "physics": {"en": "The horizon rises through the frame; the ground gains weight.",
+                    "ru": "Горизонт поднимается по кадру, земля набирает вес."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "slow"],
+        "fits_with": ["travel_stairs_down", "travel_walk_away"],
+        "conflicts_with": ["m_crane_rise", "m_tilt_up"],
+    },
+    {
+        "key": "m_arc_quarter", "group": "camera", "tier": "pro",
+        "label": {"en": "Quarter arc", "ru": "Четверть облёта"},
+        "desc": {"en": "A quarter turn around the subject — never more. Beyond that the geometry falls apart.",
+                 "ru": "Четверть оборота вокруг героя — и не больше. Дальше геометрия разваливается."},
+        "camera": "arc a quarter turn to the left",
+        "text": "The camera arcs a quarter turn around {character} to the left and settles, keeping them centred "
+                "the whole way. The subject stays planted and the background rotates behind them.",
+        "solo": "The camera arcs a quarter turn around {character} to the left, keeping them centred, and settles. "
+                "They stay planted while the background rotates behind them.",
+        "bracket": "",
+        "physics": {"en": "Only the background moves. The subject must not counter-rotate to stay facing the lens.",
+                    "ru": "Двигается только фон. Герой не должен доворачиваться вслед за камерой."},
+        "slots": ["character"], "needs_last": False, "engines": ["seedance-2-5", "kling-3.0-pro", "kling-3.0"],
+        "traits": ["moving_camera"],
+        "fits_with": ["portrait_profile_to_front", "action_impact_stop"],
+        "conflicts_with": ["m_truck_side", "m_rack_focus"],
+    },
+    {
+        "key": "m_crane_rise", "group": "camera", "tier": "pro",
+        "label": {"en": "Crane up", "ru": "Кран вверх"},
+        "desc": {"en": "The camera leaves the ground and the scene turns into a map.",
+                 "ru": "Камера отрывается от земли, и сцена превращается в карту."},
+        "camera": "crane up and back",
+        "text": "The camera rises from head height up above the scene in one continuous move and settles looking "
+                "down, {character} shrinking into the space below without moving.",
+        "solo": "The camera rises from head height up above {character} in one continuous move and settles looking "
+                "down on the scene, while they stay exactly where they are.",
+        "bracket": "",
+        "physics": {"en": "Everything below stays put; only the viewpoint climbs. No tilt on the way up.",
+                    "ru": "Внизу ничто не меняется, поднимается только точка зрения. Без наклона по дороге."},
+        "slots": ["character"], "needs_last": False, "engines": ["seedance-2-5", "kling-3.0-pro"],
+        "traits": ["moving_camera", "wide_frame"],
+        "fits_with": ["final_pull_to_wide", "crowd_one_still"],
+        "conflicts_with": ["m_pedestal_down", "m_rack_focus"],
+    },
+    {
+        "key": "m_steadi_follow", "group": "camera", "tier": "free",
+        "label": {"en": "Follow from behind", "ru": "Идём следом"},
+        "desc": {"en": "The camera walks behind the character. The most watchable movement in a music clip.",
+                 "ru": "Камера идёт за героем. Самое смотрибельное движение в клипе."},
+        "camera": "steadicam follow from behind",
+        "text": "The camera follows {character} from behind at their own walking pace in one unbroken move and "
+                "settles when they stop; the frame stays level and the distance stays the same.",
+        "solo": "The camera follows {character} from behind at walking pace in one unbroken move and settles when "
+                "they stop, holding the same distance the whole way.",
+        "bracket": "[Tracking shot]",
+        "physics": {"en": "A small vertical bounce in time with the steps keeps it from looking mechanical.",
+                    "ru": "Мелкая вертикальная качка в такт шагам не даёт движению стать механическим."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera"],
+        "fits_with": ["travel_walk_away", "travel_stairs_down"],
+        "conflicts_with": ["m_freeze_settle", "m_push_settle"],
+    },
+    {
+        "key": "m_handheld_drift", "group": "camera", "tier": "free",
+        "label": {"en": "Handheld drift", "ru": "Дрейф с рук"},
+        "desc": {"en": "Small breathing sway with no direction. Makes a frame read as witnessed, not staged.",
+                 "ru": "Мелкая дышащая качка без направления. Кадр начинает читаться как увиденный, а не поставленный."},
+        "camera": "handheld, slight drift",
+        "text": "The camera drifts with a small breathing sway and no fixed direction, staying on {character} the "
+                "whole time, and settles into stillness at the end.",
+        "solo": "The camera drifts with a small breathing sway around {character} for six seconds, with no fixed "
+                "direction, and settles into stillness.",
+        "bracket": "[Shake]",
+        "physics": {"en": "Amplitude must stay small: past a couple of degrees it reads as a mistake, not a style.",
+                    "ru": "Амплитуда обязана быть мелкой: больше пары градусов читается как брак, а не приём."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["handheld"],
+        "fits_with": ["crowd_hands_up", "travel_stairs_down"],
+        "conflicts_with": ["m_freeze_settle", "m_push_settle"],
+    },
+    {
+        "key": "m_rack_focus", "group": "camera", "tier": "free",
+        "label": {"en": "Rack focus", "ru": "Перевод фокуса"},
+        "desc": {"en": "Attention moves without a cut and without the camera moving at all.",
+                 "ru": "Внимание переходит без склейки и без единого движения камеры."},
+        "camera": "static, focus pull",
+        "text": "The plane of focus travels from {prop} in the foreground to {character} behind it and comes to "
+                "rest there; the foreground falls soft and the camera itself does not move.",
+        "solo": "The plane of focus travels from {prop} in the foreground back to {character} and comes to rest "
+                "there, the foreground going soft. The camera itself stays still.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Depth of field must be shallow in the first frame or there is nothing to pull.",
+                    "ru": "В первом кадре глубина резкости обязана быть малой, иначе переводить нечего."},
+        "slots": ["prop", "character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "close"],
+        "fits_with": ["detail_texture_macro", "open_detail_first", "travel_car_window"],
+        "conflicts_with": ["m_crane_rise", "m_arc_quarter"],
+    },
+    {
+        "key": "m_tilt_up", "group": "camera", "tier": "free",
+        "label": {"en": "Tilt up the vertical", "ru": "Наклон вверх"},
+        "desc": {"en": "The camera stays put and looks up. The subject gains height it does not have.",
+                 "ru": "Камера стоит и поднимает взгляд. Герой получает рост, которого у него нет."},
+        "camera": "tilt up from the ground",
+        "text": "The camera stays in place and tilts upward from the ground to {character}, settling once their "
+                "face is in the upper third of the frame. Verticals stretch slightly toward the top of the shot.",
+        "solo": "The camera stays in place and tilts up from the ground to {character}, settling once the face "
+                "reaches the upper third of the frame.",
+        "bracket": "[Tilt up]",
+        "physics": {"en": "Tilt is not a rise: the camera does not gain height, only angle.",
+                    "ru": "Наклон — не подъём: камера не набирает высоту, только угол."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked"],
+        "fits_with": ["portrait_profile_to_front", "night_lamp_pass"],
+        "conflicts_with": ["m_pedestal_down", "m_crane_rise"],
+    },
+    {
+        "key": "m_pan_link", "group": "camera", "tier": "free",
+        "label": {"en": "Pan to link two points", "ru": "Панорама, связывающая две точки"},
+        "desc": {"en": "One movement proves two things are in the same place. Cheaper than an establishing shot.",
+                 "ru": "Одно движение доказывает, что две вещи в одном месте. Дешевле заявочного плана."},
+        "camera": "slow pan right",
+        "text": "The camera stays in place and pans slowly to the right across {location}, ending on {character} "
+                "and settling there. No zoom, no travel, one continuous sweep.",
+        "solo": "The camera stays in place and pans slowly right across {location}, ending on {character} and "
+                "settling there in one continuous sweep.",
+        "bracket": "[Pan right]",
+        "physics": {"en": "Near objects smear more than far ones — pan too fast and the frame strobes.",
+                    "ru": "Ближнее смазывается сильнее дальнего: слишком быстрая панорама даёт строб."},
+        "slots": ["location", "character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "slow"],
+        "fits_with": ["open_empty_place", "crowd_queue_line"],
+        "conflicts_with": ["m_push_settle", "m_body_wipe"],
+    },
+    {
+        "key": "m_dolly_zoom", "group": "camera", "tier": "pro",
+        "label": {"en": "Dolly zoom", "ru": "Долли-зум"},
+        "desc": {"en": "The background compresses while the subject stays the same size. Use once per clip at most.",
+                 "ru": "Фон сжимается, герой остаётся того же размера. Не чаще одного раза за клип."},
+        "camera": "dolly in while zooming out",
+        "text": "The camera travels toward {character} while the lens widens at the same rate, so their size in "
+                "frame stays constant and the background compresses behind them, then the move settles.",
+        "solo": "The camera travels toward {character} while the lens widens at the same rate: their size stays "
+                "constant, the background compresses behind them, and the move settles.",
+        "bracket": "",
+        "physics": {"en": "The subject must be still and centred, or the effect turns into a smear.",
+                    "ru": "Герой обязан быть неподвижен и по центру, иначе приём превращается в мазню."},
+        "slots": ["character"], "needs_last": False,
+        "engines": ["seedance-2-5", "kling-3.0-pro"],
+        "traits": ["moving_camera"],
+        "fits_with": ["portrait_hold_still", "travel_corridor_push"],
+        "conflicts_with": ["m_pull_open", "m_handheld_drift"],
+    },
+
+    # ══════════════ ТЕЛО ══════════════
+    {
+        "key": "m_turn_to_lens", "group": "body", "tier": "free",
+        "label": {"en": "Turn to the lens", "ru": "Поворот к объективу"},
+        "desc": {"en": "From unaware to eye contact in one move. The most reliable performance beat there is.",
+                 "ru": "От «не замечает» до контакта глазами в одно движение. Самая надёжная актёрская доля."},
+        "camera": "static, eye level",
+        "text": "{character} turns the head from profile toward the camera in one continuous move and stops with "
+                "the eyes in the lens; the hair follows a beat behind the turn.",
+        "solo": "{character} turns from profile toward the camera in one continuous move and stops with the eyes "
+                "in the lens, the hair trailing a beat behind.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "The neck leads, the hair lags, the shoulders barely move.",
+                    "ru": "Ведёт шея, волосы отстают, плечи почти не участвуют."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "hero_face"],
+        "fits_with": ["portrait_turn_to_lens", "night_neon_wall", "interior_mirror"],
+        "conflicts_with": ["m_body_wipe", "m_whip_out"],
+    },
+    {
+        "key": "m_weight_step", "group": "body", "tier": "free",
+        "label": {"en": "Weight transfer", "ru": "Перенос веса"},
+        "desc": {"en": "One step, described the way a body actually takes it. Kills the floating-feet look.",
+                 "ru": "Один шаг, описанный так, как его делает тело. Убивает эффект скользящих ног."},
+        "camera": "static",
+        "text": "{character} shifts their weight from the back foot to the front, the hips leading and the "
+                "shoulders arriving a beat later, and comes to rest with both feet planted.",
+        "solo": "{character} shifts weight from the back foot to the front, hips leading and shoulders arriving a "
+                "beat later, and comes to rest with both feet planted.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Hips first, shoulders second. Reverse it and the walk reads as a puppet.",
+                    "ru": "Сначала бёдра, потом плечи. Наоборот — походка марионетки."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked"],
+        "fits_with": ["action_run_toward", "open_mid_action", "night_lamp_pass"],
+        "conflicts_with": ["m_crane_rise"],
+    },
+    {
+        "key": "m_head_snap", "group": "body", "tier": "free",
+        "label": {"en": "Head snap", "ru": "Рывок головой"},
+        "desc": {"en": "A fast look off-axis and back. Lands a beat without any camera work.",
+                 "ru": "Быстрый взгляд в сторону и обратно. Сажает долю без всякой камеры."},
+        "camera": "static",
+        "text": "{character} snaps the head to one side, holds for an instant and returns to the original "
+                "position, where the movement stops; the hair overshoots and settles a beat later.",
+        "solo": "{character} snaps the head to one side, holds an instant and returns, the hair overshooting and "
+                "settling a beat later. The camera does not move.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Overshoot is the whole trick: hair and collar arrive after the head has stopped.",
+                    "ru": "Весь фокус в перелёте: волосы и воротник приходят после того, как голова встала."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "fast"],
+        "fits_with": ["open_direct_look", "crowd_one_still"],
+        "conflicts_with": ["m_dolly_zoom", "m_crane_rise"],
+    },
+    {
+        "key": "m_sit_to_stand", "group": "body", "tier": "free",
+        "label": {"en": "Sit to stand", "ru": "Из сидя в стоя"},
+        "desc": {"en": "A whole decision expressed as one physical action.",
+                 "ru": "Целое решение, выраженное одним физическим действием."},
+        "camera": "static, chest level",
+        "text": "{character} pushes up from the seat, the head rising out of the top of the frame and then "
+                "settling back into it as they straighten and stop.",
+        "solo": "{character} pushes up out of the seat, straightens and stops standing, the head rising out of the "
+                "frame and settling back into it.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Weight goes forward before it goes up — otherwise the body levitates.",
+                    "ru": "Вес сначала идёт вперёд и только потом вверх, иначе тело левитирует."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked"],
+        "fits_with": ["interior_table_sit", "portrait_two_shot"],
+        "conflicts_with": ["m_crane_rise", "m_rack_focus"],
+    },
+    {
+        "key": "m_hand_raise", "group": "body", "tier": "free",
+        "label": {"en": "Hand into frame", "ru": "Рука входит в кадр"},
+        "desc": {"en": "The safest way to animate a detail shot: one hand, one direction, one stop.",
+                 "ru": "Самый безопасный способ оживить деталь: одна рука, одно направление, одна остановка."},
+        "camera": "static, macro",
+        "text": "A hand enters from the bottom edge of the frame, reaches {prop} and comes to rest on it; nothing "
+                "else in the shot moves.",
+        "solo": "A hand slides into the frame from the bottom edge, reaches {prop} and comes to rest on it. "
+                "Nothing else moves.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Fingers close after contact, not before — early closing is what reads as fake.",
+                    "ru": "Пальцы смыкаются после касания, а не до: ранний захват и читается как подделка."},
+        "slots": ["prop"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "close", "object"],
+        "fits_with": ["open_detail_first", "detail_object_pickup", "detail_hands_work"],
+        "conflicts_with": ["m_steadi_follow", "m_crane_rise"],
+    },
+    {
+        "key": "m_enter_frame", "group": "body", "tier": "free",
+        "label": {"en": "Walk into the frame", "ru": "Входит в кадр"},
+        "desc": {"en": "The scene starts without the character and acquires one. Buys a beat of anticipation.",
+                 "ru": "Сцена начинается без героя и обзаводится им. Покупает долю ожидания."},
+        "camera": "static",
+        "text": "{character} walks into the frame from one edge, crosses to the centre and stops there facing the "
+                "camera; the rest of the scene stays exactly as it was.",
+        "solo": "{character} walks into the frame from one edge, crosses to the centre and stops facing the "
+                "camera. Everything else in the scene stays as it was.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Deceleration takes a step and a half — stopping dead reads as a glitch.",
+                    "ru": "Торможение занимает полтора шага: мгновенная остановка читается как сбой."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked"],
+        "fits_with": ["interior_doorframe", "open_empty_place", "bridge_door_through"],
+        "conflicts_with": ["m_steadi_follow"],
+    },
+    {
+        "key": "m_shoulder_drop", "group": "body", "tier": "free",
+        "label": {"en": "Shoulders drop", "ru": "Плечи падают"},
+        "desc": {"en": "Exhaustion or relief without any facial acting at all.",
+                 "ru": "Усталость или облегчение вообще без мимики."},
+        "camera": "static, close",
+        "text": "{character} lets the shoulders drop on a long exhale, the chest falling and the head tipping "
+                "forward a fraction, and the body settles there.",
+        "solo": "{character} exhales, the shoulders drop and the head tips forward a fraction, and the body "
+                "settles there. The camera does not move.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Chest falls first, head second. Simultaneous movement reads as a slump, not a breath.",
+                    "ru": "Сначала опускается грудь, потом голова. Одновременно — это обвал, а не выдох."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "close", "hero_face"],
+        "fits_with": ["portrait_breath_break", "interior_table_sit", "night_screen_face"],
+        "conflicts_with": ["m_whip_out", "m_head_snap"],
+    },
+    {
+        "key": "m_eyes_to_lens", "group": "body", "tier": "free",
+        "label": {"en": "Eyes find the lens", "ru": "Глаза находят объектив"},
+        "desc": {"en": "The head does not move — only the eyes. Smaller than a turn and twice as unsettling.",
+                 "ru": "Голова не двигается, двигаются только глаза. Меньше поворота и вдвое тревожнее."},
+        "camera": "static, close",
+        "text": "The eyes of {character} travel across to the lens and stop there while the head stays completely "
+                "still; the shot holds on the look.",
+        "solo": "The eyes of {character} travel across to the lens and stop there while the head stays completely "
+                "still, and the shot holds on that look.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "One blink before the eyes arrive; none after. Blinking on arrival breaks the moment.",
+                    "ru": "Один моргок до прихода взгляда и ни одного после: моргание на приходе рушит момент."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked", "close", "hero_face"],
+        "fits_with": ["final_last_look", "open_direct_look", "portrait_hold_still"],
+        "conflicts_with": ["m_handheld_drift", "m_steadi_follow"],
+    },
+
+    # ══════════════ ФИЗИКА ══════════════
+    {
+        "key": "m_coat_inertia", "group": "physics", "tier": "free",
+        "label": {"en": "Coat inertia", "ru": "Инерция пальто"},
+        "desc": {"en": "Heavy clothing arrives after the body. One line, and the walk stops looking generated.",
+                 "ru": "Тяжёлая одежда приходит после тела. Одна строка — и походка перестаёт выглядеть сгенерённой."},
+        "camera": "",
+        "text": "{outfit} swings a beat behind every step {character} takes, the hem lifting on the forward swing "
+                "and settling against the legs when the movement stops.",
+        "solo": "{outfit} swings a beat behind each step {character} takes, the hem lifting and then settling "
+                "against the legs as the movement stops.",
+        "bracket": "",
+        "physics": {"en": "Cloth never leads the body. If the hem moves first, the shot is wrong.",
+                    "ru": "Ткань никогда не ведёт тело. Если подол пошёл первым — кадр неправильный."},
+        "slots": ["outfit", "character"], "needs_last": False, "engines": _ANY,
+        "traits": [],
+        "fits_with": ["travel_walk_away", "open_door_out", "final_walk_out_frame"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_hair_lag", "group": "physics", "tier": "free",
+        "label": {"en": "Hair lag", "ru": "Запаздывание волос"},
+        "desc": {"en": "Hair overshoots the turn and comes back. The cheapest realism there is.",
+                 "ru": "Волосы перелетают поворот и возвращаются. Самый дешёвый реализм на свете."},
+        "camera": "",
+        "text": "The hair of {character} follows the head a beat late, overshoots slightly at the end of the "
+                "movement and settles back across the shoulders.",
+        "solo": "The hair of {character} follows the head a beat late, overshoots at the end of the movement and "
+                "settles back across the shoulders.",
+        "bracket": "",
+        "physics": {"en": "Overshoot then return. Hair that stops with the head reads as a helmet.",
+                    "ru": "Перелёт и возврат. Волосы, встающие вместе с головой, читаются как шлем."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": [],
+        "fits_with": ["portrait_turn_to_lens", "night_neon_wall", "action_fall_back"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_hem_settle", "group": "physics", "tier": "free",
+        "label": {"en": "Fabric settles", "ru": "Ткань укладывается"},
+        "desc": {"en": "The last half second of any movement belongs to the clothes.",
+                 "ru": "Последние полсекунды любого движения принадлежат одежде."},
+        "camera": "",
+        "text": "After {character} stops, {outfit} keeps moving for a moment: the folds swing once, the sleeve "
+                "drops and the fabric comes to rest against the body.",
+        "solo": "After {character} stops moving, {outfit} keeps going for a moment — the folds swing once, the "
+                "sleeve drops, and the fabric comes to rest against the body.",
+        "bracket": "",
+        "physics": {"en": "The heavier the fabric, the longer the delay. Denim settles faster than a coat.",
+                    "ru": "Чем тяжелее ткань, тем длиннее задержка. Джинса встаёт быстрее пальто."},
+        "slots": ["character", "outfit"], "needs_last": False, "engines": _ANY,
+        "traits": [],
+        "fits_with": ["detail_pocket_reveal", "portrait_profile_to_front"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_dust_bloom", "group": "physics", "tier": "free",
+        "label": {"en": "Dust burst", "ru": "Пыльный выброс"},
+        "desc": {"en": "Impact made visible. Air is what proves the contact happened.",
+                 "ru": "Удар, ставший видимым. Воздух и доказывает, что контакт был."},
+        "camera": "",
+        "text": "Dust bursts outward from the point of contact, hangs in the light for a moment and settles back "
+                "toward the ground.",
+        "solo": "Dust bursts outward from the point of contact, hangs in the light for a moment and settles back "
+                "toward the ground.",
+        "bracket": "",
+        "physics": {"en": "Dust rises then falls: a cloud that only expands reads as smoke, not impact.",
+                    "ru": "Пыль сначала поднимается, потом падает. Только расширяющееся облако — это дым, не удар."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["fast"],
+        "fits_with": ["action_impact_stop", "action_jump_land", "action_run_toward"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_smoke_curl", "group": "physics", "tier": "free",
+        "label": {"en": "Smoke drift", "ru": "Дым тянется"},
+        "desc": {"en": "The one motion that makes a locked-off frame alive without anyone acting.",
+                 "ru": "Единственное движение, оживляющее статичный кадр без всякой игры."},
+        "camera": "",
+        "text": "Smoke drifts upward through the beam of light in a slow curl, breaks apart near the top of the "
+                "frame and settles into a thin haze.",
+        "solo": "Smoke drifts upward through the beam of light in a slow curl, breaks apart near the top of the "
+                "frame and settles into a thin haze.",
+        "bracket": "",
+        "physics": {"en": "It rises, then spreads sideways when it cools. Straight vertical smoke looks fake.",
+                    "ru": "Сначала поднимается, остывая — расходится вбок. Строго вертикальный дым выглядит фальшиво."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["slow"],
+        "fits_with": ["open_empty_place", "night_headlights", "final_walk_out_frame"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_water_drip", "group": "physics", "tier": "free",
+        "label": {"en": "Water and rings", "ru": "Вода и круги"},
+        "desc": {"en": "Water gives a scene a clock. Drops arrive on a rhythm the eye trusts.",
+                 "ru": "Вода даёт сцене часы. Капли приходят в ритме, которому глаз верит."},
+        "camera": "",
+        "text": "A drop gathers, falls and strikes the surface below, sending a single ring outward that spreads "
+                "and settles flat.",
+        "solo": "A drop gathers, falls and strikes the surface below, sending one ring outward that spreads and "
+                "settles flat.",
+        "bracket": "",
+        "physics": {"en": "One ring per drop. Multiple rings from a single drop is the classic generated tell.",
+                    "ru": "Один круг на каплю. Несколько кругов от одной — классический признак генерации."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["slow"],
+        "fits_with": ["night_rain_reflect", "detail_texture_macro"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_breath_fog", "group": "physics", "tier": "free",
+        "label": {"en": "Visible breath", "ru": "Видимое дыхание"},
+        "desc": {"en": "Proof of cold and of life, in one detail that costs nothing.",
+                 "ru": "Доказательство холода и жизни в одной детали, которая не стоит ничего."},
+        "camera": "",
+        "text": "The breath of {character} shows as a small cloud that leaves the mouth, drifts up past the face "
+                "and disperses, then settles into a slow steady rhythm.",
+        "solo": "The breath of {character} shows as a small cloud leaving the mouth, drifting up past the face and "
+                "dispersing, then settling into a slow steady rhythm.",
+        "bracket": "",
+        "physics": {"en": "The cloud must disperse before the next breath, or it reads as smoke.",
+                    "ru": "Облачко обязано разойтись до следующего выдоха, иначе читается как дым."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["night"],
+        "fits_with": ["night_lamp_pass", "portrait_breath_break", "travel_corridor_push"],
+        "conflicts_with": [],
+    },
+    {
+        "key": "m_paper_scatter", "group": "physics", "tier": "free",
+        "label": {"en": "Paper scatter", "ru": "Бумага разлетается"},
+        "desc": {"en": "Light objects moving in air read as chaos more clearly than any camera shake.",
+                 "ru": "Лёгкие предметы в воздухе читаются как хаос яснее любой тряски камеры."},
+        "camera": "",
+        "text": "Loose sheets lift off the surface, turn over once in the air and settle across the ground in a "
+                "scattered line.",
+        "solo": "Loose sheets lift off the surface, turn over once in the air and settle across the ground in a "
+                "scattered line.",
+        "bracket": "",
+        "physics": {"en": "Paper turns as it falls; it never drops flat. Flat-falling sheets look like cards.",
+                    "ru": "Бумага переворачивается при падении и никогда не падает плашмя — иначе это карты."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["fast"],
+        "fits_with": ["action_throw_away", "detail_written_trace"],
+        "conflicts_with": [],
+    },
+
+    # ══════════════ ПЕРЕХОДЫ ══════════════
+    {
+        "key": "m_whip_out", "group": "transition", "tier": "pro",
+        "label": {"en": "Whip out of the scene", "ru": "Рывок из сцены"},
+        "desc": {"en": "The frame smears sideways and the cut hides inside the blur.",
+                 "ru": "Кадр смазывается вбок, и склейка прячется внутри смаза."},
+        "camera": "fast whip pan right",
+        "text": "The camera whips to the right, the frame smearing into horizontal blur, and the movement stops "
+                "with the shot unreadable. Nothing in the scene moves on its own.",
+        "solo": "The camera whips to the right so the frame smears into horizontal blur and stops there, leaving "
+                "the shot unreadable. Nothing else moves.",
+        "bracket": "[Pan right]",
+        "physics": {"en": "Only the last second may be blurred — a whole scene of blur is unwatchable.",
+                    "ru": "Смазана только последняя секунда: сцена из сплошного смаза не смотрится."},
+        "slots": [], "needs_last": False, "engines": ["seedance-2-mini", "seedance-2-5", "grok"],
+        "traits": ["fast", "moving_camera"],
+        "fits_with": ["bridge_body_wipe", "open_mid_action"],
+        "conflicts_with": ["m_push_settle", "m_rack_focus", "m_eyes_to_lens"],
+    },
+    {
+        "key": "m_blur_resolve", "group": "transition", "tier": "free",
+        "label": {"en": "Resolve out of blur", "ru": "Проявление из размытия"},
+        "desc": {"en": "The scene opens out of focus and sharpens. Reads as waking up or arriving.",
+                 "ru": "Сцена открывается не в фокусе и наводится. Читается как пробуждение или приход."},
+        "camera": "static, focus resolve",
+        "text": "The shot begins completely out of focus and sharpens onto {character}, coming to rest once the "
+                "face is clear; the camera itself never moves.",
+        "solo": "The shot begins completely out of focus and sharpens onto {character}, coming to rest once the "
+                "face is clear. The camera itself does not move.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "Focus arrives once and stops — hunting back and forth reads as a broken lens.",
+                    "ru": "Фокус приходит один раз и встаёт: рысканье туда-сюда читается как сломанный объектив."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["locked"],
+        "fits_with": ["open_from_black", "bridge_match_shape", "bridge_light_to_dark"],
+        "conflicts_with": ["m_whip_out", "m_crane_rise"],
+    },
+    {
+        "key": "m_body_wipe", "group": "transition", "tier": "free",
+        "label": {"en": "Wiped by a foreground body", "ru": "Перекрытие передним планом"},
+        "desc": {"en": "Something dark crosses the lens; the cut lives inside it.",
+                 "ru": "Тёмное проходит перед объективом, и склейка живёт внутри него."},
+        "camera": "static",
+        "text": "A dark shape crosses close to the lens from one edge and fills the frame completely, and the shot "
+                "ends holding on that darkness.",
+        "solo": "A dark shape crosses close to the lens from one edge, fills the frame completely and the shot "
+                "holds on that darkness.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "The shape must be out of focus. A sharp foreground reads as a mistake, not a wipe.",
+                    "ru": "Перекрывающее обязано быть не в фокусе: резкий передний план читается как брак."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["fast"],
+        "fits_with": ["bridge_body_wipe", "crowd_part_for_hero"],
+        "conflicts_with": ["m_turn_to_lens", "m_eyes_to_lens"],
+    },
+    {
+        "key": "m_freeze_settle", "group": "transition", "tier": "free",
+        "label": {"en": "Stop dead", "ru": "Мёртвая остановка"},
+        "desc": {"en": "Everything halts at once and the frame holds. The visual equivalent of a silence.",
+                 "ru": "Всё встаёт разом, и кадр держится. Визуальный эквивалент паузы."},
+        "camera": "static",
+        "text": "All movement in the frame halts at once and the shot holds completely still; only the smallest "
+                "secondary motion — cloth, hair, dust — settles a beat after everything else has stopped.",
+        "solo": "All movement in the frame halts at once and the shot holds still, with only cloth, hair and dust "
+                "settling a beat after everything else has stopped.",
+        "bracket": "[Static shot]",
+        "physics": {"en": "The secondary motion is what proves it was a stop and not a still image.",
+                    "ru": "Именно вторичное движение доказывает, что это остановка, а не стоп-кадр."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["locked"],
+        "fits_with": ["action_impact_stop", "crowd_hands_up", "final_last_look"],
+        "conflicts_with": ["m_handheld_drift", "m_steadi_follow"],
+    },
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. СВЕТ И ЦВЕТ — 22 модификатора.
+#
+# Единица: ОДНА ФРАЗА, которая дописывается в конец обоих кадров сцены. Это не
+# самостоятельная сцена и не приём: карточка ничего не снимает, она уточняет
+# уже собранный кадр.
+#
+# ГЛАВНОЕ ПРАВИЛО ФАЙЛА, И ОНО НЕ КОСМЕТИЧЕСКОЕ. Стиль трека главнее. Он
+# подставляется рендером ПЕРВЫМ блоком промпта и отвечает за палитру, грейд,
+# фактуру, зерно и оптику; дублирование этих же вещей в image_prompt уже ломало
+# картинку и уже чинилось. Поэтому карточки делятся на два уровня:
+#
+#   level="scene"  — ГЕОМЕТРИЯ СВЕТА: откуда идёт, куда падает, что в тени,
+#                    сколько источников. Это свойство сцены, а не стиля, и
+#                    писать это в кадр можно всегда. Слова про плёнку, зерно,
+#                    грейд и палитру здесь запрещены машинно (_BAN_GRADE).
+#   level="style"  — ПАЛИТРА И ГРЕЙД: то, чем распоряжается стиль. Такие
+#                    карточки существуют, потому что владелец просил палитру, —
+#                    но формулируются они как УСТУПКА: каждая начинается с
+#                    «without overriding the track style». Это не вежливость, а
+#                    работающая конструкция: модель получает пожелание, а не
+#                    вторую конфликтующую инструкцию по грейду.
+#
+# Наличие уступки в тексте level="style" проверяется машинно. Карточка без неё
+# не проходит validate() — иначе через полгода палитра из сцены начнёт спорить
+# с палитрой из стиля, и никто не вспомнит почему.
+# ─────────────────────────────────────────────────────────────────────────────
+LIGHT_GROUPS = [
+    {"key": "scheme",  "label": {"en": "Lighting setups", "ru": "Схемы света"},
+     "hint": {"en": "Where the light comes from. Changes a frame more than any other decision.",
+              "ru": "Откуда идёт свет. Меняет кадр сильнее любого другого решения."}},
+    {"key": "time",    "label": {"en": "Time of day", "ru": "Время суток"},
+     "hint": {"en": "Terms the engines read literally — 'golden hour' works, 'nice light' does not.",
+              "ru": "Термины, которые движки читают буквально: «golden hour» работает, «красивый свет» — нет."}},
+    {"key": "palette", "label": {"en": "Palette", "ru": "Палитра"},
+     "hint": {"en": "Defers to the track style. A wish, not a second instruction.",
+              "ru": "Уступает стилю трека. Пожелание, а не вторая инструкция."}},
+    {"key": "grade",   "label": {"en": "Contrast and grade", "ru": "Контраст и грейд"},
+     "hint": {"en": "The style owns this. These cards only nudge it.",
+              "ru": "Этим распоряжается стиль. Эти карточки лишь подталкивают."}},
+]
+
+#: Фраза-уступка. Ровно одна на весь файл: два разных вежливых оборота — это
+#: два разных поведения модели и ноль возможности проверить их машинно.
+DEFER = "without overriding the track style"
+
+LIGHTS: list[dict] = [
+
+    # ══════════════ СХЕМЫ СВЕТА ══════════════
+    {
+        "key": "l_rim_back", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "Backlight rim", "ru": "Контровой ободок"},
+        "desc": {"en": "A hard source behind the subject draws a line along the shoulders and hair.",
+                 "ru": "Жёсткий источник за спиной рисует линию по плечам и волосам."},
+        "add": "Lit from behind by one strong source, a bright rim tracing the shoulders and hair while the face "
+               "stays mostly in shadow.",
+        "note": {"en": "Separates a person from a dark background with no extra light at all.",
+                 "ru": "Отрывает человека от тёмного фона вообще без дополнительного света."},
+        "slots": [], "traits": ["hard_light", "low_key"],
+        "fits_with": ["portrait_hold_still", "crowd_hands_up", "detail_object_pickup"],
+        "conflicts_with": ["l_soft_wrap", "l_overcast_flat", "l_high_key_bounce"],
+    },
+    {
+        "key": "l_hard_single", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "One hard source", "ru": "Один жёсткий источник"},
+        "desc": {"en": "A single undiffused light from one side. Sharp-edged shadows, no fill.",
+                 "ru": "Один нерассеянный источник сбоку. Тени с резкой границей, без заполнения."},
+        "add": "Lit by a single hard undiffused source from one side, sharp-edged shadows falling across the "
+               "surfaces behind, no fill light anywhere in the frame.",
+        "note": {"en": "The default of every dramatic frame. Costs nothing and reads immediately.",
+                 "ru": "Умолчание любого драматичного кадра. Ничего не стоит и читается сразу."},
+        "slots": [], "traits": ["hard_light", "low_key"],
+        "fits_with": ["portrait_breath_break", "detail_hands_work", "action_impact_stop"],
+        "conflicts_with": ["l_soft_wrap", "l_overcast_flat", "l_high_key_bounce"],
+    },
+    {
+        "key": "l_soft_wrap", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "Soft wrap", "ru": "Мягкий обёртывающий"},
+        "desc": {"en": "A large diffused source close to the subject. Skin, calm, no drama.",
+                 "ru": "Большой рассеянный источник близко к герою. Кожа, покой, без драмы."},
+        "add": "Lit by one large diffused source close to the subject, the light wrapping around the face with a "
+               "gentle falloff and shadows without hard edges.",
+        "note": {"en": "The only scheme that forgives a badly generated face.",
+                 "ru": "Единственная схема, прощающая плохо сгенерённое лицо."},
+        "slots": [], "traits": ["soft_light"],
+        "fits_with": ["interior_window_light", "portrait_two_shot", "portrait_hold_still"],
+        "conflicts_with": ["l_hard_single", "l_chiaroscuro", "l_rim_back"],
+    },
+    {
+        "key": "l_three_point", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "Three-point setup", "ru": "Три точки"},
+        "desc": {"en": "Key, fill and backlight. The neutral, professional, deliberately unremarkable option.",
+                 "ru": "Рисующий, заполняющий, контровой. Нейтрально, профессионально, нарочито незаметно."},
+        "add": "Lit with a three-point setup: a soft key from one side, a weak fill on the other, and a hard "
+               "backlight separating the subject from the background.",
+        "note": {"en": "Use when the frame must not have an opinion — product, interview, hero shot.",
+                 "ru": "Когда кадр не должен иметь мнения: товар, интервью, герой-кадр."},
+        "slots": [], "traits": ["soft_light"],
+        "fits_with": ["portrait_profile_to_front", "detail_texture_macro"],
+        "conflicts_with": ["l_chiaroscuro", "l_practical_only"],
+    },
+    {
+        "key": "l_practical_only", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "Practicals only", "ru": "Только источники в кадре"},
+        "desc": {"en": "Lit exclusively by lamps and signs visible in the shot. Reads as filmed, not staged.",
+                 "ru": "Освещено только тем, что видно в кадре. Читается как снято, а не поставлено."},
+        "add": "Lit only by the light sources visible inside the frame — lamps, windows and signs — with no "
+               "additional light from outside the shot.",
+        "note": {"en": "The single cheapest way to make a generated frame look documented.",
+                 "ru": "Самый дешёвый способ сделать сгенерённый кадр похожим на задокументированный."},
+        "slots": [], "traits": ["low_key"],
+        "fits_with": ["night_lamp_pass", "interior_table_sit", "travel_walk_away"],
+        "conflicts_with": ["l_three_point", "l_high_key_bounce"],
+    },
+    {
+        "key": "l_window_motivated", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "Motivated by the window", "ru": "Мотивирован окном"},
+        "desc": {"en": "All the light in the room comes from one window and is stronger than daylight really is.",
+                 "ru": "Весь свет в комнате идёт из одного окна и сильнее, чем бывает днём."},
+        "add": "All the light in the room comes from one window, spilling across the floor in a hard-edged shape "
+               "and leaving the far side of the space unlit.",
+        "note": {"en": "Interiors read best with one direction of light and one direction only.",
+                 "ru": "Интерьеры лучше всего читаются при одном и только одном направлении света."},
+        "slots": [], "traits": ["soft_light", "interior"],
+        "fits_with": ["interior_window_light", "detail_hands_work", "travel_car_window"],
+        "conflicts_with": ["l_deep_night", "l_screen_glow"],
+    },
+    {
+        "key": "l_screen_glow", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "Screen from below", "ru": "Экран снизу"},
+        "desc": {"en": "One cold source under the chin that flickers as its content changes.",
+                 "ru": "Один холодный источник под подбородком, мерцающий вместе с содержимым."},
+        "add": "Lit only from below by a small screen out of frame, the light cold and unsteady, everything above "
+               "the brow falling away into darkness.",
+        "note": {"en": "The most contemporary light there is, and it needs no set at all.",
+                 "ru": "Самый современный свет из существующих, и декорация ему не нужна."},
+        "slots": [], "traits": ["night", "low_key"],
+        "fits_with": ["night_screen_face", "portrait_hold_still", "interior_mirror"],
+        "conflicts_with": ["l_harsh_noon", "l_window_motivated", "l_golden_hour"],
+    },
+    {
+        "key": "l_chiaroscuro", "group": "scheme", "tier": "pro", "level": "scene",
+        "label": {"en": "One shaft, nothing else", "ru": "Один луч и больше ничего"},
+        "desc": {"en": "Extreme low key: a single shaft of light and unlit blackness around it.",
+                 "ru": "Экстремальный низкий ключ: один луч света и неосвещённая чернота вокруг."},
+        "add": "Lit by a single narrow shaft of light cutting across the frame, everything outside it completely "
+               "unlit and unreadable.",
+        "note": {"en": "Hides everything the model draws badly. Also the fastest way to look pretentious — use once.",
+                 "ru": "Прячет всё, что модель рисует плохо. И быстрее всего выглядит претенциозно — не чаще раза."},
+        "slots": [], "traits": ["hard_light", "low_key"],
+        "fits_with": ["interior_doorframe", "bridge_light_to_dark", "detail_written_trace"],
+        "conflicts_with": ["l_overcast_flat", "l_soft_wrap", "l_high_key_bounce"],
+    },
+    {
+        "key": "l_high_key_bounce", "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": "High key", "ru": "Высокий ключ"},
+        "desc": {"en": "Bright, even, almost shadowless. Advertising, comedy, relief after darkness.",
+                 "ru": "Ярко, ровно, почти без теней. Реклама, комедия, отдых после темноты."},
+        "add": "Lit high key: several soft sources bouncing evenly across the space, exposure bright and open, "
+               "almost no visible shadows anywhere.",
+        "note": {"en": "Works as contrast. Two high-key scenes in a row and the clip goes flat.",
+                 "ru": "Работает как контраст. Две подряд — и клип становится плоским."},
+        "slots": [], "traits": ["soft_light", "high_key"],
+        "fits_with": ["detail_texture_macro", "portrait_two_shot"],
+        "conflicts_with": ["l_chiaroscuro", "l_hard_single", "l_deep_night", "l_rim_back"],
+    },
+
+    # ══════════════ ВРЕМЯ СУТОК ══════════════
+    {
+        "key": "l_blue_hour", "group": "time", "tier": "free", "level": "scene",
+        "label": {"en": "Blue hour", "ru": "Синий час"},
+        "desc": {"en": "After sunset, before dark: the sky still lights the scene and every lamp is already on.",
+                 "ru": "После заката, до темноты: небо ещё светит, а лампы уже горят."},
+        "add": "Shot after sunset while the sky is still brighter than the ground, every lamp in the scene already "
+               "switched on and competing with the last daylight.",
+        "note": {"en": "The one time of day where interiors and exteriors balance without any trickery.",
+                 "ru": "Единственное время суток, когда интерьер и натура сходятся без ухищрений."},
+        "slots": [], "traits": ["night"],
+        "fits_with": ["open_door_out", "final_pull_to_wide", "open_empty_place"],
+        "conflicts_with": ["l_harsh_noon", "l_deep_night", "l_first_light"],
+    },
+    {
+        "key": "l_golden_hour", "group": "time", "tier": "free", "level": "scene",
+        "label": {"en": "Golden hour", "ru": "Золотой час"},
+        "desc": {"en": "Low sun, long shadows, light coming almost horizontally into the lens.",
+                 "ru": "Низкое солнце, длинные тени, свет идёт почти горизонтально в объектив."},
+        "add": "Lit by a low sun close to the horizon, shadows stretched long across the ground and the light "
+               "striking the subject almost horizontally from one side.",
+        "note": {"en": "Sells any frame. Also the most overused hour in the catalogue — earn it.",
+                 "ru": "Продаёт любой кадр. И самый заезженный час в каталоге — его надо заслужить."},
+        "slots": [], "traits": ["daylight", "hard_light"],
+        "fits_with": ["travel_side_track", "action_throw_away"],
+        "conflicts_with": ["l_deep_night", "l_screen_glow", "l_blue_hour"],
+    },
+    {
+        "key": "l_harsh_noon", "group": "time", "tier": "free", "level": "scene",
+        "label": {"en": "Harsh midday", "ru": "Жёсткий полдень"},
+        "desc": {"en": "Sun overhead, short black shadows, blown highlights. Uncomfortable on purpose.",
+                 "ru": "Солнце сверху, короткие чёрные тени, выбитые блики. Неудобно намеренно."},
+        "add": "Lit by an overhead midday sun, shadows short and black directly beneath everything, highlights "
+               "burnt out on every bright surface.",
+        "note": {"en": "The light nobody chooses, which is exactly why it reads as real.",
+                 "ru": "Свет, который никто не выбирает, — именно поэтому он читается как настоящий."},
+        "slots": [], "traits": ["daylight", "hard_light", "high_key"],
+        "fits_with": ["crowd_queue_line", "action_run_toward"],
+        "conflicts_with": ["l_deep_night", "l_blue_hour", "l_screen_glow", "l_chiaroscuro"],
+    },
+    {
+        "key": "l_overcast_flat", "group": "time", "tier": "free", "level": "scene",
+        "label": {"en": "Overcast", "ru": "Пасмурно"},
+        "desc": {"en": "One enormous soft source: the sky. No shadows, no direction, no drama.",
+                 "ru": "Один огромный мягкий источник — небо. Ни теней, ни направления, ни драмы."},
+        "add": "Lit by a completely overcast sky acting as one enormous soft source, no visible shadows and no "
+               "clear direction to the light.",
+        "note": {"en": "Documentary by default. Everything looks honest and slightly sad.",
+                 "ru": "По умолчанию документально. Всё выглядит честным и слегка грустным."},
+        "slots": [], "traits": ["daylight", "soft_light"],
+        "fits_with": ["crowd_one_still", "final_pull_to_wide", "travel_side_track"],
+        "conflicts_with": ["l_chiaroscuro", "l_hard_single", "l_rim_back", "l_deep_night"],
+    },
+    {
+        "key": "l_first_light", "group": "time", "tier": "free", "level": "scene",
+        "label": {"en": "First light", "ru": "Первый свет"},
+        "desc": {"en": "The sky is lighter than the ground and nothing has warmed up yet.",
+                 "ru": "Небо светлее земли, и ничто ещё не прогрелось."},
+        "add": "Shot at first light with the sky brighter than the ground, the air still and cold, the street "
+               "lamps beginning to look unnecessary.",
+        "note": {"en": "The natural ending of any night clip: same place, different hour.",
+                 "ru": "Естественный финал любого ночного клипа: то же место, другой час."},
+        "slots": [], "traits": ["daylight"],
+        "fits_with": ["final_rhyme_open", "open_empty_place", "travel_walk_away"],
+        "conflicts_with": ["l_deep_night", "l_harsh_noon", "l_blue_hour"],
+    },
+    {
+        "key": "l_deep_night", "group": "time", "tier": "free", "level": "scene",
+        "label": {"en": "Deep night", "ru": "Глухая ночь"},
+        "desc": {"en": "No sky light at all. Everything visible is lit by something switched on.",
+                 "ru": "Небо не светит вообще. Всё видимое освещено чем-то включённым."},
+        "add": "Shot in full darkness with no light from the sky at all: everything visible is lit by lamps, "
+               "windows or headlights, and the space between them is black.",
+        "note": {"en": "Night is not darkness — it is a small number of sources. Name them or the frame goes muddy.",
+                 "ru": "Ночь — это не темнота, а малое число источников. Назови их, иначе кадр поплывёт."},
+        "slots": [], "traits": ["night", "low_key"],
+        "fits_with": ["night_headlights", "night_rain_reflect", "night_lamp_pass"],
+        "conflicts_with": ["l_harsh_noon", "l_overcast_flat", "l_golden_hour", "l_first_light"],
+    },
+
+    # ══════════════ ПАЛИТРА (уступает стилю) ══════════════
+    {
+        "key": "l_one_accent", "group": "palette", "tier": "free", "level": "style",
+        "label": {"en": "One accent colour", "ru": "Один акцентный цвет"},
+        "desc": {"en": "Everything quiet except one object. The eye is led by colour, not by composition.",
+                 "ru": "Всё тихо, кроме одного предмета. Взгляд ведёт цвет, а не композиция."},
+        "add": "Colour note, " + DEFER + ": let a single {accent} element be the only loud colour in the frame "
+               "while everything else stays quiet.",
+        "note": {"en": "Keep the same accent all clip or it stops being an accent.",
+                 "ru": "Держи один и тот же акцент весь клип, иначе он перестаёт быть акцентом."},
+        "slots": ["accent"], "traits": [],
+        "fits_with": ["night_neon_wall", "detail_object_pickup", "crowd_one_still"],
+        "conflicts_with": ["l_three_colours"],
+    },
+    {
+        "key": "l_complementary", "group": "palette", "tier": "free", "level": "style",
+        "label": {"en": "Warm skin, cold shadows", "ru": "Тёплая кожа, холодные тени"},
+        "desc": {"en": "The oldest contrast in the book: warm subject against cold surroundings.",
+                 "ru": "Древнейший контраст: тёплый герой на холодном окружении."},
+        "add": "Colour note, " + DEFER + ": keep the skin tones warm against cooler surroundings so the figure "
+               "separates from the background by temperature.",
+        "note": {"en": "Works on any style that has colour at all. Skip it on monochrome styles.",
+                 "ru": "Работает на любом цветном стиле. На монохромных пропускать."},
+        "slots": [], "traits": [],
+        "fits_with": ["portrait_hold_still", "night_lamp_pass"],
+        "conflicts_with": ["l_analogous_warm"],
+    },
+    {
+        "key": "l_three_colours", "group": "palette", "tier": "pro", "level": "style",
+        "label": {"en": "Three colours only", "ru": "Только три цвета"},
+        "desc": {"en": "A deliberately limited palette. Makes a frame look designed rather than filmed.",
+                 "ru": "Намеренно ограниченная палитра. Кадр начинает выглядеть спроектированным."},
+        "add": "Colour note, " + DEFER + ": hold the frame to three colours only — one dark, one light and "
+               "{accent} — and keep everything else out.",
+        "note": {"en": "The strongest palette rule and the hardest to keep across thirty scenes.",
+                 "ru": "Самое сильное палитрное правило и самое трудное для тридцати сцен."},
+        "slots": ["accent"], "traits": [],
+        "fits_with": ["bridge_match_shape", "crowd_queue_line"],
+        "conflicts_with": ["l_one_accent", "l_analogous_warm"],
+    },
+    {
+        "key": "l_analogous_warm", "group": "palette", "tier": "free", "level": "style",
+        "label": {"en": "All warm", "ru": "Всё тёплое"},
+        "desc": {"en": "Nothing cold anywhere in frame. Unity instead of contrast.",
+                 "ru": "Ничего холодного в кадре. Единство вместо контраста."},
+        "add": "Colour note, " + DEFER + ": keep every colour in the frame on the warm side, with nothing cold "
+               "anywhere in the shot.",
+        "note": {"en": "Reads as memory. Pairs badly with anything that needs a cold accent.",
+                 "ru": "Читается как воспоминание. Плохо дружит со всем, чему нужен холодный акцент."},
+        "slots": [], "traits": [],
+        "fits_with": ["interior_table_sit", "detail_hands_work", "bridge_door_through"],
+        "conflicts_with": ["l_complementary", "l_three_colours"],
+    },
+
+    # ══════════════ КОНТРАСТ И ГРЕЙД (уступает стилю) ══════════════
+    {
+        "key": "l_contrast_hold", "group": "grade", "tier": "free", "level": "style",
+        "label": {"en": "Hold the contrast", "ru": "Держать контраст"},
+        "desc": {"en": "Ask for separation between light and dark without touching the palette.",
+                 "ru": "Просим разделения света и тени, не трогая палитру."},
+        "add": "Contrast note, " + DEFER + ": keep a clear separation between the lit and unlit parts of the "
+               "frame rather than an even exposure.",
+        "note": {"en": "Use on scenes that came back flat. Not a fix for a bad lighting setup.",
+                 "ru": "Для сцен, которые вернулись плоскими. Не лечит плохую схему света."},
+        "slots": [], "traits": [],
+        "fits_with": ["portrait_breath_break", "interior_doorframe"],
+        "conflicts_with": ["l_soft_bloom"],
+    },
+    {
+        "key": "l_crushed_blacks", "group": "grade", "tier": "pro", "level": "style",
+        "label": {"en": "Let the blacks go", "ru": "Отпустить чёрное"},
+        "desc": {"en": "Shadows with no detail at all. Hides everything the model draws badly.",
+                 "ru": "Тени вообще без деталей. Прячет всё, что модель рисует плохо."},
+        "add": "Contrast note, " + DEFER + ": let the shadows go completely black with no detail recovered in "
+               "them.",
+        "note": {"en": "A production trick, not a look: less visible area means fewer visible mistakes.",
+                 "ru": "Приём производства, а не стиля: меньше видимой площади — меньше видимых ошибок."},
+        "slots": [], "traits": [],
+        "fits_with": ["bridge_body_wipe", "night_headlights", "open_from_black"],
+        "conflicts_with": ["l_soft_bloom", "l_high_key_bounce"],
+    },
+    {
+        "key": "l_soft_bloom", "group": "grade", "tier": "free", "level": "style",
+        "label": {"en": "Let the highlights bloom", "ru": "Дать светам расцвести"},
+        "desc": {"en": "Bright sources allowed to spread softly instead of staying sharp.",
+                 "ru": "Яркие источники расплываются мягко, а не остаются резкими."},
+        "add": "Highlight note, " + DEFER + ": let the bright sources in frame spread softly at their edges "
+               "instead of staying hard.",
+        "note": {"en": "Turns lamps and signs into the subject. Fights any style that wants clean edges.",
+                 "ru": "Делает лампы и вывески главными в кадре. Спорит с любым стилем, которому нужны чистые края."},
+        "slots": [], "traits": [],
+        "fits_with": ["night_neon_wall", "night_rain_reflect", "travel_car_window"],
+        "conflicts_with": ["l_contrast_hold", "l_crushed_blacks"],
+    },
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. МИКСОВАНИЕ — правила, по которым четыре слоя складываются в одну сцену.
+#
+# Порядок сборки один и обратному не подлежит:
+#
+#     СТИЛЬ ТРЕКА  →  ЗАГОТОВКА  →  ДВИЖЕНИЕ  →  СВЕТ И ЦВЕТ
+#     (рендер)        (BOARDS)      (MOTIONS)    (LIGHTS)
+#
+# Стиль подставляет конвейер первым блоком — карточки его не видят и видеть не
+# должны. Заготовка даёт все шесть полей сцены. Движение ЗАМЕНЯЕТ motion_prompt
+# целиком, а не дописывается к нему: два описания движения в одном поле — это
+# ровно то противоречие, на котором модель ломается. Свет ДОПИСЫВАЕТСЯ в конец
+# обоих кадров, потому что он уточняет картинку, а не переопределяет её.
+#
+# ПОТОЛКИ. Один каркас, одна заготовка, одно движение, не больше двух световых
+# модификаторов и не больше одного из них уровня style. Потолок не эстетический:
+# каждый модификатор — это ещё одно указание в промпте длиной в две-три фразы,
+# и после третьего движки начинают выбирать между ними случайно.
+#
+# КАК СЧИТАЕТСЯ КОНФЛИКТ. Двумя способами, и оба нужны:
+#   1. По чертам (TRAITS + CONFLICT_PAIRS) — машинно и без участия автора
+#      карточки. «Камера стоит» и «камера едет», «полдень» и «ночь», «жёсткий»
+#      и «мягкий» несовместимы физически, а не по вкусу.
+#   2. По явным спискам conflicts_with / fits_with в самих карточках — там, где
+#      конфликт содержательный и чертами не выражается (наезд против отъезда).
+# Первый способ ловит то, о чём автор не подумал; второй — то, о чём подумал.
+# ─────────────────────────────────────────────────────────────────────────────
+MIX_RULES = {
+    "max_boards": 1,
+    "max_motions": 1,
+    "max_lights": 2,
+    "max_style_lights": 1,
+    "order": ["style", "board", "motion", "light"],
+    "note": {
+        "en": "Style first and untouchable, then one board, then one motion, then at most two light modifiers "
+              "(only one of them may be a palette or grade card).",
+        "ru": "Сначала стиль, он неприкосновенен; затем одна заготовка, одно движение и не больше двух световых "
+              "модификаторов, из которых не больше одного — палитра или грейд.",
+    },
+}
+
+#: Черты, которыми распоряжается камера. Карточка движения их перебивает.
+_CAMERA_TRAITS = {"locked", "moving_camera", "handheld"}
+
+#: Движки, у которых нет последнего кадра: motion берётся из `solo`.
+_SOLO_ENGINES = ("grok",)
+#: Движок, читающий команды камеры в скобках.
+_BRACKET_ENGINES = ("minimax-h3",)
+
+_BOARD_BY_KEY = {b["key"]: b for b in BOARDS}
+_MOTION_BY_KEY = {m["key"]: m for m in MOTIONS}
+_LIGHT_BY_KEY = {l["key"]: l for l in LIGHTS}
+_SCRIPT_BY_KEY = {s["key"]: s for s in SCRIPTS}
+
+BOARD_KEYS = tuple(_BOARD_BY_KEY)
+MOTION_KEYS = tuple(_MOTION_BY_KEY)
+LIGHT_KEYS = tuple(_LIGHT_BY_KEY)
+SCRIPT_KEYS = tuple(_SCRIPT_BY_KEY)
+
+#: Тексты заготовки — то, что закрывается тарифом. Всё остальное в карточке
+#: (подпись, описание, крупность, движение камеры, черты) видно всем: человек
+#: должен понимать, чего лишён, а не смотреть в пустое место.
+_BOARD_TEXTS = ("first", "last", "motion", "solo", "negative")
+_MOTION_TEXTS = ("text", "solo")
+_LIGHT_TEXTS = ("add",)
+
+PUBLIC_BOARD_FIELDS = ("key", "group", "tier", "label", "desc", "shot", "camera",
+                       "bracket", "note", "slots", "traits", "needs_last",
+                       "engines", "fits_with", "conflicts_with", "styles_fit", "tags")
+PUBLIC_MOTION_FIELDS = ("key", "group", "tier", "label", "desc", "camera", "bracket",
+                        "physics", "slots", "traits", "needs_last", "engines",
+                        "fits_with", "conflicts_with")
+PUBLIC_LIGHT_FIELDS = ("key", "group", "tier", "level", "label", "desc", "note",
+                       "slots", "traits", "fits_with", "conflicts_with")
+PUBLIC_SCRIPT_FIELDS = ("key", "tier", "label", "music", "bpm", "cut", "logline",
+                        "hero", "motif", "opens", "closes", "acts", "scenes",
+                        "open_board", "close_board", "styles_fit", "preset",
+                        "slots_hint", "tags", "needs_lyrics")
+
+
+def _slot_values(slots: list[str], given: dict | None) -> dict:
+    """Значения подстановки: что дал человек, иначе английский пример из SLOTS.
+    Пустой {character} в промпте хуже любого умолчания — см. fill() выше."""
+    given = given or {}
+    return {k: str(given.get(k) or "").strip() or SLOTS[k]["example"]["en"] for k in slots}
+
+
+def _sub(text: str, values: dict) -> str:
+    return _SLOT_RE.sub(lambda m: values.get(m.group(1), m.group(0)), text)
+
+
+def board_fill(key: str, slots: dict | None = None) -> dict | None:
+    """Подставить слоты в тексты заготовки."""
+    b = _BOARD_BY_KEY.get(key)
+    if not b:
+        return None
+    values = _slot_values(b["slots"], slots)
+    out = {f: _sub(b[f], values) for f in _BOARD_TEXTS}
+    out["used"] = values
+    return out
+
+
+def motion_text(key: str, slots: dict | None = None, *, engine: str = "") -> str:
+    """Готовый motion_prompt приёма движения под конкретный движок.
+
+    Grok получает `solo` (у него нет последнего кадра), MiniMax — команду в
+    скобках плюс текст, все остальные — текст пары кадров. Это единственное
+    место в файле, где движок вообще влияет на текст."""
+    m = _MOTION_BY_KEY.get(key)
+    if not m:
+        return ""
+    values = _slot_values(m["slots"], slots)
+    if engine in _SOLO_ENGINES:
+        return _sub(m["solo"], values)
+    body = _sub(m["text"], values)
+    if engine in _BRACKET_ENGINES and m["bracket"]:
+        return f"{m['bracket']} {body}"
+    return body
+
+
+def board_patch(key: str, slots: dict | None = None, *, lang: str = "ru",
+                engine: str = "") -> dict | None:
+    """Готовое тело для PATCH /api/scenes/{id} из одной заготовки.
+
+    Ключи — ровно те, что принимает update_scene() в main.py, плюс shot_note,
+    который тот же роут тоже принимает. Ничего лишнего: лишнее поле бэкенд
+    молча уронит, и «применить» применит половину карточки."""
+    body = board_fill(key, slots)
+    if not body:
+        return None
+    b = _BOARD_BY_KEY[key]
+    motion = body["solo"] if engine in _SOLO_ENGINES else body["motion"]
+    if engine in _BRACKET_ENGINES and b["bracket"]:
+        motion = f"{b['bracket']} {motion}"
+    return {
+        "image_prompt": body["first"],
+        "image_prompt_last": body["last"],
+        "motion_prompt": motion,
+        "shot_size": b["shot"],
+        "camera_move": b["camera"],
+        "shot_note": _localise(b["note"], lang),
+    }
+
+
+def check_mix(board: str = "", motion: str = "", lights: list[str] | None = None) -> list[dict]:
+    """Проверить сочетаемость до генерации. Возвращает список конфликтов.
+
+    Пустой список означает «собирается». Ничего не блокируется: карточка может
+    конфликтовать осознанно, и решает человек. Наше дело — сказать, чем он
+    платит, а не запретить."""
+    lights = list(lights or [])
+    out: list[dict] = []
+
+    if len(lights) > MIX_RULES["max_lights"]:
+        out.append({"kind": "limit", "a": "lights", "b": "",
+                    "en": f"More than {MIX_RULES['max_lights']} light modifiers: the engine starts choosing "
+                          f"between them at random.",
+                    "ru": f"Больше {MIX_RULES['max_lights']} световых модификаторов: движок начинает выбирать "
+                          f"между ними наугад."})
+    style_lights = [k for k in lights if (_LIGHT_BY_KEY.get(k) or {}).get("level") == "style"]
+    if len(style_lights) > MIX_RULES["max_style_lights"]:
+        out.append({"kind": "limit", "a": "lights", "b": "",
+                    "en": "Two palette or grade cards at once — they argue with the track style and with each other.",
+                    "ru": "Две карточки палитры или грейда сразу — они спорят и со стилем трека, и между собой."})
+
+    cards = []
+    if board and board in _BOARD_BY_KEY:
+        cards.append(("board", board, _BOARD_BY_KEY[board]))
+    if motion and motion in _MOTION_BY_KEY:
+        cards.append(("motion", motion, _MOTION_BY_KEY[motion]))
+    for k in lights:
+        if k in _LIGHT_BY_KEY:
+            cards.append(("light", k, _LIGHT_BY_KEY[k]))
+
+    # 1. Явные списки: то, о чём автор карточки подумал.
+    for _, key_a, a in cards:
+        for _, key_b, _b in cards:
+            if key_a != key_b and key_b in a.get("conflicts_with", ()):
+                out.append({"kind": "explicit", "a": key_a, "b": key_b,
+                            "en": "The cards are marked as incompatible.",
+                            "ru": "Карточки помечены как несочетаемые."})
+
+    # 2. Черты: то, о чём он не подумал. Физически взаимоисключающие условия.
+    #
+    # Одно исключение, и оно принципиальное: карточка движения ЗАМЕНЯЕТ камеру
+    # заготовки (mix() переписывает camera_move), а не спорит с ней. Поэтому
+    # наезд на статичную заготовку — это не конфликт, а ровно то, ради чего
+    # карточки движения существуют. Сравниваем «камерные» черты заготовки
+    # только тогда, когда движение о камере ничего не говорит.
+    motion_card = _MOTION_BY_KEY.get(motion) if motion else None
+    motion_owns_camera = bool(motion_card and (set(motion_card["traits"]) & _CAMERA_TRAITS))
+    eff = {}
+    for kind, key_c, c in cards:
+        traits = set(c.get("traits", ()))
+        if kind == "board" and motion_owns_camera:
+            traits -= _CAMERA_TRAITS
+        eff[key_c] = traits
+    for i, (_, key_a, a) in enumerate(cards):
+        for _, key_b, b in cards[i + 1:]:
+            for ta in eff[key_a]:
+                for tb in eff[key_b]:
+                    pair = (ta, tb)
+                    if pair in CONFLICT_PAIRS or (tb, ta) in CONFLICT_PAIRS:
+                        out.append({
+                            "kind": "trait", "a": key_a, "b": key_b,
+                            "en": f"{TRAITS[ta]['en']} and {TRAITS[tb]['en']} cannot both be true in one frame.",
+                            "ru": f"«{TRAITS[ta]['ru']}» и «{TRAITS[tb]['ru']}» не бывают в одном кадре одновременно.",
+                        })
+    # Один и тот же конфликт может прийти обоими путями — показываем один раз.
+    seen, uniq = set(), []
+    for c in out:
+        sig = (c["kind"], tuple(sorted((c["a"], c["b"]))), c["en"])
+        if sig not in seen:
+            seen.add(sig)
+            uniq.append(c)
+    return uniq
+
+
+def mix(board: str, *, motion: str = "", lights: list[str] | None = None,
+        slots: dict | None = None, lang: str = "ru", engine: str = "") -> dict | None:
+    """Собрать сцену из заготовки, движения и световых модификаторов.
+
+    Возвращает готовое тело PATCH, отдельно негатив (его принимает не всякий
+    канал) и список конфликтов. Конфликты НЕ блокируют сборку: решает человек,
+    а наше дело — предупредить."""
+    patch = board_patch(board, slots, lang=lang, engine=engine)
+    if not patch:
+        return None
+    b = _BOARD_BY_KEY[board]
+    lights = list(lights or [])
+
+    if motion:
+        text = motion_text(motion, slots, engine=engine)
+        if text:
+            patch["motion_prompt"] = text
+            m = _MOTION_BY_KEY[motion]
+            if m["camera"]:
+                patch["camera_move"] = m["camera"]
+
+    tail = []
+    for k in lights:
+        card = _LIGHT_BY_KEY.get(k)
+        if card:
+            tail.append(_sub(card["add"], _slot_values(card["slots"], slots)))
+    if tail:
+        add = " " + " ".join(tail)
+        patch["image_prompt"] += add
+        patch["image_prompt_last"] += add
+
+    return {
+        "board": board, "motion": motion, "lights": lights,
+        "scene": patch,
+        "negative": b["negative"],
+        "engine": engine or "",
+        "conflicts": check_mix(board, motion, lights),
+    }
+
+
+def script_seed(key: str) -> dict:
+    """Сюжетный seed сценария: story → Project.story, note → Track.director_note.
+    Та же форма, что у prompts_catalog.preset_seed — вызывающий код не должен
+    знать, из какого слоя пришёл каркас."""
+    s = _SCRIPT_BY_KEY.get(key)
+    if not s:
+        return {"story": "", "note": ""}
+    return {"story": s["story"], "note": s["dnote"]}
+
+
+def script_boards(key: str) -> list[str]:
+    """Все заготовки сценария по порядку актов, без повторов: это готовый
+    черновик раскадровки, который остаётся разложить по сценам трека."""
+    s = _SCRIPT_BY_KEY.get(key)
+    if not s:
+        return []
+    out: list[str] = []
+    for ref in [s["open_board"]] + [k for a in s["acts"] for k in a["boards"]] + [s["close_board"]]:
+        if ref not in out:
+            out.append(ref)
+    return out
+
+
+def _public(card: dict, fields, texts, *, lang: str, plan_id: str,
+            is_admin: bool) -> dict:
+    out = {f: card[f] for f in fields if f in card}
+    open_text = unlocked(card["tier"], plan_id, is_admin=is_admin)
+    out["locked"] = not open_text
+    if open_text:
+        for f in texts:
+            out[f] = card[f]
+    if lang in ("en", "ru"):
+        for f in ("label", "desc", "note", "physics", "music", "logline", "hero",
+                  "motif", "opens", "closes"):
+            if f in out:
+                out[f] = _localise(out[f], lang)
+        if "slots" in out:
+            out["slots"] = [
+                {"key": k,
+                 "label": _localise(SLOTS[k]["label"], lang),
+                 "hint": _localise(SLOTS[k]["hint"], lang),
+                 "example": _localise(SLOTS[k]["example"], lang)}
+                for k in card["slots"]
+            ]
+        if "traits" in out:
+            out["traits"] = [{"key": t, "label": _localise(TRAITS[t], lang)}
+                             for t in card["traits"]]
+    return out
+
+
+def public_board(key: str, *, lang: str = "", plan_id: str = "free",
+                 is_admin: bool = False) -> dict | None:
+    b = _BOARD_BY_KEY.get(key)
+    return _public(b, PUBLIC_BOARD_FIELDS, _BOARD_TEXTS, lang=lang,
+                   plan_id=plan_id, is_admin=is_admin) if b else None
+
+
+def public_boards(*, lang: str = "", group: str = "", tier: str = "",
+                  style: str = "", plan_id: str = "free",
+                  is_admin: bool = False) -> list[dict]:
+    out = []
+    for b in BOARDS:
+        if group and b["group"] != group:
+            continue
+        if tier and b["tier"] != tier:
+            continue
+        if style and style not in b["styles_fit"]:
+            continue
+        out.append(public_board(b["key"], lang=lang, plan_id=plan_id, is_admin=is_admin))
+    return out
+
+
+def public_motion(key: str, *, lang: str = "", plan_id: str = "free",
+                  is_admin: bool = False) -> dict | None:
+    m = _MOTION_BY_KEY.get(key)
+    return _public(m, PUBLIC_MOTION_FIELDS, _MOTION_TEXTS, lang=lang,
+                   plan_id=plan_id, is_admin=is_admin) if m else None
+
+
+def public_motions(*, lang: str = "", group: str = "", plan_id: str = "free",
+                   is_admin: bool = False) -> list[dict]:
+    return [public_motion(m["key"], lang=lang, plan_id=plan_id, is_admin=is_admin)
+            for m in MOTIONS if not group or m["group"] == group]
+
+
+def public_light(key: str, *, lang: str = "", plan_id: str = "free",
+                 is_admin: bool = False) -> dict | None:
+    l = _LIGHT_BY_KEY.get(key)
+    return _public(l, PUBLIC_LIGHT_FIELDS, _LIGHT_TEXTS, lang=lang,
+                   plan_id=plan_id, is_admin=is_admin) if l else None
+
+
+def public_lights(*, lang: str = "", group: str = "", plan_id: str = "free",
+                  is_admin: bool = False) -> list[dict]:
+    return [public_light(l["key"], lang=lang, plan_id=plan_id, is_admin=is_admin)
+            for l in LIGHTS if not group or l["group"] == group]
+
+
+def public_script(key: str, *, lang: str = "", plan_id: str = "free",
+                  is_admin: bool = False) -> dict | None:
+    """Карточка сценария. Закрыт ровно `story` — сам сюжетный seed; акты,
+    логлайн и роль героя видно всем, потому что по ним и выбирают."""
+    s = _SCRIPT_BY_KEY.get(key)
+    if not s:
+        return None
+    out = {f: s[f] for f in PUBLIC_SCRIPT_FIELDS if f in s}
+    open_text = unlocked(s["tier"], plan_id, is_admin=is_admin)
+    out["locked"] = not open_text
+    if open_text:
+        out["story"] = s["story"]
+        out["dnote"] = s["dnote"]
+    out["boards"] = script_boards(key)
+    if lang in ("en", "ru"):
+        for f in ("label", "music", "logline", "hero", "motif", "opens", "closes"):
+            out[f] = _localise(out[f], lang)
+        out["acts"] = [
+            {"key": a["key"], "share": a["share"], "shot": a["shot"],
+             "label": _localise(a["label"], lang),
+             "text": a.get(lang) or a["en"],
+             "boards": list(a["boards"])}
+            for a in s["acts"]
+        ]
+    return out
+
+
+def public_scripts(*, lang: str = "", cut: str = "", style: str = "",
+                   plan_id: str = "free", is_admin: bool = False) -> list[dict]:
+    out = []
+    for s in SCRIPTS:
+        if cut and s["cut"] != cut:
+            continue
+        if style and style not in s["styles_fit"]:
+            continue
+        out.append(public_script(s["key"], lang=lang, plan_id=plan_id, is_admin=is_admin))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. ПРИМЕРЫ. Владелец просил их прямо, и они здесь ДАННЫЕ, а не текст в
+# документации: docs/prompts-library.md печатает их вызовом render_example(),
+# поэтому пример физически не может разойтись с карточкой. Разошедшийся пример
+# хуже отсутствующего — он учит формулировке, которой в продукте уже нет.
+#
+# По одному примеру на каждую группу заготовок плюс по одному на сценарий,
+# движение и свет.
+# ─────────────────────────────────────────────────────────────────────────────
+EXAMPLES: list[dict] = [
+    {
+        "key": "ex_opening", "of": "board", "group": "opening",
+        "label": {"en": "Opening: out of the door at dusk", "ru": "Открывающий: выход из подъезда в сумерках"},
+        "script": "night_shift", "board": "open_door_out",
+        "motion": "m_coat_inertia", "lights": ["l_practical_only", "l_blue_hour"],
+        "slots": {"character": "young man in a black hooded jacket",
+                  "location": "panel block courtyard", "time": "late dusk",
+                  "outfit": "long grey coat"},
+        "why": {"en": "Two scene-level light cards, no palette card: the track style already owns the colour.",
+                "ru": "Два световых модификатора уровня сцены и ни одного палитрного: цветом уже распоряжается стиль."},
+    },
+    {
+        "key": "ex_travel", "of": "board", "group": "travel",
+        "label": {"en": "Travel: walking away down a wet street", "ru": "Проход: уход по мокрой улице"},
+        "script": "black_car", "board": "travel_walk_away",
+        "motion": "m_steadi_follow", "lights": ["l_deep_night"],
+        "slots": {"character": "woman in a long coat", "location": "narrow one-way street",
+                  "time": "3 a.m."},
+        "why": {"en": "The motion card replaces camera_move as well — following is the shot, not a decoration.",
+                "ru": "Карточка движения заменяет и camera_move: следование здесь и есть кадр, а не украшение."},
+    },
+    {
+        "key": "ex_portrait", "of": "board", "group": "portrait",
+        "label": {"en": "Portrait: held close-up", "ru": "Портрет: держим крупный план"},
+        "script": "the_offer", "board": "portrait_hold_still",
+        "motion": "m_push_settle", "lights": ["l_hard_single"],
+        "slots": {"character": "man in his forties, shaved head",
+                  "location": "empty office room", "emotion": "jaw set, eyes not blinking"},
+        "why": {"en": "Push-in on a locked-off board: allowed, because the board's frame is static, not the camera.",
+                "ru": "Наезд на статичную заготовку: можно, потому что статична композиция, а не камера."},
+    },
+    {
+        "key": "ex_detail", "of": "board", "group": "detail",
+        "label": {"en": "Detail: hands finishing the work", "ru": "Деталь: руки заканчивают работу"},
+        "script": "night_shift", "board": "detail_hands_work",
+        "motion": "m_hand_raise", "lights": ["l_hard_single", "l_analogous_warm"],
+        "slots": {"prop": "steel kettle", "location": "canteen kitchen"},
+        "why": {"en": "One scene light plus one palette card — the palette card defers to the style in its wording.",
+                "ru": "Один свет уровня сцены плюс одна палитра — и палитра формулировкой уступает стилю."},
+    },
+    {
+        "key": "ex_action", "of": "board", "group": "action",
+        "label": {"en": "Action: running at the lens", "ru": "Экшен: бег на объектив"},
+        "script": "run_the_block", "board": "action_run_toward",
+        "motion": "m_dust_bloom", "lights": ["l_hard_single"],
+        "slots": {"character": "teenager in a red tracksuit", "location": "concrete underpass",
+                  "time": "midday"},
+        "why": {"en": "A physics card instead of a camera card: on fast scenes the camera must stay still.",
+                "ru": "Карточка физики вместо камеры: на быстрых сценах камера обязана стоять."},
+    },
+    {
+        "key": "ex_crowd", "of": "board", "group": "crowd",
+        "label": {"en": "Crowd: one still figure", "ru": "Толпа: одна неподвижная фигура"},
+        "script": "market_day", "board": "crowd_one_still",
+        "motion": "m_freeze_settle", "lights": ["l_overcast_flat"],
+        "slots": {"crowd": "commuters in dark coats", "character": "girl with a shaved head",
+                  "location": "station concourse", "time": "morning rush"},
+        "why": {"en": "Flat overcast light on a crowd scene: shadows would turn a dense crowd into mush.",
+                "ru": "Ровный пасмурный свет на толпе: тени превратили бы плотную массу в кашу."},
+    },
+    {
+        "key": "ex_interior", "of": "board", "group": "interior",
+        "label": {"en": "Interior: by the window", "ru": "Интерьер: у окна"},
+        "script": "two_rooms", "board": "interior_window_light",
+        "motion": "m_breath_fog", "lights": ["l_window_motivated"],
+        "slots": {"character": "woman in a knitted jumper", "location": "one-room flat",
+                  "time": "first light"},
+        "why": {"en": "The light card repeats the board's own direction of light instead of adding a second source.",
+                "ru": "Световая карточка повторяет направление света заготовки, а не добавляет второй источник."},
+    },
+    {
+        "key": "ex_night", "of": "board", "group": "night",
+        "label": {"en": "Night: into the lamp light", "ru": "Ночь: вход в пятно фонаря"},
+        "script": "cold_call", "board": "night_lamp_pass",
+        "motion": "m_weight_step", "lights": ["l_deep_night", "l_crushed_blacks"],
+        "slots": {"character": "man in a leather jacket", "location": "empty embankment",
+                  "time": "2 a.m."},
+        "why": {"en": "The grade card is a production trick here: less visible area means fewer visible mistakes.",
+                "ru": "Грейд здесь производственный приём: меньше видимой площади — меньше видимых ошибок."},
+    },
+    {
+        "key": "ex_final", "of": "board", "group": "final",
+        "label": {"en": "Final: pull back to nothing", "ru": "Финал: отъезд в пустоту"},
+        "script": "last_train", "board": "final_pull_to_wide",
+        "motion": "m_pull_open", "lights": ["l_first_light"],
+        "slots": {"character": "man with a duffel bag", "location": "end-of-line platform",
+                  "time": "first light"},
+        "why": {"en": "Board and motion say the same thing on purpose — the motion card only sharpens the wording.",
+                "ru": "Заготовка и движение говорят одно и то же намеренно: карточка движения лишь уточняет формулировку."},
+    },
+    {
+        "key": "ex_bridge", "of": "board", "group": "bridge",
+        "label": {"en": "Bridge: out of light into dark", "ru": "Переход: из света в темноту"},
+        "script": "the_return", "board": "bridge_light_to_dark",
+        "motion": "m_blur_resolve", "lights": ["l_chiaroscuro"],
+        "slots": {"character": "man in a denim jacket", "location": "underpass mouth",
+                  "time": "late afternoon"},
+        "why": {"en": "A bridge is written as one scene but applied as a pair — the next scene opens on the dark end.",
+                "ru": "Переход пишется как одна сцена, а применяется парой: следующая сцена открывается с тёмного конца."},
+    },
+    {
+        "key": "ex_script", "of": "script", "group": "script",
+        "label": {"en": "A script laid onto a storyboard", "ru": "Сценарий, разложенный на раскадровку"},
+        "script": "night_shift", "board": "open_empty_place",
+        "motion": "m_smoke_curl", "lights": ["l_practical_only"],
+        "slots": {"location": "empty depot hall", "time": "half past midnight",
+                  "weather": "cold draught", "character": "man in a work jacket"},
+        "why": {"en": "script_boards() returns the whole draft storyboard in act order; this is its first scene.",
+                "ru": "script_boards() отдаёт черновик раскадровки целиком по актам; это её первая сцена."},
+    },
+    {
+        "key": "ex_motion", "of": "motion", "group": "motion",
+        "label": {"en": "One board, three engines", "ru": "Одна заготовка, три движка"},
+        "script": "", "board": "portrait_turn_to_lens",
+        "motion": "m_turn_to_lens", "lights": [],
+        "slots": {"character": "girl with wet hair", "location": "tiled bathroom",
+                  "emotion": "mouth closed, eyes steady"},
+        "why": {"en": "The same card renders differently for a first-last engine, for Grok and for MiniMax.",
+                "ru": "Одна и та же карточка рендерится по-разному для движка с двумя кадрами, для Grok и для MiniMax."},
+    },
+    {
+        "key": "ex_light", "of": "light", "group": "light",
+        "label": {"en": "Light modifiers on one board", "ru": "Световые модификаторы на одной заготовке"},
+        "script": "stage_and_after", "board": "night_neon_wall",
+        "motion": "m_hair_lag", "lights": ["l_one_accent", "l_deep_night"],
+        "slots": {"character": "rapper in a white vest", "location": "back alley behind the venue",
+                  "time": "after midnight", "accent": "sodium orange"},
+        "why": {"en": "One palette card and one time-of-day card: the limit, and the palette one defers to the style.",
+                "ru": "Одна палитра и одно время суток — это потолок, и палитра уступает стилю формулировкой."},
+    },
+]
+
+
+def render_example(key: str, *, lang: str = "ru", engine: str = "") -> dict | None:
+    """Собрать пример так же, как его собрал бы человек кнопкой «применить».
+    Именно этот вызов печатает документация — поэтому пример не может
+    разойтись с карточкой."""
+    ex = next((e for e in EXAMPLES if e["key"] == key), None)
+    if not ex:
+        return None
+    res = mix(ex["board"], motion=ex["motion"], lights=ex["lights"],
+              slots=ex["slots"], lang=lang, engine=engine)
+    if not res:
+        return None
+    res["example"] = ex["key"]
+    res["label"] = _localise(ex["label"], lang)
+    res["why"] = _localise(ex["why"], lang)
+    res["script"] = ex["script"]
+    res["slots_used"] = dict(ex["slots"])
+    return res
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. САМОПРОВЕРКА НОВЫХ СЛОЁВ. Вызывается из validate() выше.
+#
+# Проверки не косметические: каждая ловит ошибку, которая иначе всплыла бы
+# испорченным кадром у человека, а не падением у нас.
+# ─────────────────────────────────────────────────────────────────────────────
+#: Слова, которыми распоряжается СТИЛЬ. В кадре заготовки их быть не может:
+#: дублирование грейда уже ломало картинку и уже чинилось.
+_BAN_GRADE = ("film", "grain", "35mm", "16mm", "4k", "8k", "cinematic", "masterpiece",
+              "vhs", "teal", "halation", "photorealistic", "hyperrealistic",
+              "colour grade", "color grade", "anime", "painterly", "hdr")
+
+#: Ссылки на соседние кадры. Модель анимирует сцену изолированно и «как раньше»
+#: понять не может — она это просто выдумает.
+_BAN_REF = ("same as before", "as before", "previously", "continues from",
+            "in the previous", "like earlier", "as established")
+
+#: Движение без конечного состояния подвешивает генерацию и даёт дрейф — это
+#: ровно та болезнь, из-за которой ролик «застывает на 99%». Проверяется
+#: регуляркой _SETTLE_RE ниже.
+
+
+#: Конечное состояние ищется по основам слов: settles / settling / stopped /
+#: holds / comes to rest. Список форм перечислять нельзя — забудешь одну, и
+#: карточка проедет проверку.
+_SETTLE_RE = re.compile(r"\b(settl\w*|stop\w*|hold\w*|halt\w*|rests?|resting|still|"
+                        r"comes to rest)\b", re.I)
+
+
+def _has(text: str, words) -> str:
+    """Есть ли в тексте одно из слов — ПО ГРАНИЦАМ СЛОВ.
+
+    Подстрокой искать нельзя: «withdrawn» содержит «hdr», «brainstorm» —
+    «rain», и запрет начинает срабатывать на невиновных карточках."""
+    low = text.lower()
+    for w in words:
+        if re.search(r"\b" + re.escape(w) + r"\b", low):
+            return w
+    return ""
+
+
+def _settles(text: str) -> bool:
+    return bool(_SETTLE_RE.search(text))
+
+
+def _validate_v2() -> list[str]:                         # noqa: C901
+    err: list[str] = []
+    board_groups = {g["key"] for g in BOARD_GROUPS}
+    motion_groups = {g["key"] for g in MOTION_GROUPS}
+    light_groups = {g["key"] for g in LIGHT_GROUPS}
+
+    for pair in CONFLICT_PAIRS:
+        for t in pair:
+            if t not in TRAITS:
+                err.append(f"CONFLICT_PAIRS: черта {t} вне словаря TRAITS")
+
+    # ── заготовки ──
+    for b in BOARDS:
+        k = b["key"]
+        if b["group"] not in board_groups:
+            err.append(f"заготовка {k}: неизвестная группа {b['group']}")
+        if b["tier"] not in ("free", "pro"):
+            err.append(f"заготовка {k}: неизвестный тариф {b['tier']}")
+        if b["shot"] not in SHOT_SIZES:
+            err.append(f"заготовка {k}: крупность {b['shot']} вне словаря SCENES_SYSTEM")
+        if not b["camera"].strip():
+            err.append(f"заготовка {k}: пустое движение камеры")
+        used: set[str] = set()
+        for f in _BOARD_TEXTS:
+            if not b.get(f, "").strip():
+                err.append(f"заготовка {k}: пустой текст {f}")
+            used |= set(_SLOT_RE.findall(b.get(f, "")))
+        for f in ("first", "last"):
+            bad = _has(b[f], _BAN_GRADE)
+            if bad:
+                err.append(f"заготовка {k}: в {f} слово «{bad}» — этим распоряжается стиль трека")
+        for f in ("first", "last", "motion", "solo"):
+            bad = _has(b[f], _BAN_REF)
+            if bad:
+                err.append(f"заготовка {k}: в {f} ссылка на соседний кадр «{bad}»")
+        if "the same" not in b["last"].lower():
+            err.append(f"заготовка {k}: в последнем кадре нет лока «The same …» — "
+                       f"движок приедет другой комнатой и другим человеком")
+        if not _settles(b["motion"]):
+            err.append(f"заготовка {k}: в motion нет конечного состояния (settles/stops/holds)")
+        if not _settles(b["solo"]):
+            err.append(f"заготовка {k}: в solo нет конечного состояния")
+        for slot in used:
+            if slot not in SLOTS:
+                err.append(f"заготовка {k}: слот {{{slot}}} вне словаря SLOTS")
+            elif slot not in b["slots"]:
+                err.append(f"заготовка {k}: слот {{{slot}}} в тексте, но не объявлен")
+        for slot in b["slots"]:
+            if slot not in used:
+                err.append(f"заготовка {k}: слот {slot} объявлен, но в тексте не встречается")
+        if _SLOT_RE.findall(b["note"]["ru"] + b["note"]["en"]):
+            err.append(f"заготовка {k}: слот в shot_note — подставленный английский текст "
+                       f"внутри русской подписи читается как брак")
+        if b["bracket"] and not _valid_bracket(b["bracket"]):
+            err.append(f"заготовка {k}: команда MiniMax {b['bracket']} вне словаря MINIMAX_MOVES")
+        for eng in b["engines"]:
+            if eng not in ENGINE_KEYS:
+                err.append(f"заготовка {k}: неизвестный движок {eng}")
+        if b["needs_last"] and "grok" in b["engines"]:
+            err.append(f"заготовка {k}: needs_last, но в движках grok — он оживляет только первый кадр")
+        for t in b["traits"]:
+            if t not in TRAITS:
+                err.append(f"заготовка {k}: черта {t} вне словаря TRAITS")
+        for ref in b["fits_with"] + b["conflicts_with"]:
+            if ref not in _MOTION_BY_KEY and ref not in _LIGHT_BY_KEY and ref not in _BOARD_BY_KEY:
+                err.append(f"заготовка {k}: ссылка на несуществующую карточку {ref}")
+        for f in ("label", "desc", "note"):
+            if not (b[f].get("en") or "").strip() or not (b[f].get("ru") or "").strip():
+                err.append(f"заготовка {k}: поле {f} не заполнено на двух языках")
+
+    # ── движение ──
+    for m in MOTIONS:
+        k = m["key"]
+        if m["group"] not in motion_groups:
+            err.append(f"движение {k}: неизвестная группа {m['group']}")
+        used = set()
+        for f in _MOTION_TEXTS:
+            if not m.get(f, "").strip():
+                err.append(f"движение {k}: пустой текст {f}")
+            used |= set(_SLOT_RE.findall(m.get(f, "")))
+            bad = _has(m[f], _BAN_REF)
+            if bad:
+                err.append(f"движение {k}: в {f} ссылка на соседний кадр «{bad}»")
+        if not _settles(m["text"]):
+            err.append(f"движение {k}: в text нет конечного состояния — движок подвиснет на дрейфе")
+        if not _settles(m["solo"]):
+            err.append(f"движение {k}: в solo нет конечного состояния")
+        for slot in used:
+            if slot not in SLOTS:
+                err.append(f"движение {k}: слот {{{slot}}} вне словаря SLOTS")
+            elif slot not in m["slots"]:
+                err.append(f"движение {k}: слот {{{slot}}} в тексте, но не объявлен")
+        for slot in m["slots"]:
+            if slot not in used:
+                err.append(f"движение {k}: слот {slot} объявлен, но в тексте не встречается")
+        if m["bracket"] and not _valid_bracket(m["bracket"]):
+            err.append(f"движение {k}: команда MiniMax {m['bracket']} вне словаря MINIMAX_MOVES")
+        for eng in m["engines"]:
+            if eng not in ENGINE_KEYS:
+                err.append(f"движение {k}: неизвестный движок {eng}")
+        for t in m["traits"]:
+            if t not in TRAITS:
+                err.append(f"движение {k}: черта {t} вне словаря TRAITS")
+        for ref in m["fits_with"] + m["conflicts_with"]:
+            if ref not in _BOARD_BY_KEY and ref not in _MOTION_BY_KEY:
+                err.append(f"движение {k}: ссылка на несуществующую карточку {ref}")
+        for f in ("label", "desc", "physics"):
+            if not (m[f].get("en") or "").strip() or not (m[f].get("ru") or "").strip():
+                err.append(f"движение {k}: поле {f} не заполнено на двух языках")
+
+    # ── свет ──
+    for l in LIGHTS:
+        k = l["key"]
+        if l["group"] not in light_groups:
+            err.append(f"свет {k}: неизвестная группа {l['group']}")
+        if l["level"] not in ("scene", "style"):
+            err.append(f"свет {k}: неизвестный уровень {l['level']}")
+        if not l["add"].strip():
+            err.append(f"свет {k}: пустая дописка")
+        if l["level"] == "scene":
+            bad = _has(l["add"], _BAN_GRADE)
+            if bad:
+                err.append(f"свет {k}: уровень scene, но в тексте «{bad}» — это епархия стиля, "
+                           f"либо убрать слово, либо перевести карточку в level=style")
+        else:
+            if DEFER not in l["add"]:
+                err.append(f"свет {k}: уровень style без фразы-уступки «{DEFER}» — "
+                           f"такая карточка начнёт спорить со стилем трека")
+        used = set(_SLOT_RE.findall(l["add"]))
+        for slot in used:
+            if slot not in SLOTS:
+                err.append(f"свет {k}: слот {{{slot}}} вне словаря SLOTS")
+            elif slot not in l["slots"]:
+                err.append(f"свет {k}: слот {{{slot}}} в тексте, но не объявлен")
+        for slot in l["slots"]:
+            if slot not in used:
+                err.append(f"свет {k}: слот {slot} объявлен, но в тексте не встречается")
+        for t in l["traits"]:
+            if t not in TRAITS:
+                err.append(f"свет {k}: черта {t} вне словаря TRAITS")
+        for ref in l["fits_with"] + l["conflicts_with"]:
+            if ref not in _BOARD_BY_KEY and ref not in _LIGHT_BY_KEY:
+                err.append(f"свет {k}: ссылка на несуществующую карточку {ref}")
+        for f in ("label", "desc", "note"):
+            if not (l[f].get("en") or "").strip() or not (l[f].get("ru") or "").strip():
+                err.append(f"свет {k}: поле {f} не заполнено на двух языках")
+
+    # ── сценарии ──
+    for s in SCRIPTS:
+        k = s["key"]
+        if s["tier"] not in ("free", "pro"):
+            err.append(f"сценарий {k}: неизвестный тариф {s['tier']}")
+        if s["cut"] not in ("slow", "mid", "fast"):
+            err.append(f"сценарий {k}: неизвестный темп монтажа {s['cut']}")
+        share = round(sum(a["share"] for a in s["acts"]), 3)
+        if share != 1.0:
+            err.append(f"сценарий {k}: сумма долей актов {share}, а должна быть 1.0")
+        for a in s["acts"]:
+            if a["shot"] not in SHOT_SIZES:
+                err.append(f"сценарий {k}: акт {a['key']} — крупность {a['shot']} вне словаря")
+            for ref in a["boards"]:
+                if ref not in _BOARD_BY_KEY:
+                    err.append(f"сценарий {k}: акт {a['key']} ссылается на несуществующую заготовку {ref}")
+            for f in ("en", "ru"):
+                if not (a.get(f) or "").strip():
+                    err.append(f"сценарий {k}: акт {a['key']} не описан на языке {f}")
+        for ref in (s["open_board"], s["close_board"]):
+            if ref not in _BOARD_BY_KEY:
+                err.append(f"сценарий {k}: несуществующая заготовка {ref}")
+        sc = s["scenes"]
+        if not (sc["min"] <= sc["typ"] <= sc["max"]):
+            err.append(f"сценарий {k}: число сцен min/typ/max не по возрастанию")
+        for slot in s["slots_hint"]:
+            if slot not in SLOTS:
+                err.append(f"сценарий {k}: слот {slot} вне словаря SLOTS")
+        # story уезжает в Project.story, а claude.py требует сюжет по-русски.
+        if not any("а" <= ch.lower() <= "я" for ch in s["story"]):
+            err.append(f"сценарий {k}: story не по-русски — claude.py ждёт русский сюжет")
+        if len(s["story"].split()) < 60:
+            err.append(f"сценарий {k}: story короче 60 слов — это не сюжет, а логлайн")
+        if not s["dnote"].strip():
+            err.append(f"сценарий {k}: пустая режиссёрская заметка")
+        for f in ("label", "music", "logline", "hero", "motif", "opens", "closes"):
+            if not (s[f].get("en") or "").strip() or not (s[f].get("ru") or "").strip():
+                err.append(f"сценарий {k}: поле {f} не заполнено на двух языках")
+
+    # ── примеры ──
+    ex_groups = set()
+    for e in EXAMPLES:
+        if e["board"] not in _BOARD_BY_KEY:
+            err.append(f"пример {e['key']}: несуществующая заготовка {e['board']}")
+            continue
+        if e["motion"] and e["motion"] not in _MOTION_BY_KEY:
+            err.append(f"пример {e['key']}: несуществующее движение {e['motion']}")
+        for ref in e["lights"]:
+            if ref not in _LIGHT_BY_KEY:
+                err.append(f"пример {e['key']}: несуществующий свет {ref}")
+        if e["script"] and e["script"] not in _SCRIPT_BY_KEY:
+            err.append(f"пример {e['key']}: несуществующий сценарий {e['script']}")
+        # Пример, который сам себе противоречит, учит плохому.
+        bad = check_mix(e["board"], e["motion"], e["lights"])
+        if bad:
+            err.append(f"пример {e['key']}: конфликтует сам с собой — {bad[0]['ru']}")
+        if not render_example(e["key"]):
+            err.append(f"пример {e['key']}: не собирается")
+        ex_groups.add(e["group"])
+    for g in board_groups:
+        if g not in ex_groups:
+            err.append(f"группа заготовок {g} осталась без примера")
+
+    # ── связь со стилями и тегами каталога ──
+    try:
+        import prompts_catalog as _pc
+    except Exception:                                    # noqa: BLE001
+        err.append("prompts_catalog не импортируется — проверка стилей новых слоёв не выполнена")
+    else:
+        known = set(_pc.STYLE_KEYS)
+        blob = repr(BOARDS) + repr(SCRIPTS) + repr(MOTIONS) + repr(LIGHTS)
+        for sk in _pc.STYLE_KEYS:
+            text = _pc.style_prompt(sk)
+            if text and len(text) >= 60 and text[:60] in blob:
+                err.append(f"УТЕЧКА: промпт стиля {sk} скопирован в базу промтов")
+        for s in SCRIPTS:
+            for ref in s["styles_fit"]:
+                if ref not in known:
+                    err.append(f"сценарий {s['key']}: несуществующий стиль {ref}")
+            if s["preset"] and s["preset"] not in _pc.PRESET_KEYS:
+                err.append(f"сценарий {s['key']}: несуществующий каркас {s['preset']}")
+            for t in s["tags"]:
+                if not any(t in axis for axis in _pc.TAGS.values()):
+                    err.append(f"сценарий {s['key']}: тег {t} вне словаря TAGS")
+            seed = _pc.preset_seed(s["preset"]) if s["preset"] else {}
+            if seed.get("story") and seed["story"][:60] == s["story"][:60]:
+                err.append(f"сценарий {s['key']}: story скопирован из закрытого каркаса {s['preset']}")
+        for b in BOARDS:
+            for ref in b["styles_fit"]:
+                if ref not in known:
+                    err.append(f"заготовка {b['key']}: несуществующий стиль {ref}")
+            for t in b["tags"]:
+                if not any(t in axis for axis in _pc.TAGS.values()):
+                    err.append(f"заготовка {b['key']}: тег {t} вне словаря TAGS")
+
+    return err
+
+
+#: Команды камеры MiniMax H3. Это их словарь, а не наш: движок читает буквально
+#: только эти пятнадцать и по описанию словами их не восстанавливает.
+MINIMAX_MOVES = ("Truck left", "Truck right", "Pan left", "Pan right", "Push in",
+                 "Pull out", "Pedestal up", "Pedestal down", "Tilt up", "Tilt down",
+                 "Zoom in", "Zoom out", "Shake", "Tracking shot", "Static shot")
+
+
+def _valid_bracket(value: str) -> bool:
+    """Команда в скобках: одна или несколько через запятую, но не больше трёх —
+    дальше MiniMax перестаёт их исполнять и начинает выбирать наугад."""
+    v = value.strip()
+    if not (v.startswith("[") and v.endswith("]")):
+        return False
+    parts = [p.strip() for p in v[1:-1].split(",")]
+    return 0 < len(parts) <= 3 and all(p in MINIMAX_MOVES for p in parts)
+
+
 if __name__ == "__main__":
     problems = validate()
     if problems:
@@ -2331,3 +6771,7 @@ if __name__ == "__main__":
               f"({free} открытых, {len(SHOTS) - free} по тарифу) "
               f"в {len(CATEGORIES)} категориях, {len(PACKS)} наборов, "
               f"{len(SLOTS)} слотов")
+        print(f"база промтов цела: {len(SCRIPTS)} сценариев, "
+              f"{len(BOARDS)} заготовок в {len(BOARD_GROUPS)} группах, "
+              f"{len(MOTIONS)} движений, {len(LIGHTS)} модификаторов света, "
+              f"{len(EXAMPLES)} примеров, {len(TRAITS)} черт")
