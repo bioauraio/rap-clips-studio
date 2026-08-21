@@ -2176,3 +2176,27 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .notice-dock b { display: block; font-size: 13.5px; margin-bottom: 3px; }
 .notice-dock p { margin: 0; font-size: 12.5px; line-height: 1.45; }
 .notice-dock button { flex: none; }
+
+/* ────────── панель действий раскадровки ──────────
+   Одна строка на десктопе в порядке работы: сцены → лист → посмотреть →
+   разложить. Главное действие выделено огнём, остальные картонные — так
+   видно, с чего начинать, и кнопки не сливаются в кашу. */
+.board-bar {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px; margin-bottom: 14px;
+}
+.board-bar > button { flex: none; }
+/* Статусы прижаты вправо и не расталкивают кнопки. */
+.board-bar .status { margin-left: auto; }
+.board-bar .status + .status { margin-left: 10px; }
+/* Кнопки листа неактивны, пока листа нет: серая кнопка честнее, чем кнопка,
+   которая молча ничего не делает. */
+.board-bar button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+
+@media (max-width: 700px) {
+  .board-bar { gap: 6px; }
+  .board-bar > button { flex: 1 1 calc(50% - 3px); font-size: 12px; padding: 7px 8px; }
+  .board-bar .gen-scenes { flex: 1 1 100%; }
+  .board-bar .status { flex: 1 1 100%; margin-left: 0; }
+  .board-bar .status + .status { margin-left: 0; }
+}
