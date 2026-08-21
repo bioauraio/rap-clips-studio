@@ -159,90 +159,26 @@
     ];
   }
 
-  const MODES = [
-    {
-      id: "clip",
-      icon: "🎬",
-      // Режим переименован в «rap clips»: id НЕ трогаем — он в адресе
-      // (#/clip/...) и в state.lastStep, и его смена сломала бы сохранённые
-      // ссылки владельца.
-      get title() { return T("modes.clip.title", "rap clips"); },
-      get full() { return T("modes.clip.full", "rap clips — клип под свой трек"); },
-      projectKinds: ["album", "single"],
-      object: "track",
-      next: clipNext,
-      steps: [
-        { id: "story",  num: 1, icon: "✍",  scope: "project", panel: "story",  get title() { return T("modes.steps.story", "Сюжет"); } },
-        { id: "chars",  num: 2, icon: "🎭", scope: "project", panel: "chars",  get title() { return T("modes.steps.chars", "Персонажи"); } },
-        { id: "tracks", num: 3, icon: "🎵", scope: "project", panel: "tracks", pane: "setup", get title() { return T("modes.steps.tracks", "Треки"); } },
-        { id: "board",  num: 4, icon: "🎞", scope: "track",   panel: "tracks", pane: "board", get title() { return T("modes.steps.board", "Раскадровка"); } },
-        { id: "anim",   num: 5, icon: "▶",  scope: "track",   panel: "tracks", pane: "anim",  get title() { return T("modes.steps.anim", "Анимация"); } },
-      ],
-    },
-    {
-      id: "ugc",
-      icon: "📱",
-      get title() { return T("modes.ugc.title", "UGC / блогеры"); },
-      get full() { return T("modes.ugc.full", "UGC и ИИ-блогеры"); },
-      projectKinds: ["ugc"],
-      object: "reel",
-      next: ugcNext,
-      steps: [
-        { id: "persona", num: 1, icon: "🙋", scope: "project", panel: "docs",   get title() { return T("modes.steps.persona", "Блогер"); } },
-        { id: "chars",   num: 2, icon: "🎭", scope: "project", panel: "chars",  get title() { return T("modes.steps.chars", "Персонажи"); } },
-        { id: "reels",   num: 3, icon: "📋", scope: "project", panel: "tracks", pane: "setup", get title() { return T("modes.steps.reels", "Ролики"); } },
-        { id: "board",   num: 4, icon: "🎞", scope: "track",   panel: "tracks", pane: "board", get title() { return T("modes.steps.board", "Раскадровка"); } },
-        { id: "anim",    num: 5, icon: "▶",  scope: "track",   panel: "tracks", pane: "anim",  get title() { return T("modes.steps.anim", "Анимация"); } },
-      ],
-    },
-    {
-      id: "series",
-      icon: "📺",
-      get title() { return T("modes.series.title", "сериалы"); },
-      get full() { return T("modes.series.full", "Сериал с сезонами и сериями"); },
-      projectKinds: ["series"],
-      object: "episode",
-      groupBy: "season",
-      next: seriesNext,
-      steps: [
-        { id: "bible",   num: 1, icon: "📖", scope: "project", panel: "docs",   get title() { return T("modes.steps.bible", "Библия сезона"); } },
-        { id: "chars",   num: 2, icon: "🎭", scope: "project", panel: "chars",  get title() { return T("modes.steps.chars", "Персонажи"); } },
-        { id: "season",  num: 3, icon: "🗓",  scope: "project", panel: "docs",   get title() { return T("modes.steps.season", "Поэпизодник"); } },
-        { id: "episode", num: 4, icon: "📝", scope: "project", panel: "tracks", pane: "setup", get title() { return T("modes.steps.episode", "Серии"); } },
-        { id: "board",   num: 5, icon: "🎞", scope: "track",   panel: "tracks", pane: "board", get title() { return T("modes.steps.board", "Раскадровка"); } },
-        { id: "anim",    num: 6, icon: "▶",  scope: "track",   panel: "tracks", pane: "anim",  get title() { return T("modes.steps.anim", "Анимация"); } },
-      ],
-    },
-    {
-      // Чат — полноценный режим, а не кнопка в шапке. Раньше вход в него был
-      // единственным (#chat-btn в топбаре), а верстак топбар прячет: без
-      // этой строки чат исчезал бы вместе с ним.
-      id: "chat", icon: "💬",
-      get title() { return T("modes.chat.title", "Чат"); },
-      get full() { return T("modes.chat.full", "Чат с моделью"); },
-      external: () => { const b = $("#chat-btn"); if (b) b.click(); },
-      steps: [],
-    },
-    {
-      id: "audio", icon: "🎧", soon: true,
-      get title() { return T("modes.audio.title", "Аудио"); },
-      get full() { return T("modes.audio.full", "Озвучка, музыка и мастеринг"); },
-      steps: [],
-    },
-  ];
+  /* РЕЕСТР — ОБЩИЙ, из modes.js. Своего массива у верстака больше нет: он
+     жил здесь и синхронизировался с backend/formats.py руками, а видел его
+     только тот, кто включил флаг ?nav=1. Тумблер режимов обязан быть один на
+     обе шапки, значит и реестр один.
 
-  /* Кабинет — не режим. Это раздел с тем же вторым ярусом. */
-  const ACCOUNT_STEPS = [
-    { id: "profile", num: 1, icon: "👤", get title() { return T("account.tabs.account", "Аккаунт"); },    acc: "account" },
-    { id: "plan",    num: 2, icon: "⚡", get title() { return T("account.tabs.plan", "Тариф"); },          acc: "plan" },
-    // Архив файлов — такой же раздел кабинета, как тариф: он должен быть в
-    // рельсе, а не только вкладкой внутри модалки.
-    { id: "files",   num: 3, icon: "🗃", get title() { return T("account.tabs.files", "Файлы"); },         acc: "files" },
-    { id: "ref",     num: 4, icon: "🤝", get title() { return T("account.tabs.ref", "Амбассадор"); },      acc: "ref" },
-    { id: "payouts", num: 5, icon: "💸", get title() { return T("account.tabs.payouts", "Выплаты"); },     acc: "payouts", admin: true },
-    { id: "crm",     num: 6, icon: "👥", get title() { return T("account.tabs.crm", "Клиенты"); },         acc: "crm", admin: true },
-    { id: "bc",      num: 7, icon: "📣", get title() { return T("account.tabs.broadcast", "Рассылка"); },  acc: "broadcast", admin: true },
-  ];
+     Единственное, что верстак дописывает к записям, — правило «что дальше»:
+     оно завязано на его собственное состояние (state, charsFilled) и в общем
+     реестре ему делать нечего. */
+  const NEXT_BY_MODE = { clip: clipNext, ugc: ugcNext, series: seriesNext };
+
+  const REG = window.QlolModes || null;
+  const MODES = REG ? REG.MODES : [];
+  MODES.forEach((m) => { if (NEXT_BY_MODE[m.id]) m.next = NEXT_BY_MODE[m.id]; });
+
+  /* Кабинет — не режим, но ярус у него тот же. Тоже из общего реестра. */
+  const ACCOUNT_STEPS = REG ? REG.ACCOUNT_STEPS : [];
+
+  /* Что рисуем в рейке и в доке: ярлыки и переходы там равноправны с
+     режимами (владелец называет их в одном ряду), мёртвое «скоро» — нет. */
+  function segModes() { return REG ? REG.seg() : MODES; }
 
   const DRAWER_SEGS = [
     { id: "projects", icon: "🗂", title: "Проекты" },
@@ -663,9 +599,11 @@
   /* ───────────────────────────── рендер ───────────────────────────── */
 
   function renderModes() {
+    const list = segModes();
     els.modes.innerHTML = "";
-    MODES.forEach((m) => {
-      const b = el("button", "wb-mode" + (m.id === state.mode ? " on" : "") + (m.soon ? " is-soon" : ""));
+    list.forEach((m) => {
+      const b = el("button", "wb-mode" + (m.id === state.mode ? " on" : "")
+        + (m.soon ? " is-soon" : "") + (m.kind === "shortcut" ? " is-shortcut" : ""));
       b.type = "button";
       b.dataset.mode = m.id;
       b.setAttribute("role", "tab");
@@ -679,7 +617,7 @@
 
     // док: те же режимы, теми же данными; при >5 пятый слот становится «Ещё»
     els.dock.innerHTML = "";
-    const fits = MODES.length <= 5 ? MODES : MODES.slice(0, 4);
+    const fits = list.length <= 5 ? list : list.slice(0, 4);
     fits.forEach((m) => {
       const b = el("button", "wb-dock-item" + (m.id === state.mode ? " on" : ""));
       b.type = "button";
@@ -690,24 +628,32 @@
       on(b, "click", () => goMode(m.id));
       els.dock.appendChild(b);
     });
-    if (MODES.length > 5) {
+    if (list.length > 5) {
       const more = el("button", "wb-dock-item");
       more.type = "button";
-      more.append(el("span", "wb-dock-ico", "✦"), el("span", "wb-dock-cap", "Ещё"));
-      on(more, "click", () => openSheet("Режимы", modeTiles()));
+      more.append(el("span", "wb-dock-ico", "✦"),
+        el("span", "wb-dock-cap", T("modes.menu.more", "Ещё")));
+      // «Ещё» открывает ТУ ЖЕ шторку режимов, что и капсула в классической
+      // шапке: один компонент на четыре поверхности, а не два похожих.
+      on(more, "click", () => {
+        if (window.QlolModeMenu) { closeLayers(); window.QlolModeMenu.open(state.mode); }
+        else openSheet(T("modes.menu.title", "Режимы"), modeTiles());
+      });
       els.dock.appendChild(more);
     }
   }
 
   function modeTiles() {
     const list = el("div", "wb-sheet-list");
-    MODES.forEach((m) => {
+    segModes().forEach((m) => {
       const b = el("button", "wb-proj-card" + (m.id === state.mode ? " on" : ""));
       b.type = "button";
       const ico = el("span", "wb-proj-cover", m.icon);
       const main = el("div", "wb-proj-main");
       main.append(el("div", "wb-proj-name", m.full || m.title),
-        el("div", "wb-proj-meta", m.soon ? "скоро" : "доступен"));
+        el("div", "wb-proj-meta", m.soon ? T("modes.menu.soon", "скоро")
+          : m.kind === "shortcut" ? T("modes.menu.shortcut", "стиль")
+          : T("modes.menu.available", "доступен")));
       b.append(ico, main);
       on(b, "click", () => { closeLayers(); goMode(m.id); });
       list.appendChild(b);
@@ -1045,17 +991,26 @@
     // Режим-«переход»: у чата свой экран в app.js, и верстак его не рисует.
     // Клик по такой плитке должен вести туда, а не гасить рабочую область.
     if (typeof m.external === "function") { m.external(); return; }
+    // ЯРЛЫК («3D Pixar») — не режим: он ведёт в чужой режим с преднастройкой.
+    // Показываем его карточку, где написано, что это стиль поверх rap clips,
+    // и там же лежит единственная кнопка действия.
+    if (m.kind === "shortcut") {
+      if (window.QlolModeMenu) { window.QlolModeMenu.open(id); }
+      else if (typeof window.applyModeShortcut === "function") window.applyModeShortcut(id);
+      return;
+    }
     if (state.mode === id) return;
-    // Режим = ВИД ОТКРЫТОГО ПРОЕКТА. Переключить его на месте нельзя: сериал
-    // не превращается в клип, у них разные объекты второго уровня. Поэтому
-    // клик по чужому режиму открывает ящик проектов, а не гасит рабочую
-    // область под пустой режим, в который нечего показать.
+    // Режим = ВИД ОТКРЫТОГО ПРОЕКТА, и переключить его на месте нельзя:
+    // сериал не превращается в клип, у них разные объекты второго уровня.
+    // Раньше клик по чужому режиму кидал тост и открывал ящик проектов —
+    // человек терял и контекст, и объяснение. Теперь открывается карточка
+    // режима: что это, какой маршрут и одна кнопка действия.
     if ((m.projectKinds || []).length && !cfg.demo) {
       const sel = $("#project-select");
       const opts = sel ? Array.from(sel.options) : [];
-      if (!opts.some((o) => m.projectKinds.includes(o.dataset.kind || "album"))) {
-        toast(`${m.full || m.title}: создай проект этого вида`);
-      }
+      const have = opts.some((o) => m.projectKinds.includes(o.dataset.kind || "album"));
+      if (window.QlolModeMenu) { window.QlolModeMenu.open(id); return; }
+      if (!have) toast(`${m.full || m.title}: создай проект этого вида`);
       openDrawer("projects");
       return;
     }
@@ -1355,7 +1310,7 @@
         if (nt) { e.preventDefault(); goTrack(nt.id); }
       } else if (e.key.toLowerCase() === "g") { e.preventDefault(); state.drawer ? closeDrawer() : openDrawer(); }
       else if (/^[1-9]$/.test(e.key)) {
-        const m = MODES[Number(e.key) - 1];
+        const m = segModes()[Number(e.key) - 1];
         if (m) { e.preventDefault(); goMode(m.id); }
       }
     });
@@ -1475,10 +1430,14 @@
     if (booted) renderAll();
   }
 
+  /* Регистрация режима извне. Пишем В ОБЩИЙ реестр (MODES — это тот же
+     массив, что и window.QlolModes.MODES), иначе новый режим увидел бы
+     только верстак, а классическая шапка — нет. */
   function registerMode(mode) {
     if (!mode || !mode.id || MODES.some((m) => m.id === mode.id)) return;
     MODES.push(mode);
     if (booted) renderModes();
+    if (window.QlolModeMenu) window.QlolModeMenu.sync();
   }
 
   window.QlolNav = {

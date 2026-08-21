@@ -259,8 +259,8 @@ def tg_pricing(request: Request):
             "current": plan_now,
             "points": int(user.gen_points or 0) if user else 0,
             "authorized": bool(user),
-            # Докупка очков — только при живой платной подписке (правило сайта,
-            # не Telegram): пакетное очко дороже подписочного.
+            # Докупка токенов — только при живой платной подписке (правило сайта,
+            # не Telegram): пакетное токен дороже подписочного.
             "topup_requires_plan": core.TOPUP_REQUIRES_PLAN,
             "topup_allowed": (bool(user and plan_now != "free")
                               if core.TOPUP_REQUIRES_PLAN else True),
@@ -456,7 +456,7 @@ async def stars_refund(request: Request):
     """Вернуть звёзды И ОТОБРАТЬ ВЫДАННОЕ.
 
     Дыра, которую это закрывает: `/refund` в боте звал `refundStarPayment`,
-    звёзды уходили обратно, а очки и тариф оставались. Плюс Telegram при
+    звёзды уходили обратно, а токены и тариф оставались. Плюс Telegram при
     чарджбэке в Apple/Google списывает звёзды с нашего баланса задним числом —
     то есть возврат может случиться и без нашего участия."""
     if not _key_ok(request):
@@ -532,7 +532,7 @@ async def stars_refund(request: Request):
             db.delete(ev)
         db.delete(row)
         db.commit()
-        log.info("звёзды: возврат %s — юзер %s, −%s очков, тариф %s",
+        log.info("звёзды: возврат %s — юзер %s, −%s токенов, тариф %s",
                  charge_id, user.id, points, core._plan_of(user))
         return {"ok": True, "user_id": user.id, "points": int(user.gen_points or 0),
                 "plan": core._plan_of(user)}

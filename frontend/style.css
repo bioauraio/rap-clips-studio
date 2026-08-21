@@ -23,7 +23,7 @@
      2.6:1 — неон и нечитаемо. Взят тот же оранжевый, но глубже: белый на
      #e5761b — 3.03:1, на #c85a14 — 4.26:1, то есть читается и остаётся тёплым.
      МЕНЯТЬ ТОЛЬКО ВМЕСТЕ с landing.css и только в сторону оранжевого. */
-  --fire-ink: linear-gradient(180deg, #e5761b, #c85a14);
+  --fire-ink: linear-gradient(95deg, #e0503a 0%, #ea6a34 45%, #f0913c 100%);
   --on-accent: #fff;
   /* Чернильные дублёры марки для ТЕКСТА: сам --accent (#ff3d3d) на тёплой
      бумаге даёт 3.4:1, --accent-2 (#ff7a29) — 2.4:1. Заливкам это не мешает,
@@ -669,6 +669,17 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .points-badge {
   background: linear-gradient(90deg, var(--gold), var(--accent-2));
   letter-spacing: .04em; white-space: nowrap;
+  /* Монетка марки вместо значка «молния»: баланс читается как валюта сервиса,
+     а не как абстрактная единица. Файл — frontend/img/token.svg. */
+  padding-left: 26px;
+  background-image: url("/img/token.svg"),
+                    linear-gradient(90deg, var(--gold), var(--accent-2));
+  background-repeat: no-repeat, no-repeat;
+  background-position: 6px 50%, 0 0;
+  background-size: 15px 15px, 100% 100%;
+}
+@media (max-width: 700px) {
+  .points-badge { padding-left: 22px; background-size: 13px 13px, 100% 100%; }
 }
 
 /* ────────── выбор/микс стилей (1–3 чипа, первый — основа) ────────── */
@@ -2199,4 +2210,228 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   .board-bar .gen-scenes { flex: 1 1 100%; }
   .board-bar .status { flex: 1 1 100%; margin-left: 0; }
   .board-bar .status + .status { margin-left: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ТУМБЛЕР РЕЖИМОВ, МЕНЮ РЕЖИМА И ЕДИНЫЙ БЛОК ПАРАМЕТРОВ
+   Тот же картон и тот же огонь: обводка 1.5–2px #2d211a, офсет 0 2px 0,
+   шкала отступов 4/8/12/16/24. Ни одного нового цвета.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ────────── лента режимов в шапке ──────────
+   Место под неё освобождает вид проекта: «альбом / сингл» написано и в
+   карточке режима, и в ящике проектов, а строка шапки — единственная. */
+.topbar #project-kind { display: none; }
+
+.mode-seg {
+  display: none;                 /* включается с 1100px, см. ниже */
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  height: var(--tb-h, 34px);
+  padding: 3px;
+  border-radius: 999px;
+  border: 1.5px solid #2d211a;
+  background: var(--inset);
+  box-shadow: 0 2px 0 #2d211a;
+  max-width: 40vw;
+  /* Лента УМЕЕТ сжиматься и прокручиваться внутри себя. Без этого она
+     держала свою ширину намертво и отбирала место у имени проекта — то есть
+     тумблер ломал ту самую строку, в которую его добавляли. */
+  flex: 0 1 auto;
+  min-width: 96px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mode-seg::-webkit-scrollbar { display: none; }
+.mode-seg-sep {
+  width: 1px; align-self: stretch; margin: 4px 3px; flex: none;
+  background: rgba(45, 33, 26, .18);
+}
+.mode-seg-btn {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  height: 100%; padding: 0 10px; border-radius: 999px;
+  border: 0; background: transparent; color: var(--text);
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
+  letter-spacing: .05em; text-transform: uppercase; white-space: nowrap;
+  cursor: pointer; line-height: 1;
+}
+.mode-seg-btn:hover { background: rgba(255, 122, 41, .12); }
+.mode-seg-btn.on { color: var(--on-accent); background: var(--fire-ink); }
+.mode-seg-btn .mode-seg-ico { font-size: 13px; letter-spacing: 0; }
+/* Ярлык — не режим: пунктир говорит это раньше, чем человек прочтёт карточку. */
+.mode-seg-btn.is-shortcut .mode-seg-cap { border-bottom: 1px dashed currentColor; }
+
+/* Схлопнутая капсула — прежний бейдж режима, ставший кнопкой. */
+.mode-switch { cursor: pointer; }
+.mode-switch:hover { background: #fff; }
+.mode-switch .mode-caret { font-size: 9px; opacity: .6; }
+
+/* Широкий экран: работает лента, капсула прячется.
+   ПОДПИСИ ПО УМОЛЧАНИЮ ТОЛЬКО У АКТИВНОГО сегмента. С полными подписями
+   лента съедала 577px из 1360px строки и сжимала список проектов до 73px —
+   то есть тумблер отбирал место у того, ради чего человек в шапку смотрит.
+   Название неактивного режима читается в подсказке и в карточке меню. */
+@media (min-width: 1100px) {
+  .mode-seg { display: flex; }
+  .topbar .mode-switch { display: none; }
+  .mode-seg-btn:not(.on) .mode-seg-cap { display: none; }
+  .mode-seg-btn:not(.on) { padding: 0 8px; }
+  .topbar .project-select { min-width: 150px; }
+  /* Имя проекта — редактируемое поле, а не подпись: ему нужен минимум,
+     иначе оно сжимается в полоску в 23 пикселя. */
+  .topbar .project-name { min-width: 110px; }
+}
+/* От 1600px места хватает всем: подписи возвращаются целиком. */
+@media (min-width: 1600px) {
+  .mode-seg-btn .mode-seg-cap { display: inline; }
+  .mode-seg-btn { padding: 0 10px; }
+}
+
+/* ────────── меню режима: поповер на десктопе, шторка на телефоне ────────── */
+.mode-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(36, 26, 20, .34);
+}
+.mode-sheet {
+  position: fixed; z-index: 61; width: 380px; max-width: calc(100vw - 16px);
+  max-height: 76vh; overflow-y: auto;
+  padding: 14px; border-radius: 18px;
+  border: 2px solid #2d211a; background: var(--card);
+  box-shadow: 0 6px 0 #2d211a, 0 18px 40px rgba(180, 90, 30, .18);
+}
+.mode-sheet.is-sheet {
+  left: 0; right: 0; bottom: 0; top: auto; width: auto; max-width: none;
+  border-radius: 20px 20px 0 0; max-height: 84vh;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+}
+.mode-sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.mode-sheet-head b {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted);
+}
+.mode-sheet-x {
+  margin-left: auto; padding: 2px 8px; border-radius: 999px;
+  border: 1.5px solid #2d211a; background: var(--inset); cursor: pointer;
+  font-size: 12px; line-height: 1.4;
+}
+.mode-sheet-rail {
+  display: flex; gap: 4px; padding: 3px; margin-bottom: 12px;
+  border-radius: 999px; border: 1.5px solid #2d211a; background: var(--inset);
+  overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity;
+}
+.mode-sheet-rail::-webkit-scrollbar { display: none; }
+.mode-sheet-rail .mode-seg-btn { height: 28px; scroll-snap-align: start; }
+
+.mode-card { display: flex; flex-direction: column; gap: 8px; }
+.mode-card-head { display: flex; align-items: flex-start; gap: 10px; }
+.mode-card-ico { font-size: 26px; line-height: 1; }
+.mode-card-ttl { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.mode-card-ttl b { font-size: 16px; }
+.mode-card-badge {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted);
+  padding: 2px 7px; border-radius: 999px; border: 1px dashed var(--border-bright);
+}
+.mode-card-note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text); }
+.mode-card-soon { margin: 0; font-size: 12px; color: var(--muted); }
+.mode-card-h {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); margin-top: 4px;
+}
+.mode-card-fact { display: flex; gap: 8px; font-size: 12px; }
+.mc-fact-k { color: var(--muted); min-width: 96px; flex: none; }
+.mc-fact-v { font-weight: 700; }
+.mode-card-route { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.mc-route-step {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 999px;
+  border: 1.5px solid #2d211a; background: var(--inset); font-size: 11.5px;
+}
+.mc-route-sep { color: var(--muted); font-style: normal; }
+.mode-card-go { margin-top: 6px; }
+.mode-sheet-soon { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.mode-soon-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 3px 0; }
+.mode-soon-row .muted { font-size: 11.5px; }
+
+/* ────────── ЕДИНЫЙ БЛОК ПАРАМЕТРОВ РЕЖИМА ──────────
+   Пять секций в порядке принятия решений. Открыты всегда 1, 2 и 4 — два
+   решения человека и цена; 3 и 5 схлопнуты, потому что это уточнения. */
+.mode-setup { display: flex; flex-direction: column; gap: 12px; }
+.ms-summary {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  padding: 8px 12px; border-radius: 12px;
+  border: 1.5px solid #2d211a; background: var(--inset);
+  box-shadow: 0 2px 0 #2d211a;
+}
+.ms-summary:empty { display: none; }
+.ms-sec {
+  padding: 12px; border-radius: 16px;
+  border: 2px solid rgba(45, 33, 26, .18); background: var(--inset);
+}
+.ms-h, .ms-fold > summary {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); font-weight: 800;
+  margin: 0 0 8px;
+}
+.ms-fold > summary { cursor: pointer; margin: 0; }
+.ms-fold[open] > summary { margin-bottom: 10px; }
+.ms-fold-body { display: flex; flex-direction: column; gap: 8px; }
+.ms-hint { margin: 0 0 8px; font-size: 12px; line-height: 1.5; }
+.ms-hint:empty { display: none; }
+.ms-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ms-row > label { margin: 0; min-width: 120px; flex: none; }
+.ms-frame-note:empty { display: none; }
+.ms-foot { margin: 0; }
+
+/* Витрина каркасов — та самая, что до сих пор жила только на лендинге. */
+.ms-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.ms-preset {
+  position: relative; display: flex; flex-direction: column; gap: 2px;
+  flex: 1 1 190px; max-width: 260px; text-align: left;
+  padding: 8px 10px; border-radius: 12px;
+  border: 1.5px solid #2d211a; background: var(--card);
+  box-shadow: 0 2px 0 #2d211a; cursor: pointer; color: var(--text);
+}
+.ms-preset:hover { background: #fff; }
+.ms-preset:active { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.ms-preset b { font-size: 12.5px; }
+.ms-preset .muted { font-size: 11px; line-height: 1.4; }
+.ms-preset.on { color: var(--on-accent); background: var(--fire-ink); }
+.ms-preset.on .muted { color: rgba(255, 255, 255, .86); }
+.ms-preset-mark {
+  position: absolute; top: 6px; right: 8px; font-style: normal;
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .08em;
+  text-transform: uppercase; opacity: .7;
+}
+/* Каркас подсказывает стиль: styles_fit наконец работает в интерфейсе. */
+.style-chip.ms-fit:not(.on) { border-color: var(--gold); }
+
+.ms-story { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.ms-bible { display: flex; flex-direction: column; gap: 4px; }
+
+/* Фото упаковки: тот же картон, что и у фото персонажа. */
+.ms-photos { display: flex; flex-direction: column; gap: 6px; }
+.ms-photos-hint { margin: 0; font-size: 11.5px; line-height: 1.45; }
+.ms-photos-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-photo {
+  position: relative; width: 78px; height: 78px; border-radius: 12px;
+  overflow: hidden; border: 1.5px solid #2d211a; background: var(--card);
+}
+.ms-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-photo-del {
+  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px;
+  border-radius: 999px; border: 1.5px solid #2d211a; background: var(--inset);
+  cursor: pointer; font-size: 10px; line-height: 1; padding: 0;
+}
+.ms-photo-add {
+  align-self: flex-start; padding: 6px 11px; border-radius: 999px;
+  border: 1px dashed var(--border-bright); color: var(--accent-2-ink);
+  font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .ms-sec { padding: 10px; }
+  .ms-preset { flex: 1 1 100%; max-width: none; }
+  .ms-row > label { min-width: 100%; }
 }

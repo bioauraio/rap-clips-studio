@@ -1,4 +1,4 @@
-"""Stripe для lolq.ai: подписки (планы) и разовые платежи (пакеты очков).
+"""Stripe для lolq.ai: подписки (планы) и разовые платежи (пакеты токенов).
 
 Почему без SDK: библиотека stripe тянет свои зависимости и свой HTTP-клиент,
 а нам нужны ровно четыре вызова — Checkout Session, купон, отмена подписки и
@@ -141,7 +141,7 @@ async def create_checkout_session(
     tier: str = "",             # ступень объёма тарифа со шкалой (ULTRA)
     idempotency_key: str = "",
 ) -> dict:
-    """Checkout Session: подписка для плана, разовый платёж для пакета очков.
+    """Checkout Session: подписка для плана, разовый платёж для пакета токенов.
 
     metadata дублируется в subscription_data/payment_intent_data — иначе при
     автопродлении к нам приезжает invoice, у которого своей metadata нет, и
@@ -194,7 +194,7 @@ async def create_checkout_session(
             params["discounts"] = [{"coupon": coupon_id}]
     else:
         params["mode"] = "payment"
-        # Разовая покупка очков: способ оплаты НЕ сохраняем — это не подписка.
+        # Разовая покупка токенов: способ оплаты НЕ сохраняем — это не подписка.
         params["payment_intent_data"] = {"metadata": meta}
         if not customer_id:
             params["customer_creation"] = "if_required"

@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine,
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -37,13 +37,13 @@ class User(Base):
     login = Column(String, nullable=False, default="")
     password_hash = Column(String, nullable=False, default="")
     is_admin = Column(Boolean, nullable=False, default=False)
-    # Очки генераций: защита кошелька владельца — генерации идут через его
+    # Токены генераций: защита кошелька владельца — генерации идут через его
     # подписки. Гость стартует с месячной нормы плана free (держи это число
     # равным PLANS["free"]["points"] в main.py), админ — с бесконечностью.
     #
     # 150, а не 120: норму FREE подняли до 150 в main.py, а СТАРТОВОЕ значение
-    # осталось прежним — и каждый новый гость получал 120 очков вместо
-    # обещанных 150. Ровно те 30 очков, которых не хватало на последнюю сцену
+    # осталось прежним — и каждый новый гость получал 120 токенов вместо
+    # обещанных 150. Ровно те 30 токенов, которых не хватало на последнюю сцену
     # трёхминутного клипа, то есть обещание «первый клип за наш счёт»
     # не выполнялось. Теперь оба числа в одном месте правды.
     gen_points = Column(Integer, nullable=False, default=150)
@@ -61,7 +61,7 @@ class User(Base):
     # Запланированное ПОНИЖЕНИЕ ступени: применяется в момент продления.
     # Понижать сразу нельзя — за текущий месяц уже заплачено.
     plan_tier_next = Column(String, nullable=False, default="")
-    # Помесячная выдача очков ГОДОВОЙ подписки. Раньше год начислял норму ×12
+    # Помесячная выдача токенов ГОДОВОЙ подписки. Раньше год начислял норму ×12
     # разом, и годовой ULTRA означал бы $15600 обязательства в день оплаты.
     # Теперь оплата даёт первый транш, остальные 11 капают раз в PLAN_DAYS.
     points_drip_left = Column(Integer, nullable=False, default=0)
@@ -165,7 +165,7 @@ class Payout(Base):
 
 
 class ProcessedPayment(Base):
-    """Платежи, по которым тариф или пакет очков уже выданы (оба провайдера).
+    """Платежи, по которым тариф или пакет токенов уже выданы (оба провайдера).
 
     Обе платёжки повторяют событие, пока не получат 200, и дублируют его на
     ретраях сети. Без этой таблицы каждый дубль двигал plan_until ещё на
@@ -184,7 +184,7 @@ class ProcessedPayment(Base):
     provider = Column(String, nullable=False, default="yookassa")  # yookassa | stripe
     kind = Column(String, nullable=False, default="plan")          # plan | topup
     period = Column(String, nullable=False, default="month")       # month | year
-    points = Column(Integer, nullable=False, default=0)            # сколько очков выдали
+    points = Column(Integer, nullable=False, default=0)            # сколько токенов выдали
     amount_cents = Column(Integer, nullable=False, default=0)      # сумма в центах, если USD
     currency = Column(String, nullable=False, default="RUB")
     created_at = Column(DateTime, default=now)
@@ -313,7 +313,7 @@ class CharacterPhoto(Base):
 
 
 class CharacterAttribute(Base):
-    """Атрибут персонажа: его фирменная вещь (шляпа, очки, квадрик, тачка).
+    """Атрибут персонажа: его фирменная вещь (шляпа, токены, квадрик, тачка).
 
     У атрибута свой набор фото-моделек — ракурсы ПРЕДМЕТА, а не лица. Когда
     кадр строится вокруг вещи (её имя встречается в тексте сцены), референсом
@@ -535,7 +535,7 @@ class Scene(Base):
     image_engine = Column(String, nullable=False, default="")
     video_engine = Column(String, nullable=False, default="")
 
-    # Сколько очков за ЭТУ сцену уже списано. Сцена — единица тарификации:
+    # Сколько токенов за ЭТУ сцену уже списано. Сцена — единица тарификации:
     # кадры берут аванс, видео добирает разницу до цены своего движка, а
     # перегенерация уже оплаченного не списывает второй раз. Без счётчика
     # пришлось бы либо брать за кадры отдельно (двойная плата за сцену),
@@ -602,7 +602,7 @@ class Doc(Base):
 
 
 class PointEvent(Base):
-    """Журнал очков: каждое списание и каждое начисление отдельной строкой.
+    """Журнал токенов: каждое списание и каждое начисление отдельной строкой.
 
     До него история расхода существовала ТОЛЬКО в log.info контейнера:
     _charge менял users.gen_points и писал строчку в лог. Поэтому кабинет не
@@ -627,7 +627,7 @@ class PointEvent(Base):
     # СЕБЕСТОИМОСТЬ вызова в центах. Без неё маржа сервиса неизвестна в
     # принципе: выручка лежит в processed_payments, а расход — нигде.
     # Считается в момент списания из mediagen.*_engine_usd, то есть из того
-    # же прайса, из которого выведена цена в очках. НАРУЖУ НЕ ОТДАЁТСЯ:
+    # же прайса, из которого выведена цена в токенах. НАРУЖУ НЕ ОТДАЁТСЯ:
     # из неё восстанавливается наша наценка (см. /api/account/usage).
     cost_cents = Column(Integer, nullable=False, default=0)
     # id внешней задачи (kie/seevio/kling). Списание происходит ДО постановки
@@ -641,7 +641,7 @@ class PointEvent(Base):
 
 
 class AdminAction(Base):
-    """Что админ сделал руками. Журнал очков покрывает ТОЛЬКО очки: смена
+    """Что админ сделал руками. Журнал токенов покрывает ТОЛЬКО токены: смена
     тарифа, блокировка и продление в него не ложатся, а знать, кто и когда
     включил человеку ULTRA руками, нужно ровно так же."""
     __tablename__ = "admin_actions"
@@ -738,9 +738,9 @@ class ChatMessage(Base):
     text = Column(Text, nullable=False, default="")
     media_filename = Column(String, nullable=False, default="")
     engine = Column(String, nullable=False, default="")
-    # Сколько очков списано ЗА ЭТО сообщение. Нужно для возврата при ошибке:
+    # Сколько токенов списано ЗА ЭТО сообщение. Нужно для возврата при ошибке:
     # в студии упавшая сцена теряется в потоке, а в чате запросы одиночные —
-    # молча съеденные 154 очка человек увидит сразу.
+    # молча съеденные 154 токена человек увидит сразу.
     points = Column(Integer, nullable=False, default=0)
     params_json = Column(Text, nullable=False, default="")
     status = Column(String, nullable=False, default="")        # '' | queued | running | error
@@ -768,6 +768,142 @@ class ChatFile(Base):
     created_at = Column(DateTime, default=now)
 
     message = relationship("ChatMessage", back_populates="files")
+
+
+# ═════════════════════════════ раздел «Музыка» ═════════════════════════════
+# Отдельная сущность, а НЕ поля в Track. Track — это объект клип-конвейера:
+# он живёт внутри проекта, у него позиция в альбоме, сцены, раскадровка и
+# сборка. Музыкальный релиз ничего этого не имеет и имеет своё: замеры
+# громкости исходника, мастер, обложку 3000×3000, метаданные площадок и
+# состояние заявки в лейбл. Слепить их в одну таблицу значило бы получить
+# сорок колонок, половина которых у любой строки пустая, — и невозможность
+# ответить на вопрос «сколько у нас релизов» без фильтра по трём признакам.
+
+class MusicTrack(Base):
+    """Трек музыкального раздела: загруженный или сгенерированный.
+
+    ИСХОДНИК НЕ ПЕРЕЗАПИСЫВАЕТСЯ НИКОГДА. Мастер — отдельный файл рядом:
+    сравнение «до/после» существует только пока есть оба файла, а «улучшить
+    задним числом» — это молча подменить человеку то, что он уже слушал.
+    """
+    __tablename__ = "music_tracks"
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, nullable=False, default=0, index=True)
+    created_at = Column(DateTime, default=now, index=True)
+    updated_at = Column(DateTime, default=now)
+    # Мягкое удаление: файлы уносит уборщик, строка остаётся для истории токенов.
+    deleted_at = Column(DateTime, nullable=True)
+
+    # ─────────────────────────────── исходник ───────────────────────────────
+    source_filename = Column(String, nullable=False, default="")
+    # Имя, под которым файл лежал у человека. На диске он уже uuid, а в
+    # интерфейсе список из шестнадцатеричных имён нечитаем.
+    source_name = Column(String, nullable=False, default="")
+    source_ext = Column(String, nullable=False, default="")
+    source_bytes = Column(Integer, nullable=False, default=0)
+    duration_sec = Column(Float, nullable=False, default=0.0)
+
+    # Замеры исходника (backend/mastering.py measure()). Считаются один раз
+    # фоном сразу после приёма файла — до всякой оплаты: это и есть та самая
+    # бесплатная демонстрация компетентности из дизайн-системы, §4.12.
+    lufs = Column(Float, nullable=False, default=0.0)
+    true_peak = Column(Float, nullable=False, default=0.0)
+    lra = Column(Float, nullable=False, default=0.0)
+    # '' | queued | running | done | error — состояние ЗАМЕРА, не мастеринга.
+    probe_status = Column(String, nullable=False, default="")
+    probe_note = Column(Text, nullable=False, default="")
+
+    # Разбор дорожки (backend/audio_analysis.py): темп, сетка, секции.
+    bpm = Column(Integer, nullable=False, default=0)
+    analysis_json = Column(Text, nullable=False, default="")
+    # Огибающая для волны — отдельно от analysis_json: волну рисуют на каждом
+    # открытии карточки, а полный разбор весит десятки килобайт.
+    wave_json = Column(Text, nullable=False, default="")
+
+    # upload — человек принёс свой файл; generated — сгенерировано у нас.
+    origin = Column(String, nullable=False, default="upload")
+    gen_prompt = Column(Text, nullable=False, default="")
+    gen_model = Column(String, nullable=False, default="")
+
+    # ─────────────────────────────── мастеринг ───────────────────────────────
+    master_filename = Column(String, nullable=False, default="")
+    master_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error
+    # На успехе — человеческий отчёт (чем мастерили и что произошло с числами),
+    # на ошибке — текст ошибки. Состояние различает master_status.
+    master_note = Column(Text, nullable=False, default="")
+    master_engine = Column(String, nullable=False, default="")  # matchering | ffmpeg | roex
+    master_target = Column(String, nullable=False, default="")  # streaming | club | youtube | cd
+    master_ref_filename = Column(String, nullable=False, default="")
+    master_ref_title = Column(String, nullable=False, default="")
+    master_lufs = Column(Float, nullable=False, default=0.0)
+    master_true_peak = Column(Float, nullable=False, default=0.0)
+    master_lra = Column(Float, nullable=False, default=0.0)
+
+    # ──────────────────────────── метаданные релиза ────────────────────────────
+    title = Column(String, nullable=False, default="")
+    artist = Column(String, nullable=False, default="")
+    feat = Column(String, nullable=False, default="")
+    genre = Column(String, nullable=False, default="")
+    language = Column(String, nullable=False, default="")
+    version = Column(String, nullable=False, default="")   # radio edit, remix, …
+    release_date = Column(String, nullable=False, default="")  # YYYY-MM-DD, как просят площадки
+    isrc = Column(String, nullable=False, default="")
+    upc = Column(String, nullable=False, default="")
+    explicit = Column(Boolean, nullable=False, default=False)
+    # Раскрытие ИИ: none | music | vocals | all. Spotify и Deezer уже требуют
+    # помечать сгенерированное, и врать здесь дороже, чем признаться.
+    ai_disclosure = Column(String, nullable=False, default="")
+    credits = Column(Text, nullable=False, default="")
+    notes = Column(Text, nullable=False, default="")
+
+    cover_filename = Column(String, nullable=False, default="")
+    cover_w = Column(Integer, nullable=False, default=0)
+    cover_h = Column(Integer, nullable=False, default=0)
+
+    # ─────────────────────── видео и наши соцсети ───────────────────────
+    # Ни Instagram, ни TikTok, ни YouTube не принимают голое аудио, поэтому
+    # перед публикацией из обложки и дорожки собирается mp4.
+    video_filename = Column(String, nullable=False, default="")
+    video_status = Column(String, nullable=False, default="")
+    video_note = Column(Text, nullable=False, default="")
+    social_status = Column(String, nullable=False, default="")
+    social_note = Column(Text, nullable=False, default="")
+    social_url = Column(String, nullable=False, default="")
+    social_platform = Column(String, nullable=False, default="")
+
+    # ──────────────────────── пакет и заявка в лейбл ────────────────────────
+    package_filename = Column(String, nullable=False, default="")
+    package_at = Column(DateTime, nullable=True)
+    # draft | submitted — состояние ЗАЯВКИ, а не релиза. Слова «опубликован»
+    # здесь нет и не будет, пока нет договора с дистрибьютором.
+    release_status = Column(String, nullable=False, default="draft")
+    submitted_at = Column(DateTime, nullable=True)
+    lead_id = Column(Integer, nullable=False, default=0)
+
+
+class MusicLead(Base):
+    """Заявка в лейбл qlolmusic.
+
+    Два входа, одна таблица: форма на странице /music.html (source=music-page)
+    и кнопка «Отправить на площадки» в разделе Музыка (source=studio, с
+    track_id). Оба конца ведут к живому человеку, потому что автоматической
+    отгрузки на площадки у нас нет — см. docs/qlolmusic.md."""
+    __tablename__ = "music_leads"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    track_id = Column(Integer, nullable=False, default=0, index=True)
+    name = Column(String, nullable=False, default="")
+    contact = Column(String, nullable=False, default="")
+    demo = Column(String, nullable=False, default="")
+    need = Column(String, nullable=False, default="")       # distribution | mastering | clip | all
+    comment = Column(Text, nullable=False, default="")
+    lang = Column(String, nullable=False, default="")
+    source = Column(String, nullable=False, default="")
+    ip = Column(String, nullable=False, default="")
+    user_agent = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="new")  # new | seen | done
+    note = Column(Text, nullable=False, default="")
 
 
 def init_db() -> None:

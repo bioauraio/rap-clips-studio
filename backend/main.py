@@ -333,10 +333,10 @@ def _rub_kopeks(key: str, usd_cents: int) -> int:
 # Grok оживляет), и стоит нам ноль. Платные открывают Nano Banana для кадров и
 # Seedance/Kling для видео — за них мы платим по API kie.ai.
 #
-# ВАЖНО про экономику. Очко привязано к деньгам ровно одной константой
-# POINT_USD (ниже): столько СЕБЕСТОИМОСТИ мы кладём в одно очко. Отсюда:
+# ВАЖНО про экономику. Токен привязано к деньгам ровно одной константой
+# POINT_USD (ниже): столько СЕБЕСТОИМОСТИ мы кладём в одно токен. Отсюда:
 #   норма тарифа × POINT_USD = максимум, который тариф может стоить нам за месяц.
-# Это худший случай — человек спускает все очки на самый дорогой движок. По
+# Это худший случай — человек спускает все токены на самый дорогой движок. По
 # нынешней сетке он равен 41-44 % выручки тарифа. Маржа положительная, но
 # ЭТО НЕ 30 %: движки уровня Seedance 2.5 столько стоят на самом деле, и
 # подгонять цифры «чтобы красиво» здесь нельзя.
@@ -365,7 +365,7 @@ PLANS = {
         "features": [
             # 150, а не 120: витрина обязана называть ту же цифру, которую
             # человек увидит на счётчике. Ровно на этой строке обещание и
-            # ломалось — «120 очков, одного клипа хватит» при клипе ценой
+            # ломалось — «120 токенов, одного клипа хватит» при клипе ценой
             # ровно 120 и листе раскадровки сверху.
             "150 points — a full 3-minute clip, with room to redo a scene",
             "Grok engine: animates the first frame of every scene",
@@ -374,8 +374,8 @@ PLANS = {
     },
     "pro": {
         "title": "PRO", "usd_cents": int(os.environ.get("PRICE_PRO_USD", "20")) * 100,
-        # 660 очков = ровно один трёхминутный клип на Seedance 2 Mini
-        # (30 сцен × 22 очка). Раньше было 700 очков при цене сцены 10 —
+        # 660 токенов = ровно один трёхминутный клип на Seedance 2 Mini
+        # (30 сцен × 22 токена). Раньше было 700 токенов при цене сцены 10 —
         # то есть два клипа по $1.23 за сцену, это −$50 на каждом подписчике.
         "points": 660,
         "video": ["grok", "seedance"],
@@ -392,7 +392,7 @@ PLANS = {
     },
     "pro_max": {
         "title": "PRO MAX", "usd_cents": int(os.environ.get("PRICE_PRO_MAX_USD", "100")) * 100,
-        # 2400 → 3400 очков (+42 %). Больше дать нельзя: 3400 × POINT_USD =
+        # 2400 → 3400 токенов (+42 %). Больше дать нельзя: 3400 × POINT_USD =
         # $42.5 предельной себестоимости на $100 выручки.
         "points": 3400,
         "video": ["grok", "seedance", "kling"],
@@ -415,7 +415,7 @@ PLANS = {
         # вебхуках. Переименование стоило бы миграции и сломанных продлений,
         # а меняется здесь вывеска, а не идентификатор.
         "title": "ULTRA", "usd_cents": int(os.environ.get("PRICE_STUDIO_USD", "299")) * 100,
-        # 10500 очков = два полных клипа на Seedance 2.5 (62 сцены) или шесть
+        # 10500 токенов = два полных клипа на Seedance 2.5 (62 сцены) или шесть
         # на Kling 3.0 Pro. Целый клип на самой дорогой модели физически
         # помещается только сюда. Это ПЕРВАЯ ступень шкалы (см. PLAN_TIERS):
         # у действующих подписчиков STUDIO ничего не меняется.
@@ -457,12 +457,12 @@ for _pid, _p in PLANS.items():
 # рисует четыре колонки, а четыре варианта человек ещё сравнивает, пять уже нет.
 #
 # Якорь ступеней — ЦЕЛЫЙ КЛИП НА ФЛАГМАНЕ. На ULTRA кадры рисует Nano Banana
-# Pro (пара 15 очков), сцена на Seedance 2.5 720p = 15 + 152 = 167 очков,
-# клип 3 минуты = 30 сцен = 5010 очков. Каждая ступень — целое число таких
-# клипов: 2 / 5 / 10 / 20. Отсюда и цифры очков, они не подогнаны «покруглее».
+# Pro (пара 15 токенов), сцена на Seedance 2.5 720p = 15 + 152 = 167 токенов,
+# клип 3 минуты = 30 сцен = 5010 токенов. Каждая ступень — целое число таких
+# клипов: 2 / 5 / 10 / 20. Отсюда и цифры токенов, они не подогнаны «покруглее».
 #
 # ПОЧЕМУ МАРЖА НЕ МОЖЕТ УЕХАТЬ ВНИЗ. VIDEO_COST/FRAME_COST считаются как
-# ceil(себестоимость / POINT_USD) — очко физически не может стоить нам дороже
+# ceil(себестоимость / POINT_USD) — токен физически не может стоить нам дороже
 # POINT_USD ($0.0125) ни на одном движке. Худший случай ступени =
 # points × POINT_USD, и он заложен в цену:
 #   u1  10500 → $131 из $299 (маржа 56 %)   u3  52000 → $650 из $1199 (46 %)
@@ -482,7 +482,7 @@ PLAN_TIERS = {
 ULTRA_TOP_TIERS = os.environ.get("ULTRA_TOP_TIERS", "1") not in ("0", "false", "no")
 
 # ПОЛ ЦЕНЫ ОЧКА. Объёмная скидка и годовая −20 % складываются, и на верхней
-# ступени год выходил $20630 = 1.65¢ за очко при потолке себестоимости 1.25¢ —
+# ступени год выходил $20630 = 1.65¢ за токен при потолке себестоимости 1.25¢ —
 # маржа 24 %, а с реферальной −10 % уже 16 %. Пол в 1.8¢ (маржа 30.6 %) ниже
 # себя не пускает НИКАКУЮ скидку. Бьёт он сегодня ровно по годовому u4, и
 # витрина честно пишет там −13 %, а не −20 %: процент считается из цены.
@@ -492,7 +492,7 @@ POINT_PRICE_FLOOR_USD = float(os.environ.get("POINT_PRICE_FLOOR_USD", "0.018"))
 
 
 def _floor_cents(points: int, cents: int) -> int:
-    """Цена не ниже пола за очко. Округляем вверх до целого доллара —
+    """Цена не ниже пола за токен. Округляем вверх до целого доллара —
     дробный ценник на витрине выглядит как ошибка вёрстки."""
     floor = int(math.ceil(points * POINT_PRICE_FLOOR_USD * 100))
     return max(int(cents), (floor + 99) // 100 * 100)
@@ -507,7 +507,7 @@ for _pid, _tiers in PLAN_TIERS.items():
         _t["rub_kopeks"] = _rub_kopeks(f"{_pid}_{_t['id']}", _t["usd_cents"])
         _t["rub_year_kopeks"] = _rub_kopeks(f"{_pid}_{_t['id']}_year",
                                             _t["usd_year_cents"])
-        # Зачёркнутая цена — ЧЕСТНАЯ: тот же объём по цене очка базовой
+        # Зачёркнутая цена — ЧЕСТНАЯ: тот же объём по цене токена базовой
         # ступени. Не выдуманный «якорь», а число из нашего же прайса,
         # которое человек может проверить делением сам.
         _t["list_usd_cents"] = int(round(_t["points"] * _base_per_point / 100)) * 100
@@ -518,11 +518,11 @@ for _pid, _tiers in PLAN_TIERS.items():
         _t["year_discount_pct"] = max(0, int(round(
             100 - 100 * _t["usd_year_cents"] / (_t["usd_cents"] * 12))))
 
-# Пакеты очков (докупка сверх подписки).
+# Пакеты токенов (докупка сверх подписки).
 #
-# ПОЧИНЕНА ДЫРА. Было: очко в пакете 1.13-2.25¢ против 4.2¢ в PRO MAX — вчетверо
+# ПОЧИНЕНА ДЫРА. Было: токен в пакете 1.13-2.25¢ против 4.2¢ в PRO MAX — вчетверо
 # дешевле, да ещё и без подписки. В таком виде подписку выгоднее было не
-# покупать вообще. Стало: САМОЕ дешёвое пакетное очко (3.19¢) дороже САМОГО
+# покупать вообще. Стало: САМОЕ дешёвое пакетное токен (3.19¢) дороже САМОГО
 # дорогого подписочного (3.03¢ у PRO), то есть пакет проигрывает любой
 # подписке по цене и остаётся тем, чем должен быть — удобством «добрать
 # сейчас», а не способом обойти тариф.
@@ -543,20 +543,20 @@ for _kid, _k in TOPUP_PACKS.items():
     _k["save_pct"] = int(round(100 - 100 * (_k["usd_cents"] / _k["points"]) / _BASE_PER_POINT))
 
 # ───────────────────────── сколько стоит работа ─────────────────────────
-# ЕДИНСТВЕННАЯ константа, связывающая очки с деньгами: сколько себестоимости
-# лежит в одном очке. Всё остальное считается из неё и из долларовых цен
-# движков в mediagen.VIDEO_ENGINES/IMAGE_ENGINES — цена в очках физически не
+# ЕДИНСТВЕННАЯ константа, связывающая токены с деньгами: сколько себестоимости
+# лежит в одном токене. Всё остальное считается из неё и из долларовых цен
+# движков в mediagen.VIDEO_ENGINES/IMAGE_ENGINES — цена в токенах физически не
 # может разойтись с тем, что мы платим kie.ai.
 POINT_USD = float(os.environ.get("POINT_USD", "0.0125"))
 # Шлюзы владельца стоят нам ноль, но даром отдавать их нельзя: без ценника
 # перерисовка кадров становится бесконечным насосом по чужой подписке.
-# 2 очка — символическая плата ровно за это.
+# 2 токена — символическая плата ровно за это.
 GATEWAY_POINTS = int(os.environ.get("GATEWAY_POINTS", "2"))
 SCENE_SEC = 6              # средняя длина сцены, из claude.py
 
 
 def _points_of_usd(usd: float) -> int:
-    """Доллары себестоимости → очки. Округление ВВЕРХ: недобор очка — это
+    """Доллары себестоимости → токены. Округление ВВЕРХ: недобор токена — это
     наши деньги, а не пользовательские."""
     if usd <= 0:
         return GATEWAY_POINTS
@@ -633,7 +633,7 @@ def _tier_spec(plan_id: str, tier) -> dict | None:
 
 
 def _plan_points(plan_id: str, tier: str = "") -> int:
-    """Месячная норма очков тарифа с учётом ступени."""
+    """Месячная норма токенов тарифа с учётом ступени."""
     spec = _tier_spec(plan_id, tier)
     if spec:
         return int(spec["points"])
@@ -835,7 +835,7 @@ async def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
 
 
 class NotEnoughPoints(Exception):
-    """Очки кончились. Не текст «напиши владельцу сервиса», а структура: по ней
+    """Токены кончились. Не текст «напиши владельцу сервиса», а структура: по ней
     фронт открывает витрину с нужной суммой, а не показывает тупик.
     Ответ 402: {"error":"not_enough_points","need":…,"have":…,"plan":…}."""
 
@@ -863,13 +863,13 @@ async def _not_enough_points_handler(request: Request, exc: NotEnoughPoints) -> 
     )
 
 
-# ─────────────────────────── журнал очков ───────────────────────────
+# ─────────────────────────── журнал токенов ───────────────────────────
 # ЕДИНСТВЕННЫЙ источник правды о расходе. До него история существовала только
 # в log.info контейнера: _charge менял users.gen_points и писал строчку в лог,
 # поэтому кабинет не мог показать ни расход по дням, ни «на что ушло», ни
 # возвраты — строить было не из чего.
 #
-# ОДНА ДВЕРЬ. Раньше контракт «каждое движение очков попадает в журнал»
+# ОДНА ДВЕРЬ. Раньше контракт «каждое движение токенов попадает в журнал»
 # держался ДИСЦИПЛИНОЙ, а не кодом: пять мест мутировали user.gen_points
 # напрямую и рядом вручную звали _log_points. Следующая правка про это
 # забыла бы, и журнал перестал бы объяснять остаток — молча, а обнаружилось
@@ -906,7 +906,7 @@ def _cost_cents(kind: str, engine: str, *, count: int = 1,
                 seconds: int = SCENE_SEC, resolution: str = "") -> int:
     """СЕБЕСТОИМОСТЬ операции в центах — сколько мы за неё платим kie.ai.
 
-    Считается из того же прайса движков, из которого выведена цена в очках
+    Считается из того же прайса движков, из которого выведена цена в токенах
     (mediagen.*_engine_usd), поэтому маржа не может разъехаться с реальностью.
     Шлюзовые движки честно дают ноль: они идут по подписке владельца.
 
@@ -953,7 +953,7 @@ def _log_points(db: Session, user: User, delta: int, what: str, *,
         db.commit()
         return int(ev.id or 0)
     except Exception as e:  # noqa: BLE001
-        log.warning("журнал очков: строка не записалась (%s): %s", what, str(e)[:150])
+        log.warning("журнал токенов: строка не записалась (%s): %s", what, str(e)[:150])
         return 0
 
 
@@ -962,7 +962,7 @@ def _move_points(db: Session, user: User, delta: int, what: str, *,
     """ЕДИНСТВЕННОЕ место, где меняется user.gen_points. Возвращает id строки
     журнала.
 
-    Всё, что двигает очки — списание, возврат, оплата, месячный транш,
+    Всё, что двигает токены — списание, возврат, оплата, месячный транш,
     админский грант, откат звёздного платежа — проходит здесь. Ни один вызов
     не может «забыть» журнал, потому что журнал и есть эта функция."""
     delta = int(delta or 0)
@@ -973,9 +973,9 @@ def _move_points(db: Session, user: User, delta: int, what: str, *,
         return _log_points(db, user, delta, what, commit=commit, **meta)
     except Exception as e:  # noqa: BLE001
         # Журнал не должен отменять уже принятое решение о деньгах: если
-        # строка не пишется, очки всё равно двигаем и жалуемся в лог.
+        # строка не пишется, токены всё равно двигаем и жалуемся в лог.
         db.rollback()
-        log.warning("журнал очков упал, двигаю очки без строки (%s): %s",
+        log.warning("журнал токенов упал, двигаю токены без строки (%s): %s",
                     what, str(e)[:150])
         fresh = db.get(User, user.id)
         if fresh is not None:
@@ -990,7 +990,7 @@ def _attach_task(db: Session, ref_type: str, ref_id: int, task_id: str,
 
     Списание идёт ДО постановки задачи, taskId приходит из mediagen позже —
     поэтому не параметр, а второй шаг. Это то, чем разбирается спор:
-    «списали 154 очка → задача kie abc123 → упала → возврат строкой ниже»."""
+    «списали 154 токена → задача kie abc123 → упала → возврат строкой ниже»."""
     if not task_id or not ref_id:
         return
     try:
@@ -1005,7 +1005,7 @@ def _attach_task(db: Session, ref_type: str, ref_id: int, task_id: str,
             db.commit()
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        log.warning("журнал очков: не привязал задачу %s: %s", task_id, str(e)[:120])
+        log.warning("журнал токенов: не привязал задачу %s: %s", task_id, str(e)[:120])
 
 
 def _take_points(db: Session, user: User, points: int, what: str = "",
@@ -1021,7 +1021,7 @@ def _take_points(db: Session, user: User, points: int, what: str = "",
 
 
 def _charge(db: Session, user: User, points: int, what: str, **meta) -> int:
-    """Списание очков генерации В МОМЕНТ постановки задачи (не в треде):
+    """Списание токенов генерации В МОМЕНТ постановки задачи (не в треде):
     генерации идут через подписки владельца, лимит защищает его кошелёк.
 
     Возвращает id строки журнала — по нему потом привязывается внешняя задача."""
@@ -1030,16 +1030,16 @@ def _charge(db: Session, user: User, points: int, what: str, **meta) -> int:
     if int(user.gen_points or 0) < points:
         raise NotEnoughPoints(points, int(user.gen_points or 0), _plan_of(user), what)
     ev = _move_points(db, user, -int(points), what, **meta)
-    log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
+    log.info("user %s: −%s токенов за %s (осталось %s)", user.id, points, what, user.gen_points)
     return ev
 
 
 def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> int:
-    """Вернуть очки за НЕсостоявшуюся работу.
+    """Вернуть токены за НЕсостоявшуюся работу.
 
     До чата возврата не было нигде: у сцены упавшая генерация оставляла
     charged_points на месте. В студии это тонет в потоке кнопок, а в чате
-    запросы одиночные — молча съеденные за упавший Seedance 154 очка человек
+    запросы одиночные — молча съеденные за упавший Seedance 154 токена человек
     видит сразу и справедливо считает это воровством."""
     if user.is_admin or points <= 0:
         return 0
@@ -1049,7 +1049,7 @@ def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> int
     meta.pop("cost_cents", None)
     ev = _move_points(db, user, int(points),
                       what or "возврат за неудачную генерацию", **meta)
-    log.info("user %s: +%s очков возврата за %s (стало %s)",
+    log.info("user %s: +%s токенов возврата за %s (стало %s)",
              user.id, points, what or "неудачную генерацию", user.gen_points)
     return ev
 
@@ -1076,7 +1076,7 @@ def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str,
     движках каждое нажатие «перегенерировать» — живые деньги нам (Nano Banana
     Pro стоит $0.09 за картинку), и при трёх прогонах тариф уходил в минус.
     Теперь платим за вызов: сколько раз запустил движок — столько и списано.
-    Бесплатные шлюзовые движки по-прежнему стоят символические 2 очка."""
+    Бесплатные шлюзовые движки по-прежнему стоят символические 2 токена."""
     if cost <= 0:
         return 0
     ev = _charge(db, user, cost, what, kind=kind, engine=engine,
@@ -1092,7 +1092,7 @@ def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str,
                    *, kind: str = "", engine: str = "", track_id: int = 0,
                    project_id: int = 0) -> int:
     """То же для пачки сцен: одно списание на весь пакет (и один отказ, если
-    очков не хватило), потом отметки на сценах."""
+    токенов не хватило), потом отметки на сценах."""
     rows, total = [], 0
     for s in scenes:
         cost = cost_of(s)
@@ -1789,7 +1789,7 @@ def _midframes(s: Scene) -> list[dict]:
 
 def _midframe_count(duration_sec: int) -> int:
     """Сколько промежуточных кадров положено сцене: примерно раз в 2 секунды
-    между первым и последним, но не больше 4 (экономия очков и времени)."""
+    между первым и последним, но не больше 4 (экономия токенов и времени)."""
     return max(0, min(4, round((duration_sec or 0) / 2) - 1))
 
 
@@ -2058,7 +2058,7 @@ def _onboarding_state(db: Session, user: User) -> dict:
             "clip_total": scene_cost * CLIP_SCENES,
         },
         # Хватает ли остатка на целый клип. Сам клип на FREE стоит 120 (30 сцен
-        # по 4) при норме 150, то есть запас — 30 очков: лист раскадровки,
+        # по 4) при норме 150, то есть запас — 30 токенов: лист раскадровки,
         # моделька и одна переделка. Врать тут нельзя.
         "enough": points >= scene_cost * CLIP_SCENES,
     }
@@ -3414,7 +3414,7 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
     elif catalog == "mockup":
         # Мокап без фото упаковки — это не съёмка, а фантазия: генератор
         # нарисует «похожую» банку с выдуманной этикеткой, и это выяснится
-        # только после списания очков за все шесть кадров.
+        # только после списания токенов за все шесть кадров.
         if not _track_photo_paths(track, 1):
             raise HTTPException(400, "сначала загрузи фото упаковки — по нему совпадает товар")
     _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}",
@@ -4326,7 +4326,7 @@ def _run_scene_video(scene_id: int) -> None:
             seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
             engine=engine, aspect=_track_aspect(track),
         ))
-        # Задача внешнего движка — в строку списания: «списали 154 очка →
+        # Задача внешнего движка — в строку списания: «списали 154 токена →
         # задача kie abc123». Без неё спорную генерацию разобрать нечем.
         _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "video")
         old_video = scene.video_filename
@@ -4476,7 +4476,7 @@ def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) ->
     """Развести предоплату супергенерации по реально нарезанным сценам.
 
     Предоплата бралась по ОЦЕНКЕ длительности, а сцен Claude мог нарезать
-    больше или меньше. Лишние оплаченные сцены возвращаем очками, недостающие
+    больше или меньше. Лишние оплаченные сцены возвращаем токенами, недостающие
     добираем с баланса. Пустая строка — всё сошлось; текст — почему не сошлось
     (тогда конвейер останавливается, а не работает бесплатно)."""
     if per_scene <= 0:
@@ -4507,7 +4507,7 @@ def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) ->
             track_id=track.id, project_id=track.project_id,
             cost_cents=_cost_cents("video", eng,
                                    count=max(1, need // max(1, per_scene)))):
-        return (f"не хватило {need} очков: трек длиннее оценки "
+        return (f"не хватило {need} токенов: трек длиннее оценки "
                 f"({len(scenes)} сцен). Пополни баланс и запусти ещё раз")
     for s in unpaid:
         s.charged_points = per_scene
@@ -4519,7 +4519,7 @@ def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) ->
                      f"возврат предоплаты супергенерации трека {track.id}",
                      kind="refund", ref_type="track", ref_id=track.id,
                      track_id=track.id, project_id=track.project_id)
-        log.info("супергенерация трека %s: вернули %s очков за %s лишних сцен",
+        log.info("супергенерация трека %s: вернули %s токенов за %s лишних сцен",
                  track.id, left * per_scene, left)
     db.commit()
     return ""
@@ -4882,6 +4882,12 @@ def providers(user: User = Depends(current_user)):
             "frames_cost": FRAME_COST[eid],
             "usd_per_image": round(mediagen.image_engine_usd(eid), 4),
             "current": eid == real_image,
+            # Умеет ли движок геометрию кадра и какие разрешения берёт.
+            # Без этих двух полей интерфейс не может сказать правду о
+            # квадрате: движок с "aspect": False молча вернёт вертикаль,
+            # чем бы человек ни щёлкнул в блоке параметров.
+            "aspect": bool(spec.get("aspect")),
+            "resolutions": list(spec.get("resolutions") or ()),
         })
     return {
         # Легаси-контракт фронта: семейства движков и два булевых флага.
@@ -5633,12 +5639,12 @@ def _pay_key(provider: str, payment_id: str) -> str:
 
 
 def _grant_cap(user: User, grant: int) -> int:
-    """Сколько очков РЕАЛЬНО ляжет на счёт при начислении: потолок — две
+    """Сколько токенов РЕАЛЬНО ляжет на счёт при начислении: потолок — две
     МЕСЯЧНЫЕ нормы этого начисления.
 
     ПРИБАВЛЯЕМ к остатку, а не перезаписываем. Раньше стояло
     max(остаток, норма): экономный человек, у которого осталось 590 из 600,
-    после оплаты получал 10 очков за 990 ₽ — тариф наказывал за бережливость.
+    после оплаты получал 10 токенов за 990 ₽ — тариф наказывал за бережливость.
     Потолок — две нормы: копить бесконечно нельзя, иначе подписка превращается
     в склад, но месяц простоя больше не сгорает.
     Опускать баланс потолок не имеет права: сверху могли лежать докупленные
@@ -5648,7 +5654,7 @@ def _grant_cap(user: User, grant: int) -> int:
 
 
 def _add_points(db: Session, user: User, grant: int, what: str, **meta) -> int:
-    """Начислить очки с потолком и записать это в журнал. Возвращает,
+    """Начислить токены с потолком и записать это в журнал. Возвращает,
     сколько реально начислено (потолок мог срезать часть).
 
     commit=False: начисление обязано ехать ОДНОЙ транзакцией с выдачей
@@ -5663,7 +5669,7 @@ def _add_points(db: Session, user: User, grant: int, what: str, **meta) -> int:
 
 def _grant_plan_points(db: Session, user: User, plan_id: str, period: str,
                        tier: str = "", what: str = "", provider: str = "") -> int:
-    """Начислить очки за оплаченный период.
+    """Начислить токены за оплаченный период.
 
     ГОД НАЧИСЛЯЕТСЯ ПОМЕСЯЧНО. Раньше period="year" клал норму ×12 разом при
     потолке накопления 2×12 норм: годовой ULTRA u4 — это $2149×12 выручки
@@ -5699,7 +5705,7 @@ def _points_drip_pass(db: Session) -> int:
     done = 0
     for u in rows:
         # Тариф кончился раньше срока (отмена, возврат) — капли прекращаем:
-        # очки годовой подписки не должны пережить саму подписку.
+        # токены годовой подписки не должны пережить саму подписку.
         if (u.plan or "free") == "free":
             u.points_drip_left = 0
             u.points_drip_size = 0
@@ -5728,7 +5734,7 @@ def _already_processed(db: Session, provider: str, payment_id: str,
     alt_ids — ДРУГИЕ имена того же платежа. Одна оплата подписки Stripe
     приезжает двумя событиями, и у сессии чекаута поле invoice бывает пустым
     (Stripe кладёт id счёта не всегда) — тогда события ключевались по-разному,
-    и один платёж выдавал ДВА месяца, две нормы очков и две доли амбассадору.
+    и один платёж выдавал ДВА месяца, две нормы токенов и две доли амбассадору.
     Поэтому ищем по всем известным именам, а пишем каноническое."""
     key = _pay_key(provider, payment_id)
     if not key:
@@ -5779,7 +5785,7 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
                    currency: str = "USD", pay_method_id: str = "",
                    stripe_customer: str = "", stripe_subscription: str = "",
                    tier: str = "", alt_ids=()) -> bool:
-    """Выдать оплаченное: тариф с очками или пакет очков. False — уже выдавали.
+    """Выдать оплаченное: тариф с токенами или пакет токенов. False — уже выдавали.
 
     ИДЕМПОТЕНТНОСТЬ. Обе платёжки повторяют уведомление, пока не получат 200,
     и один платёж приезжает к нам по нескольку раз (а подписочный — ещё и
@@ -5796,7 +5802,7 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
     if kind == "topup":
         pack = TOPUP_PACKS.get(pack_id)
         if not pack:
-            log.warning("платёж %s: неизвестный пакет очков %r", key, pack_id)
+            log.warning("платёж %s: неизвестный пакет токенов %r", key, pack_id)
             return False
         # Пакет считаем ПО СВОЕЙ таблице, а не по числу из metadata: metadata
         # ездит через чужой сервис, а прайс живёт здесь.
@@ -5804,7 +5810,7 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
         # Пакет потолком НЕ режется (за него заплачено отдельно), но едет
         # через ту же дверь: строка журнала попадает в ту же транзакцию, что
         # и отметка о платеже.
-        _move_points(db, user, points, f"пакет очков {pack_id}", commit=False,
+        _move_points(db, user, points, f"пакет токенов {pack_id}", commit=False,
                      kind="topup", ref_type="payment", engine=provider)
     else:
         if plan_id not in PLANS or PLANS[plan_id]["usd_cents"] <= 0:
@@ -5851,16 +5857,16 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
         db.commit()
     except IntegrityError:
         # Второе уведомление по тому же платежу успело раньше — откатываем
-        # ВСЁ, включая выдачу: месяц и очки уже начислены им.
+        # ВСЁ, включая выдачу: месяц и токены уже начислены им.
         db.rollback()
         log.info("платёж %s уже обработан — пропускаем", key)
         return False
-    # Приход в журнал очков поехал ТОЙ ЖЕ транзакцией, что и выдача (см.
+    # Приход в журнал токенов поехал ТОЙ ЖЕ транзакцией, что и выдача (см.
     # _move_points/_add_points с commit=False выше): кабинет обязан объяснять,
     # откуда взялся баланс, а не только куда он делся. Раньше строка писалась
     # здесь, после коммита — и при откате по IntegrityError журнал оставался
     # с приходом, которого не было.
-    log.info("выдано по платежу %s: юзер %s, %s %s, +%s очков", key, user.id, kind,
+    log.info("выдано по платежу %s: юзер %s, %s %s, +%s токенов", key, user.id, kind,
              plan_id or pack_id, points)
     return True
 
@@ -5876,7 +5882,7 @@ def _reward_kopeks(amount_kopeks: int, amount_cents: int) -> int:
 # ─────────────────────────── витрина тарифов ───────────────────────────
 
 def _movies_estimate(points: int, scene_cost: int) -> int:
-    """Сколько клипов по 3 минуты выходит из этих очков на таком движке."""
+    """Сколько клипов по 3 минуты выходит из этих токенов на таком движке."""
     if points <= 0 or scene_cost <= 0:
         return 0
     return int(points) // (scene_cost * CLIP_SCENES)
@@ -5885,12 +5891,12 @@ def _movies_estimate(points: int, scene_cost: int) -> int:
 def _volume_breakdown(plan_id: str, points: int) -> dict:
     """Расшифровка объёма в ЧЕЛОВЕЧЕСКИХ единицах — по каждому движку тарифа.
 
-    Витрина обязана переводить очки в то, что человек понимает: клипы и кадры.
+    Витрина обязана переводить токены в то, что человек понимает: клипы и кадры.
     Считаем здесь, а не на фронте, — иначе появится третья копия прайса,
     которая разъедется вслед за LD_PLANS_FALLBACK.
 
     ВАЖНО про «0 клипов». На дорогом движке объём часто не дотягивает до
-    целого клипа (3400 очков PRO MAX = 20 сцен на Seedance 2.5, две трети
+    целого клипа (3400 токенов PRO MAX = 20 сцен на Seedance 2.5, две трети
     песни). Врать нельзя, но и писать «0 клипов» — значит убить карточку
     собственной рукой: отдаём и clips, и scenes, а витрина показывает сцены
     там, где клипов меньше одного."""
@@ -5936,11 +5942,11 @@ def _tier_card(plan_id: str, spec: dict) -> dict:
         "rub_kopeks": int(spec["rub_kopeks"]),
         "rub_year": int(spec["rub_year_kopeks"]) // 100,
         "rub_year_kopeks": int(spec["rub_year_kopeks"]),
-        # Зачёркнутая цена = тот же объём по цене очка базовой ступени.
+        # Зачёркнутая цена = тот же объём по цене токена базовой ступени.
         "list_usd": round(spec["list_usd_cents"] / 100, 2),
         "list_usd_cents": int(spec["list_usd_cents"]),
         "save_pct": int(spec["save_pct"]),
-        # Годовая скидка ИМЕННО ЭТОЙ ступени: после пола цены очка она уже не
+        # Годовая скидка ИМЕННО ЭТОЙ ступени: после пола цены токена она уже не
         # YEAR_DISCOUNT_PCT, и обещать −20 % там, где −13 %, нельзя.
         "year_discount_pct": int(spec["year_discount_pct"]),
         "usd_per_point": round(spec["usd_cents"] / 100 / pts, 5) if pts else 0.0,
@@ -5998,7 +6004,7 @@ def _plan_card(plan_id: str) -> dict:
         "movies_estimate": _movies_estimate(p["points"], work),
         "movies_estimate_top": _movies_estimate(p["points"], top),
         "movies_estimate_grok": _movies_estimate(p["points"], SCENE_COST["grok"]),
-        # Правда об экономике очка: сколько человек платит за очко и сколько
+        # Правда об экономике токена: сколько человек платит за токен и сколько
         # себестоимости в него заложено. Считаем один раз тут, а не на фронте.
         "usd_per_point": round(int(p["usd_cents"]) / 100 / int(p["points"]), 5)
         if int(p["points"]) else 0.0,
@@ -6023,7 +6029,7 @@ def _pack_card(pack_id: str) -> dict:
         "usd_per_point": round(k["usd_cents"] / 100 / k["points"], 5),
         "save_pct": int(k["save_pct"]),
         "badge": k["badge"],
-        # Пакет — добор, а не тариф: он дороже подписочного очка и продаётся
+        # Пакет — добор, а не тариф: он дороже подписочного токена и продаётся
         # только при живой платной подписке (см. TOPUP_REQUIRES_PLAN).
         "requires_plan": TOPUP_REQUIRES_PLAN,
         "movies_estimate": _movies_estimate(k["points"], SCENE_COST["seedance-2-mini"]),
@@ -6037,8 +6043,8 @@ def _providers_state() -> dict:
 
 @app.get("/api/billing/plans")
 def billing_plans(request: Request, db: Session = Depends(db_session)):
-    """Всё, что нужно витрине: тарифы обоих периодов, пакеты очков, флаги
-    платёжек, цена работы в очках и текущее состояние человека.
+    """Всё, что нужно витрине: тарифы обоих периодов, пакеты токенов, флаги
+    платёжек, цена работы в токенах и текущее состояние человека.
 
     Роут ПУБЛИЧНЫЙ: цены — первое, что смотрит человек с лендинга, и требовать
     ради них аккаунт значит терять его на входе. Гостю отдаём витрину без
@@ -6067,10 +6073,10 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
         "year_discount_pct": YEAR_DISCOUNT_PCT,
         "plans": [_plan_card(pid) for pid in PLANS],
         "packs": [_pack_card(kid) for kid in TOPUP_PACKS],
-        # Докупка очков разрешена только при живой платной подписке.
+        # Докупка токенов разрешена только при живой платной подписке.
         "topup_requires_plan": TOPUP_REQUIRES_PLAN,
         "topup_allowed": bool(user and _plan_of(user) != "free") if TOPUP_REQUIRES_PLAN else True,
-        # Прайс работы в очках — витрине, чтобы объяснять, куда они уходят.
+        # Прайс работы в токенах — витрине, чтобы объяснять, куда они уходят.
         "costs": {
             "scene": dict(SCENE_COST),          # кадры на шлюзе + видео движком
             "video": dict(VIDEO_COST),          # только видео сцены
@@ -6082,7 +6088,7 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
             "character_model": COST_CHARACTER_MODEL,
             "clip_scenes": CLIP_SCENES,
             "scene_sec": SCENE_SEC,
-            # Якорь экономики: сколько себестоимости лежит в одном очке.
+            # Якорь экономики: сколько себестоимости лежит в одном токене.
             "point_usd": POINT_USD,
         },
         # Справочник движков для витрины «что даёт верхний тариф».
@@ -6114,7 +6120,7 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
 
 @app.get("/api/billing/packs")
 def billing_packs(request: Request, db: Session = Depends(db_session)):
-    """Пакеты очков отдельно от тарифов: докупка не трогает подписку.
+    """Пакеты токенов отдельно от тарифов: докупка не трогает подписку.
     Публичный по той же причине, что и витрина тарифов."""
     user = _resolve_user(request, db)
     return {
@@ -6133,7 +6139,7 @@ def billing_packs(request: Request, db: Session = Depends(db_session)):
 @app.post("/api/billing/create")
 async def billing_create(request: Request, user: User = Depends(current_user),
                          db: Session = Depends(db_session)):
-    """Ссылка на оплату: подписка на тариф или разовая покупка пакета очков.
+    """Ссылка на оплату: подписка на тариф или разовая покупка пакета токенов.
 
     body: {kind:"plan"|"topup", plan?, tier?, pack?, period?:"month"|"year",
            provider?:"stripe"|"yookassa", currency?:"usd"|"rub", promo?}
@@ -6191,7 +6197,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
 
     # Промокод партнёрки: если человек ещё ни за кем не закреплён — закрепляем
     # прямо здесь (то же первое касание, что и по ссылке ?ref=). Скидка — один
-    # раз, на первую ПОДПИСКУ; продления и пакеты очков идут по прайсу.
+    # раз, на первую ПОДПИСКУ; продления и пакеты токенов идут по прайсу.
     promo = _norm_code(body.get("promo") or "")
     if promo:
         _attach_ref(db, user, promo)
@@ -6253,7 +6259,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
         "amount": {"value": f"{pay_kopeks // 100}.{pay_kopeks % 100:02d}", "currency": "RUB"},
         "capture": True,
         # Сохранённый способ оплаты = подписка: дальше списываем сами.
-        # Пакет очков — разовая покупка, карту для него не сохраняем.
+        # Пакет токенов — разовая покупка, карту для него не сохраняем.
         "save_payment_method": kind == "plan",
         "confirmation": {"type": "redirect",
                          "return_url": f"{PUBLIC_BASE_URL}/?paid={plan_id or pack_id}"},
@@ -6288,7 +6294,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
 
 @app.post("/api/billing/webhook")
 async def billing_webhook(request: Request, db: Session = Depends(db_session)):
-    """Уведомление ЮKassa: по успешной оплате выдаём тариф или пакет очков.
+    """Уведомление ЮKassa: по успешной оплате выдаём тариф или пакет токенов.
 
     Событие проверяем обратным запросом в ЮKassa — на вебхук можно прислать
     что угодно, доверять телу нельзя."""
@@ -6389,7 +6395,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(db_session)):
                 stripe_customer=customer, stripe_subscription=sub_id,
                 alt_ids=(inv_id, str(obj.get("id") or "")))
         else:
-            # Разовая покупка очков: ключ — id платёжного намерения.
+            # Разовая покупка токенов: ключ — id платёжного намерения.
             pi = obj.get("payment_intent")
             pay_id = pi if isinstance(pi, str) else str(
                 (pi or {}).get("id") or obj.get("id") or "")
@@ -6525,7 +6531,7 @@ def _subscription_pass() -> None:
             _points_drip_pass(db)
         except Exception as e:  # noqa: BLE001 — капля не должна ронять проход продлений
             db.rollback()
-            log.warning("помесячная выдача очков упала: %s", str(e)[:200])
+            log.warning("помесячная выдача токенов упала: %s", str(e)[:200])
         due = db.query(User).filter(User.plan != "free", User.plan_until.isnot(None),
                                     User.plan_until <= now()).all()
         for u in due:
@@ -6841,7 +6847,7 @@ def _stars_subscription(user: User) -> dict:
 
 @app.get("/api/account")
 def account(user: User = Depends(current_user), db: Session = Depends(db_session)):
-    """Личный кабинет: тариф, срок, очки, привязки входа, проекты."""
+    """Личный кабинет: тариф, срок, токены, привязки входа, проекты."""
     plan = _plan_of(user)
     projects = db.query(Project).filter(Project.owner_id == user.id).count()
     # Партнёрка коротко — на карточку кабинета; подробности в /api/ambassador.
@@ -6891,7 +6897,7 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
     }
 
 
-# ─────────────────────── расход очков: данные для дашборда ───────────────────────
+# ─────────────────────── расход токенов: данные для дашборда ───────────────────────
 # Витрина кабинета отвечает на вопрос «сколько я ещё сделаю», а не «какой у
 # меня тариф». Поэтому здесь считается ТЕМП, а не только остаток: прогноз
 # «при нынешнем расходе хватит до <даты>» — единственная цифра, ради которой
@@ -6995,7 +7001,7 @@ def _plan_limits(db: Session, user: User) -> dict:
     tier = _tier_of_user(user)
     norm = _plan_points(plan_id, tier)
     # Начало периода = ПОСЛЕДНЕЕ начисление, а не «месяц назад»: у годовой
-    # подписки очки капают раз в PLAN_DAYS, и календарный месяц врал бы.
+    # подписки токены капают раз в PLAN_DAYS, и календарный месяц врал бы.
     last_grant = (db.query(func.max(PointEvent.created_at))
                   .filter(PointEvent.user_id == user.id,
                           PointEvent.kind.in_(("plan", "drip", "topup"))).scalar())
@@ -7022,7 +7028,7 @@ def _plan_limits(db: Session, user: User) -> dict:
         "period_start": start.isoformat(),
         "plan_until": _as_utc(user.plan_until).isoformat() if user.plan_until else "",
         "tier_next": user.plan_tier_next or "",
-        # Очки годовой подписки, которые ещё НЕ выданы: «на счету 660, ещё
+        # Токены годовой подписки, которые ещё НЕ выданы: «на счету 660, ещё
         # 7260 придут по месяцам» — иначе годовой тариф выглядит обманом.
         "drip_left": int(user.points_drip_left or 0),
         "drip_size": int(user.points_drip_size or 0),
@@ -7048,7 +7054,7 @@ def _event_dict(e: PointEvent, admin: bool = False) -> dict:
 
 # ─────────────────── лента операций: фильтры и курсор ───────────────────
 # Дашборд показывает 12 последних строк — этого хватает «что я сделал только
-# что» и не хватает «за что списали 154 очка в прошлый вторник». Здесь та же
+# что» и не хватает «за что списали 154 токена в прошлый вторник». Здесь та же
 # история целиком, с фильтрами и курсором. Курсор по id, а не OFFSET:
 # OFFSET на растущей таблице пропускает строки при добавлении новых.
 
@@ -7450,7 +7456,7 @@ def _files_purge_pass() -> int:
 
 
 def _backfill_point_events() -> None:
-    """Восстановить историю очков за прошлое — один раз, из того, что осталось.
+    """Восстановить историю токенов за прошлое — один раз, из того, что осталось.
 
     Журнала раньше не было: расход жил в log.info контейнера. Собрать из
     scenes.charged_points, chat_messages.points и processed_payments можно
@@ -7498,10 +7504,10 @@ def _backfill_point_events() -> None:
                 WHERE pp.points > 0 AND pp.user_id IS NOT NULL
             """)).rowcount
         if done:
-            log.info("журнал очков: восстановлено %s строк истории", done)
+            log.info("журнал токенов: восстановлено %s строк истории", done)
     except Exception as e:  # noqa: BLE001
         # Не критично: журнал начнёт заполняться с этого момента.
-        log.warning("восстановление журнала очков не прошло: %s", str(e)[:200])
+        log.warning("восстановление журнала токенов не прошло: %s", str(e)[:200])
 
 
 _backfill_point_events()

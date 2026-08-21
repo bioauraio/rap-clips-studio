@@ -596,3 +596,31 @@ def profile_text(analysis: dict) -> str:
     parts.append("склейки ставь по началам тактов, длину кадра меряй тактами, "
                  "а не секундами")
     return "; ".join(parts)
+
+
+def waveform(path: str, buckets: int = 480) -> list:
+    """Огибающая для рисования волны: `buckets` чисел 0…1.
+
+    Зачем отдельно от analyze(): волна нужна СРАЗУ после приёма файла и
+    рисуется на каждом открытии карточки, а полный разбор весит десятки
+    килобайт и считает то, что для картинки не нужно (сетку долей, секции).
+    Здесь один проход по уже декодированному моно-сигналу.
+
+    Берём пик в корзине, а не RMS: RMS-огибающая выглядит вялой и на глаз
+    врёт про динамику — по ней не видно ни врыва, ни клиппинга.
+    """
+    if not _HAVE_NUMPY:
+        return []
+    y = _decode(path)
+    n = max(16, min(2000, int(buckets or 480)))
+    if len(y) < n:
+        return []
+    # Хвост, не делящийся на корзину, отбрасываем: полсекунды тишины в конце
+    # не стоят ветки кода с ragged-массивом.
+    step = len(y) // n
+    trimmed = y[: step * n].reshape(n, step)
+    peaks = np.max(np.abs(trimmed), axis=1)
+    top = float(np.max(peaks) or 1.0)
+    if top <= 0:
+        return []
+    return [round(float(v) / top, 3) for v in peaks]

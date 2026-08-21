@@ -1068,3 +1068,7 @@ body.wb-on .modal-overlay {
   .wb-dock-item .wb-dock-cap { font-size: 8.5px; }
   .wb-dock-item .wb-dock-ico { font-size: 17px; }
 }
+
+/* Ярлык режима («3D Pixar») в рейке верстака. Он не режим — пунктир под
+   подписью говорит это раньше, чем человек откроет карточку. */
+.wb-mode.is-shortcut .wb-mode-cap { border-bottom: 1px dashed currentColor; }

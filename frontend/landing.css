@@ -53,7 +53,7 @@
   --on-accent: #fff;
 
   /* ── огонь: один сплошной на экран ── */
-  --fire-ink: linear-gradient(180deg, #e5761b, #c85a14);
+  --fire-ink: linear-gradient(95deg, #e0503a 0%, #ea6a34 45%, #f0913c 100%);
   --fire-hot: linear-gradient(90deg, var(--gold), var(--accent-2), var(--accent));
 
   --ring: 0 0 0 3px rgba(207, 34, 34, .22);

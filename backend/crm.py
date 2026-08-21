@@ -7,10 +7,10 @@
 
 ТРИ РЕШЕНИЯ, БЕЗ КОТОРЫХ ЭТО БЫЛА БЫ ДЕКОРАЦИЯ:
 
-1. Каждое админское действие пишется ДВАЖДЫ: движение очков — в journal очков
+1. Каждое админское действие пишется ДВАЖДЫ: движение токенов — в journal токенов
    через core._move_points (ту же единственную дверь, что и генерации), а сам
-   факт «кто и когда это сделал» — в admin_actions. Журнал очков покрывает
-   только очки; смена тарифа и блокировка в него не ложатся, а знать, кто
+   факт «кто и когда это сделал» — в admin_actions. Журнал токенов покрывает
+   только токены; смена тарифа и блокировка в него не ложатся, а знать, кто
    включил человеку ULTRA руками, нужно ровно так же.
 
 2. Кнопка «отключить подписку» НЕ ВРЁТ. Она выключает НАШУ сторону
@@ -197,7 +197,7 @@ def admin_users(q: str = "", plan: str = "", state: str = "", has: str = "",
 @router.get("/api/admin/users/{uid}")
 def admin_user_card(uid: int, user: User = Depends(admin_user),
                     db: Session = Depends(db_session)):
-    """Карточка клиента: профиль, тариф, очки, работы, деньги."""
+    """Карточка клиента: профиль, тариф, токены, работы, деньги."""
     core = _core()
     u = db.get(User, uid)
     if not u:
@@ -269,7 +269,7 @@ def admin_user_card(uid: int, user: User = Depends(admin_user),
 @router.post("/api/admin/users/{uid}/points")
 async def admin_points(uid: int, request: Request, user: User = Depends(admin_user),
                        db: Session = Depends(db_session)):
-    """Начислить или списать очки руками.
+    """Начислить или списать токены руками.
 
     Идёт через core._move_points — ту же единственную дверь, что и генерации:
     иначе в кабинете человека появился бы остаток, которого не объясняет ни
@@ -282,14 +282,14 @@ async def admin_points(uid: int, request: Request, user: User = Depends(admin_us
     delta = int(body.get("delta") or 0)
     reason = str(body.get("reason") or "").strip()[:160]
     if not delta:
-        raise HTTPException(400, "нужно ненулевое число очков")
+        raise HTTPException(400, "нужно ненулевое число токенов")
     if delta < 0 and int(u.gen_points or 0) + delta < 0:
         delta = -int(u.gen_points or 0)      # в минус баланс не уводим
     core._move_points(db, u, delta,
                       f"админ: {reason or ('начисление' if delta > 0 else 'списание')}",
                       kind="admin", ref_type="admin", ref_id=user.id)
     _log_action(db, user, uid, "points", {"delta": delta, "reason": reason})
-    log.info("crm: админ %s → юзеру %s %+d очков (%s)", user.id, uid, delta, reason)
+    log.info("crm: админ %s → юзеру %s %+d токенов (%s)", user.id, uid, delta, reason)
     return {"ok": True, "points": int(u.gen_points or 0)}
 
 
@@ -298,9 +298,9 @@ async def admin_plan(uid: int, request: Request, user: User = Depends(admin_user
                      db: Session = Depends(db_session)):
     """Поставить тариф руками: план, ступень, срок, автопродление.
 
-    Очки при этом начисляются ТОЛЬКО если попросили явно (grant_points):
+    Токены при этом начисляются ТОЛЬКО если попросили явно (grant_points):
     «поменять тариф» и «выдать месячную норму» — разные действия, и склеивать
-    их значит раздавать очки при каждой правке срока."""
+    их значит раздавать токены при каждой правке срока."""
     core = _core()
     u = db.get(User, uid)
     if not u:
@@ -450,7 +450,7 @@ def ledger_audit(limit: int = 50, user: User = Depends(admin_user),
     из-за ручной правки базы.
 
     ВАЖНО про интерпретацию: у людей, заведённых ДО журнала, стартовая норма
-    (150 очков плана free) строкой не оформлена, поэтому дельта на её
+    (150 токенов плана free) строкой не оформлена, поэтому дельта на её
     величину — это норма, а не дыра. Поэтому отдаём и то, и другое."""
     core = _core()
     free_start = core.PLANS["free"]["points"]
@@ -489,8 +489,8 @@ def ledger_audit(limit: int = 50, user: User = Depends(admin_user),
 SEGMENTS = {
     "all": "все зарегистрированные",
     "new_no_gen": "новички за 7 дней без единой генерации",
-    "free_active": "на FREE, потратили больше 100 очков",
-    "low_points": "очки на исходе (меньше 15 % нормы тарифа)",
+    "free_active": "на FREE, потратили больше 100 токенов",
+    "low_points": "токены на исходе (меньше 15 % нормы тарифа)",
     "expiring": "подписка кончается в ближайшие 5 дней без автопродления",
     "sleeping": "не заходили 30 дней, но что-то генерили",
     "made_clip": "дошли до собранного клипа",

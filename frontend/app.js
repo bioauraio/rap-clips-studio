@@ -217,7 +217,7 @@ async function api(path, opts = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-// me — текущий пользователь: бейдж очков и кнопка «Сохранить аккаунт» живут от него.
+// me — текущий пользователь: бейдж токенов и кнопка «Сохранить аккаунт» живут от него.
 let me = { authed: false, user: null };
 
 // ────────── реферальная метка ?ref=КОД ──────────
@@ -297,7 +297,7 @@ function showWelcome() {
   renderRefBanner();
   hideScreens();
   $("#welcome").classList.remove("hidden");
-  // Главная — полноценная витрина: тексты, шаги, тарифы и шкала очков
+  // Главная — полноценная витрина: тексты, шаги, тарифы и шкала токенов
   // собираются в renderLanding() (низ файла) из словаря I18N (i18n.js).
   renderLanding();
 }
@@ -856,9 +856,9 @@ function payLine(a) {
 // тариф». Поэтому герой один и широкий (остаток + прогноз при нынешнем
 // темпе), а тариф уезжает во второй ярус к расходу и партнёрке.
 //
-// Раньше здесь лежали четыре одинаковые плашки «Тариф / До / Очки / Проекты».
+// Раньше здесь лежали четыре одинаковые плашки «Тариф / До / Токены / Проекты».
 // Из них выжила одна: «Проекты: 3» не отвечает ни на один вопрос, а «До»
-// дублирует строку оплаты. График строится по journalу очков (PointEvent) —
+// дублирует строку оплаты. График строится по journalу токенов (PointEvent) —
 // до него история расхода существовала только в логах контейнера.
 
 // ────────── графики: своя отрисовка, без библиотек ──────────
@@ -993,7 +993,7 @@ function dashRecent(usage) {
     const what = document.createElement("span");
     what.className = "dash-ev-what";
     // Упавшая генерация с возвратом видна отдельной строкой — иначе «молча
-    // съеденные очки» остаются молча съеденными.
+    // съеденные токены» остаются молча съеденными.
     what.textContent = (e.what || "") + (e.engine ? ` · ${engineTitle(e.engine)}` : "");
     const when = document.createElement("span");
     when.className = "dash-ev-when";
@@ -1116,7 +1116,7 @@ async function renderAccountPane(pane) {
       cell(t("lim.cap"), tNum(lim.cap), t("lim.capNote")),
     ];
     if (lim.drip_left) {
-      // Годовая подписка: очки капают помесячно. Без этой плашки годовой
+      // Годовая подписка: токены капают помесячно. Без этой плашки годовой
       // тариф выглядит обманом — заплатил за год, на счету одна норма.
       parts.push(cell(t("lim.drip"), tNum(lim.drip_left * lim.drip_size),
                       t("lim.dripNote", { n: lim.drip_left,
@@ -1181,7 +1181,7 @@ async function renderAccountPane(pane) {
   const recentBox = $(".dash-recent-box", pane);
   recentBox.appendChild(dashRecent(usage || {}));
   // Двенадцати строк хватает на «что я сделал только что» и не хватает на
-  // «за что списали 154 очка в прошлый вторник». Полная лента — с фильтрами.
+  // «за что списали 154 токена в прошлый вторник». Полная лента — с фильтрами.
   const allBtn = document.createElement("button");
   allBtn.type = "button";
   allBtn.className = "ghost ev-more";
@@ -1190,7 +1190,7 @@ async function renderAccountPane(pane) {
   recentBox.appendChild(allBtn);
 
   // Герой ведёт в кассу: это единственное действие, ради которого сюда
-  // приходят, когда очки кончаются. Огонь — только на нём.
+  // приходят, когда токены кончаются. Огонь — только на нём.
   const heroActs = $(".dash-hero-acts", pane);
   const topup = document.createElement("button");
   topup.type = "button";
@@ -1587,8 +1587,8 @@ function openFileModal(f, pane) {
 
 // ══════════════════════ ВКЛАДКА «КЛИЕНТЫ» (только админ) ══════════════════════
 // «Видеть клиентов и тех, кто зарегался, включать-отключать им подписки или
-// начислять токены». Каждое действие пишется дважды: движение очков — в
-// журнал очков (та же дверь, что у генераций), сам факт «кто и когда» — в
+// начислять токены». Каждое действие пишется дважды: движение токенов — в
+// журнал токенов (та же дверь, что у генераций), сам факт «кто и когда» — в
 // admin_actions. Иначе «кто включил человеку ULTRA руками» остаётся загадкой.
 
 const CRM_STATE = { q: "", plan: "", state: "", has: "", sort: "new", cursor: 0 };
@@ -2072,7 +2072,7 @@ async function loadCampaigns(pane) {
 
 // ────────── входящие в приложении: плашка по каналу inapp ──────────
 // Канал, который работает без единого внешнего ключа. Для «у тебя осталось
-// 40 очков» это точнее письма и не требует ни DMARC, ни диалога с ботом.
+// 40 токенов» это точнее письма и не требует ни DMARC, ни диалога с ботом.
 
 async function checkNotices() {
   if (!me || !me.authed) return;
@@ -2137,7 +2137,7 @@ async function renderStarsPane(pane) {
   // Telegram разрешает НЕСКОЛЬКО одновременных подписок одного человека на
   // одного бота и второй счёт оплатится молча. Поэтому при живой звёздной
   // подписке кнопок «купить тариф» не показываем вообще — только управление
-  // текущей и докупку очков.
+  // текущей и докупку токенов.
   const hasSub = sub.provider === "stars" && sub.active;
   const plans = hasSub ? [] : (d.plans || []).filter((p) => p.available && p.id !== d.current);
   const packs = (d.packs || []).filter((p) => p.available && d.topup_allowed);
@@ -2172,7 +2172,7 @@ async function renderStarsPane(pane) {
       btn.disabled = true;
       accMsg(pane, "");
       // Снимок ДО оплаты: выдачу мы определяем по изменению кабинета, а не по
-      // ответу openInvoice — «paid» не значит, что очки уже начислены.
+      // ответу openInvoice — «paid» не значит, что токены уже начислены.
       let before = { plan: d.current, points: d.points };
       try {
         const st = await TGA.pay(kind, id, () => {});
@@ -2274,7 +2274,7 @@ async function renderPlanPane(pane) {
         const isCur = p.id === current && (!tr || tr.id === (curTier || (p.tiers[0] || {}).id));
         // Ступени объёма — ползунок, а не ряд кнопок: у ULTRA их четыре,
         // и в узкой карточке они не читаются. Заодно считаем выгоду —
-        // насколько очко на этой ступени дешевле, чем на первой.
+        // насколько токен на этой ступени дешевле, чем на первой.
         let scale = "";
         let saveBadge = "";
         if (tr) {
@@ -2656,8 +2656,8 @@ function formatLabel(mode, key) {
 }
 
 function kindLabel(kind) {
-  return t({ single: "top.kindSingle", ugc: "top.kindUgc", series: "top.kindSeries" }[kind]
-           || "top.kindAlbum");
+  return t({ single: "top.kindSingle", ugc: "top.kindUgc", series: "top.kindSeries",
+             mockup: "top.kindMockup" }[kind] || "top.kindAlbum");
 }
 
 /* Можно ли добавить ещё один объект. Сингл — ровно один трек, и форму
@@ -2691,7 +2691,7 @@ function docsBusy() {
 let pollTimer = null;
 
 async function loadProject() {
-  // Обновляем и очки: после каждой генерации бейдж «⚡ N» должен быть честным.
+  // Обновляем и токены: после каждой генерации бейдж «⚡ N» должен быть честным.
   me = await api("/api/me").catch(() => me);
   renderUserBar();
   projects = await api("/api/projects");
@@ -2733,18 +2733,19 @@ function renderProjectBar() {
   }
   $("#project-kind").textContent = kindLabel(project.kind);
   // Режим — не второй вид проекта, а его прочтение: album/single читаются как
-  // «rap clips». Бейдж стоит рядом с видом, чтобы «сингл» не выглядел режимом.
-  const modeEl = $("#project-mode");
-  const m = curMode();
-  modeEl.innerHTML = "";
-  const ico = document.createElement("span");
-  ico.className = "mode-ico";
-  ico.textContent = m.icon || "🎬";
-  const cap = document.createElement("span");
-  cap.textContent = t(`modes.${m.id}.title`);
-  modeEl.append(ico, cap);
-  modeEl.title = t(`modes.${m.id}.full`);
-  modeEl.classList.remove("hidden");
+  // «rap clips». Раньше здесь красился статичный бейдж; теперь тот же узел —
+  // схлопнутый ТУМБЛЕР, а рисует его mode-menu.js из общего реестра. Красить
+  // отсюда нельзя: тумблер знает про ярлыки и «скоро», а этот код — нет.
+  if (window.QlolModeMenu) {
+    window.QlolModeMenu.sync();
+  } else {
+    // Реестр не загрузился — оставляем прежний бейдж, а не пустое место.
+    const modeEl = $("#project-mode");
+    const m = curMode();
+    modeEl.textContent = t(`modes.${m.id}.title`);
+    modeEl.title = t(`modes.${m.id}.full`);
+    modeEl.classList.remove("hidden");
+  }
   const coverImg = $("#project-cover-img");
   if (project.cover_url) {
     coverImg.src = project.cover_url;
@@ -2761,8 +2762,32 @@ $("#project-select").addEventListener("change", (e) => {
   loadProject();
 });
 
-$("#new-project-btn").addEventListener("click", () => {
+/* Карточки видов проекта — ИЗ РЕЕСТРА, а не из захардкоженного списка из
+   четырёх штук: новый режим (мокапы) обязан появиться здесь сам, иначе он
+   есть на сервере, есть в тумблере и недоступен для создания. */
+const KIND_NOTE = {
+  album: "albumNote", single: "singleNote", ugc: "ugcNote",
+  series: "seriesNote", mockup: "mockupNote",
+};
+
+function kindCards(active) {
+  const list = window.QlolModes
+    ? window.QlolModes.kinds().map((x) => x.kind)
+    : ["album", "single", "ugc", "series"];
+  return list.map((k) => `<button type="button" class="kind-card${k === active ? " on" : ""}" data-kind="${escHtml(k)}">
+      <b>${escHtml(t("modal.newProject." + k) || k)}</b><span class="muted">${escHtml(t("modal.newProject." + (KIND_NOTE[k] || k + "Note")) || "")}</span>
+    </button>`).join("");
+}
+
+/* Окно «новый проект». Вынесено в функцию и повешено на window: тумблер
+   режимов открывает его с ПРЕДВЫБРАННЫМ видом, когда проектов такого вида
+   ещё нет («Создать проект: Мокапы»). Раньше вход был один — кнопка в шапке,
+   и предвыбрать вид было нечем. */
+function openNewProjectModal(preKind, pendingStyle) {
   openModal(t("modal.newProject.title"), (body) => {
+    const known = window.QlolModes
+      ? window.QlolModes.kinds().map((x) => x.kind) : ["album", "single", "ugc", "series"];
+    const kind0 = known.includes(preKind) ? preKind : known[0];
     body.innerHTML = `
       <label>${escHtml(t("modal.newProject.nameLabel"))}</label>
       <input class="np-name" placeholder="${escHtml(t("modal.newProject.namePh"))}" />
@@ -2771,13 +2796,7 @@ $("#new-project-btn").addEventListener("click", () => {
            канал блогера, series — сериал. Отдельного переключателя режимов
            нет намеренно: режим выбирается один раз и потом не меняется —
            сериал не превращается в клип, у них разные объекты. -->
-      <div class="kind-cards">
-        ${[["album", "album", "albumNote"], ["single", "single", "singleNote"],
-           ["ugc", "ugc", "ugcNote"], ["series", "series", "seriesNote"]]
-          .map(([k, lab, note], i) => `<button type="button" class="kind-card${i ? "" : " on"}" data-kind="${k}">
-          <b>${escHtml(t("modal.newProject." + lab))}</b><span class="muted">${escHtml(t("modal.newProject." + note))}</span>
-        </button>`).join("")}
-      </div>
+      <div class="kind-cards">${kindCards(kind0)}</div>
       <label>${escHtml(t("modal.newProject.coverLabel"))}</label>
       <label class="cover-drop">
         <input type="file" class="np-cover hidden" accept="image/jpeg,image/png,image/webp" />
@@ -2789,7 +2808,7 @@ $("#new-project-btn").addEventListener("click", () => {
         <span class="np-error error hidden"></span>
       </div>`;
 
-    let kind = "album";
+    let kind = kind0;
     $$(".kind-card", body).forEach((cardBtn) => {
       cardBtn.addEventListener("click", () => {
         kind = cardBtn.dataset.kind;
@@ -2841,7 +2860,40 @@ $("#new-project-btn").addEventListener("click", () => {
     nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
     nameInput.focus();
   });
-});
+}
+
+window.openNewProjectModal = openNewProjectModal;
+$("#new-project-btn").addEventListener("click", () => openNewProjectModal());
+
+/* ЯРЛЫК РЕЖИМА («3D Pixar»). Ярлык — не режим: он ведёт в чужой режим с уже
+   выбранным стилем. Проект нужного вида уже открыт — просто применяем стиль
+   к первому объекту; нет — открываем создание проекта и применяем стиль,
+   как только объект появится (тот же механизм, что у витрины промтов). */
+async function applyModeShortcut(id) {
+  const sc = window.QlolModes && window.QlolModes.byId(id);
+  if (!sc || !sc.target) return;
+  const want = sc.target;
+  const here = window.QlolModes.ofKind(project && project.kind);
+  if (!here || here.id !== want.mode) {
+    ldPending = { style: want.style };
+    openNewProjectModal(want.kind || "album");
+    return;
+  }
+  const tr = (project.tracks || [])[0];
+  if (!tr) {                       // объекта ещё нет — применим, когда появится
+    ldPending = { style: want.style };
+    // Объект появится позже (человек ещё не загрузил дорожку) — применим
+    // стиль тем же отложенным механизмом, что и витрина промтов.
+    if (window.QlolNav) window.QlolNav.toast(t("modes.menu.shortcutWait"));
+    return;
+  }
+  const keys = Array.from(new Set([want.style, ...(tr.style_keys || [])])).slice(0, 3);
+  try {
+    await api(`/api/tracks/${tr.id}/style`, { method: "POST", body: { style_keys: keys } });
+  } catch (e) { fail(e); }
+  await loadProject();
+}
+window.applyModeShortcut = applyModeShortcut;
 
 // Обложка активного проекта: клик по миниатюре в топбаре = заменить.
 $("#project-cover-input").addEventListener("change", async (e) => {
@@ -3157,7 +3209,12 @@ function applyMode() {
   const storyPanel = $("#story").closest(".panel");
   const docsPanel = $("#docs-panel");
   const isClip = m.id === "clip";
-  storyPanel.classList.toggle("hidden", !isClip);
+  // Панель сюжета видна только тогда, когда единому блоку негде его показать:
+  // блок живёт в карточке объекта, а объектов может ещё не быть. Сам узел
+  // #story НИКОГДА не удаляется и не переносится — на нём держится
+  // render(), сохранение проекта и генерация сюжета.
+  const mirrored = isClip && (project.tracks || []).length > 0;
+  storyPanel.classList.toggle("hidden", !isClip || mirrored);
   docsPanel.classList.toggle("hidden", isClip);
   $("#tracks-title").textContent = objT("many", m);
   // Заголовок персонажей тоже режимный: «Персонажи альбома» над сквозными
@@ -3384,14 +3441,16 @@ function renderDocs() {
   if (panel.classList.contains("hidden")) return;
   const mode = curMode();
   $("#docs-title").textContent = t(`modes.${mode.id}.full`);
-  $("#docs-lead").textContent = mode.id === "series" ? t("docs.seriesHint") : t("docs.ugcHint");
+  $("#docs-lead").textContent = mode.id === "series" ? t("docs.seriesHint")
+    : mode.id === "mockup" ? t("docs.mockupHint") : t("docs.ugcHint");
   const isSeries = mode.id === "series";
   $("#docs-eps-wrap").classList.toggle("hidden", !isSeries);
 
   const busy = docsBusy();
   const bibleBtn = $("#docs-gen-bible");
   bibleBtn.textContent = busy ? t("docs.genBibleBusy")
-    : (isSeries ? t("docs.genBibleSeries") : t("docs.genBibleUgc"));
+    : isSeries ? t("docs.genBibleSeries")
+    : mode.id === "mockup" ? t("docs.genBrandbook") : t("docs.genBibleUgc");
   bibleBtn.disabled = busy;
 
   const sheetBtn = $("#docs-gen-sheet");
@@ -3672,10 +3731,18 @@ function renderTrackModeFields(card, tr) {
   if (isClip) return;
 
   const isSeries = mode.id === "series";
+  const isMockup = mode.id === "mockup";
   $(".t-season-wrap", card).classList.toggle("hidden", !isSeries);
   $(".t-episode-wrap", card).classList.toggle("hidden", !isSeries);
-  $(".t-location-wrap", card).classList.toggle("hidden", isSeries);
+  // «Формула локации» — свойство ролика: у мокапа место действия задаёт
+  // фирменный мир проекта, а не отдельное поле у каждого артикула.
+  $(".t-location-wrap", card).classList.toggle("hidden", isSeries || isMockup);
   $(".t-script-wrap", card).classList.toggle("hidden", !isSeries);
+  // Выпадающий список каркаса остаётся ХРАНИЛИЩЕМ выбора, но с глаз уходит:
+  // видимый выбор — карточки набора в секции «Что снимаем», и два контрола
+  // на одно значение читаются как два разных параметра.
+  const fw = $(".t-format-wrap", card);
+  if (fw) fw.classList.add("hidden");
 
   const patch = async (body) => {
     try {
@@ -3733,6 +3800,293 @@ function renderTrackModeFields(card, tr) {
     loc.addEventListener("change", () => patch({ location_bible: loc.value }));
   }
 }
+
+/* ═════════════════ ЕДИНЫЙ БЛОК ПАРАМЕТРОВ РЕЖИМА ═════════════════
+   Владелец просил собрать «сценарий и все настройки» в один блок. До этого
+   они лежали в пяти местах, а сюжетный КАРКАС (CLIP_PRESETS) вообще не имел
+   входа из студии: карточки каркасов жили только на лендинге и применялись
+   один раз, сразу после входа. Человек с уже созданным проектом не мог
+   выбрать каркас никогда.
+
+   Разметку блока держит index.html (секции .ms-sec), а этот код наполняет
+   секции и связывает их с сервером. Узлы НЕ переносятся между секциями на
+   лету — они уже лежат по местам в шаблоне: перенос ломался бы каждой
+   перерисовкой #tracks. */
+
+// Состояние схлопнутых секций держим В МОДУЛЕ, а не в DOM: поллинг стирает
+// #tracks целиком, и <details open> в разметке схлопывался бы сам каждые
+// три секунды — тот же класс бага, что потеря несохранённого ввода.
+const msFold = new Map();   // "<режим>/<секция>" → открыта ли
+
+function msFoldKey(mode, sec) { return `${mode.id}/${sec}`; }
+
+function msBindFold(card, tr, mode) {
+  $$(".ms-fold", card).forEach((d) => {
+    const sec = d.dataset.sec;
+    const key = msFoldKey(mode, sec);
+    // Дефолт по режиму: у мокапа геометрия кадра — главный параметр съёмки,
+    // и держать её закрытой значило бы прятать самое важное.
+    const def = sec === "frame" ? mode.id === "mockup"
+      : sec === "material" ? (mode.needs_audio || mode.id === "mockup")
+      : false;
+    d.open = msFold.has(key) ? msFold.get(key) : Boolean(def);
+    d.addEventListener("toggle", () => msFold.set(key, d.open));
+  });
+}
+
+/* Каркас объекта: «что снимаем». У клипа это CLIP_PRESETS с сервера, у
+   остальных режимов — каркас режима (formats.py). Разметка карточки одна на
+   всех: у обоих реестров есть key/label/logline/beats. */
+function msPresets(card, tr, mode) {
+  const box = $(".ms-presets", card);
+  if (!box) return;
+  const isClip = mode.id === "clip";
+  const items = isClip
+    ? ((stylesCatalog && stylesCatalog.presets) || [])
+    : modeFormats(mode);
+  const cur = isClip ? (tr.clip_preset_key || "") : (tr.format_key || "");
+
+  if (isClip && !items.length && !(stylesCatalog && stylesCatalog.failed)) {
+    // Каталог ещё едет — дорисуем, когда приедет. Пустое место здесь читается
+    // как «каркасов нет», а их шесть.
+    loadStyles().then(() => { if (card.isConnected) msPresets(card, tr, mode); });
+  }
+
+  box.innerHTML = "";
+  items.forEach((p) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ms-preset" + (p.key === cur ? " on" : "");
+    b.dataset.key = p.key;
+    const lab = document.createElement("b");
+    lab.textContent = typeof p.label === "string" ? p.label : ((p.label && (p.label[LANG] || p.label.en)) || p.key);
+    const log = document.createElement("span");
+    log.className = "muted";
+    log.textContent = typeof p.logline === "string" ? p.logline : ((p.logline && (p.logline[LANG] || p.logline.en)) || "");
+    b.append(lab, log);
+    if (p.no_story) {
+      const mark = document.createElement("i");
+      mark.className = "ms-preset-mark";
+      mark.textContent = t("modeSetup.punch");
+      b.appendChild(mark);
+    }
+    b.addEventListener("click", async () => {
+      try {
+        if (isClip) {
+          // Тот же роут, что и у витрины промтов: сервер сам ставит no_story
+          // из пресета и подкладывает режиссёрскую заметку.
+          await api(`/api/tracks/${tr.id}/style`, {
+            method: "POST",
+            body: { style_keys: tr.style_keys || [], preset: p.key === cur ? "" : p.key },
+          });
+        } else {
+          // Каркас режима живёт в .t-format — пишем туда и дёргаем его же
+          // обработчик, чтобы не заводить второй путь сохранения.
+          const sel = $(".t-format", card);
+          if (sel) {
+            sel.value = p.key;
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
+      } catch (e) { fail(e); }
+      await loadProject();
+    });
+    box.appendChild(b);
+  });
+
+  // Каркас подсказывает стиль, а не наоборот: styles_fit до сих пор лежал в
+  // каталоге и не использовался интерфейсом нигде.
+  const chosen = items.find((p) => p.key === cur);
+  const fit = (chosen && chosen.styles_fit) || [];
+  $$(".style-chip", card).forEach((chip) => {
+    const k = chip.dataset.key || chip.dataset.style || "";
+    chip.classList.toggle("ms-fit", Boolean(k && fit.includes(k)));
+  });
+}
+
+/* Сюжет проекта в блоке. ЗЕРКАЛО #story: настоящий узел живёт в своей панели
+   вне #tracks, и перенести его сюда нельзя — перерисовка #tracks его убьёт,
+   а весь app.js держится на $("#story"). */
+function msStory(card, tr, mode, isFirst) {
+  const box = $(".ms-story", card);
+  if (!box) return;
+  const on = mode.id === "clip" && isFirst;
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  const ta = $(".ms-story-text", card);
+  const src = $("#story");
+  ta.value = src ? src.value : (project.story || "");
+  ta.addEventListener("input", () => { if (src) src.value = ta.value; });
+  const st = $("#story-status");
+  const mine = $(".ms-story-status", card);
+  mine.textContent = st ? st.textContent : "";
+  mine.className = "status ms-story-status " + (st ? st.className.replace("status", "").trim() : "");
+  const gen = $(".ms-story-gen", card);
+  const real = $("#gen-story-btn");
+  gen.disabled = Boolean(real && real.disabled);
+  gen.addEventListener("click", () => { if (real) real.click(); });
+  $(".ms-story-save", card).addEventListener("click", () => {
+    const btn = $("#save-project-btn");
+    if (btn) btn.click();
+  });
+}
+
+/* Библия героя — тем же зеркалом и по той же причине. */
+function msBible(card, mode, isFirst) {
+  const box = $(".ms-bible", card);
+  if (!box) return;
+  const on = mode.id === "clip" && isFirst;
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  const ta = $(".ms-bible-text", card);
+  const src = $("#character-bible");
+  ta.value = src ? src.value : (project.character_bible || "");
+  ta.addEventListener("input", () => { if (src) src.value = ta.value; });
+}
+
+// Геометрия кадра. Список короткий и закрытый: это не свободный параметр, а
+// три формата, под которые есть и движки, и сборка.
+const MS_ASPECTS = ["9:16", "1:1", "4:5"];
+const MS_RES = ["", "1K", "2K", "4K"];
+
+function msFrame(card, tr, mode) {
+  const patch = async (body) => {
+    try {
+      await api(`/api/tracks/${tr.id}`, { method: "PATCH", body });
+      Object.assign(tr, body);
+      await loadProject();
+    } catch (e) { fail(e); }
+  };
+  const eff = tr.eff_aspect || mode.aspect || "9:16";
+  const aBox = $(".ms-aspect", card);
+  if (aBox) {
+    aBox.innerHTML = "";
+    MS_ASPECTS.forEach((a) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "eng-chip" + (a === eff ? " on" : "");
+      chip.textContent = a;
+      chip.title = t("modeSetup.aspectHint." + a.replace(":", "_")) || a;
+      // Пустая строка — валидное значение «как у режима»: снять свой выбор
+      // должно быть можно, иначе первый клик становится вечным.
+      chip.addEventListener("click", () => patch({ aspect: a === tr.aspect ? "" : a }));
+      aBox.appendChild(chip);
+    });
+  }
+  const rBox = $(".ms-res", card);
+  if (rBox) {
+    rBox.innerHTML = "";
+    MS_RES.forEach((r) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "eng-chip" + (r === (tr.image_resolution || "") ? " on" : "");
+      chip.textContent = r || t("modeSetup.resAuto");
+      chip.addEventListener("click", () => patch({ image_resolution: r }));
+      rBox.appendChild(chip);
+    });
+  }
+  // Честное предупреждение вместо тихой подмены: движок без поддержки
+  // аспекта вернёт вертикаль, чем бы человек ни щёлкнул.
+  const note = $(".ms-frame-note", card);
+  if (note) {
+    const img = imageEngineById(effImageEngine(tr));
+    note.textContent = (eff !== "9:16" && img && img.aspect === false)
+      ? t("modeSetup.aspectLocked", { engine: img.title }) : "";
+  }
+}
+
+/* Фото товара (мокапы): референс, по которому упаковка обязана совпасть до
+   последней буквы на этикетке. Механика та же, что у фото персонажа. */
+function msPhotos(card, tr, mode) {
+  const box = $(".ms-photos", card);
+  if (!box) return;
+  const on = mode.id === "mockup";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  const grid = $(".ms-photos-grid", card);
+  const st = $(".ms-photos-status", card);
+  grid.innerHTML = "";
+  (tr.photos || []).forEach((ph) => {
+    const cell = document.createElement("div");
+    cell.className = "ms-photo";
+    const img = document.createElement("img");
+    img.src = ph.url;
+    img.alt = "";
+    img.loading = "lazy";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "ms-photo-del";
+    del.textContent = "✕";
+    del.title = t("common.del");
+    del.addEventListener("click", async () => {
+      try { await api(`/api/track-photos/${ph.id}`, { method: "DELETE" }); } catch (e) { fail(e); }
+      await loadProject();
+    });
+    cell.append(img, del);
+    grid.appendChild(cell);
+  });
+  const input = $(".ms-photo-input", card);
+  input.addEventListener("change", async () => {
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    st.textContent = t("common.loading");
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append("photo", f);
+      try {
+        await api(`/api/tracks/${tr.id}/photos`, { method: "POST", body: fd });
+      } catch (e) { fail(e); break; }
+    }
+    input.value = "";
+    st.textContent = "";
+    await loadProject();
+  });
+}
+
+/* Шапка блока: одна строка, по которой видно всё решение целиком — режим,
+   каркас, стиль, движок и прогноз расхода. Она и есть ответ на «что я
+   вообще собрал», ради которого раньше приходилось листать пять мест. */
+function msSummary(card, tr, mode) {
+  const box = $(".ms-summary", card);
+  if (!box) return;
+  const parts = [];
+  parts.push(`${mode.icon || "🎬"} ${t(`modes.${mode.id}.title`)}`);
+  const pk = mode.id === "clip" ? (tr.clip_preset_key || "") : (tr.format_key || "");
+  if (pk) {
+    const items = mode.id === "clip"
+      ? ((stylesCatalog && stylesCatalog.presets) || []) : modeFormats(mode);
+    const p = items.find((x) => x.key === pk);
+    if (p) parts.push(typeof p.label === "string" ? p.label : ((p.label && (p.label[LANG] || p.label.en)) || pk));
+  }
+  if (tr.style_label) parts.push(tr.style_label);
+  const vid = videoEngineById(effVideoEngine(tr));
+  if (vid) parts.push(vid.title);
+  const img = imageEngineById(effImageEngine(tr));
+  const scenes = tr.scenes_count || (mode.scenes && mode.scenes.typ) || 30;
+  const per = (img ? img.frames_cost : 0) + (vid ? vid.video_cost : 0);
+  if (per > 0) parts.push(t("modeSetup.forecast", { scenes, total: tNum(scenes * per) }));
+  box.textContent = parts.join(" · ");
+}
+
+/* Сборка блока. Зовётся из renderTrack после движков и полей режима: к этому
+   моменту все секции уже наполнены штатным кодом, и здесь остаётся только
+   то, чего до единого блока в студии не было вовсе. */
+function mountModeSetup(card, tr, isFirst) {
+  const mode = curMode();
+  const box = $(".mode-setup", card);
+  if (!box) return;
+  box.dataset.mode = mode.id;
+  const hint = $(".ms-hint", card);
+  if (hint) hint.textContent = t(`modes.${mode.id}.note`) || "";
+  msBindFold(card, tr, mode);
+  msPresets(card, tr, mode);
+  msStory(card, tr, mode, isFirst);
+  msBible(card, mode, isFirst);
+  msFrame(card, tr, mode);
+  msPhotos(card, tr, mode);
+  msSummary(card, tr, mode);
+}
+
 
 function renderTrack(tr) {
   const tpl = $("#track-tpl").content.cloneNode(true);
@@ -3817,9 +4171,14 @@ function renderTrack(tr) {
       await api(`/api/tracks/${tr.id}/style`, { method: "POST", body: { style_keys: keys } });
     } catch (e) { fail(e); }
   });
-  // ── движки объекта и поля режима ──
+  // ── движки объекта, поля режима и единый блок параметров ──
   renderTrackEngines(card, tr);
   renderTrackModeFields(card, tr);
+  // Сюжет и библия героя — свойства ПРОЕКТА, а не объекта: зеркалим их в
+  // блок ровно одного объекта, иначе у альбома из десяти треков на экране
+  // окажется десять копий одного и того же текста.
+  const firstTrack = (project.tracks || [])[0];
+  mountModeSetup(card, tr, Boolean(firstTrack && firstTrack.id === tr.id));
   $(".t-comment", card).value = tr.comment;
   $(".t-grain", card).checked = Boolean(tr.film_grain);
   $(".t-nostory", card).checked = Boolean(tr.no_story);
@@ -3851,7 +4210,9 @@ function renderTrack(tr) {
   gate(".t-nostory-wrap", trMode.needs_audio);
   if (!trMode.needs_audio) audioEl.style.display = "none";
   $(".save-track", card).textContent = objT("save", trMode) || t("track.saveTrack");
-  const styleLab = $(".stage-pane[data-stage=\"setup\"] > label", card);
+  // Раньше подпись искалась как ПРЯМОЙ потомок панели настройки; в едином
+  // блоке она лежит в секции «Как выглядит», и у неё есть свой класс.
+  const styleLab = $(".ms-style-label", card);
   if (styleLab) styleLab.textContent = objT("style", trMode) || t("track.styleLabel");
 
   // Плеер трека сам подсвечивает кадр, который сейчас звучит — и наоборот,
@@ -3923,6 +4284,12 @@ function renderTrack(tr) {
     const sc = docBy("script", tr.id);
     scenesReady = Boolean(sc && sc.body);
     scenesWhy = t("docs.needScript");
+  } else if (modeNow.id === "mockup") {
+    // Мокап без фото упаковки — фантазия, а не съёмка: генератор нарисует
+    // «похожую» банку с выдуманной этикеткой, и выяснится это уже после
+    // списания токенов за все шесть кадров.
+    scenesReady = Boolean((tr.photos || []).length);
+    scenesWhy = t("modeSetup.needPhoto");
   }
   genBtn.disabled = busy || !scenesReady;
   genBtn.title = scenesReady ? "" : scenesWhy;
@@ -3936,7 +4303,7 @@ function renderTrack(tr) {
   // супергенерацию без всякой причины.
   superBtn.disabled = superBusy
     || (modeNow.needs_audio !== false && !tr.audio_duration_sec)
-    || (modeNow.id === "series" && !scenesReady);
+    || ((modeNow.id === "series" || modeNow.id === "mockup") && !scenesReady);
   superBtn.textContent = superBusy ? t("track.supergenBusy") : t("track.supergen");
   superBtn.addEventListener("click", () => openSupergenModal(tr));
   const superNote = $(".supergen-note", card);
@@ -4778,7 +5145,7 @@ async function genScenes(id) {
   try {
     await api(`/api/tracks/${id}/generate-scenes`, { method: "POST" });
   } catch (e) {
-    fail(e); // в т.ч. «не хватает очков» — текст соберёт errText()
+    fail(e); // в т.ч. «не хватает токенов» — текст соберёт errText()
   }
   await loadProject();
 }
@@ -5607,16 +5974,16 @@ function openModelModal(c, onDone = null) {
 
 // ═════════════════════════ ГЛАВНАЯ СТРАНИЦА lolq.ai ═════════════════════════
 // Витрина сервиса и воронка: первый экран → как это работает → что внутри →
-// тарифы → докупка очков → партнёрка → FAQ → подвал.
+// тарифы → докупка токенов → партнёрка → FAQ → подвал.
 //
 // ВСЕ пользовательские строки лежат в словаре I18N (i18n.js), раздел landing.*:
 // перевод = правка одного файла, разметка и логика не трогаются. В index.html
 // текстовые узлы помечены data-i18n="путь.в.словаре" (и data-i18n-alt для alt
 // картинок), повторяющиеся блоки рисуются здесь из тех же данных.
 
-// Цена работы в очках — зеркало SCENE_COST в backend/main.py. Если там
+// Цена работы в токенах — зеркало SCENE_COST в backend/main.py. Если там
 // поменяются числа, поменяй и здесь: витрина считает «сколько это клипов».
-// Цена сцены в очках — зеркало SCENE_COST в backend/main.py (кадры на шлюзе +
+// Цена сцены в токенах — зеркало SCENE_COST в backend/main.py (кадры на шлюзе +
 // видео движком). Эти три числа УЖЕ РАЗЪЕЗЖАЛИСЬ с прайсом: было
 // {grok:4, seedance:10, top:16} при живых 4 / 101 / 154, то есть витрина
 // занижала стоимость впятеро. Живой ответ /api/billing/plans их
@@ -5627,7 +5994,7 @@ const LD_REF = { discount: 10, reward: 10 };  // REF_DISCOUNT_PCT / REF_REWARD_P
 
 // Запасная витрина: лендинг обязан рисоваться, даже если ответ сервера не
 // приехал. Числа ДЕРЖИ СИНХРОННЫМИ с PLANS/TOPUP_PACKS бэкенда — этот блок
-// уже однажды протух (PRO 700 очков при живых 660, STUDIO 6000 при 10500,
+// уже однажды протух (PRO 700 токенов при живых 660, STUDIO 6000 при 10500,
 // пакеты по старым ценам), и заметить это было невозможно.
 const LD_PLANS_FALLBACK = [
   { id: "free", points: 150, usd: 0 },
@@ -5646,7 +6013,7 @@ const LD_PACKS_FALLBACK = [
 let ldBuilt = false;         // тяжёлую разметку собираем один раз
 let ldPeriod = "month";      // тумблер «помесячно / на год»
 let ldPricing = null;        // нормализованный ответ /api/billing/plans
-let ldPackIndex = 2;         // выбранная ступень шкалы очков
+let ldPackIndex = 2;         // выбранная ступень шкалы токенов
 
 // ────────── доступ к разделу landing словаря ──────────
 // LT — сырое значение (массивы шагов, функций, тарифов), LTX — строка с
@@ -5902,7 +6269,7 @@ function ldPointsLabel(points) {
 
 // Расшифровка объёма в человеческих единицах. ГЛАВНОЕ ПРАВИЛО: если клипов
 // выходит меньше одного — пишем СЦЕНЫ, а не «0 клипов». На дорогом движке
-// объём часто не дотягивает до целого клипа (3400 очков PRO MAX = 20 сцен
+// объём часто не дотягивает до целого клипа (3400 токенов PRO MAX = 20 сцен
 // на Seedance 2.5, две трети песни), и «0 клипов» убивает карточку, а врать
 // про единицу нельзя.
 function ldVolumeLine(row) {
@@ -5976,7 +6343,7 @@ function ldPlanCard(plan) {
                             || (!ldPricing.current.tier && tier.id === (plan.tiers[0] || {}).id)));
   const feats = (copy.features || []).map((f) => `<li>${escHtml(f)}</li>`).join("");
 
-  // Шкала: те же тики, что у докупки очков, плюс ползунок на широком экране.
+  // Шкала: те же тики, что у докупки токенов, плюс ползунок на широком экране.
   let scale = "";
   let saveBadge = "";
   let volume = "";
@@ -5992,11 +6359,11 @@ function ldPlanCard(plan) {
           <span>${escHtml(ldPointsLabel(tr.points))}</span>
         </button>`).join("")}</div>
     </div>`;
-    // Зачёркнутая цена — честная: тот же объём по цене очка базовой ступени.
+    // Зачёркнутая цена — честная: тот же объём по цене токена базовой ступени.
     // Проценты приходят с сервера посчитанными, включая годовой (после пола
-    // цены очка он уже не −20 %, и рисовать −20 % там нельзя).
+    // цены токена он уже не −20 %, и рисовать −20 % там нельзя).
     // Зачёркнутое — всегда ЧЕСТНАЯ база сравнения, не выдуманный якорь:
-    //   в месячном режиме — тот же объём по цене очка базовой ступени;
+    //   в месячном режиме — тот же объём по цене токена базовой ступени;
     //   в годовом — месячная цена ЭТОЙ ЖЕ ступени, ведь рядом стоит «в месяц
     //   при оплате за год», и сравнивать надо именно эти две цифры.
     const pct = yearMode ? tier.yearPct : tier.savePct;
@@ -6099,7 +6466,7 @@ function ldRenderPlans() {
 }
 
 // Приписка мелким: точная цена сцены по каждому движку верхнего тарифа.
-// Это то место, где витрина обязана сойтись с кассой до очка — считается из
+// Это то место, где витрина обязана сойтись с кассой до токена — считается из
 // живого ответа сервера, а не из констант фронта.
 function ldFinePrint() {
   const T = LT("pricing");
@@ -6116,7 +6483,7 @@ function ldFinePrint() {
   });
 }
 
-// ────────── шкала докупки очков ──────────
+// ────────── шкала докупки токенов ──────────
 function ldPacks() {
   return (ldPricing && ldPricing.packs && ldPricing.packs.length)
     ? ldPricing.packs : LD_PACKS_FALLBACK;
@@ -6734,7 +7101,7 @@ onLangChange(() => {
     if (project && !$("#app").classList.contains("hidden")) render();
   });
   if (!$("#app").classList.contains("hidden")) {
-    renderUserBar();                  // бейдж очков и тариф тоже подписаны словами
+    renderUserBar();                  // бейдж токенов и тариф тоже подписаны словами
     if (project) render();
   }
   rebuildAddTrackPicker();
@@ -6754,13 +7121,13 @@ onLangChange(() => {
 // Цена видна ДО отправки и пересчитывается на каждое движение селектора. Сервер
 // остаётся авторитетом по деньгам — клиент только показывает то же число.
 //
-// Авто-режима «сам решу, что ты хотел» здесь нет намеренно: текст стоит 2 очка,
+// Авто-режима «сам решу, что ты хотел» здесь нет намеренно: текст стоит 2 токена,
 // картинка 8, видео до 154. Автороутер, промахнувшийся в видео, стоит человеку
 // месячной нормы тарифа — цена ошибки несимметрична, поэтому решает человек.
 
 const chatState = {
   models: [],          // плоский список позиций селектора с /api/chat/models
-  meta: null,          // тарифные данные ответа: очки, ретенция, дефолты
+  meta: null,          // тарифные данные ответа: токены, ретенция, дефолты
   chats: [],
   activeId: 0,
   messages: [],
@@ -6775,7 +7142,7 @@ const chatState = {
 
 function chatEl(id) { return document.getElementById(id); }
 
-// Единица очков в нужной форме: «1 очко», «2 очка», «5 очков».
+// Единица токенов в нужной форме: «1 токен», «2 токена», «5 токенов».
 function chatUnit(n) { return tPlural(n, tRaw("chat.unit")); }
 
 // Лента всегда показывает последнее сообщение. Отдельная функция нужна из-за
@@ -7332,7 +7699,7 @@ async function chatSend() {
     chatState.sourceId = 0;
     await chatAfterSend();
   } catch (e) {
-    // Нехватка очков приходит структурой (402 not_enough_points) — открываем
+    // Нехватка токенов приходит структурой (402 not_enough_points) — открываем
     // тарифы прямо отсюда, а не оставляем человека в тупике с alert'ом.
     if (e && e.code === "not_enough_points") openAccountModal("plan");
     fail(e);
@@ -7427,7 +7794,7 @@ function chatSchedulePoll() {
       if (me && me.user && chatState.meta) chatState.meta.points = me.user.gen_points;
       chatRenderFeed();
       chatRenderCompose();
-      // Цена под полем показывает и остаток очков: после возврата за упавшую
+      // Цена под полем показывает и остаток токенов: после возврата за упавшую
       // генерацию он меняется, и строка обязана это отразить.
       chatRenderPrice();
       chatSchedulePoll();

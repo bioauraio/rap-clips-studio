@@ -47,9 +47,9 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=56" />
-<link rel="stylesheet" href="/landing.css?v=56" />
-<link rel="stylesheet" href="/tg.css?v=56" />
+<link rel="stylesheet" href="/style.css?v=57" />
+<link rel="stylesheet" href="/landing.css?v=57" />
+<link rel="stylesheet" href="/tg.css?v=57" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -67,7 +67,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=56"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=57"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -77,7 +77,7 @@
      Все пользовательские тексты живут в словаре I18N (i18n.js): разметка
      держит только структуру и ключи data-i18n="путь.в.словаре" (плюс
      -ph / -title / -alt / -aria / -content для атрибутов). Повторяющиеся
-     блоки (шаги, функции, тарифы, пакеты очков, FAQ, подвал) рисует JS из
+     блоки (шаги, функции, тарифы, пакеты токенов, FAQ, подвал) рисует JS из
      того же словаря — переводчику хватит одного файла.
      ───────────────────────────────────────────────────────────────────── -->
 <div id="welcome" class="landing hidden">
@@ -191,7 +191,7 @@
       <p class="ld-pay-note" id="ld-pay-note"></p>
     </section>
 
-    <!-- 5. Докупка очков: шкала пакетов -->
+    <!-- 5. Докупка токенов: шкала пакетов -->
     <section class="ld-sec ld-shell" id="ld-topup">
       <div class="ld-sec-head">
         <span class="ld-eyebrow" data-i18n="landing.topup.eyebrow"></span>
@@ -329,12 +329,24 @@
         <span class="cover-ph"></span>
       </label>
       <input id="project-name" class="project-name" data-i18n-ph="top.projectNamePh" />
+      <!-- Вид проекта (альбом/сингл) остаётся в DOM: на него пишет
+           renderProjectBar, а $("#…") в app.js — голый querySelector без
+           проверок. В шапке он скрыт стилем: то же самое написано в карточке
+           режима, а место в строке нужно тумблеру. -->
       <span id="project-kind" class="kind-badge"></span>
-      <!-- Режим проекта: он же его вид (album|single → rap clips, ugc, series).
-           Второго реестра нет — подпись берётся из словаря по project.mode. -->
-      <span id="project-mode" class="mode-badge hidden"></span>
+      <!-- ТУМБЛЕР РЕЖИМОВ, схлопнутый в капсулу. Это прежний бейдж режима:
+           id сохранён (его ищет renderProjectBar), но теперь это кнопка —
+           клик открывает меню режимов. На широком экране капсула прячется,
+           её место занимает лента #mode-seg. -->
+      <button type="button" id="project-mode" class="mode-badge mode-switch hidden"
+              aria-haspopup="dialog" aria-expanded="false"
+              data-i18n-title="modes.menu.title"></button>
       <button id="new-project-btn" class="tb-new" data-i18n="top.newProject"></button>
     </div>
+    <!-- Лента режимов. Стоит между проектом и правым краем: тумблер отвечает
+         на вопрос «чем я снимаю», а не «в каком я проекте». Наполняет
+         mode-menu.js из общего реестра modes.js. -->
+    <div id="mode-seg" class="mode-seg" role="tablist" data-i18n-aria="modes.menu.title"></div>
     <div class="tb-user">
       <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
         <button type="button" data-lang="en">EN</button>
@@ -519,88 +531,180 @@
 
     <div class="stage-panes">
       <!-- 1. Настройка -->
+      <!-- ЕДИНЫЙ БЛОК ПАРАМЕТРОВ РЕЖИМА.
+           Раньше настройки объекта лежали в пяти разных местах: стиль здесь,
+           «зерно» и «без сюжета» — чекбоксами под плеером, сюжет — отдельной
+           панелью шага 1, движки — своей коробкой, а сюжетный КАРКАС был
+           доступен вообще только на лендинге и в студию не попадал никогда.
+           Здесь всё это стоит в одном блоке и в порядке принятия решений:
+           что снимаем → как выглядит → кадр → чем и почём → материал.
+
+           Порядок продиктован данными, а не вкусом: у каждого каркаса есть
+           styles_fit, то есть каркас подсказывает стиль, а не наоборот.
+
+           Секции 1, 2 и 4 открыты всегда — это два решения человека и цена.
+           3 и 5 схлопнуты: их состояние держит app.js в модуле, а не в DOM,
+           потому что #tracks перерисовывается поллингом целиком. -->
       <section class="stage-pane" data-stage="setup">
-        <label data-i18n-title="track.styleLabelTitle" data-i18n="track.styleLabel"></label>
-        <div class="t-style-picker style-picker style-picker-wide"></div>
-        <input type="hidden" class="t-style" />
+        <div class="mode-setup">
+          <div class="ms-summary"></div>
 
-        <!-- ДВИЖКИ ОБЪЕКТА: один выбор на весь трек, табами.
-             Раньше чипы движка рисовались В КАЖДОЙ карточке кадра (тридцать
-             наборов по восемь), нигде не сохранялись и полностью
-             игнорировались кнопками «все кадры» и «все видео». -->
-        <div class="t-engines">
-          <div class="t-engines-head">
-            <b data-i18n="engines.title"></b>
-            <span class="eng-hint"></span>
-          </div>
-          <div class="eng-row">
-            <label data-i18n="engines.image"></label>
-            <div class="t-img-engines eng-tabs"></div>
-          </div>
-          <div class="eng-row">
-            <label data-i18n="engines.video"></label>
-            <div class="t-vid-engines eng-tabs"></div>
-          </div>
-          <div class="eng-forecast"></div>
-        </div>
-
-        <!-- Поля режимов «сериалы» и «UGC». В клипе скрыты целиком. -->
-        <div class="t-mode-fields hidden">
-          <div class="row t-mode-row">
-            <div class="t-format-wrap">
-              <label data-i18n="docs.formatLabel"></label>
-              <select class="t-format"></select>
+          <!-- 1. ЧТО СНИМАЕМ -->
+          <section class="ms-sec" data-sec="what">
+            <h4 class="ms-h" data-i18n="modeSetup.what"></h4>
+            <p class="ms-hint muted"></p>
+            <!-- Витрина каркасов. У клипа это CLIP_PRESETS (до сих пор жили
+                 только на лендинге и в студию не попадали никогда), у
+                 остальных режимов — каркас из реестра formats.py. Настоящее
+                 состояние по-прежнему держит .t-format ниже: карточки пишут
+                 в него и дёргают его же обработчик. -->
+            <div class="ms-presets"></div>
+            <!-- Сюжет проекта. Это ЗЕРКАЛО #story, а не переезд: панель сюжета
+                 живёт вне #tracks, а #tracks поллинг перерисовывает целиком —
+                 перенесённый сюда узел был бы уничтожен первой же
+                 перерисовкой, и весь app.js упал бы на $("#story").value.
+                 Показывается ровно у одного объекта: сюжет общий на проект. -->
+            <div class="ms-story hidden">
+              <label data-i18n="modeSetup.storyLabel"></label>
+              <textarea class="ms-story-text" rows="3" data-i18n-ph="story.arcPh"></textarea>
+              <div class="row">
+                <button type="button" class="ms-story-save" data-i18n="common.save"></button>
+                <button type="button" class="ms-story-gen primary" data-i18n="story.gen"></button>
+                <span class="ms-story-status status"></span>
+              </div>
             </div>
-            <div class="t-season-wrap hidden">
-              <label data-i18n="docs.seasonLabel"></label>
-              <input class="t-season" type="number" min="0" max="99" />
-            </div>
-            <div class="t-episode-wrap hidden">
-              <label data-i18n="docs.episodeLabel"></label>
-              <input class="t-episode" type="number" min="0" max="999" />
-            </div>
-          </div>
-          <div class="t-location-wrap hidden">
-            <label data-i18n="docs.locationLabel"></label>
-            <textarea class="t-location" rows="2" data-i18n-ph="docs.locationPh"></textarea>
-          </div>
-          <div class="t-script-wrap hidden">
-            <div class="row">
-              <button class="t-gen-script primary"></button>
-              <span class="t-script-status status"></span>
-            </div>
-            <div class="t-script-body doc-body muted"></div>
-          </div>
-        </div>
-        <div class="track-body">
-          <div class="track-left">
-            <!-- Аудио и «без сюжета» — свойства КЛИПА: серия и ролик режутся
-                 не по дорожке, а по сценарию, и эти поля там ведут в никуда.
-                 Скрывает их renderTrack по mode.needs_audio. -->
-            <label class="t-audio-label" data-i18n="track.audio"></label>
-            <audio class="t-audio" controls></audio>
-            <span class="t-duration"></span>
-            <label class="approve-check grain-check" data-i18n-title="track.grainTitle"><input type="checkbox" class="t-grain" /> <span data-i18n="track.grain"></span></label>
+            <!-- «Без сюжета» — это ВЫБОР ТИПА СЮЖЕТА, а не свойство плеера.
+                 До этого чекбокс стоял под аудио, рядом с зерном плёнки. -->
             <label class="approve-check grain-check t-nostory-wrap" data-i18n-title="track.nostoryTitle"><input type="checkbox" class="t-nostory" /> <span data-i18n="track.nostory"></span></label>
-          </div>
-          <div class="track-right">
-            <label data-i18n="track.comment"></label>
-            <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
-            <!-- Режиссёрская заметка трека: её пишет генератор сюжета. Сюжет
-                 альбома живёт в своей панели, а заметка — свойство трека,
-                 поэтому она осталась здесь, рядом с комментарием владельца. -->
-            <div class="t-note-view hidden">
-              <label data-i18n="track.noteLabel"></label>
-              <p class="t-note-text muted"></p>
+
+            <!-- Поля режимов «сериалы», «UGC» и «мокапы». В клипе скрыты. -->
+            <div class="t-mode-fields hidden">
+              <div class="row t-mode-row">
+                <div class="t-format-wrap">
+                  <label data-i18n="docs.formatLabel"></label>
+                  <select class="t-format"></select>
+                </div>
+                <div class="t-season-wrap hidden">
+                  <label data-i18n="docs.seasonLabel"></label>
+                  <input class="t-season" type="number" min="0" max="99" />
+                </div>
+                <div class="t-episode-wrap hidden">
+                  <label data-i18n="docs.episodeLabel"></label>
+                  <input class="t-episode" type="number" min="0" max="999" />
+                </div>
+              </div>
+              <div class="t-location-wrap hidden">
+                <label data-i18n="docs.locationLabel"></label>
+                <textarea class="t-location" rows="2" data-i18n-ph="docs.locationPh"></textarea>
+              </div>
+              <div class="t-script-wrap hidden">
+                <div class="row">
+                  <button class="t-gen-script primary"></button>
+                  <span class="t-script-status status"></span>
+                </div>
+                <div class="t-script-body doc-body muted"></div>
+              </div>
             </div>
+          </section>
+
+          <!-- 2. КАК ВЫГЛЯДИТ -->
+          <section class="ms-sec" data-sec="look">
+            <h4 class="ms-h" data-i18n="modeSetup.look"></h4>
+            <label class="ms-style-label" data-i18n-title="track.styleLabelTitle" data-i18n="track.styleLabel"></label>
+            <div class="t-style-picker style-picker style-picker-wide"></div>
+            <input type="hidden" class="t-style" />
+          </section>
+
+          <!-- 3. КАДР: геометрия, разрешение, зерно. Схлопнуто у всех, кроме
+               мокапов: там квадрат и разрешение — главные параметры съёмки. -->
+          <details class="ms-sec ms-fold" data-sec="frame">
+            <summary data-i18n="modeSetup.frame"></summary>
+            <div class="ms-fold-body">
+              <div class="ms-row">
+                <label data-i18n="modeSetup.aspect"></label>
+                <div class="ms-aspect eng-tabs"></div>
+              </div>
+              <div class="ms-row ms-res-row">
+                <label data-i18n="modeSetup.resolution"></label>
+                <div class="ms-res eng-tabs"></div>
+              </div>
+              <label class="approve-check grain-check" data-i18n-title="track.grainTitle"><input type="checkbox" class="t-grain" /> <span data-i18n="track.grain"></span></label>
+              <p class="ms-frame-note muted"></p>
+            </div>
+          </details>
+
+          <!-- 4. ДВИЖКИ И ЦЕНА: один выбор на весь объект, табами.
+               Движков восемь, и цена сцены у них отличается в тридцать раз —
+               выбор такого веса обязан быть виден целиком. -->
+          <section class="ms-sec" data-sec="engines">
+            <h4 class="ms-h" data-i18n="modeSetup.engines"></h4>
+            <div class="t-engines">
+              <div class="t-engines-head">
+                <b data-i18n="engines.title"></b>
+                <span class="eng-hint"></span>
+              </div>
+              <div class="eng-row">
+                <label data-i18n="engines.image"></label>
+                <div class="t-img-engines eng-tabs"></div>
+              </div>
+              <div class="eng-row">
+                <label data-i18n="engines.video"></label>
+                <div class="t-vid-engines eng-tabs"></div>
+              </div>
+              <div class="eng-forecast"></div>
+            </div>
+          </section>
+
+          <!-- 5. МАТЕРИАЛ: то, что человек приносит сам. У клипа дорожка и
+               текст песни, у ролика локация, у мокапа фото упаковки. -->
+          <details class="ms-sec ms-fold" data-sec="material">
+            <summary data-i18n="modeSetup.material"></summary>
+            <div class="ms-fold-body">
+              <!-- Фото товара (мокапы): референс, по которому упаковка обязана
+                   совпасть до последней буквы на этикетке. -->
+              <div class="ms-photos hidden">
+                <label data-i18n="modeSetup.photos"></label>
+                <p class="ms-photos-hint muted" data-i18n="modeSetup.photosHint"></p>
+                <div class="ms-photos-grid"></div>
+                <label class="ms-photo-add">
+                  <input type="file" class="ms-photo-input hidden" accept="image/jpeg,image/png,image/webp" multiple />
+                  <span data-i18n="modeSetup.photosAdd"></span>
+                </label>
+                <span class="ms-photos-status status"></span>
+              </div>
+              <div class="track-body">
+                <div class="track-left">
+                  <!-- Аудио — свойство КЛИПА: серия и ролик режутся не по
+                       дорожке, а по сценарию. Скрывает renderTrack по
+                       mode.needs_audio. -->
+                  <label class="t-audio-label" data-i18n="track.audio"></label>
+                  <audio class="t-audio" controls></audio>
+                  <span class="t-duration"></span>
+                </div>
+                <div class="track-right">
+                  <label data-i18n="track.comment"></label>
+                  <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
+                  <!-- Режиссёрская заметка трека: её пишет генератор сюжета. -->
+                  <div class="t-note-view hidden">
+                    <label data-i18n="track.noteLabel"></label>
+                    <p class="t-note-text muted"></p>
+                  </div>
+                </div>
+              </div>
+              <label class="t-lyrics-label" data-i18n="track.lyrics"></label>
+              <textarea class="t-lyrics" rows="5" data-i18n-ph="track.lyricsPh"></textarea>
+              <!-- Библия героя — тоже зеркало проектного поля, по той же
+                   причине, что и сюжет: узел живёт вне #tracks. -->
+              <div class="ms-bible hidden">
+                <label data-i18n-title="story.bibleTitle" data-i18n="story.bible"></label>
+                <textarea class="ms-bible-text" rows="2" data-i18n-ph="story.biblePh"></textarea>
+              </div>
+            </div>
+          </details>
+
+          <div class="row ms-foot">
+            <button class="save-track" data-i18n="track.saveTrack"></button>
           </div>
-        </div>
-        <!-- Текст песни — тоже свойство клипа: у серии реплики пишет сценарий,
-             у ролика — генератор. Скрывает renderTrack по mode.needs_lyrics. -->
-        <label class="t-lyrics-label" data-i18n="track.lyrics"></label>
-        <textarea class="t-lyrics" rows="5" data-i18n-ph="track.lyricsPh"></textarea>
-        <div class="row">
-          <button class="save-track" data-i18n="track.saveTrack"></button>
         </div>
       </section>
 
@@ -945,8 +1049,16 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=56"></script>
-<script src="/app.js?v=56"></script>
+<!-- Реестр режимов — ПЕРВЫМ и ВСЕГДА: из него читают и классическая шапка
+     (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
+     реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
+     то есть владелец в обычной студии его не видел вообще. -->
+<script src="/modes.js?v=57"></script>
+<script src="/i18n.js?v=57"></script>
+<script src="/app.js?v=57"></script>
+<!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
+     #project-select и на window.openNewProjectModal / applyModeShortcut. -->
+<script src="/mode-menu.js?v=57"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -970,10 +1082,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=56";
+  css.href = "/nav.css?v=57";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=56";
+  js.src = "/nav.js?v=57";
   document.body.appendChild(js);
 })();
 </script>
