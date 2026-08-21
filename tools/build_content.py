@@ -754,17 +754,24 @@ def build_sitemap(arts: list[dict], by_key: dict,
             entries.append((f"{prefixes[lang]}/", today, {
                 lang: f"{prefixes[lang]}/", other: f"{prefixes[other]}/",
                 "x-default": f"{prefixes['en']}/"}))
-    index = dict(by_key)
-    for a in (extra or []):
-        index[(a["translationKey"], a["lang"])] = a
-    for a in list(arts) + list(extra or []):
-        sib = index.get((a["translationKey"],
-                         "en" if a["lang"] == "ru" else "ru"))
-        alt = {a["lang"]: a["url"]}
-        if sib:
-            alt[sib["lang"]] = sib["url"]
-        alt["x-default"] = alt.get("en", a["url"])
-        entries.append((a["url"], a.get("updated") or a["date"], alt))
+    # Пара ищется ВНУТРИ своей коллекции. Раньше здесь был один плоский
+    # индекс, и уроки затирали статьи с тем же translationKey: ключ "engines"
+    # есть и у статьи (seedance-vs-kling-vs-grok), и у урока (04-engines).
+    # Из-за этого в sitemap у статьи ru-альтернативой стоял /ru/learn/engines/,
+    # а на самой странице — правильная пара: страницы собирает article_page()
+    # по отдельному словарю статей. Разные hreflang на странице и в sitemap
+    # Google считает конфликтом и выбрасывает ОБА, то есть ru- и en-версии
+    # статьи продолжали конкурировать друг с другом вместо склейки.
+    extra_by = {(a["translationKey"], a["lang"]): a for a in (extra or [])}
+    for coll, idx in ((arts, by_key), (extra or [], extra_by)):
+        for a in coll:
+            sib = idx.get((a["translationKey"],
+                           "en" if a["lang"] == "ru" else "ru"))
+            alt = {a["lang"]: a["url"]}
+            if sib:
+                alt[sib["lang"]] = sib["url"]
+            alt["x-default"] = alt.get("en", a["url"])
+            entries.append((a["url"], a.get("updated") or a["date"], alt))
 
     rows = []
     for loc, lastmod, alt in entries:
