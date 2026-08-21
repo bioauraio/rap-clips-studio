@@ -628,12 +628,13 @@ def _model_sheet_engine(user: "User") -> str:
     return _plan_image_engine(user)
 
 
-def _frames_cost(user: "User", scene: "Scene | None" = None) -> int:
+def _frames_cost(user: "User", scene: "Scene | None" = None,
+                 engine: str = "") -> int:
     """Цена пары кадров сцены. Если кадры уже нарисованы — по ТОМУ движку,
     которым их реально нарисовали: иначе смена тарифа между кадрами и видео
     ломала бы добор до цены сцены."""
-    engine = (scene.image_engine if scene else "") or _plan_image_engine(user)
-    return FRAME_COST.get(engine, FRAMES_COST)
+    eng = engine or (scene.image_engine if scene else "") or _plan_image_engine(user)
+    return FRAME_COST.get(eng, FRAMES_COST)
 
 
 def _scene_cost(user: "User", provider: str, scene: "Scene | None" = None,
@@ -653,6 +654,47 @@ def _allowed_provider(user: "User", wanted: str) -> str:
         if p in allowed:
             return p
     return "grok"
+
+
+# ══════════════ РЕЖИМЫ: вид проекта решает, что и чем генерим ══════════════
+# Отдельного «реестра режимов» в базе нет и не нужно: Project.kind И ЕСТЬ
+# режим (album|single → rap clips, ugc, series). Всё остальное — структура —
+# лежит в backend/formats.py и читается отсюда. Новый режим = объект там,
+# а не ветка if по всему файлу.
+
+def _mode_of(project: "Project | None") -> dict:
+    return formats.mode_of_kind(project.kind if project else "album")
+
+
+def _catalog_of(project: "Project | None") -> str:
+    return _mode_of(project)["format_catalog"]
+
+
+def _format_key(track: "Track") -> str:
+    """Каркас объекта: явный выбор владельца или дефолт режима."""
+    catalog = _catalog_of(track.project)
+    key = (track.format_key or "").strip()
+    if key and formats.format_spec(catalog, key):
+        return key
+    return formats.default_format(catalog)
+
+
+# ══════════════ ДВИЖКИ: один выбор на объект, а не на каждый кадр ══════════════
+# Порядок разрешения ОДИН для одиночной генерации, пакетной и супергенерации:
+#     явный выбор запроса → движок трека → дефолт тарифа,
+# и финальным фильтром всегда тариф (_plan_*_engine), который молча опускает
+# недоступное. Раньше выбор жил только в карточке кадра, никуда не сохранялся
+# и полностью игнорировался кнопками «все кадры» / «все видео» — они звали
+# роут вообще без параметров.
+
+def _resolve_image_engine(user: "User | None", track: "Track | None",
+                          want: str = "") -> str:
+    return _plan_image_engine(user, want or (track.image_engine if track else ""))
+
+
+def _resolve_video_engine(user: "User | None", track: "Track | None",
+                          provider: str, want: str = "") -> str:
+    return _plan_video_engine(user, provider, want or (track.video_engine if track else ""))
 
 
 class ApiError(Exception):
@@ -789,7 +831,8 @@ def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> Non
              user.id, points, what or "неудачную генерацию", user.gen_points)
 
 
-def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str) -> None:
+def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str,
+                  *, kind: str = "", engine: str = "") -> None:
     """Списать за КАЖДЫЙ платный вызов движка.
 
     Раньше перегенерация уже оплаченной сцены была бесплатной: считалось, что
@@ -800,12 +843,14 @@ def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str)
     Бесплатные шлюзовые движки по-прежнему стоят символические 2 очка."""
     if cost <= 0:
         return
-    _charge(db, user, cost, what)
+    _charge(db, user, cost, what, kind=kind,
+            ref_type="scene", ref_id=scene.id, engine=engine)
     scene.charged_points = int(scene.charged_points or 0) + cost
     db.commit()
 
 
-def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str) -> int:
+def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str,
+                   *, kind: str = "", engine: str = "", track_id: int = 0) -> int:
     """То же для пачки сцен: одно списание на весь пакет (и один отказ, если
     очков не хватило), потом отметки на сценах."""
     rows, total = [], 0
@@ -815,7 +860,8 @@ def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str) ->
             total += cost
             rows.append((s, cost))
     if total:
-        _charge(db, user, total, what)
+        _charge(db, user, total, what, kind=kind, engine=engine,
+                ref_type="track" if track_id else "", ref_id=track_id)
     for s, cost in rows:
         s.charged_points = int(s.charged_points or 0) + cost
     if rows:
@@ -1529,6 +1575,13 @@ def scene_dict(s: Scene) -> dict:
         "video_url": f"/api/media/{s.video_filename}" if s.video_filename else "",
         "video_status": s.video_status, "video_error": s.video_error,
         "video_provider": s.video_provider,
+        # Движки сцены наружу отдавались... никогда: карточка кадра рисовала
+        # чипы по s.image_engine/s.video_engine, которых в ответе не было, и
+        # подсветка всегда врала. Теперь поля есть, и «переопределить движок»
+        # в карточке показывает то, чем сцену реально сняли.
+        "image_engine": s.image_engine or "", "video_engine": s.video_engine or "",
+        # Режимы «сериалы» и «UGC»: акт серии и кто говорит в кадре.
+        "act": s.act or "", "speaker": s.speaker or "",
     }
 
 
@@ -1572,15 +1625,44 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "cover_url": f"/api/media/{t.cover_filename}" if t.cover_filename else "",
         "supergen_status": t.supergen_status, "supergen_note": t.supergen_note,
         "film_grain": t.film_grain, "no_story": t.no_story,
+        # Один выбор движков на весь объект. Пусто = «как решит тариф»;
+        # карточка кадра показывает это наследование, а не пустой чип.
+        "video_engine": t.video_engine or "", "image_engine": t.image_engine or "",
+        # Режимы «сериалы» и «UGC».
+        "season_no": t.season_no or 0, "episode_no": t.episode_no or 0,
+        "format_key": t.format_key or "", "location_bible": t.location_bible or "",
     }
     if with_scenes:
         d["scenes"] = [scene_dict(s) for s in t.scenes]
     return d
 
 
-def project_dict(p: Project, with_scenes: bool = False) -> dict:
+def doc_dict(d: Doc) -> dict:
+    """Сценарный артефакт наружу. body_json отдаётся РАЗОБРАННЫМ: фронт не
+    должен уметь парсить наш внутренний формат, он рисует список карточек."""
+    parsed = None
+    if (d.body_json or "").strip():
+        try:
+            parsed = json.loads(d.body_json)
+        except Exception:  # noqa: BLE001
+            parsed = None
+    return {
+        "id": d.id, "project_id": d.project_id, "track_id": d.track_id or 0,
+        "kind": d.kind, "position": d.position, "title": d.title,
+        "body": d.body, "data": parsed,
+        "status": d.status, "error": d.error,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else "",
+    }
+
+
+def project_dict(p: Project, with_scenes: bool = False, docs: list | None = None) -> dict:
+    mode = _mode_of(p)
     return {
         "id": p.id, "name": p.name, "kind": p.kind, "character_bible": p.character_bible,
+        # Режим проекта — производная от kind, но отдаём явно: фронт не должен
+        # держать вторую копию таблицы «какой kind в каком режиме».
+        "mode": mode["id"],
+        "docs": [doc_dict(d) for d in (docs or [])],
         "characters": [character_dict(c) for c in sorted(p.characters, key=lambda x: x.position)],
         "story": p.story, "story_status": p.story_status, "story_error": p.story_error,
         "cover_url": f"/api/media/{p.cover_filename}" if p.cover_filename else "",
@@ -1753,7 +1835,8 @@ async def api_onboarding_mark(request: Request, user: User = Depends(current_use
 @app.get("/api/projects")
 def list_projects(user: User = Depends(current_user), db: Session = Depends(db_session)):
     return [
-        {"id": p.id, "name": p.name, "kind": p.kind, "tracks": len(p.tracks)}
+        {"id": p.id, "name": p.name, "kind": p.kind,
+         "mode": _mode_of(p)["id"], "tracks": len(p.tracks)}
         for p in db.query(Project).filter(Project.owner_id == user.id)
                     .order_by(Project.id).all()
     ]
@@ -1762,15 +1845,16 @@ def list_projects(user: User = Depends(current_user), db: Session = Depends(db_s
 @app.post("/api/projects")
 async def create_project(request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     body = await request.json()
-    kind = str(body.get("kind") or "album")
-    if kind not in ("album", "single"):
-        kind = "album"
+    # Вид проекта = режим. Неизвестный вид тихо становится альбомом: это
+    # безопасная сторона ошибки — клип умеет всё, что умели старые проекты.
+    kind = formats.norm_kind(body.get("kind"))
     project = Project(name=str(body.get("name") or "Новый проект"), kind=kind,
                       owner_id=user.id)
     db.add(project)
     db.commit()
     db.refresh(project)
-    return {"id": project.id, "name": project.name, "kind": project.kind}
+    return {"id": project.id, "name": project.name, "kind": project.kind,
+            "mode": _mode_of(project)["id"]}
 
 
 @app.delete("/api/projects/{project_id}")
@@ -1804,9 +1888,18 @@ def delete_project(project_id: int, user: User = Depends(current_user), db: Sess
     return {"ok": True}
 
 
+def _project_docs(db: Session, project: Project) -> list:
+    return (db.query(Doc).filter(Doc.project_id == project.id)
+            .order_by(Doc.track_id.is_(None).desc(), Doc.position, Doc.id).all())
+
+
 @app.get("/api/project")
 def get_project(project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
-    return project_dict(get_or_create_project(db, user, project_id), with_scenes=True)
+    project = get_or_create_project(db, user, project_id)
+    # Документы едут ВМЕСТЕ с проектом: у них тот же status/error, что у
+    # сюжета, и поллер фронта уже ходит сюда. Отдельный адрес заставил бы его
+    # опрашивать два места и рассинхронизировал бы «генерится» на экране.
+    return project_dict(project, with_scenes=True, docs=_project_docs(db, project))
 
 
 @app.patch("/api/project")
@@ -1818,7 +1911,7 @@ async def update_project(request: Request, project_id: int | None = None, user: 
     if "character_bible" in body:
         project.character_bible = str(body["character_bible"])
     db.commit()
-    return project_dict(project)
+    return project_dict(project, docs=_project_docs(db, project))
 
 
 def _run_story_generation(project_id: int) -> None:
@@ -1874,6 +1967,414 @@ def generate_story(project_id: int | None = None, user: User = Depends(current_u
     return {"ok": True}
 
 
+# ═══════════════════ РЕЖИМЫ, СЦЕНАРНЫЕ ДОКУМЕНТЫ И СЕРИАЛЫ ═══════════════════
+# Ни одного нового конвейера. Всё ниже пишет ТЕКСТ в таблицу docs; кадры,
+# видео и сборка потом берут его тем же путём, что и сюжет клипа. Поэтому
+# «сериал» — это шесть роутов вокруг Doc, а не второе приложение.
+
+
+@app.get("/api/modes")
+def api_modes(request: Request, lang: str = ""):
+    """Реестр режимов для фронта и мини-аппа: шаги, объекты, каркасы.
+
+    Подписей режимов здесь нет намеренно — они i18n-ключи словаря
+    (modes.<id>.*). Иначе перевод расползся бы между сервером и i18n.js, и
+    третий язык пришлось бы заводить в двух местах."""
+    lg = _lang_of(request, lang)
+    return {"modes": formats.public_modes(lang=lg), "kinds": formats.PROJECT_KINDS}
+
+
+def _own_doc(db: Session, user: User, doc_id: int) -> Doc:
+    doc = db.get(Doc, doc_id)
+    if not doc:
+        raise HTTPException(404, "документ не найден")
+    project = db.get(Project, doc.project_id)
+    if not _owned(user, project):
+        raise HTTPException(404, "документ не найден")
+    return doc
+
+
+def _find_doc(db: Session, project_id: int, kind: str,
+              track_id: int | None = None) -> "Doc | None":
+    q = db.query(Doc).filter(Doc.project_id == project_id, Doc.kind == kind)
+    q = q.filter(Doc.track_id == track_id) if track_id else q.filter(Doc.track_id.is_(None))
+    return q.first()
+
+
+def _put_doc(db: Session, project_id: int, kind: str, *, track_id: int | None = None,
+             title: str = "", body: str | None = None, data=None,
+             status: str | None = None, error: str | None = None,
+             position: int = 0) -> Doc:
+    """Один документ каждого вида на объект: upsert, а не add.
+
+    Иначе повторная генерация логлайна клала бы вторую строку, и «какой из
+    них настоящий» решала бы сортировка по id — то есть случай."""
+    doc = _find_doc(db, project_id, kind, track_id)
+    if not doc:
+        doc = Doc(project_id=project_id, track_id=track_id, kind=kind, position=position)
+        db.add(doc)
+    if title:
+        doc.title = title[:200]
+    if body is not None:
+        doc.body = body
+    if data is not None:
+        doc.body_json = json.dumps(data, ensure_ascii=False)
+    if status is not None:
+        doc.status = status
+    if error is not None:
+        doc.error = error
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def _doc_status(project_id: int, kinds: tuple, status: str, error: str = "",
+                track_id: int | None = None) -> None:
+    """Отметить пачку документов одним статусом из фонового треда."""
+    db = SessionLocal()
+    try:
+        for k in kinds:
+            _put_doc(db, project_id, k, track_id=track_id, status=status, error=error)
+    finally:
+        db.close()
+
+
+@app.get("/api/projects/{project_id}/docs")
+def list_docs(project_id: int, user: User = Depends(current_user),
+              db: Session = Depends(db_session)):
+    project = _own_project(db, user, project_id)
+    return [doc_dict(d) for d in _project_docs(db, project)]
+
+
+@app.post("/api/projects/{project_id}/docs")
+async def save_doc(project_id: int, request: Request,
+                   user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Ручная правка документа: владелец правит сгенерированное или пишет сам.
+
+    Сценарные документы обязаны быть редактируемыми: ИИ ошибается в именах и
+    в мелочах мира, а перегенерировать весь сезон ради одной фразы — дорого."""
+    project = _own_project(db, user, project_id)
+    body = await request.json()
+    kind = str(body.get("kind") or "")
+    if kind not in formats.DOC_KINDS:
+        raise HTTPException(400, f"неизвестный вид документа: {kind}")
+    track_id = int(body.get("track_id") or 0) or None
+    if track_id:
+        _own_track(db, user, track_id)
+    doc = _put_doc(db, project.id, kind, track_id=track_id,
+                   title=str(body.get("title") or ""),
+                   body=str(body.get("body") or ""),
+                   status="", error="")
+    return doc_dict(doc)
+
+
+@app.delete("/api/docs/{doc_id}")
+def delete_doc(doc_id: int, user: User = Depends(current_user),
+               db: Session = Depends(db_session)):
+    doc = _own_doc(db, user, doc_id)
+    db.delete(doc)
+    db.commit()
+    return {"ok": True}
+
+
+# ─────────────── библия сезона / персона блогера ───────────────
+
+_BIBLE_DOCS = ("logline", "synopsis", "arc")
+
+
+def _run_series_bible(project_id: int, idea: str, episodes: int) -> None:
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if not project:
+            return
+        key = formats.default_format("series")
+        # Каркас берём у первой серии, если она уже заведена: владелец мог
+        # выбрать жанр там, и библия обязана писаться под ТОТ ЖЕ каркас.
+        for t in project.tracks:
+            if formats.format_spec("series", t.format_key or ""):
+                key = t.format_key
+                break
+        import asyncio
+        res = asyncio.run(claude.generate_series_bible(
+            idea=idea,
+            format_label=((formats.format_spec("series", key) or {})
+                          .get("label", {}).get("ru", key)),
+            season_beats=formats.beats_block("series", key, "season_beats"),
+            format_note=formats.seed(key).get("note", ""),
+            episodes=episodes,
+            character_bible=project.character_bible,
+            characters=characters_payload(project),
+        ))
+        arcs = res.get("arcs") or []
+        arc_text = "\n\n".join(
+            f"{a.get('name', '')}: {a.get('arc', '')}" for a in arcs if a.get("arc"))
+        world = str(res.get("world") or "")
+        if world:
+            arc_text = (arc_text + "\n\nМИР И ЕГО ПРАВИЛА\n" + world).strip()
+        _put_doc(db, project_id, "logline", body=str(res.get("logline") or ""),
+                 status="", error="", position=1)
+        _put_doc(db, project_id, "synopsis", body=str(res.get("synopsis") or ""),
+                 status="", error="", position=2)
+        _put_doc(db, project_id, "arc", body=arc_text,
+                 data={"arcs": arcs, "world": world}, status="", error="", position=3)
+        if res.get("character_bible"):
+            project.character_bible = str(res["character_bible"])
+            db.commit()
+        log.info("библия сезона готова для проекта %s", project_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _doc_status(project_id, _BIBLE_DOCS, "error", str(e)[:500])
+        log.warning("библия сезона проекта %s упала: %s", project_id, e)
+    finally:
+        db.close()
+
+
+def _run_ugc_persona(project_id: int, idea: str) -> None:
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if not project:
+            return
+        import asyncio
+        res = asyncio.run(claude.generate_ugc_persona(
+            idea=idea, character_bible=project.character_bible,
+            characters=characters_payload(project),
+        ))
+        _put_doc(db, project_id, "persona", title=str(res.get("name") or ""),
+                 body=str(res.get("persona") or ""), status="", error="", position=1)
+        # Локация — отдельный документ, а не кусок персоны: она подставляется
+        # в промпты своей дословной формулой и правится отдельно (сменил
+        # комнату — переписал одну строку, а не всю персону).
+        _put_doc(db, project_id, "location", body=str(res.get("location_bible") or ""),
+                 status="", error="", position=2)
+        if res.get("character_bible"):
+            project.character_bible = str(res["character_bible"])
+            db.commit()
+        log.info("персона блогера готова для проекта %s", project_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _doc_status(project_id, ("persona", "location"), "error", str(e)[:500])
+        log.warning("персона блогера проекта %s упала: %s", project_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/projects/{project_id}/generate-bible")
+async def generate_bible(project_id: int, request: Request,
+                         user: User = Depends(current_user),
+                         db: Session = Depends(db_session)):
+    """Сезонный слой одним нажатием: логлайн + синопсис + арки (сериал) или
+    персона блогера (UGC). У клипа своя кнопка — /api/project/generate-story."""
+    from threading import Thread
+    project = _own_project(db, user, project_id)
+    catalog = _catalog_of(project)
+    body = await request.json() if await request.body() else {}
+    idea = str(body.get("idea") or "")[:4000]
+    if catalog == "series":
+        episodes = max(2, min(24, int(body.get("episodes") or 8)))
+        _charge(db, user, COST_STORY, f"библия сезона проекта {project.id}",
+                kind="story", ref_type="project", ref_id=project.id)
+        _doc_status(project.id, _BIBLE_DOCS, "queued")
+        Thread(target=_run_series_bible, args=(project.id, idea, episodes),
+               daemon=True).start()
+        return {"ok": True, "episodes": episodes}
+    if catalog == "ugc":
+        _charge(db, user, COST_STORY, f"персона блогера проекта {project.id}",
+                kind="story", ref_type="project", ref_id=project.id)
+        _doc_status(project.id, ("persona", "location"), "queued")
+        Thread(target=_run_ugc_persona, args=(project.id, idea), daemon=True).start()
+        return {"ok": True}
+    raise HTTPException(400, "у клипа сюжет генерится кнопкой «сюжет проекта»")
+
+
+# ─────────────── поэпизодный план и создание серий ───────────────
+
+def _run_beatsheet(project_id: int, episodes: int) -> None:
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if not project:
+            return
+        key = formats.default_format("series")
+        for t in project.tracks:
+            if formats.format_spec("series", t.format_key or ""):
+                key = t.format_key
+                break
+        logline = _find_doc(db, project_id, "logline")
+        synopsis = _find_doc(db, project_id, "synopsis")
+        arc = _find_doc(db, project_id, "arc")
+        import asyncio
+        res = asyncio.run(claude.generate_beatsheet(
+            logline=logline.body if logline else "",
+            synopsis=synopsis.body if synopsis else project.story,
+            arcs=arc.body if arc else "",
+            season_beats=formats.beats_block("series", key, "season_beats"),
+            format_note=formats.seed(key).get("note", ""),
+            episodes=episodes,
+        ))
+        rows = res.get("episodes") or []
+        text = "\n\n".join(
+            f"{r.get('no', i)}. {r.get('title', '')}\n"
+            f"Событие: {r.get('event', '')}\n"
+            f"Меняется: {r.get('changes', '')}\n"
+            f"Обрыв: {r.get('cliffhanger', '')}"
+            for i, r in enumerate(rows, 1))
+        _put_doc(db, project_id, "beatsheet", body=text, data={"episodes": rows},
+                 status="", error="", position=4)
+        log.info("поэпизодный план готов для проекта %s (%s серий)", project_id, len(rows))
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _doc_status(project_id, ("beatsheet",), "error", str(e)[:500])
+        log.warning("поэпизодный план проекта %s упал: %s", project_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/projects/{project_id}/generate-beatsheet")
+async def generate_beatsheet_route(project_id: int, request: Request,
+                                   user: User = Depends(current_user),
+                                   db: Session = Depends(db_session)):
+    from threading import Thread
+    project = _own_project(db, user, project_id)
+    if _catalog_of(project) != "series":
+        raise HTTPException(400, "поэпизодный план бывает только у сериала")
+    body = await request.json() if await request.body() else {}
+    episodes = max(2, min(24, int(body.get("episodes") or 8)))
+    if not _find_doc(db, project.id, "logline"):
+        raise HTTPException(400, "сначала собери библию сезона")
+    _charge(db, user, COST_STORY, f"поэпизодный план проекта {project.id}",
+            kind="story", ref_type="project", ref_id=project.id)
+    _doc_status(project.id, ("beatsheet",), "queued")
+    Thread(target=_run_beatsheet, args=(project.id, episodes), daemon=True).start()
+    return {"ok": True, "episodes": episodes}
+
+
+@app.post("/api/projects/{project_id}/create-episodes")
+async def create_episodes(project_id: int, request: Request,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """Карточки поэпизодного плана → настоящие серии (Track).
+
+    Отдельным нажатием, а не автоматически после плана: план переписывают по
+    два-три раза, и каждый прогон плодил бы сезон-дубль."""
+    project = _own_project(db, user, project_id)
+    if _catalog_of(project) != "series":
+        raise HTTPException(400, "серии бывают только у сериала")
+    body = await request.json() if await request.body() else {}
+    season = max(0, int(body.get("season_no") or 1))
+    sheet = _find_doc(db, project.id, "beatsheet")
+    rows = []
+    if sheet and sheet.body_json:
+        try:
+            rows = (json.loads(sheet.body_json) or {}).get("episodes") or []
+        except Exception:  # noqa: BLE001
+            rows = []
+    if not rows:
+        raise HTTPException(400, "сначала сгенерируй поэпизодный план")
+    have = {(t.season_no, t.episode_no) for t in project.tracks}
+    key = formats.default_format("series")
+    for t in project.tracks:
+        if formats.format_spec("series", t.format_key or ""):
+            key = t.format_key
+            break
+    pos = max((t.position for t in project.tracks), default=0)
+    made = 0
+    for i, r in enumerate(rows, 1):
+        no = int(r.get("no") or i)
+        if (season, no) in have:
+            continue          # эта серия уже заведена — второй раз не создаём
+        pos += 1
+        comment = "\n".join(x for x in (
+            f"Событие: {r.get('event', '')}",
+            f"Меняется: {r.get('changes', '')}",
+            f"Главный: {r.get('lead', '')}",
+            f"Обрыв: {r.get('cliffhanger', '')}") if x.split(": ", 1)[1].strip())
+        db.add(Track(
+            project_id=project.id, position=pos,
+            title=str(r.get("title") or f"Серия {no}"),
+            comment=comment, format_key=key,
+            season_no=season, episode_no=no,
+        ))
+        made += 1
+    db.commit()
+    return {"ok": True, "created": made}
+
+
+# ─────────────── сценарий одной серии ───────────────
+
+def _run_episode_script(track_id: int) -> None:
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        project = track.project
+        key = _format_key(track)
+        logline = _find_doc(db, project.id, "logline")
+        synopsis = _find_doc(db, project.id, "synopsis")
+        arc = _find_doc(db, project.id, "arc")
+        sheet = _find_doc(db, project.id, "beatsheet")
+        card = track.comment
+        if sheet and sheet.body_json:
+            try:
+                rows = (json.loads(sheet.body_json) or {}).get("episodes") or []
+                for r in rows:
+                    if int(r.get("no") or 0) == int(track.episode_no or 0):
+                        card = json.dumps(r, ensure_ascii=False)
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+        import asyncio
+        res = asyncio.run(claude.generate_episode_script(
+            logline=logline.body if logline else "",
+            synopsis=synopsis.body if synopsis else project.story,
+            arcs=arc.body if arc else "",
+            character_bible=project.character_bible,
+            episode_card=card,
+            episode_beats=formats.beats_block("series", key, "episode_beats"),
+            previously=_episode_previously(db, track),
+            rules=formats.rules("series"),
+            comment=track.comment,
+        ))
+        acts = res.get("acts") or []
+        text = "\n\n".join(f"[{a.get('act', '')}]\n{a.get('text', '')}" for a in acts)
+        _put_doc(db, project.id, "script", track_id=track.id,
+                 title=str(res.get("title") or track.title), body=text,
+                 data={"acts": acts, "summary": res.get("summary", ""),
+                       "recap_points": res.get("recap_points") or []},
+                 status="", error="")
+        if res.get("title") and not (track.title or "").strip():
+            track.title = str(res["title"])[:200]
+            db.commit()
+        log.info("сценарий серии %s готов (%s актов)", track_id, len(acts))
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        tr = db.get(Track, track_id)
+        if tr:
+            _doc_status(tr.project_id, ("script",), "error", str(e)[:500], track_id)
+        log.warning("сценарий серии %s упал: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/generate-script")
+def generate_script(track_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    from threading import Thread
+    track = _own_track(db, user, track_id)
+    if _catalog_of(track.project) != "series":
+        raise HTTPException(400, "сценарий по актам бывает только у серии")
+    if not _find_doc(db, track.project_id, "logline"):
+        raise HTTPException(400, "сначала собери библию сезона")
+    _charge(db, user, COST_STORY, f"сценарий серии {track.id}",
+            kind="story", ref_type="track", ref_id=track.id)
+    _put_doc(db, track.project_id, "script", track_id=track.id,
+             status="queued", error="")
+    Thread(target=_run_episode_script, args=(track_id,), daemon=True).start()
+    return {"ok": True}
+
+
 # ─────────────────────────────── треки ───────────────────────────────
 
 def _audio_profile(path: str, duration_sec: int) -> str:
@@ -1926,6 +2427,9 @@ def _ffprobe_duration(path: str) -> int:
 async def create_track(
     title: str = Form(""), lyrics: str = Form(""), comment: str = Form(""),
     style_keys: str = Form(""), style_extra: str = Form(""),
+    # Поля режимов «сериалы» и «UGC». Клип их просто не присылает — Form с
+    # дефолтом не ломает существующий сабмит формы «+ трек».
+    format_key: str = Form(""), season_no: int = Form(0), episode_no: int = Form(0),
     audio: UploadFile | None = None,
     project_id: int | None = None,
     user: User = Depends(current_user), db: Session = Depends(db_session),
@@ -1939,11 +2443,22 @@ async def create_track(
     keys = [k.strip() for k in (style_keys or "").split(",")
             if k.strip() in prompts_catalog.STYLE_KEYS][:3]
     extra = (style_extra or "").strip()[:2000]
+    catalog = _catalog_of(project)
+    fkey = str(format_key or "").strip()
+    if not formats.format_spec(catalog, fkey):
+        fkey = formats.default_format(catalog)
     track = Track(
         project_id=project.id, position=max_pos + 1,
         title=title, lyrics=lyrics, comment=comment,
         style_keys=",".join(keys), style_extra=extra,
         style=prompts_catalog.fusion(keys, extra),
+        format_key=fkey,
+        season_no=max(0, int(season_no or 0)),
+        # Номер серии внутри сезона: не передан — считаем по уже имеющимся,
+        # иначе весь сезон был бы «серией 0».
+        episode_no=int(episode_no or 0) or (
+            1 + sum(1 for t in project.tracks if t.season_no == max(0, int(season_no or 0)))
+            if catalog == "series" else 0),
     )
     if audio is not None:
         ext = os.path.splitext(audio.filename or "")[1] or ".mp3"
@@ -1980,6 +2495,25 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
         track.film_grain = bool(body["film_grain"])
     if "no_story" in body:
         track.no_story = bool(body["no_story"])
+    if "location_bible" in body:
+        track.location_bible = str(body["location_bible"])[:4000]
+    for num in ("season_no", "episode_no"):
+        if num in body:
+            setattr(track, num, max(0, int(body[num] or 0)))
+    if "format_key" in body:
+        want = str(body["format_key"] or "").strip()
+        catalog = _catalog_of(track.project)
+        track.format_key = want if formats.format_spec(catalog, want) else ""
+    # ДВИЖКИ ОБЪЕКТА. Пустая строка — валидное значение и означает «как решит
+    # тариф»: так владелец может снять свой выбор, а не остаться с ним навсегда.
+    # Проверяем по реестру, а не по тарифу: тариф опустит недоступное сам в
+    # момент генерации, а стереть уже сделанный выбор из-за смены тарифа нельзя.
+    if "video_engine" in body:
+        want = str(body["video_engine"] or "").strip()
+        track.video_engine = want if want in mediagen.VIDEO_ENGINES else ""
+    if "image_engine" in body:
+        want = str(body["image_engine"] or "").strip()
+        track.image_engine = want if want in mediagen.IMAGE_ENGINES else ""
     db.commit()
     return track_dict(track)
 
@@ -2246,6 +2780,103 @@ async def upload_track_cover(track_id: int, cover: UploadFile, user: User = Depe
 
 
 # ─────────────────────────────── сцены ───────────────────────────────
+# Раскадровка у всех режимов ОДНА: сцены → кадры → видео → сборка. Различается
+# только промпт, которым сцены пишутся, и каркас, который в него подставляется.
+# Поэтому ниже — три ветки на входе и общая запись в базу на выходе, а не три
+# конвейера.
+
+def _track_duration(track: Track) -> int:
+    """Целевой хронометраж объекта в секундах.
+
+    У клипа он объективен — длина дорожки. У ролика и серии дорожки нет:
+    длину задаёт число слотов режима на среднюю длину кадра. Поэтому
+    audio_duration_sec тут не «пустое поле», а просто неприменимое."""
+    if track.audio_duration_sec:
+        return int(track.audio_duration_sec)
+    mode = _mode_of(track.project)
+    lo, hi = mode["scenes"]["slot"]
+    return int(mode["scenes"]["typ"] * (lo + hi) / 2)
+
+
+def _episode_previously(db: Session, track: Track) -> str:
+    """«В предыдущих сериях»: сводки серий того же сезона до текущей.
+
+    Без этого блока каждая серия пишется так, будто она первая: герой заново
+    знакомится с тем, что уже знает, и сезон рассыпается на не связанные
+    эпизоды."""
+    prev = [t for t in track.project.tracks
+            if t.season_no == track.season_no and t.position < track.position]
+    lines = []
+    for t in sorted(prev, key=lambda x: x.position):
+        doc = (db.query(Doc)
+               .filter(Doc.track_id == t.id, Doc.kind == "script").first())
+        summary = ""
+        if doc:
+            try:
+                summary = (json.loads(doc.body_json or "{}") or {}).get("summary", "")
+            except Exception:  # noqa: BLE001
+                summary = ""
+        lines.append(f"Серия {t.episode_no or t.position} «{t.title}»: "
+                     f"{summary or t.comment or '(без сводки)'}")
+    return "\n".join(lines)
+
+
+def _scenes_for_series(db: Session, track: Track) -> dict:
+    """Сцены серии: сценарий по актам → кадры. Сценарий обязателен — без него
+    разбивка выдумывает сюжет заново и расходится с поэпизодным планом."""
+    import asyncio
+    project = track.project
+    catalog = "series"
+    key = _format_key(track)
+    script_doc = (db.query(Doc)
+                  .filter(Doc.track_id == track.id, Doc.kind == "script").first())
+    if not script_doc or not (script_doc.body or "").strip():
+        raise RuntimeError("у серии нет сценария — сгенерируй его на шаге «Серия»")
+    return asyncio.run(claude.generate_series_scenes(
+        script=script_doc.body,
+        character_bible=project.character_bible,
+        episode_beats=formats.beats_block(catalog, key, "episode_beats"),
+        style=track.style,
+        duration_sec=_track_duration(track),
+        rules=formats.rules(catalog),
+        characters=characters_payload(project),
+        comment=track.comment,
+    ))
+
+
+def _scenes_for_ugc(db: Session, track: Track) -> dict:
+    """Слоты UGC-ролика. Бриф необязателен: формат сам по себе — каркас."""
+    import asyncio
+    project = track.project
+    catalog = "ugc"
+    key = _format_key(track)
+    spec = formats.format_spec(catalog, key) or {}
+    brief_doc = (db.query(Doc)
+                 .filter(Doc.track_id == track.id, Doc.kind == "brief").first())
+    persona_doc = (db.query(Doc)
+                   .filter(Doc.project_id == project.id, Doc.track_id.is_(None),
+                           Doc.kind == "persona").first())
+    loc_doc = (db.query(Doc)
+               .filter(Doc.project_id == project.id, Doc.track_id.is_(None),
+                       Doc.kind == "location").first())
+    slots = int((spec.get("slots") or {}).get("typ") or 8)
+    return asyncio.run(claude.generate_ugc_scenes(
+        persona=persona_doc.body if persona_doc else "",
+        character_bible=project.character_bible,
+        # Локация ролика: своя, иначе общая локация канала. Второй уровень
+        # нужен ровно затем, чтобы «сегодня снимаем на кухне» не переписывало
+        # студию всего канала.
+        location_bible=track.location_bible or (loc_doc.body if loc_doc else ""),
+        format_beats=formats.beats_block(catalog, key, "beats"),
+        format_note=formats.seed(key).get("note", ""),
+        brief=(brief_doc.body if brief_doc else "") or track.comment,
+        style=track.style,
+        slots=slots,
+        duration_sec=_track_duration(track),
+        rules=formats.rules(catalog),
+        lang="ru",
+    ))
+
 
 def _run_scene_generation(track_id: int) -> None:
     db = SessionLocal()
@@ -2257,6 +2888,7 @@ def _run_scene_generation(track_id: int) -> None:
         track.scenes_error = ""
         db.commit()
         project = track.project
+        catalog = _catalog_of(project)
         # Заметка из отдельного поля; старые треки могли хранить её в комментарии.
         track_note = track.director_note
         if not track_note:
@@ -2264,15 +2896,20 @@ def _run_scene_generation(track_id: int) -> None:
             track_note = note_match.group(1).strip() if note_match else ""
         clean_comment = re.sub(r"\n*\[режиссёрская заметка\].*$", "", track.comment, flags=re.DOTALL).strip()
         import asyncio
-        result = asyncio.run(claude.generate_scenes(
-            story="" if track.no_story else project.story,
-            character_bible=project.character_bible,
-            track_note=track_note, title=track.title, lyrics=track.lyrics,
-            comment=clean_comment, style=track.style,
-            duration_sec=track.audio_duration_sec or 180,
-            characters=characters_payload(project),
-            audio_profile=track.audio_profile,
-        ))
+        if catalog == "series":
+            result = _scenes_for_series(db, track)
+        elif catalog == "ugc":
+            result = _scenes_for_ugc(db, track)
+        else:
+            result = asyncio.run(claude.generate_scenes(
+                story="" if track.no_story else project.story,
+                character_bible=project.character_bible,
+                track_note=track_note, title=track.title, lyrics=track.lyrics,
+                comment=clean_comment, style=track.style,
+                duration_sec=track.audio_duration_sec or 180,
+                characters=characters_payload(project),
+                audio_profile=track.audio_profile,
+            ))
         for s in list(track.scenes):
             _remove_media(s.image_filename)
             _remove_media(s.video_filename)
@@ -2284,10 +2921,20 @@ def _run_scene_generation(track_id: int) -> None:
         cursor = 0
         for i, sc in enumerate(result.get("scenes", []), start=1):
             dur = max(2, min(12, int(sc.get("duration_sec") or 6)))
+            # Реплика серии и строка трека — ОДНО поле lyric_line: у клипа это
+            # строка песни, у серии реплика, у ролика фраза блогера. Второе
+            # поле под текст завело бы три способа сказать одно и то же.
+            speaker = str(sc.get("speaker") or "")
+            line = str(sc.get("line") or sc.get("lyric_line") or "")
+            chars = [str(n) for n in (sc.get("characters") or []) if str(n).strip()]
+            if speaker and speaker not in chars:
+                chars.append(speaker)
             db.add(Scene(
                 track_id=track.id, position=i, start_sec=cursor, duration_sec=dur,
-                lyric_line=str(sc.get("lyric_line") or ""),
-                characters=", ".join(str(n) for n in (sc.get("characters") or []) if str(n).strip()),
+                lyric_line=line,
+                characters=", ".join(chars),
+                act=str(sc.get("act") or ""),
+                speaker=speaker,
                 shot_size=str(sc.get("shot_size") or ""),
                 camera_move=str(sc.get("camera_move") or ""),
                 image_prompt=str(sc.get("image_prompt") or ""),
@@ -2316,8 +2963,18 @@ def _run_scene_generation(track_id: int) -> None:
 def generate_scenes(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
     track = _own_track(db, user, track_id)
-    if not track.project.story and not track.no_story:
-        raise HTTPException(400, "сначала сгенерируй общий сюжет проекта (или включи «без сюжета»)")
+    catalog = _catalog_of(track.project)
+    # Предусловие у каждого режима своё: клипу нужен сюжет проекта, серии —
+    # её сценарий, ролику не нужно ничего (каркас формата и есть план).
+    if catalog == "clip":
+        if not track.project.story and not track.no_story:
+            raise HTTPException(400, "сначала сгенерируй общий сюжет проекта (или включи «без сюжета»)")
+    elif catalog == "series":
+        has_script = db.query(Doc).filter(
+            Doc.track_id == track.id, Doc.kind == "script",
+            Doc.body != "").count()
+        if not has_script:
+            raise HTTPException(400, "сначала сгенерируй сценарий серии")
     _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}")
     track.scenes_status = "queued"
     db.commit()
@@ -2449,6 +3106,15 @@ def _run_storyboard(track_id: int) -> None:
             characters=characters_payload(track.project),
         ))
         prompt = built.get("prompt") or ""
+        if prompt:
+            # Модель сама выбирала раскладку («аккуратной сеткой»), и лист
+            # выходил то 4x2, то 3x3 — нарезка резала мимо. Диктуем жёстко.
+            _c, _r = sheet_grid(len(track.scenes))
+            prompt = (f"{prompt}\n\nGRID (mandatory): exactly {_c} columns by {_r} rows, "
+                      f"{_c * _r} equal rectangular panels of identical size, "
+                      f"filling the whole image edge to edge. No outer margin, no gaps "
+                      f"between panels, no rounded corners, no page background visible. "
+                      f"Panels are numbered left to right, top to bottom.")
         if not prompt:
             raise RuntimeError("Claude не вернул промпт листа раскадровки")
         # Лист: референсом идёт КОЛЛАЖ моделек всех героев трека (до 3) — так
@@ -2482,6 +3148,10 @@ def _run_storyboard(track_id: int) -> None:
         old = track.storyboard_filename
         # Лист смотрят целиком, апскейл до 4К ему не нужен.
         track.storyboard_filename = _save_image(data, mime, upscale=False)
+        # Запоминаем сетку, по которой лист заказан: нарезка обязана резать
+        # ровно по ней, а не пересчитывать заново.
+        _c, _r = sheet_grid(len(track.scenes))
+        track.storyboard_grid = f"{_c}x{_r}"
         _reg_file(db, track.storyboard_filename, track.project.owner_id)
         track.storyboard_status = "done"
         db.commit()
@@ -2501,6 +3171,29 @@ def _run_storyboard(track_id: int) -> None:
         db.close()
 
 
+def sheet_grid(n: int) -> tuple[int, int]:
+    """Единая сетка листа раскадровки: одна и та же для ПРОМПТА генерации и
+    для НАРЕЗКИ. Раньше промпт просил «аккуратную сетку» на усмотрение модели,
+    а нарезка считала свою — панели не совпадали, и куски резались со сдвигом."""
+    n = max(1, int(n))
+    cols = 2 if n <= 4 else (3 if n <= 9 else 4)
+    rows = -(-n // cols)
+    return cols, rows
+
+
+def track_grid(track) -> tuple[int, int]:
+    """Сетка конкретного листа: сохранённая при генерации, иначе расчётная."""
+    raw = (getattr(track, "storyboard_grid", "") or "").lower()
+    if "x" in raw:
+        try:
+            c, r = raw.split("x", 1)
+            if int(c) > 0 and int(r) > 0:
+                return int(c), int(r)
+        except (TypeError, ValueError):
+            pass
+    return sheet_grid(len(track.scenes))
+
+
 @app.post("/api/tracks/{track_id}/storyboard-cells")
 def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Режет лист на ячейки и отдаёт их превью — БЕЗ записи в сцены.
@@ -2512,9 +3205,8 @@ def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Sess
     src = os.path.join(UPLOAD_DIR, track.storyboard_filename)
     if not os.path.exists(src):
         raise HTTPException(404, "файл листа не найден")
-    n = max(1, len(track.scenes))
-    cols = 3 if n > 4 else 2
-    rows = -(-n // cols)
+    cols, rows = track_grid(track)
+    n = min(max(1, len(track.scenes)), cols * rows)
     cells = []
     for i in range(n):
         cx, cy = i % cols, i // cols
@@ -2585,9 +3277,8 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
     src = os.path.join(UPLOAD_DIR, track.storyboard_filename)
     if not os.path.exists(src):
         raise HTTPException(404, "файл листа не найден")
-    n = len(scenes)
-    cols = 3 if n > 4 else 2
-    rows = -(-n // cols)
+    # Та же сетка, что у листа: иначе «разложить по кадрам» режет мимо панелей.
+    cols, rows = track_grid(track)
     done = 0
     for i, sc in enumerate(scenes):
         cx, cy = i % cols, i // cols
@@ -2734,14 +3425,29 @@ def _character_model_file(c: Character) -> "CharacterPhoto | None":
     return None
 
 
-def _character_model_paths(chars: list[Character], limit: int) -> list[str]:
-    """Модельки персонажей (по одной на героя) — они отвечают только за
-    узнаваемость лица, не за стилистику кадра."""
+def _character_model_paths(chars: list[Character], limit: int,
+                           prefer_photo: bool = False) -> list[str]:
+    """Референсы персонажей (по одному на героя) — они отвечают только за
+    узнаваемость лица, не за стилистику кадра.
+
+    prefer_photo=True — для КАДРОВ СЦЕН: там берём обычное фото, а не
+    сгенерированный разворот. Разворот сам является сеткой из нескольких
+    ракурсов, и генератор воспроизводил именно её: вместо сцены выходил
+    второй character sheet. Для листа раскадровки и самой генерации моделек
+    разворот по-прежнему уместен."""
     paths: list[str] = []
     for c in chars:
         if len(paths) >= limit:
             break
-        photo = _character_model_file(c)
+        photo = None
+        if prefer_photo:
+            plain = [x for x in c.photos if (x.kind or "photo") != "model"]
+            for x in sorted(plain, key=lambda y: (y.position, y.id)):
+                if os.path.exists(os.path.join(UPLOAD_DIR, x.filename)):
+                    photo = x
+                    break
+        if photo is None:
+            photo = _character_model_file(c)
         if photo:
             paths.append(os.path.join(UPLOAD_DIR, photo.filename))
     return paths
@@ -2762,7 +3468,7 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     scene_refs = _scene_ref_paths(scene)
     if scene_refs:
         models = _character_model_paths(
-            chars or [c for c in project.characters if c.is_main], 2)
+            chars or [c for c in project.characters if c.is_main], 2, prefer_photo=True)
         # Реф первым: первая картинка коллажа для генератора — главная.
         return _ref_collage(db, [scene_refs[0], *models], project.owner_id) or scene_refs[0]
 
@@ -2771,7 +3477,7 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
         return attr_path
     if not chars:
         chars = [c for c in project.characters if c.is_main]
-    paths = _character_model_paths(chars, 3)
+    paths = _character_model_paths(chars, 3, prefer_photo=True)
     if not paths:
         return None
     # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
@@ -2852,6 +3558,20 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "backdrop unless the style says so. Expose for a bright readable image: avoid crushed "
         "blacks and muddy dark frames unless the style explicitly asks for night noir."
     )
+    # 4b. Самое частое разрушение кадра: реф-моделька персонажа сама по себе
+    # является СЕТКОЙ из нескольких ракурсов на нейтральном фоне, и генератор
+    # воспроизводит именно эту раскладку — вместо сцены выходит второй
+    # character sheet. Запрещаем явно и повторяем формулировками, которые
+    # модель понимает буквально.
+    parts.append(
+        "CRITICAL: some reference images are character turnaround sheets — several views of the "
+        "same person side by side on a neutral backdrop. Take ONLY the person's identity from "
+        "them: face, hair, body type, clothing. NEVER reproduce their layout. The output is ONE "
+        "single photographic frame of a real scene: one camera angle, one moment in time, real "
+        "environment. Absolutely no multi-panel grids, no split screens, no side-by-side views, "
+        "no contact sheets, no turnarounds, no character sheets, no collage, no white or grey "
+        "studio cyclorama, no repeated figures of the same character within the frame."
+    )
     # 5. Динамика: кадр клипа — момент действия, а не позирование в камеру.
     parts.append(
         "The shot must be caught in motion: the character is acting, moving and interacting with "
@@ -2881,7 +3601,10 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
         track = scene.track
         import asyncio
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
-        engine = _plan_image_engine(owner)
+        # Раньше здесь стояло `engine = _plan_image_engine(owner)` — переданный
+        # параметр молча затирался дефолтом тарифа, и выбор движка в интерфейсе
+        # не значил вообще ничего. Теперь работает цепочка «запрос → трек → тариф».
+        engine = _resolve_image_engine(owner, track, engine)
         # Nano Banana берёт референсы ОТДЕЛЬНЫМИ картинками (до 8-14 штук) —
         # ради этого движок и подключался. Шлюзам по-прежнему нужен один файл,
         # поэтому коллаж собираем только для них.
@@ -2964,12 +3687,11 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
     # Кадры не имеют своей цены: они берут аванс в счёт цены сцены. Видео потом
     # добирает разницу до цены движка, а перерисовка кадров уже оплаченной
     # сцены бесплатна — человек не должен бояться жать «перегенерировать».
-    _scene_charge(db, user, scene, _frames_cost(user, scene),
-                  f"кадры сцены {scene.id} ({which})")
+    engine = _resolve_image_engine(user, scene.track, engine)
+    _scene_charge(db, user, scene, _frames_cost(user, scene, engine),
+                  f"кадры сцены {scene.id} ({which})", kind="frames", engine=engine)
     scene.image_status = "queued"
     db.commit()
-    # Чужой тарифу движок молча опускается до разрешённого — как и у видео.
-    engine = _plan_image_engine(user, engine)
     Thread(target=_run_scene_frames, args=(scene_id, which, engine), daemon=True).start()
     return {"ok": True}
 
@@ -3111,7 +3833,8 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
         raise HTTPException(400, f"провайдер {provider} недоступен: {mediagen.video_providers()}")
     # engine — явный id модели (см. /api/providers.video_engines). Чужой тарифу
     # движок молча опускается до дефолтного, а не даёт FREE'шнику Seedance 2.5.
-    engine = _plan_video_engine(user, provider, str(body.get("engine") or ""))
+    engine = _resolve_video_engine(user, scene.track, provider,
+                                   str(body.get("engine") or ""))
     # Цена по движку: Grok идёт по нашей подписке и стоит в разы дешевле
     # платного Seedance 2.5 — раньше все платные списывали одинаковые 16.
     cost = _scene_cost(user, provider, scene, engine)
@@ -3121,9 +3844,11 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
         # перерисовываем). У Grok разница нулевая, и перерендер бесплатен:
         # он и правда ничего нам не стоит.
         _charge(db, user, max(0, cost - _frames_cost(user, scene)),
-                f"перерендер видео сцены {scene.id} ({engine})")
+                f"перерендер видео сцены {scene.id} ({engine})",
+                kind="video", ref_type="scene", ref_id=scene.id, engine=engine)
     else:
-        _scene_charge(db, user, scene, cost, f"видео сцены {scene.id} ({engine})")
+        _scene_charge(db, user, scene, cost, f"видео сцены {scene.id} ({engine})",
+                      kind="video", engine=engine)
     scene.video_provider = provider
     scene.video_engine = engine
     scene.video_status = "queued"
@@ -3262,7 +3987,13 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
             return
         project = track.project
 
-        if track.no_story:
+        if _catalog_of(project) != "clip":
+            # У серии сквозной документ — сценарий (он уже обязателен на входе
+            # роута), у ролика — каркас формата. Сюжет проекта им не нужен и
+            # генерить его тут значило бы платить за текст, который никто
+            # не прочитает.
+            pass
+        elif track.no_story:
             pass  # рандомные панчи: сюжет не нужен
         elif not (project.story or "").strip():
             note("пишу сквозной сюжет…")
@@ -3291,12 +4022,16 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
 
         scene_ids = [s.id for s in sorted(track.scenes, key=lambda x: x.position)]
         total = len(scene_ids)
+        # Движок кадров фиксируем один раз на весь конвейер и берём С ТРЕКА:
+        # соседние сцены одного объекта не должны уехать на разные модели.
+        sg_owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
+        img_engine = _resolve_image_engine(sg_owner, track)
         for i, sid in enumerate(scene_ids, 1):
             db.expire_all()
             s = db.get(Scene, sid)
             if not (s and s.image_filename and s.image_last_filename):
                 note(f"кадры: сцена {i}/{total}…")
-                _run_scene_frames(sid)
+                _run_scene_frames(sid, engine=img_engine)
                 db.expire_all()
                 s = db.get(Scene, sid)
                 if not s or s.image_status == "error":
@@ -3309,7 +4044,7 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
             provider = _allowed_provider(owner, provider)
         # Модель внутри семейства фиксируем один раз на весь конвейер: иначе
         # соседние сцены одного клипа уехали бы на разные движки.
-        engine = _plan_video_engine(owner, provider)
+        engine = _resolve_video_engine(owner, track, provider)
         for i, sid in enumerate(scene_ids, 1):
             db.expire_all()
             s = db.get(Scene, sid)
@@ -3350,8 +4085,14 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
 def supergen(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
     track = _own_track(db, user, track_id)
-    if not track.audio_filename:
+    catalog = _catalog_of(track.project)
+    # Дорожка обязательна только там, где она ЗАДАЁТ ритм. У ролика и серии
+    # ритм задают слоты и акты, и требовать mp3 значило бы запрещать им
+    # супергенерацию без всякой причины.
+    if catalog == "clip" and not track.audio_filename:
         raise HTTPException(400, "у трека нет аудио — загрузи дорожку")
+    if catalog == "series" and not _find_doc(db, track.project_id, "script", track.id):
+        raise HTTPException(400, "у серии нет сценария — сгенерируй его на шаге «Серия»")
     # Без стиля и персонажей Claude выдумывает свои: стиль обязателен, герои тоже.
     if not (track.style or "").strip():
         raise HTTPException(400, "не выбран стиль клипа — выбери пресет на карточке трека")
@@ -3362,7 +4103,9 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
     # Стоимость конвейера — вперёд. Цена сцены зависит от движка, которым
     # супергенерация будет рисовать видео: тот же выбор, что и в _run_supergen.
     prov = _allowed_provider(user, "seedance" if mediagen.seedance_available() else "grok")
-    per_scene = _scene_cost(user, prov)
+    vid_engine = _resolve_video_engine(user, track, prov)
+    img_engine = _resolve_image_engine(user, track)
+    per_scene = _scene_cost(user, prov, engine=vid_engine)
     scenes = list(track.scenes)
     if not (track.project.story or "").strip():
         _charge(db, user, COST_STORY, f"сюжет проекта {track.project.id}")
@@ -3375,20 +4118,22 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
                 return per_scene    # полный круг: кадры + видео
             if not (s.image_filename and s.image_last_filename):
                 # видео есть, дорисуем недостающие кадры — по цене СВОЕГО движка
-                return _frames_cost(user, s)
+                return _frames_cost(user, s, img_engine)
             return 0                # делать нечего
 
         _scenes_charge(db, user, scenes, _sg_cost,
-                       f"супергенерация трека {track.id} ({prov})")
+                       f"супергенерация трека {track.id} ({vid_engine})",
+                       kind="video", engine=vid_engine, track_id=track.id)
     else:
         # Сцен ещё нет — объём оцениваем по длительности трека (~6 сек на сцену).
         # Прежняя оценка упиралась в потолок 30 сцен: четырёхминутный трек
         # списывал как трёхминутный, а работу делал всю. Теперь оценка честная,
         # а расхождение с реальностью разводит _settle_supergen: недостачу
         # добирает, лишнее возвращает.
-        prepaid = _est_scenes(track.audio_duration_sec)
+        prepaid = _est_scenes(_track_duration(track))
         _charge(db, user, COST_SCENES + per_scene * prepaid,
-                f"супергенерация трека {track.id} ({prov}, ~{prepaid} сцен)")
+                f"супергенерация трека {track.id} ({vid_engine}, ~{prepaid} сцен)",
+                kind="video", ref_type="track", ref_id=track.id, engine=vid_engine)
     track.supergen_status = "queued"
     track.supergen_note = "старт…"
     db.commit()
@@ -4110,7 +4855,7 @@ async def add_scene(track_id: int, request: Request, user: User = Depends(curren
 
 
 
-def _run_all_frames(track_id: int) -> None:
+def _run_all_frames(track_id: int, engine: str = "") -> None:
     """Пакетная генерация: кадры ВСЕХ сцен трека подряд, одна за другой.
 
     Последовательно, а не парал­лельно: шлюзы картинок обслуживают один
@@ -4126,15 +4871,18 @@ def _run_all_frames(track_id: int) -> None:
                      and (s.image_prompt or "").strip()
                      and not s.image_prompt.startswith("(готовый кадр")]
         db.close()
-        log.info("пакет кадров трека %s: %s сцен", track_id, len(scene_ids))
+        log.info("пакет кадров трека %s: %s сцен движком %s",
+                 track_id, len(scene_ids), engine or "(по тарифу)")
         for sid in scene_ids:
-            _run_scene_frames(sid)
+            _run_scene_frames(sid, engine=engine)
     except Exception as e:  # noqa: BLE001
         log.warning("пакет кадров трека %s упал: %s", track_id, e)
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
-def generate_all_frames(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
+def generate_all_frames(track_id: int, engine: str = "",
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
     from threading import Thread
     track = _own_track(db, user, track_id)
     if not track.scenes:
@@ -4147,13 +4895,17 @@ def generate_all_frames(track_id: int, user: User = Depends(current_user), db: S
         raise HTTPException(400, "у всех сцен кадры уже готовы")
     # Списываем за весь пакет вперёд — до того, как сцены встанут в очередь.
     # Кадры берут аванс в счёт цены сцены; уже оплаченные сцены не платят снова.
-    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc),
-                   f"кадры всех сцен трека {track.id}")
+    # Движок выбираем ДО списания: цена кадров зависит именно от него, а сам
+    # выбор берётся с ТРЕКА, а не молча падает в дефолт тарифа, как раньше.
+    eng = _resolve_image_engine(user, track, engine)
+    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng),
+                   f"кадры всех сцен трека {track.id} ({eng})",
+                   kind="frames", engine=eng, track_id=track.id)
     for s in todo:
         s.image_status = "queued"
     db.commit()
-    Thread(target=_run_all_frames, args=(track_id,), daemon=True).start()
-    return {"ok": True, "queued": len(todo)}
+    Thread(target=_run_all_frames, args=(track_id, eng), daemon=True).start()
+    return {"ok": True, "queued": len(todo), "engine": eng}
 
 
 def _run_all_videos(track_id: int) -> None:
@@ -4188,9 +4940,10 @@ def generate_all_videos(track_id: int, provider: str = "", engine: str = "",
         raise HTTPException(400, "нет сцен с кадрами без видео")
     # Движок выбираем ДО списания: цена сцены зависит именно от него.
     prov = _allowed_provider(user, provider or ("seedance" if mediagen.seedance_available() else "grok"))
-    eng = _plan_video_engine(user, prov, engine)
+    eng = _resolve_video_engine(user, track, prov, engine)
     _scenes_charge(db, user, todo, lambda sc: _scene_cost(user, prov, sc, eng),
-                   f"видео всех сцен трека {track.id} ({eng})")
+                   f"видео всех сцен трека {track.id} ({eng})",
+                   kind="video", engine=eng, track_id=track.id)
     for s in todo:
         s.video_provider = prov
         s.video_engine = eng
@@ -5503,6 +6256,140 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
             "referrals": ref_stats["invited"] if ref_stats else 0,
         },
     }
+
+
+# ─────────────────────── расход очков: данные для дашборда ───────────────────────
+# Витрина кабинета отвечает на вопрос «сколько я ещё сделаю», а не «какой у
+# меня тариф». Поэтому здесь считается ТЕМП, а не только остаток: прогноз
+# «при нынешнем расходе хватит до <даты>» — единственная цифра, ради которой
+# человек вообще открывает кабинет.
+
+USAGE_KINDS = ("frames", "video", "chat", "audio", "story", "sheet",
+               "model", "assemble", "other")
+
+
+@app.get("/api/account/usage")
+def account_usage(days: int = 30, user: User = Depends(current_user),
+                  db: Session = Depends(db_session)):
+    days = max(7, min(90, int(days or 30)))
+    since = now() - timedelta(days=days)
+    rows = (db.query(PointEvent)
+            .filter(PointEvent.user_id == user.id, PointEvent.created_at >= since)
+            .order_by(PointEvent.created_at.desc()).all())
+
+    daily: dict[str, dict] = {}
+    for i in range(days):
+        d = (now() - timedelta(days=days - 1 - i)).date().isoformat()
+        daily[d] = {"date": d, "spent": 0, "granted": 0,
+                    **{k: 0 for k in USAGE_KINDS}}
+    spent = granted = 0
+    for e in rows:
+        d = (_as_utc(e.created_at) or now()).date().isoformat()
+        cell = daily.get(d)
+        if cell is None:
+            continue
+        if e.delta < 0:
+            cell["spent"] += -e.delta
+            spent += -e.delta
+            cell[e.kind if e.kind in USAGE_KINDS else "other"] += -e.delta
+        else:
+            cell["granted"] += e.delta
+            granted += e.delta
+
+    # Темп считаем по неделе, а не по месяцу: месяц назад человек мог быть на
+    # другом тарифе, и «в среднем» врало бы в обе стороны сразу.
+    week_since = now() - timedelta(days=7)
+    burn_week = sum(-e.delta for e in rows
+                    if e.delta < 0 and (_as_utc(e.created_at) or now()) >= week_since)
+    burn_day = burn_week / 7.0
+    points = int(user.gen_points or 0)
+    forecast = ""
+    if burn_day > 0 and points > 0:
+        forecast = (now() + timedelta(days=min(365, points / burn_day))).date().isoformat()
+
+    # До какой даты история ВОССТАНОВЛЕНА, а не записана. Говорим это вслух:
+    # у восстановленных строк нет возвратов и нет удалённых сцен, и график до
+    # этой даты — форма, а не точный счёт.
+    approx = (db.query(func.max(PointEvent.created_at))
+              .filter(PointEvent.user_id == user.id,
+                      PointEvent.ref_type == "backfill").scalar())
+
+    return {
+        "days": days,
+        "daily": list(daily.values()),
+        "kinds": list(USAGE_KINDS),
+        "spent": spent, "granted": granted,
+        "burn_day": round(burn_day, 1),
+        "burn_week": burn_week,
+        "points": points,
+        "forecast_date": forecast,
+        "approx_before": _as_utc(approx).isoformat() if approx else "",
+        "recent": [
+            {"id": e.id, "at": (_as_utc(e.created_at) or now()).isoformat(),
+             "delta": e.delta, "kind": e.kind, "what": e.what,
+             "engine": e.engine, "ref_type": e.ref_type, "ref_id": e.ref_id,
+             "balance_after": e.balance_after}
+            for e in rows[:12]
+        ],
+    }
+
+
+def _backfill_point_events() -> None:
+    """Восстановить историю очков за прошлое — один раз, из того, что осталось.
+
+    Журнала раньше не было: расход жил в log.info контейнера. Собрать из
+    scenes.charged_points, chat_messages.points и processed_payments можно
+    ФОРМУ графика, но не точный счёт — возвратов и удалённых сцен там нет.
+    Поэтому строки помечаются ref_type='backfill', а кабинет честно пишет,
+    что история до этой даты приблизительная.
+
+    Проход самоисчерпывающийся: работает только на пустой таблице."""
+    from sqlalchemy import text as _sqltext
+    from db import engine as _engine
+    try:
+        with _engine.begin() as conn:
+            have = conn.execute(_sqltext("SELECT COUNT(*) FROM point_events")).scalar()
+            if have:
+                return
+            done = conn.execute(_sqltext("""
+                INSERT INTO point_events
+                    (user_id, created_at, delta, kind, what, ref_type, ref_id, engine, balance_after)
+                SELECT p.owner_id, s.updated_at, -s.charged_points,
+                       CASE WHEN s.video_filename != '' THEN 'video' ELSE 'frames' END,
+                       'сцена ' || s.position, 'backfill', s.id,
+                       COALESCE(s.video_engine, ''), 0
+                FROM scenes s
+                JOIN tracks t ON t.id = s.track_id
+                JOIN projects p ON p.id = t.project_id
+                WHERE s.charged_points > 0 AND p.owner_id IS NOT NULL
+            """)).rowcount
+            done += conn.execute(_sqltext("""
+                INSERT INTO point_events
+                    (user_id, created_at, delta, kind, what, ref_type, ref_id, engine, balance_after)
+                SELECT c.owner_id, m.created_at, -m.points, 'chat', 'запрос в чате',
+                       'backfill', m.id, COALESCE(m.engine, ''), 0
+                FROM chat_messages m
+                JOIN chats c ON c.id = m.chat_id
+                WHERE m.points > 0
+            """)).rowcount
+            done += conn.execute(_sqltext("""
+                INSERT INTO point_events
+                    (user_id, created_at, delta, kind, what, ref_type, ref_id, engine, balance_after)
+                SELECT pp.user_id, pp.created_at, pp.points,
+                       CASE WHEN pp.kind = 'topup' THEN 'topup' ELSE 'plan' END,
+                       'оплата ' || COALESCE(pp.plan, ''), 'backfill', pp.id,
+                       COALESCE(pp.provider, ''), 0
+                FROM processed_payments pp
+                WHERE pp.points > 0 AND pp.user_id IS NOT NULL
+            """)).rowcount
+        if done:
+            log.info("журнал очков: восстановлено %s строк истории", done)
+    except Exception as e:  # noqa: BLE001
+        # Не критично: журнал начнёт заполняться с этого момента.
+        log.warning("восстановление журнала очков не прошло: %s", str(e)[:200])
+
+
+_backfill_point_events()
 
 
 @app.get("/api/health")

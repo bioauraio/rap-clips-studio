@@ -365,6 +365,10 @@ class Track(Base):
     # и она же идёт контекстом в промпты отдельных кадров.
     storyboard_filename = Column(String, nullable=False, default="")
     storyboard_status = Column(String, nullable=False, default="")
+    # Сетка листа «столбцыxстроки», зафиксированная В МОМЕНТ генерации.
+    # Без неё нарезка считала сетку заново от текущего числа сцен и резала
+    # мимо панелей: лист 4x2, а резали 3x2 — куски захватывали соседей.
+    storyboard_grid = Column(String, nullable=False, default="")
     storyboard_error = Column(Text, nullable=False, default="")
 
     # Итоговый клип трека (склейка утверждённых сцен + дорожка).
