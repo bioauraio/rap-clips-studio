@@ -4019,14 +4019,24 @@ async def apply_cells(track_id: int, request: Request, user: User = Depends(curr
             continue
         new_name = f"slice_{uuid.uuid4().hex}.png"
         shutil.copyfile(src, os.path.join(UPLOAD_DIR, new_name))
-        old = scene.image_filename
-        scene.image_filename = new_name
-        scene.image_status = "done"
-        scene.image_error = ""
+        # ДОБАВЛЯЕМ, А НЕ ЗАМЕНЯЕМ. Раньше ячейка листа затирала уже
+        # отрисованный кадр и он удалялся с диска: человек терял работу,
+        # за которую заплатил токенами. Если первый кадр занят — ячейка
+        # уходит в последний; если заняты оба — кладём её референсом сцены,
+        # чтобы она осталась материалом, а не пропала.
+        if not scene.image_filename:
+            scene.image_filename = new_name
+            scene.image_status = "done"
+            scene.image_error = ""
+        elif not scene.image_last_filename:
+            scene.image_last_filename = new_name
+        else:
+            pos = 1 + max([r.position for r in scene.refs] or [0])
+            db.add(SceneRef(scene_id=scene.id, filename=new_name,
+                            position=pos, kind="vibe"))
         _reg_file(db, new_name, track.project.owner_id, kind="frame",
                   project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         db.commit()
-        _remove_media(old)
         applied += 1
     return {"ok": True, "applied": applied}
 
@@ -4060,14 +4070,22 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
         )
         if r.returncode != 0 or not os.path.exists(dst):
             continue
-        old = sc.image_filename
-        sc.image_filename = fname
-        sc.image_status = "done"
-        sc.image_error = ""
+        # Тоже ДОБАВЛЯЕМ: «разложить лист по кадрам» на треке с готовыми
+        # кадрами больше не стирает их. Занят первый — идём в последний,
+        # заняты оба — ячейка остаётся референсом сцены.
+        if not sc.image_filename:
+            sc.image_filename = fname
+            sc.image_status = "done"
+            sc.image_error = ""
+        elif not sc.image_last_filename:
+            sc.image_last_filename = fname
+        else:
+            pos = 1 + max([r.position for r in sc.refs] or [0])
+            db.add(SceneRef(scene_id=sc.id, filename=fname,
+                            position=pos, kind="vibe"))
         _reg_file(db, fname, track.project.owner_id, kind="frame",
                   project_id=track.project_id, track_id=track.id, scene_id=sc.id)
         db.commit()
-        _remove_media(old)
         done += 1
     return {"ok": True, "sliced": done, "grid": f"{cols}x{rows}"}
 
@@ -4209,20 +4227,29 @@ def _character_model_paths(chars: list[Character], limit: int,
     второй character sheet. Для листа раскадровки и самой генерации моделек
     разворот по-прежнему уместен."""
     paths: list[str] = []
+    if not chars:
+        return paths
+    # Сколько фото на героя. Раньше было жёстко ОДНО, и модель усваивала лицо
+    # с одного ракурса — отсюда «персонаж не похож». Движки берут до 8-14
+    # референсов, поэтому при одном-двух героях в кадре отдаём им несколько
+    # снимков: чем больше ракурсов одного лица, тем меньше модель фантазирует.
+    per_char = max(1, limit // max(1, len(chars)))
     for c in chars:
         if len(paths) >= limit:
             break
-        photo = None
-        if prefer_photo:
-            plain = [x for x in c.photos if (x.kind or "photo") != "model"]
-            for x in sorted(plain, key=lambda y: (y.position, y.id)):
-                if os.path.exists(os.path.join(UPLOAD_DIR, x.filename)):
-                    photo = x
-                    break
-        if photo is None:
-            photo = _character_model_file(c)
-        if photo:
-            paths.append(os.path.join(UPLOAD_DIR, photo.filename))
+        picked: list[str] = []
+        plain = [x for x in c.photos if (x.kind or "photo") != "model"]
+        models = [x for x in c.photos if (x.kind or "photo") == "model"]
+        # Порядок важен: живые фото первыми (они и есть человек), разворот —
+        # в конце и только если места хватило.
+        order = (plain + models) if prefer_photo else (models + plain)
+        for x in sorted(order, key=lambda y: (y.position, y.id)):
+            if len(picked) >= per_char or len(paths) + len(picked) >= limit:
+                break
+            full = os.path.join(UPLOAD_DIR, x.filename)
+            if os.path.exists(full) and full not in picked:
+                picked.append(full)
+        paths.extend(picked)
     return paths
 
 
@@ -4267,7 +4294,7 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
         return scene_refs[0] if scene_refs else None
     if scene_refs:
         models = _character_model_paths(
-            chars or [c for c in project.characters if c.is_main], 2, prefer_photo=True)
+            chars or [c for c in project.characters if c.is_main], 4, prefer_photo=True)
         # Реф первым: первая картинка коллажа для генератора — главная.
         return _ref_collage(db, [scene_refs[0], *models], project.owner_id) or scene_refs[0]
 
@@ -4276,7 +4303,8 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
         return attr_path
     if not chars:
         chars = [c for c in project.characters if c.is_main]
-    paths = _character_model_paths(chars, 3, prefer_photo=True)
+    # Лимит по движку: Nano Banana 2 берёт 14 картинок, Pro — 8, шлюз — 1.
+    paths = _character_model_paths(chars, 6, prefer_photo=True)
     if not paths:
         return None
     # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
@@ -4368,9 +4396,12 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         # 1. Стиль — ПЕРВЫМ и безусловным законом кадра. Раньше он стоял после
         # промпта сцены, и генератор тянул свет с фото-модельки: кадры выходили
         # тёмными студийными портретами вместо клипа в заданной стилистике.
-        f"VISUAL STYLE (mandatory, overrides everything): {style}. "
+        f"VISUAL STYLE (applies to lighting, palette, texture and mood — NOT to who "
+        f"the people are): {style}. "
         f"Render the whole frame in this style — lighting, palette, texture, grain and mood "
-        f"come from the STYLE, never from the reference images.",
+        f"come from the STYLE, never from the reference images. "
+        f"BUT the identity of the people is NOT part of the style: faces, hair and outfits "
+        f"come from the reference photos and stay exactly as they are, whatever the style is.",
         # 2. Что происходит в кадре.
         base,
         # 3. Роль референсов: узнаваемость и композиция, но не картинка целиком.
