@@ -47,13 +47,13 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=64" />
-<link rel="stylesheet" href="/landing.css?v=64" />
-<link rel="stylesheet" href="/tg.css?v=64" />
+<link rel="stylesheet" href="/style.css?v=66" />
+<link rel="stylesheet" href="/landing.css?v=66" />
+<link rel="stylesheet" href="/tg.css?v=66" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=64" />
+<link rel="stylesheet" href="/music-studio.css?v=66" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -71,7 +71,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=64"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=66"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -482,7 +482,11 @@
      намерение: текст, картинка или видео из картинки.
      Ленту, сайдбар и селектор рисует app.js — разметка держит только каркас.
      ───────────────────────────────────────────────────────────────────── -->
-<div id="chat" class="chat hidden">
+<div id="chat" class="chat mk hidden">
+  <!-- ЛЕВО: история и проекты. Две вкладки — «Ленты» (то, что сделано в этом
+       окне) и «Проекты» (настоящие Project.kind, вход в специальные режимы).
+       Третьей сущности «папка для лент» здесь нет намеренно: она породила бы
+       вторую студию рядом с настоящей. -->
   <aside id="chat-side" class="chat-side">
     <div class="chat-side-head">
       <button id="chat-to-studio" class="ghost chat-back" data-i18n="chat.toStudio"></button>
@@ -491,15 +495,25 @@
         <button type="button" data-lang="ru">RU</button>
       </div>
     </div>
+    <div id="mk-tabs" class="mk-tabs" role="tablist"></div>
     <button id="chat-new" class="primary chat-new" data-i18n="chat.new"></button>
     <input id="chat-search" class="chat-search" data-i18n-ph="chat.searchPh" />
     <div id="chat-list" class="chat-list"></div>
-    <p id="chat-retention" class="chat-retention muted"></p>
+    <div id="mk-projects" class="mk-projects hidden"></div>
+    <div class="mk-side-foot">
+      <p id="chat-retention" class="chat-retention muted"></p>
+      <p id="mk-storage" class="chat-retention muted"></p>
+    </div>
   </aside>
 
+  <!-- ЦЕНТР: карточка выбранной модели до первого запуска, дальше — лента
+       результатов. Пустое поле в экономике, где нажатие стоит от 0 до 252
+       токенов, — это лотерея; карточка отвечает на «умеет / не умеет / что
+       нужно на входе / сколько стоит» ДО нажатия. -->
   <main class="chat-main">
     <header class="chat-head">
       <button id="chat-side-toggle" class="ghost chat-side-toggle" aria-label="menu">☰</button>
+      <button id="mk-back-scene" class="ghost mk-back-scene hidden"></button>
       <span id="chat-head-title" class="chat-head-title"></span>
       <span id="chat-points" class="kind-badge points-badge" data-i18n-title="top.pointsTitle"></span>
     </header>
@@ -508,24 +522,54 @@
 
     <div class="chat-compose">
       <!-- Расход этого разговора виден прямо над полем: человек не должен
-           уходить в кабинет, чтобы понять, во что ему обходится чат. -->
+           уходить в кабинет, чтобы понять, во что ему обходится работа. -->
       <div class="cc-meter"><span id="cc-meter"></span></div>
       <div id="cc-source" class="cc-source hidden"></div>
       <div id="cc-files" class="cc-files"></div>
-      <textarea id="cc-text" rows="2" data-i18n-ph="chat.inputPh"></textarea>
+      <div class="cc-field">
+        <textarea id="cc-text" rows="2" data-i18n-ph="chat.inputPh"></textarea>
+        <!-- Счётчик появляется с 80 % лимита. Постоянный «0/5000» — шум в
+             99 % случаев, а лимит у нас настоящий: раз режем на сервере,
+             обязаны написать где. -->
+        <span id="mk-count" class="mk-count hidden"></span>
+      </div>
+      <!-- Ошибка живёт ПОД ПОЛЕМ, а не в alert: в окне, где одно нажатие
+           стоит 252 токена, модальное окно поверх работы особенно неуместно. -->
+      <p id="mk-error" class="mk-error hidden"></p>
+      <p id="mk-enhanced" class="mk-enhanced hidden"></p>
+      <!-- Порядок контролов = порядок работы: что прикладываю → чем делаю →
+           как → сколько стоит → пуск. -->
       <div class="cc-bar">
         <label class="cc-attach" data-i18n-title="chat.attachTitle">
           <input id="cc-file" type="file" class="hidden" accept="image/jpeg,image/png,image/webp" multiple />
           <span>+</span>
         </label>
         <select id="cc-model" class="cc-model"></select>
+        <button type="button" id="mk-aspect-btn" class="mk-mini hidden"></button>
+        <!-- Длительность держится селектом как СОСТОЯНИЕМ (её читает отправка),
+             а видимый контрол — чипы с ценой в правой панели: варианты,
+             различающиеся ценой, обязаны быть видны целиком. -->
         <select id="cc-duration" class="cc-duration hidden"></select>
+        <button type="button" id="mk-dur-btn" class="mk-mini hidden"></button>
+        <button type="button" id="mk-enhance" class="ghost mk-mini"></button>
+        <button type="button" id="mk-params" class="ghost mk-mini" aria-controls="mk-panel"></button>
         <span id="cc-price" class="cc-price"></span>
         <button id="cc-send" type="button" class="primary cc-send"></button>
       </div>
       <p class="cc-note muted" id="cc-note"></p>
     </div>
   </main>
+
+  <!-- ПРАВО: параметры сверху вниз В ПОРЯДКЕ ВЛИЯНИЯ НА ЦЕНУ. «Сбросить» у
+       группы появляется, только когда есть что сбрасывать: пять всегда
+       мёртвых кнопок сброса — те же пять контролов, которые ничего не делают. -->
+  <aside id="mk-panel" class="mk-panel">
+    <div id="mk-groups" class="mk-groups"></div>
+    <div class="mk-panel-foot">
+      <button type="button" id="mk-reset-all" class="ghost hidden"></button>
+      <button type="button" id="mk-hide" class="ghost"></button>
+    </div>
+  </aside>
 </div>
 
 <!-- ═══════════════════════════ РАЗДЕЛ «МУЗЫКА» ═══════════════════════════
@@ -642,12 +686,13 @@
           <section class="ms-sec" data-sec="what">
             <h4 class="ms-h" data-i18n="modeSetup.what"></h4>
             <p class="ms-hint muted"></p>
-            <!-- Витрина каркасов. У клипа это CLIP_PRESETS (до сих пор жили
-                 только на лендинге и в студию не попадали никогда), у
-                 остальных режимов — каркас из реестра formats.py. Настоящее
-                 состояние по-прежнему держит .t-format ниже: карточки пишут
-                 в него и дёргают его же обработчик. -->
-            <div class="ms-presets"></div>
+            <!-- Витрина каркасов убрана по просьбе владельца: тринадцать
+                 карточек с описаниями занимали экран и мешали работе.
+                 Каркасы никуда не делись — они живут на лендинге и в каталоге
+                 промтов, а настоящее состояние держит .t-format ниже.
+                 Узел оставлен пустым и скрытым: на нём висит рендер, и его
+                 удаление уронило бы renderModeSetup. -->
+            <div class="ms-presets hidden"></div>
             <!-- ТЕКСТОВАЯ МОДЕЛЬ. Стоит здесь, а не в блоке движков, потому
                  что это решение о СЦЕНАРИИ: кто пишет сюжет, библию и
                  раскадровку. Движки ниже отвечают за картинку и видео —
@@ -1053,6 +1098,11 @@
                  его по сюжету, стилю и соседним кадрам. -->
             <button type="button" class="s-gen-prompt" data-i18n="scene.genPrompt"
                     data-i18n-title="scene.genPromptTitle"></button>
+            <!-- Мост «режим → мастерская». Закрывает единственный настоящий
+                 сценарий, ради которого уходят из студии: одна сцена не вышла,
+                 хочется поиграть промптом, не гоняя конвейер целиком. -->
+            <button type="button" class="s-to-make" data-i18n="make.fromScene"
+                    data-i18n-title="make.fromSceneTitle"></button>
           </details>
         </div>
       </div>
@@ -1179,15 +1229,15 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=64"></script>
-<script src="/i18n.js?v=64"></script>
-<script src="/app.js?v=64"></script>
+<script src="/modes.js?v=66"></script>
+<script src="/i18n.js?v=66"></script>
+<script src="/app.js?v=66"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=64"></script>
+<script src="/music-studio.js?v=66"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=64"></script>
+<script src="/mode-menu.js?v=66"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1211,10 +1261,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=64";
+  css.href = "/nav.css?v=66";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=64";
+  js.src = "/nav.js?v=66";
   document.body.appendChild(js);
 })();
 </script>

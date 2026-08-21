@@ -1956,7 +1956,10 @@ def _midframe_count(duration_sec: int) -> int:
 
 def scene_dict(s: Scene) -> dict:
     return {
-        "id": s.id, "position": s.position, "start_sec": s.start_sec,
+        # track_id нужен мосту «Доснять в мастерской»: карточка кадра рисуется
+        # без объекта трека, а заголовок возврата («← К сцене 12 трека …»)
+        # обязан назвать трек, иначе это кнопка «назад в никуда».
+        "id": s.id, "track_id": s.track_id, "position": s.position, "start_sec": s.start_sec,
         "duration_sec": s.duration_sec, "lyric_line": s.lyric_line,
         "characters": s.characters,
         "attribute_ids": [int(x) for x in (s.attribute_ids or "").split(",") if x.strip().isdigit()],
@@ -3908,33 +3911,11 @@ def delete_scene(scene_id: int, user: User = Depends(current_user), db: Session 
 
 
 # ───────────────────── референсы кадра ─────────────────────
-# Что именно берём с приложенной картинки. Без вида референса промпт трактовал
-# любую как «композиция, но не палитра» — сказать «вот так выглядит место» или
-# «повтори этот кадр целиком» было нечем.
-REF_KINDS = ("vibe", "style", "place", "copy")
-
-# Инструкция генератору по каждому виду. Тексты разные не для красоты: vibe и
-# style противоположны по отношению к грейду, и смешивать их нельзя.
-REF_RULES = {
-    "vibe": (
-        "COMPOSITION REFERENCE: take framing, camera angle, distance and the energy "
-        "of the shot. Do NOT copy its colours, lighting or background."
-    ),
-    "style": (
-        "STYLE REFERENCE: copy exactly this look — colour grade, lighting, contrast, "
-        "texture and grain. Ignore its subject and composition."
-    ),
-    "place": (
-        "LOCATION REFERENCE: this is where the shot happens. Reproduce the environment, "
-        "architecture, objects and time of day. People in it are irrelevant — our own "
-        "characters act in this place."
-    ),
-    "copy": (
-        "SHOT TO REPRODUCE: recreate this frame as closely as possible — same composition, "
-        "same environment, same light — replacing only the person with OUR character from "
-        "the character references."
-    ),
-}
+# Виды референса и тексты правил переехали в backend/refs.py: те же самые
+# инструкции нужны мастерской (chat.py), а chat.py не может импортировать
+# main.py — тот импортирует его. Две копии текстов разъехались бы, и
+# генератор получал бы взаимоисключающие указания про грейд.
+from refs import REF_DEFAULT, REF_KINDS, REF_RULES, ref_legend  # noqa: E402,F401
 
 
 
@@ -5135,9 +5116,19 @@ def _apply_frame_cache(db: Session, user: User, scene: Scene, which: str,
     """Если ВСЕ запрошенные кадры уже рисовались этим человеком с тем же
     отпечатком — поставить их ссылками и не списывать ничего.
 
-    Возвращает True, когда генерация не нужна. Половинчатого попадания не
-    бывает намеренно: «первый из кэша, последний рисуем» усложнило бы
-    списание вдвое ради экономии одной картинки."""
+    ГРАНИЦА, БЕЗ КОТОРОЙ ЭТО БЫЛА БЫ ЛОВУШКА: кэш работает ТОЛЬКО когда
+    кадра ещё нет. Человек, который жмёт «перерисовать» на готовом кадре,
+    хочет ДРУГОЙ вариант — модели стохастичны, в этом весь смысл кнопки. Вернуть
+    ему ту же самую картинку (пусть и бесплатно) значило бы сделать вид, что
+    кнопка сломана. Поэтому кэш ловит ровно то, ради чего заводился: повторное
+    нажатие, ретрай после ошибки и пакет по сценам, где кадров нет.
+
+    Половинчатого попадания не бывает намеренно: «первый из кэша, последний
+    рисуем» усложнило бы списание вдвое ради экономии одной картинки."""
+    have = {"first": bool(scene.image_filename), "last": bool(scene.image_last_filename)}
+    want0 = ["first", "last"] if which == "both" else [which]
+    if any(have.get(w) for w in want0):
+        return False
     track = scene.track
     aspect = _track_aspect(track)
     res = (track.image_resolution or "").strip()
@@ -5150,18 +5141,25 @@ def _apply_frame_cache(db: Session, user: User, scene: Scene, which: str,
             return False
         hits[w] = name
     owner_id = track.project.owner_id
-    _keep_scene_version(db, scene, track, kind="frames")
+    # СНАЧАЛА собираем ВСЕ ссылки, потом трогаем сцену. Иначе сорвавшаяся на
+    # втором кадре ссылка оставила бы сцену наполовину подменённой, да ещё и
+    # с лишней записью в истории.
+    clones = {}
     for w, name in hits.items():
         clone = _clone_media(db, name, owner_id=owner_id,
                              kind="frame" if w == "first" else "frame_last",
                              project_id=track.project_id, track_id=track.id,
                              scene_id=scene.id)
         if not clone:
+            for made in clones.values():
+                _remove_media(made, db)
             return False
-        if w == "first":
-            scene.image_filename = clone
-        else:
-            scene.image_last_filename = clone
+        clones[w] = clone
+    _keep_scene_version(db, scene, track, kind="frames")
+    if "first" in clones:
+        scene.image_filename = clones["first"]
+    if "last" in clones:
+        scene.image_last_filename = clones["last"]
     scene.image_status = "done"
     scene.image_error = ""
     scene.image_engine = engine
@@ -6061,12 +6059,19 @@ def _clone_character_into(db: Session, source: Character, project: Project) -> C
     # только если место главного в целевом проекте ещё свободно.
     has_main = any(c.is_main for c in project.characters)
     clone = Character(
-        project_id=project.id, position=max_pos + 1,
+        position=max_pos + 1,
         name=source.name, description=source.description,
         voice_id=source.voice_id or "",
         is_main=bool(source.is_main and not has_main),
     )
-    db.add(clone)
+    # ЧЕРЕЗ КОЛЛЕКЦИЮ, А НЕ db.add(project_id=…) — иначе копия проекта
+    # ДВОИТ героев. У только что созданного проекта collection «characters»
+    # уже materialized пустым списком, и db.add в обход неё его не обновляет:
+    # следующий читатель (_bring_characters в конце _copy_track_into, да и
+    # max_pos/has_main выше) видит проект без героев и клонирует Рому второй
+    # раз. Append держит коллекцию правдивой в пределах сессии, а project_id
+    # проставит сам relationship на flush.
+    project.characters.append(clone)
     db.flush()
     for i, ph in enumerate(source.photos, start=1):
         fname = _clone_media(db, ph.filename, owner_id=project.owner_id,
@@ -6867,6 +6872,65 @@ def _retime_quote(track: Track, scene: Scene, new_dur: int) -> dict:
     }
 
 
+@app.post("/api/tracks/{track_id}/fit-timings")
+def fit_timings(track_id: int, user: User = Depends(current_user),
+                db: Session = Depends(db_session)):
+    """Подогнать раскадровку под длину дорожки.
+
+    Нужно после «удлинить клип»: сумма слотов стала больше дорожки, а сборка
+    вешает звук с -shortest — то есть лишние секунды МОЛЧА обрезаются по
+    музыке вместе с последними кадрами. Это ровно тот случай, когда человек
+    решает, что сервис потерял его работу.
+
+    Сжимаем пропорционально, никого не делая короче двух секунд. Остаток от
+    округления добираем с самых длинных кадров — так искажение размазывается
+    там, где его меньше всего видно."""
+    track = _own_track(db, user, track_id)
+    target = int(track.audio_duration_sec or 0)
+    if not target:
+        raise HTTPException(400, "у объекта нет дорожки — подгонять не подо что")
+    scenes = sorted(track.scenes, key=lambda x: (x.position, x.id))
+    if not scenes:
+        raise HTTPException(400, "у объекта нет кадров")
+    total = sum(int(s.duration_sec or 0) for s in scenes)
+    if total == target:
+        return {"ok": True, "changed": 0, "total_sec": total}
+    floor_total = SCENE_MIN_SEC * len(scenes)
+    if target < floor_total:
+        raise ApiError(409, "too_many_scenes",
+                       f"кадров {len(scenes)}, короче {SCENE_MIN_SEC} секунд слот "
+                       f"не бывает — на {target} с столько не помещается",
+                       min_total=floor_total)
+    plan = {}
+    for sc in scenes:
+        plan[sc.id] = _clamp_dur(round(int(sc.duration_sec or 0) * target / total))
+    drift = target - sum(plan.values())
+    order = sorted(scenes, key=lambda x: -int(x.duration_sec or 0))
+    guard = 0
+    while drift and guard < 1000:
+        guard += 1
+        moved = False
+        for sc in order:
+            if not drift:
+                break
+            step = 1 if drift > 0 else -1
+            nxt = plan[sc.id] + step
+            if SCENE_MIN_SEC <= nxt <= SCENE_MAX_SEC:
+                plan[sc.id] = nxt
+                drift -= step
+                moved = True
+        if not moved:
+            break
+    changed = {sid: d for sid, d in plan.items()
+               if d != int(next(s.duration_sec for s in scenes if s.id == sid) or 0)}
+    _retime_apply(db, track, {"changes": changed})
+    db.commit()
+    db.refresh(track)
+    return {"ok": True, "changed": len(changed),
+            "total_sec": sum(int(s.duration_sec or 0) for s in track.scenes),
+            "track": track_dict(track, with_scenes=True)}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # КОПИИ: проект, объект, кадр
 #
@@ -6953,7 +7017,8 @@ def _copy_scene_into(db: Session, src: Scene, track: Track, *, position: int,
 
 
 def _copy_track_into(db: Session, src: Track, project: Project, *,
-                     media: str = "link", position: int = 0) -> tuple:
+                     media: str = "link", position: int = 0,
+                     rename: bool = True) -> tuple:
     """Копия объекта в проект. Возвращает (новый трек, имена доклонированных
     персонажей).
 
@@ -6967,7 +7032,7 @@ def _copy_track_into(db: Session, src: Track, project: Project, *,
     pos = position or (max((t.position for t in project.tracks), default=0) + 1)
     dst = Track(
         project_id=project.id, position=pos,
-        title=(src.title or "").strip() + " (копия)",
+        title=((src.title or "").strip() + " (копия)") if rename else src.title,
         lyrics=src.lyrics, comment=src.comment,
         style=src.style, style_keys=src.style_keys, style_extra=src.style_extra,
         clip_preset_key=src.clip_preset_key,
@@ -7107,7 +7172,7 @@ async def copy_project(project_id: int, request: Request,
         _clone_character_into(db, c, dst)
     db.flush()
     for t in sorted(src.tracks, key=lambda x: (x.position, x.id)):
-        _copy_track_into(db, t, dst, media=media, position=t.position)
+        _copy_track_into(db, t, dst, media=media, position=t.position, rename=False)
     # Документы ПРОЕКТА (логлайн, синопсис, арка, поэпизодный план).
     for doc in db.query(Doc).filter(Doc.project_id == src.id,
                                     Doc.track_id.is_(None)).all():
@@ -7325,9 +7390,12 @@ async def extend_scene(scene_id: int, request: Request,
     # модель добавляет только конец плана.
     written = False
     try:
-        import asyncio
         nxt = _next_lyric_line(track, scene)
-        res = asyncio.run(claude.continue_scene(
+        # AWAIT, А НЕ asyncio.run. Роут асинхронный, то есть уже крутится в
+        # петле событий, и asyncio.run из неё ВСЕГДА падает RuntimeError —
+        # модель не звалась бы никогда, а человек молча получал бы фолбэк.
+        # asyncio.run в этом файле законен только внутри тредов-воркеров.
+        res = await claude.continue_scene(
             image_prompt_first=dst.image_prompt,
             prev_motion=scene.motion_prompt, prev_note=scene.shot_note,
             characters=characters_payload(track.project),
@@ -7335,7 +7403,7 @@ async def extend_scene(scene_id: int, request: Request,
             location_bible=track.location_bible or "",
             next_line=nxt, shot_size=scene.shot_size,
             camera_move=scene.camera_move, engine=engine,
-        ))
+        )
         dst.image_prompt_last = str(res.get("image_prompt_last") or "").strip()
         dst.motion_prompt = str(res.get("motion_prompt") or "").strip() or dst.motion_prompt
         dst.shot_note = str(res.get("shot_note") or "").strip() or dst.shot_note
@@ -10125,17 +10193,23 @@ def _sweep_dir(path: str, older_than_s: int, prefixes: tuple = ()) -> int:
     return freed
 
 
-def _reclaim(need_bytes: int = 0) -> dict:
+def _reclaim(need_bytes: int = 0, aggressive: bool = False) -> dict:
     """Убрать лишнее. Порядок — по ЦЕНЕ ВОССТАНОВЛЕНИЯ, а не по размеру:
     первым уходит то, что вернётся само и бесплатно.
 
+    БЕЗОПАСНЫЙ УРОВЕНЬ (всегда):
       1. миниатюры        — 0 токенов, пересоберутся лениво;
-      2. outbox/сборки    — 0, это мусор незавершённых задач;
+      2. outbox/сборки/экспорт — мусор незавершённых задач;
       3. фантомные строки — 0 байт, но чинит учёт (см. _files_verify_pass);
-      4. собранные клипы старше CLIP_KEEP_DAYS — 0 токенов, ffmpeg склеит
-         заново; на проде это 64 % всего индексированного объёма;
-      5. варианты сверх тарифного лимита — сначала промежуточные кадры,
-         потом кадры, видео последним: оно стоит до 152 токенов.
+      4. варианты сверх ТАРИФНОГО лимита — это ровно та ретенция, о которой
+         человеку сказано в интерфейсе.
+
+    АГРЕССИВНЫЙ УРОВЕНЬ (только когда места правда нет):
+      5. собранные клипы старше CLIP_KEEP_DAYS. Восстановление стоит 0
+         токенов (ffmpeg склеит заново из тех же видео), но это ЧУЖОЙ
+         готовый артефакт, и трогать его на всякий случай нельзя: молча
+         исчезнувший клип — это ровно то, что человек читает как «сервис
+         потерял мою работу».
 
     НИКОГДА автоматически: живые кадры и видео сцены, дорожки треков, фото
     персонажей, закреплённые варианты. Это чужая оплаченная работа."""
@@ -10157,10 +10231,15 @@ def _reclaim(need_bytes: int = 0) -> dict:
     _files_purge_pass()
     if need_bytes and freed >= need_bytes:
         return {"freed": freed, "steps": steps}
-    freed += _reclaim_clips()
-    if _disk_stat()["free_pct"] < DISK_WARN_FREE_PCT:
-        freed += _reclaim_versions()
-        steps.append("варианты сверх лимита")
+    freed_now = _reclaim_versions()
+    if freed_now:
+        steps.append(f"варианты сверх лимита {freed_now // 1024 // 1024} МБ")
+    freed += freed_now
+    if aggressive and (not need_bytes or freed < need_bytes):
+        freed_now = _reclaim_clips()
+        if freed_now:
+            steps.append(f"собранные клипы {freed_now // 1024 // 1024} МБ")
+        freed += freed_now
     return {"freed": freed, "steps": steps}
 
 
@@ -10168,7 +10247,7 @@ def _reclaim_clips() -> int:
     """Собранные клипы, к которым давно не возвращались. Ноль токенов на
     восстановление — единственный крупный артефакт с таким свойством."""
     db = SessionLocal()
-    freed = 0
+    freed, gone = 0, 0
     try:
         edge = now() - timedelta(days=CLIP_KEEP_DAYS)
         rows = (db.query(Track)
@@ -10183,10 +10262,12 @@ def _reclaim_clips() -> int:
             _remove_media(tr.clip_filename, db)
             tr.clip_filename = ""
             tr.clip_status = ""
+            gone += 1
         if freed:
             db.commit()
-            log.info("уборка: снято %s МБ собранных клипов старше %s дней",
-                     freed // 1024 // 1024, CLIP_KEEP_DAYS)
+            log.warning("МЕСТО: сняты собранные клипы старше %s дней (%s МБ, %s шт.) — "
+                        "пересборка бесплатна",
+                        CLIP_KEEP_DAYS, freed // 1024 // 1024, gone)
     except Exception as e:  # noqa: BLE001
         db.rollback()
         log.warning("уборка клипов не прошла: %s", str(e)[:200])
@@ -10213,6 +10294,14 @@ def _reclaim_versions() -> int:
             before = sum(int(v.bytes or 0) for v in
                          db.query(SceneVersion).filter(SceneVersion.scene_id == sid).all())
             _trim_scene_versions(db, sid, owner)
+            # FLUSH ОБЯЗАТЕЛЕН, иначе функция ВСЕГДА возвращает ноль. Сессия
+            # живёт с autoflush=False (см. db.SessionLocal), а _trim_scene_versions
+            # только помечает строки db.delete() — без flush следующий SELECT
+            # видит их живыми, before == after, и «освобождено 0».
+            # Врущий ноль опасен не сам по себе: на нём _reclaim не срабатывает
+            # ранний выход `freed >= need_bytes` и идёт сносить СОБРАННЫЕ КЛИПЫ,
+            # хотя место уже нашлось на вариантах.
+            db.flush()
             after = sum(int(v.bytes or 0) for v in
                         db.query(SceneVersion).filter(SceneVersion.scene_id == sid).all())
             freed += max(0, before - after)
@@ -10245,11 +10334,18 @@ def _guard_disk() -> None:
 def _disk_guard_pass() -> dict:
     st = _disk_stat()
     _DISK_LOW["free_pct"] = st["free_pct"]
+    # Временные копии убираем ВСЕГДА, а не только под нехваткой места. С
+    # переходом кадров на WebP через outbox проходит каждый кадр, который
+    # едет во внешний движок (kie/seevio webp могут не принять — наружу
+    # всегда уезжает JPEG-копия). Копия живёт минуты, но копится постоянно,
+    # и ждать 20 % свободного диска, чтобы её снять, незачем.
+    _sweep_dir(mediagen.OUTBOX_DIR, 3600)
+    _sweep_dir(EXPORT_DIR, 3600)
     if st["free_pct"] < DISK_MIN_FREE_PCT:
         _DISK_LOW["on"] = True
         log.error("МЕСТО НА ДИСКЕ: свободно %s%% — генерации закрыты, убираю",
                   st["free_pct"])
-        _reclaim(need_bytes=int(st["total"] * 0.15))
+        _reclaim(need_bytes=int(st["total"] * 0.15), aggressive=True)
         st = _disk_stat()
         _DISK_LOW["free_pct"] = st["free_pct"]
         _DISK_LOW["on"] = st["free_pct"] < DISK_MIN_FREE_PCT
@@ -10597,6 +10693,11 @@ chat_module.configure(
     guard=_guard_user,
     reg_file=_reg_file,
     save_image=_save_image,
+    # Место на диске. Мастерская показывает его в подвале левой панели рядом
+    # со сроком хранения: упереться в квоту посреди генерации без единого
+    # предупреждения — тот же 402, только про диск.
+    storage_used=_storage_used_bytes,
+    storage_quota=_storage_quota_bytes,
     remove_media=_remove_media,
     upload_dir=UPLOAD_DIR,
 )

@@ -1027,6 +1027,11 @@ def _body_seedance(prompt: str, first: str, last: str | None, dur: int,
     }
     if last:
         inp["last_frame_url"] = last
+        # Seedance 2.5 с кадрами на входе принимает ТОЛЬКО adaptive: с явным
+        # «9:16» он отвечает «first-frame and first-last-frame tasks only
+        # support adaptive aspect ratio» и задача падает. Пропорции всё равно
+        # берутся с наших кадров, а они вертикальные.
+        inp["aspect_ratio"] = "adaptive"
     return inp
 
 
@@ -1140,6 +1145,27 @@ def video_engine_live(engine: str) -> bool:
 
 def video_engines_live() -> list[str]:
     return [k for k in VIDEO_ENGINES if video_engine_live(k)]
+
+
+def engine_versions(engine: str) -> list[str]:
+    """Настоящие ВЕРСИИ движка — братья по одной и той же модели.
+
+    Версией у нас называется не отдельный ярус каталога, а ровно то, что
+    физически является ОДНОЙ моделью в разных режимах: seedance-2-5 в 720p и
+    480p (`bytedance/seedance-2-5`), kling-3.0 std и pro (`kling-3.0/video`).
+    Группируем по полю `model`, а НЕ по `family`: у minimax-h3 семейство
+    исторически "seedance" из-за маршрутизации, и по семейству интерфейс
+    написал бы «MiniMax — версия Seedance», то есть соврал бы.
+
+    Один в списке — версий нет, и группу «Версия» показывать нечем."""
+    spec = VIDEO_ENGINES.get(engine)
+    if not spec:
+        return []
+    model = spec.get("model") or ""
+    if not model:
+        return []
+    same = [k for k, v in VIDEO_ENGINES.items() if (v.get("model") or "") == model]
+    return same if len(same) > 1 else []
 
 
 async def _animate_via_kie(engine: str, prompt: str, first_path: str,

@@ -84,9 +84,14 @@
     const live = currentModeId();
     box.innerHTML = "";
     R().seg().forEach((m, i) => {
-      // Чат отделён волосяной чертой: он единственный уводит с текущего
-      // экрана и не возвращает к проекту.
-      if (m.kind === "external" && i) box.appendChild(el("i", "mode-seg-sep"));
+      // Переходы отделены волосяной чертой: они уводят с текущего экрана.
+      // Черта ставится там, где МЕНЯЕТСЯ природа соседей, а не «перед каждым
+      // внешним»: мастерская теперь стоит первой, и правило «внешний с
+      // ненулевым индексом» оставило бы её без границы, а музыке дало вторую.
+      const prev = i ? R().seg()[i - 1] : null;
+      if (prev && (prev.kind === "external") !== (m.kind === "external")) {
+        box.appendChild(el("i", "mode-seg-sep"));
+      }
       const b = el("button", "mode-seg-btn"
         + (m.id === now ? " on" : "")
         + (m.id === live ? " is-live" : "")

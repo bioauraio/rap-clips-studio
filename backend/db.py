@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, backref, relationship, sessionmaker
 
 DB_PATH = os.environ.get("DB_PATH", "/data/rapclips.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -313,7 +313,16 @@ class Character(Base):
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
-    project = relationship("Project", backref="characters")
+    # CASCADE НА СТОРОНЕ ПРОЕКТА ОБЯЗАТЕЛЕН, и это не украшательство. Без него
+    # SQLAlchemy при удалении проекта пытается ОТВЯЗАТЬ героя (project_id=NULL),
+    # а колонка NOT NULL — то есть удаление любого проекта с персонажами падало
+    # 500 на IntegrityError и не удаляло НИЧЕГО. Ровно это здесь и подразумевали:
+    # main.delete_project сам стирает с диска фото героев и их атрибутов прямо
+    # перед db.delete(project). Герой не существует вне проекта (project_id
+    # NOT NULL), так что «осиротеть» ему некуда.
+    project = relationship("Project",
+                           backref=backref("characters",
+                                           cascade="all, delete-orphan"))
     photos = relationship("CharacterPhoto", back_populates="character",
                           cascade="all, delete-orphan", order_by="CharacterPhoto.position")
     attributes = relationship("CharacterAttribute", back_populates="character",
@@ -971,6 +980,10 @@ class Chat(Base):
     # Последний выбранный движок: вернувшись в чат, человек продолжает тем же.
     model = Column(String, nullable=False, default="")
     archived = Column(Boolean, nullable=False, default=False)
+    # ИЗБРАННОЕ. Не украшение: закреплённая лента не подметается ретенцией
+    # (см. chat.sweep_expired). Звезда, которая только сортирует список, а
+    # файлы под ней всё равно исчезают по сроку, — врущий контрол.
+    pinned = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -995,6 +1008,18 @@ class ChatMessage(Base):
     text = Column(Text, nullable=False, default="")
     media_filename = Column(String, nullable=False, default="")
     engine = Column(String, nullable=False, default="")
+    # ЧЕМ НАРИСОВАНО НА САМОМ ДЕЛЕ. generate_image_ex откатывается по цепочке
+    # «запрошенный → ChatGPT-шлюз → Grok-шлюз» и честно возвращает engine, но
+    # до этой колонки его никто не записывал: человек платил 8 токенов за
+    # Nano Banana Pro и мог получить картинку со шлюза, которая стоит ноль.
+    # Пусто = сработало то, что просили.
+    engine_actual = Column(String, nullable=False, default="")
+    # ВАРИАНТЫ ОДНОГО ЗАПУСКА. N ответов на одну реплику делят общий ключ и
+    # показываются одной полосой миниатюр: четыре отдельных пузыря разносят
+    # ленту, и сравнить варианты глазом становится нечем.
+    group_id = Column(String, nullable=False, default="")
+    # Закреплённое сообщение не подметается ретенцией — как и лента.
+    pinned = Column(Boolean, nullable=False, default=False)
     # Сколько токенов списано ЗА ЭТО сообщение. Нужно для возврата при ошибке:
     # в студии упавшая сцена теряется в потоке, а в чате запросы одиночные —
     # молча съеденные 154 токена человек увидит сразу.
@@ -1022,6 +1047,11 @@ class ChatFile(Base):
     message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True, index=True)
     position = Column(Integer, nullable=False, default=0)
     filename = Column(String, nullable=False)
+    # ВИД РЕФЕРЕНСА — то же, что у SceneRef.kind (vibe | style | place | copy),
+    # и те же тексты правил (backend/refs.py). До этой колонки вложение чата
+    # уходило в генерацию без вида, и промпт трактовал ЛЮБУЮ картинку как
+    # «композиция, но не палитра»: сказать «вот так выглядит место» было нечем.
+    kind = Column(String, nullable=False, default="vibe")
     created_at = Column(DateTime, default=now)
 
     message = relationship("ChatMessage", back_populates="files")

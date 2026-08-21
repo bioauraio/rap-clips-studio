@@ -323,9 +323,11 @@ function showApp() {
   $("#app").classList.remove("hidden");
   renderUserBar();
   loadProject();
-  // Прямая ссылка /#/chat открывает чат сразу. Проект при этом всё равно
-  // грузится фоном: «Сохранить в проект» нужен список персонажей.
-  if (location.hash === "#/chat") showChat();
+  // Прямая ссылка открывает мастерскую сразу. #/make — канонический адрес,
+  // #/chat продолжает работать: он лежит в закладках владельца и в
+  // state.lastStep, и ломать его переименованием нельзя. Проект при этом
+  // всё равно грузится фоном: «В проект» нужен список персонажей.
+  if (location.hash === "#/chat" || location.hash === "#/make") showChat();
   // То же для музыки: /#/music — рабочая ссылка, её кладут в закладку.
   if (location.hash === "#/music" && window.QlolMusic) window.QlolMusic.show();
 }
@@ -622,6 +624,10 @@ const ACC_TABS = [
   // дате, виду и проекту. Не отдельная страница, а вкладка кабинета: открытый
   // проект, поллинг и несохранённые поля остаются на месте.
   { key: "files" },
+  // «История» — все варианты кадров и видео, которые человек когда-либо
+  // сделал. Рядом с файлами намеренно: это два взгляда на одно и то же
+  // занятое место, и решение «что почистить» принимается один раз.
+  { key: "versions" },
   { key: "ref" },
   // Админских вкладок здесь БОЛЬШЕ НЕТ. CRM, рассылка и выплаты уехали на
   // отдельную страницу /admin: два входа в один экран разъезжаются за месяц,
@@ -842,7 +848,7 @@ function openAccountModal(initial = "account") {
 
     const loaders = {
       account: renderAccountPane, plan: renderPlanPane,
-      files: renderFilesPane, ref: renderRefPane,
+      files: renderFilesPane, versions: renderVersionsPane, ref: renderRefPane,
     };
     // Вкладка грузится один раз при первом открытии: лишних запросов нет,
     // а перерисовку после действий делают сами обработчики.
@@ -1382,6 +1388,7 @@ async function renderFilesPane(pane) {
       <span class="arc-total"></span>
       <span class="muted arc-sub"></span>
     </div>
+    <div class="arc-quota"></div>
     <div class="ev-filters arc-kinds"></div>
     <div class="ev-filters arc-scope"></div>
     <div class="arc-grid"></div>
@@ -1423,6 +1430,7 @@ async function loadFiles(pane, reset) {
       .slice(0, 4)
       .map((r) => `${t("files.kinds." + r.kind) || r.kind} ${fmtBytes(r.bytes)}`)
       .join(" · ");
+    paintQuota(pane, data.quota);
     buildArcFilters(pane, data);
   }
   $$(".ev-more", pane).forEach((b) => b.remove());
@@ -1455,6 +1463,146 @@ async function loadFiles(pane, reset) {
     more.addEventListener("click", () => loadFiles(pane, false));
     grid.after(more);
   }
+}
+
+/* СКОЛЬКО МЕСТА ЗАНЯТО. Считается по ФИЗИЧЕСКИМ файлам: копия проекта —
+   это жёсткие ссылки, и второй раз она не весит ничего. Полоска нужна не
+   ради красоты: у сервера общий диск с чужими проектами, и человек должен
+   видеть свой расход раньше, чем упрётся в него. */
+function paintQuota(pane, q) {
+  const box = $(".arc-quota", pane);
+  if (!box) return;
+  if (!q || !q.limit_bytes) { box.innerHTML = ""; return; }
+  const pct = Math.min(100, Number(q.pct) || 0);
+  const cls = pct >= 100 ? "over" : pct >= 80 ? "warn" : "";
+  box.innerHTML = `
+    <div class="quota-line">
+      <span>${escHtml(t("files.quota", {
+        used: fmtBytes(q.used_bytes), limit: fmtBytes(q.limit_bytes),
+      }))}</span>
+      <span class="muted">${escHtml(t("files.quotaClips", { n: q.clip_keep_days }))}</span>
+    </div>
+    <div class="quota-bar ${cls}"><i style="width:${pct}%"></i></div>`;
+}
+
+/* ═════════ ИСТОРИЯ КРЕАТОРА: все варианты, которые он сделал ═════════
+
+   Та же курсорная лента, что у архива файлов, и по той же причине: пока
+   человек листает, генерации продолжают писать новые варианты, и OFFSET
+   начал бы повторять и пропускать строки. */
+const VER_STATE = { project_id: 0, kind: "", pinned: 0, cursor: "" };
+
+async function renderVersionsPane(pane) {
+  pane.innerHTML = `
+    <div class="arc-head">
+      <span class="arc-total"></span>
+      <span class="muted arc-sub"></span>
+    </div>
+    <div class="ev-filters ver-kinds"></div>
+    <div class="ev-filters ver-scope"></div>
+    <div class="ver-list"></div>
+    <span class="status ver-msg"></span>`;
+  VER_STATE.project_id = 0;
+  VER_STATE.kind = "";
+  VER_STATE.pinned = 0;
+  VER_STATE.cursor = "";
+  await loadVersions(pane, true);
+}
+
+async function loadVersions(pane, reset) {
+  const list = $(".ver-list", pane);
+  if (reset) { list.innerHTML = ""; VER_STATE.cursor = ""; }
+  const qs = new URLSearchParams({ limit: "60" });
+  if (VER_STATE.kind) qs.set("kind", VER_STATE.kind);
+  if (VER_STATE.project_id) qs.set("project_id", String(VER_STATE.project_id));
+  if (VER_STATE.pinned) qs.set("pinned", "1");
+  if (VER_STATE.cursor) qs.set("cursor", VER_STATE.cursor);
+  let data;
+  try {
+    data = await api(`/api/account/versions?${qs}`);
+  } catch (e) {
+    const msg = $(".ver-msg", pane);
+    if (msg) { msg.textContent = errText(e); msg.className = "status ver-msg error"; }
+    return;
+  }
+  if (reset) {
+    $(".arc-total", pane).textContent = t("versions.total", {
+      n: tNum(data.totals.count), size: fmtBytes(data.totals.bytes) });
+    $(".arc-sub", pane).textContent = t("versions.note", { n: data.keep, days: data.days });
+    buildVersionFilters(pane, data);
+  }
+  $$(".ev-more", pane).forEach((b) => b.remove());
+  if (!data.items.length && reset) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("versions.empty");
+    list.appendChild(empty);
+    return;
+  }
+  data.items.forEach((v) => {
+    const row = versionCard(v, v.scene_id, () => loadVersions(pane, true));
+    const where = document.createElement("span");
+    where.className = "muted ver-where";
+    where.textContent = t("versions.where", { n: v.scene_position || v.scene_id });
+    row.insertBefore(where, row.lastChild);
+    list.appendChild(row);
+  });
+  VER_STATE.cursor = data.next_cursor || "";
+  if (VER_STATE.cursor) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "ghost ev-more";
+    more.textContent = t("common.loadMore");
+    more.addEventListener("click", () => loadVersions(pane, false));
+    list.after(more);
+  }
+}
+
+function buildVersionFilters(pane, data) {
+  const kinds = $(".ver-kinds", pane);
+  kinds.innerHTML = "";
+  [["", t("files.all")]].concat(
+    (data.kinds || []).map((k) => [k, t("versions.kind." + k) || k]),
+  ).forEach(([key, label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ev-chip" + (key === VER_STATE.kind ? " on" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      VER_STATE.kind = key;
+      loadVersions(pane, true);
+    });
+    kinds.appendChild(chip);
+  });
+  const scope = $(".ver-scope", pane);
+  scope.innerHTML = "";
+  const pin = document.createElement("button");
+  pin.type = "button";
+  pin.className = "ev-chip" + (VER_STATE.pinned ? " on" : "");
+  pin.textContent = t("versions.onlyPinned");
+  pin.addEventListener("click", () => {
+    VER_STATE.pinned = VER_STATE.pinned ? 0 : 1;
+    loadVersions(pane, true);
+  });
+  scope.appendChild(pin);
+  const sel = document.createElement("select");
+  sel.className = "ver-project";
+  const all = document.createElement("option");
+  all.value = "0";
+  all.textContent = t("files.allProjects");
+  sel.appendChild(all);
+  (data.projects || []).forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p.id;
+    o.textContent = p.name;
+    if (p.id === VER_STATE.project_id) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", () => {
+    VER_STATE.project_id = Number(sel.value);
+    loadVersions(pane, true);
+  });
+  scope.appendChild(sel);
 }
 
 function buildArcFilters(pane, data) {
@@ -2789,6 +2937,13 @@ function renderProjectBar() {
     coverImg.removeAttribute("src");
     coverImg.classList.add("hidden");
   }
+}
+
+// ⧉ в шапке — копия проекта целиком. Ноль токенов и ноль байт на диске:
+// медиа переезжает жёсткими ссылками, поэтому копировать можно смело.
+{
+  const cpBtn = $("#copy-project-btn");
+  if (cpBtn) cpBtn.addEventListener("click", () => openCopyProjectModal());
 }
 
 $("#project-select").addEventListener("change", (e) => {
@@ -4485,6 +4640,8 @@ function renderTrack(tr) {
   $(".up", card).addEventListener("click", () => moveTrack(tr.id, -1));
   $(".down", card).addEventListener("click", () => moveTrack(tr.id, 1));
   $(".del", card).addEventListener("click", () => deleteTrack(tr.id));
+  const tCopy = $(".t-copy", card);
+  if (tCopy) tCopy.addEventListener("click", () => openCopyTrackModal(tr));
   $(".save-track", card).addEventListener("click", () => saveTrack(tr.id, card));
 
   // ── этап 2: раскадровка
@@ -4540,7 +4697,12 @@ function renderTrack(tr) {
     redrawBtn.classList.toggle("hidden", !drawn);
     redrawBtn.disabled = framesBusy || ["queued", "running"].includes(tr.restyle_status);
     redrawBtn.textContent = t("restyle.redrawN", { n: drawn });
-    redrawBtn.addEventListener("click", () => openRestyleModal(tr.id));
+    // Смена СТИЛЯ — это рестайл (там своя смета и переписывание промптов).
+    // Перерисовка в ТОМ ЖЕ стиле — окно выбора объёма: по умолчанию платим
+    // только за кадры, где промпт или стиль реально изменились.
+    redrawBtn.addEventListener("click", () =>
+      (tr.prompts_dirty || tr.scenes_stale)
+        ? openRestyleModal(tr.id) : openFramesScopeModal(tr));
   }
   const genBtn = $(".gen-scenes", card);
   const busy = tr.scenes_status === "queued" || tr.scenes_status === "running";
@@ -4574,7 +4736,29 @@ function renderTrack(tr) {
   // даём дописать хвост, не трогая уже готовые кадры.
   const cov = tr.coverage;
   const covBox = $(".scenes-coverage", card);
-  if (covBox && cov && cov.total_sec) {
+  // РАСКАДРОВКА ДЛИННЕЕ ДОРОЖКИ. Обратный случай покрытия и куда опаснее:
+  // сборка вешает звук с -shortest, поэтому лишние секунды НЕ обрезаются
+  // видимо — вместе с ними из клипа молча исчезают последние кадры. Тот же
+  // блок, что и «кадров не хватает», только с кнопкой «подогнать».
+  if (covBox && tr.timing_over_sec > 0) {
+    covBox.classList.remove("hidden");
+    covBox.innerHTML = "";
+    const txt = document.createElement("span");
+    txt.className = "warn";
+    txt.textContent = t("track.timingOver", { n: fmtTime(tr.timing_over_sec) });
+    const fit = document.createElement("button");
+    fit.type = "button";
+    fit.className = "primary";
+    fit.textContent = t("track.fitTimings");
+    fit.addEventListener("click", async () => {
+      fit.disabled = true;
+      try {
+        await api(`/api/tracks/${tr.id}/fit-timings`, { method: "POST" });
+      } catch (e) { fail(e); fit.disabled = false; return; }
+      await loadProject();
+    });
+    covBox.append(txt, fit);
+  } else if (covBox && cov && cov.total_sec) {
     const short = !cov.full && cov.left_sec > 0 && (tr.scenes_count || 0) > 0;
     covBox.classList.toggle("hidden", !short);
     if (short) {
@@ -4655,8 +4839,21 @@ function renderTrack(tr) {
   sbBtn.textContent = sbBusy ? t("track.sheetBusy")
     : tr.storyboard_url ? t("track.redrawSheet") : t("track.genSheet");
   sbBtn.addEventListener("click", () => genStoryboard(tr.id));
+  // ЛИСТ УСТАРЕЛ. Сцен стало больше или меньше, чем было в момент его
+  // заказа: сетка листа и сетка нарезки разошлись, и «разложить по кадрам»
+  // порежет мимо панелей — куски захватят соседей. Поэтому не подсказка, а
+  // блокировка: сервер такой запрос всё равно отклонит (409 sheet_stale).
+  const sbStale = $(".sb-stale", card);
+  if (sbStale) {
+    sbStale.classList.toggle("hidden", !tr.storyboard_stale);
+    if (tr.storyboard_stale) {
+      sbStale.textContent = t("track.sheetStale", {
+        a: tr.storyboard_scenes, b: tr.scenes_count });
+    }
+  }
   const sliceBtn = $(".slice-storyboard", card);
-  sliceBtn.disabled = !tr.storyboard_url;
+  sliceBtn.disabled = !tr.storyboard_url || Boolean(tr.storyboard_stale);
+  if (tr.storyboard_stale) sliceBtn.title = t("track.sheetStaleTitle");
   sliceBtn.addEventListener("click", () => openCellsModal(tr));
 
   // ── Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
@@ -5085,10 +5282,48 @@ function renderScene(s, audioEl, mode = "board") {
       await loadProject();
     });
   }
+  // «Доснять в мастерской». Мост в основное окно: промпт кадра уезжает в
+  // строку ввода, а «куда положить» заранее указывает НА ЭТУ сцену — то есть
+  // результат возвращается туда, откуда человек вышел, а не в общую ленту.
+  const toMakeBtn = $(".s-to-make", card);
+  if (toMakeBtn) {
+    toMakeBtn.addEventListener("click", () => {
+      const tr = ((project && project.tracks) || []).find((x) => x.id === s.track_id) || null;
+      if (window.mkFromScene) window.mkFromScene(s, tr);
+    });
+  }
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
   $(".s-save", card).addEventListener("click", () => saveScene(s.id, card));
+  // ⧉ — копия кадра, ⟶ — ПРОДОЛЖЕНИЕ: следующий кадр начинается там, где
+  // этот закончился. Оба удлиняют раскадровку, поэтому оба спрашивают, что
+  // сделать с таймингом (одно и то же окно, одна и та же смета).
+  const copyBtn = $(".s-copy", card);
+  if (copyBtn) copyBtn.addEventListener("click", () => openSceneRetimeModal(s, "copy"));
+  const extBtn = $(".s-extend", card);
+  if (extBtn) {
+    extBtn.disabled = !s.image_url && !s.image_last_url;
+    extBtn.title = extBtn.disabled ? t("extend.noFrames") : t("extend.title");
+    extBtn.addEventListener("click", () => openSceneRetimeModal(s, "extend"));
+  }
+  // «Этот план продолжает предыдущий» — видно прямо в шапке кадра, иначе
+  // связка существует только в базе.
+  if (s.continued_from_id) {
+    const mark = document.createElement("span");
+    mark.className = "s-cont muted";
+    mark.textContent = "⟶";
+    mark.title = t("extend.contMark");
+    $(".s-pos", card).after(mark);
+  }
+  // Видео снято под ДРУГОЙ слот: рядом вставили кадр и тайминги пересчитались.
+  // Не стираем (это оплаченная работа), но говорим вслух — сборка подрежет.
+  if (s.video_stale) {
+    const w = document.createElement("span");
+    w.className = "status warn s-video-stale";
+    w.textContent = t("retime.videoStaleOne", { n: s.duration_sec });
+    card.appendChild(w);
+  }
   // ✎ раскрывает остальные поля кадра (крупность, камера, лирика, анимация).
   $(".s-edit-toggle", card).addEventListener("click", () =>
     $(".s-edit", card).classList.toggle("hidden"));
@@ -5363,6 +5598,76 @@ function renderScene(s, audioEl, mode = "board") {
 /* СНИМКИ ПРЕЖНИХ СТИЛЕЙ. Перерисовка не стирает кадры и видео — они уезжают
    в версию. Лента раскрывается по требованию: у кадра без истории её нет
    вовсе, а пустая свёрнутая строка на тридцати карточках — это шум. */
+/* ═══════════════════ ИСТОРИЯ ВАРИАНТОВ КАДРА ═══════════════════
+
+   Каждая перерисовка и каждый пересчёт видео оставляют после себя вариант.
+   Раньше здесь была лента снимков ОДНОГО случая — рестайла; всё остальное
+   старое просто стиралось, и «перерисовать кадр» уносило с собой видео за
+   152 токена. Теперь это полноценная галерея: что снято, чем, когда, почём
+   и как вернуть — целиком или только видео.
+
+   Постер вместо <video>: тяжёлые файлы в сетке браузер перестаёт грузить,
+   упершись в лимит одновременных медиа. Это уже проходили на архиве. */
+function versionKindLabel(v) {
+  return t("versions.kind." + (v.kind || "frames")) || v.kind || "";
+}
+
+function versionCard(v, sceneId, onDone) {
+  const row = document.createElement("div");
+  row.className = "s-version" + (v.pinned ? " pinned" : "");
+  const poster = v.image_thumb_url || v.video_poster_url || "";
+  const price = v.cost_points ? " · " + t("versions.cost", { n: tNum(v.cost_points) }) : "";
+  const size = v.bytes ? " · " + fmtBytes(v.bytes) : "";
+  row.innerHTML = `
+    ${poster ? `<img src="${escHtml(poster)}" alt="" loading="lazy" decoding="async" />` : ""}
+    <span class="s-version-meta">
+      <b>${escHtml(versionKindLabel(v))}${v.style_label ? " · " + escHtml(v.style_label) : ""}</b>
+      <span class="muted">${escHtml(fmtDate(v.at, true))}${escHtml(price)}${escHtml(size)}${
+        v.video_url ? " · " + escHtml(t("versions.withVideo")) : ""}</span>
+    </span>`;
+  const acts = document.createElement("span");
+  acts.className = "s-version-acts";
+
+  const mkBtn = (label, title, fn, cls) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ghost " + (cls || "");
+    b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await fn(); } catch (e) { fail(e); b.disabled = false; }
+    });
+    return b;
+  };
+
+  acts.appendChild(mkBtn(t("versions.restore"), t("versions.restoreTitle"), async () => {
+    if (!confirm(t("versions.restoreConfirm"))) return;
+    await api(`/api/scenes/${sceneId}/versions/${v.id}/restore`, { method: "POST" });
+    await loadProject();
+    if (onDone) onDone(); else closeModal();
+  }));
+  // «Только видео» — отдельная кнопка, потому что дубль видео снят под ТЕ
+  // кадры: возвращая его целиком, человек неожиданно теряет нынешние.
+  if (v.video_url) {
+    acts.appendChild(mkBtn(t("versions.restoreVideo"), t("versions.restoreVideoTitle"), async () => {
+      await api(`/api/scenes/${sceneId}/versions/${v.id}/restore?only=video`, { method: "POST" });
+      await loadProject();
+      if (onDone) onDone(); else closeModal();
+    }));
+  }
+  acts.appendChild(mkBtn(v.pinned ? "📌" : "📍",
+    v.pinned ? t("versions.unpinTitle") : t("versions.pinTitle"), async () => {
+      await api(`/api/scenes/${sceneId}/versions/${v.id}/pin`,
+                { method: "POST", body: { pinned: !v.pinned } });
+      v.pinned = !v.pinned;
+      row.classList.toggle("pinned", v.pinned);
+      if (onDone) onDone();
+    }, "s-version-pin"));
+  row.appendChild(acts);
+  return row;
+}
+
 function mountSceneVersions(card, s) {
   if (!Number(s.versions || 0)) return;
   const box = document.createElement("details");
@@ -5374,46 +5679,321 @@ function mountSceneVersions(card, s) {
   box.append(sum, body);
   card.appendChild(box);
   let loaded = false;
-  box.addEventListener("toggle", async () => {
-    if (!box.open || loaded) return;
-    loaded = true;
+  const draw = async () => {
     body.textContent = t("common.loading");
     try {
       const d = await api(`/api/scenes/${s.id}/versions`);
       body.innerHTML = "";
-      (d.versions || []).forEach((v) => {
-        const row = document.createElement("div");
-        row.className = "s-version";
-        row.innerHTML = `
-          ${v.image_thumb_url ? `<img src="${escHtml(v.image_thumb_url)}" alt="" loading="lazy" />` : ""}
-          <span class="s-version-meta">
-            <b>${escHtml(v.style_label || t("versions.unknown"))}</b>
-            <span class="muted">${escHtml(fmtDate(v.at))}${v.video_url ? " · " + escHtml(t("versions.withVideo")) : ""}</span>
-          </span>`;
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "ghost";
-        btn.textContent = t("versions.restore");
-        btn.addEventListener("click", async () => {
-          if (!confirm(t("versions.restoreConfirm"))) return;
-          btn.disabled = true;
-          try {
-            await api(`/api/scenes/${s.id}/versions/${v.id}/restore`, { method: "POST" });
-            await loadProject();
-            closeModal();
-          } catch (e) { fail(e); btn.disabled = false; }
-        });
-        row.appendChild(btn);
-        body.appendChild(row);
-      });
+      (d.versions || []).forEach((v) => body.appendChild(versionCard(v, s.id, null)));
       const note = document.createElement("p");
       note.className = "muted s-versions-note";
-      note.textContent = t("versions.note", { n: d.keep });
+      note.textContent = t("versions.note", { n: d.keep, days: d.days });
       body.appendChild(note);
     } catch (e) {
       body.textContent = errText(e);
     }
+  };
+  box.addEventListener("toggle", async () => {
+    if (!box.open || loaded) return;
+    loaded = true;
+    await draw();
   });
+}
+
+/* ═══════════════════ КОПИИ: ПРОЕКТ, ОБЪЕКТ, КАДР ═══════════════════
+
+   Главное, что должно быть видно человеку в этих окнах: копия НЕ ЗАНИМАЕТ
+   МЕСТА. Медиа переезжает жёсткими ссылками, поэтому «4.1 ГБ материала, на
+   диске 0 байт» — не фигура речи, а то, что реально произойдёт. Без этой
+   строки копировать боятся. */
+function copyModeRow(box, mode, onPick) {
+  const wrap = document.createElement("div");
+  wrap.className = "ev-filters copy-modes";
+  [["link", t("copy.modeLink"), t("copy.modeLinkNote")],
+   ["none", t("copy.modeNone"), t("copy.modeNoneNote")]].forEach(([key, label, note]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ev-chip" + (key === mode.value ? " on" : "");
+    chip.textContent = label;
+    chip.title = note;
+    chip.addEventListener("click", () => {
+      mode.value = key;
+      $$(".ev-chip", wrap).forEach((c) => c.classList.toggle("on", c === chip));
+      if (onPick) onPick(key);
+    });
+    wrap.appendChild(chip);
+  });
+  box.appendChild(wrap);
+  const note = document.createElement("p");
+  note.className = "muted";
+  box.appendChild(note);
+  const paint = (key) => {
+    note.textContent = key === "none" ? t("copy.modeNoneNote") : t("copy.modeLinkNote");
+  };
+  paint(mode.value);
+  return paint;
+}
+
+async function openCopyProjectModal() {
+  let plan = null;
+  try {
+    plan = await api(`/api/projects/${activeProjectId}/copy/plan`);
+  } catch (e) { return fail(e); }
+  openModal(t("copy.projectTitle"), (body) => {
+    const mode = { value: "link" };
+    body.innerHTML = `
+      <label>${escHtml(t("copy.nameLabel"))}</label>
+      <input class="cp-name" value="${escHtml(plan.name + " (копия)")}" />
+      <p class="muted cp-sum">${escHtml(t("copy.projectSum", {
+        tracks: tNum(plan.tracks), scenes: tNum(plan.scenes),
+        chars: tNum(plan.characters),
+      }))}</p>`;
+    const paint = copyModeRow(body, mode);
+    const disk = document.createElement("p");
+    disk.className = "muted cp-disk";
+    body.appendChild(disk);
+    const paintDisk = () => {
+      disk.textContent = mode.value === "none"
+        ? t("copy.diskNone")
+        : t("copy.disk", { media: fmtBytes(plan.media_bytes), n: tNum(plan.media_files) });
+    };
+    paintDisk();
+    body.querySelectorAll(".copy-modes .ev-chip").forEach((c) =>
+      c.addEventListener("click", () => { paint(mode.value); paintDisk(); }));
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = t("copy.go");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      go.textContent = t("copy.going");
+      try {
+        const r = await api(`/api/projects/${activeProjectId}/copy`, {
+          method: "POST",
+          body: { media: mode.value, name: $(".cp-name", body).value.trim() },
+        });
+        closeModal();
+        // Переключаемся в копию: человек нажал «копировать», чтобы в ней и
+        // работать, а не чтобы найти её потом в списке.
+        activeProjectId = r.project_id;
+        localStorage.setItem("rc_project", activeProjectId);
+        await loadProject();
+      } catch (e) { fail(e); go.disabled = false; go.textContent = t("copy.go"); }
+    });
+    body.appendChild(go);
+  }, { medium: true });
+}
+
+async function openCopyTrackModal(tr) {
+  let plan = null;
+  try {
+    plan = await api(`/api/tracks/${tr.id}/copy/plan`);
+  } catch (e) { return fail(e); }
+  openModal(t("copy.trackTitle"), (body) => {
+    const mode = { value: "link" };
+    body.innerHTML = `
+      <p class="muted">${escHtml(t("copy.trackSum", {
+        title: plan.title || t("copy.untitled"), scenes: tNum(plan.scenes),
+      }))}</p>
+      <label>${escHtml(t("copy.targetLabel"))}</label>
+      <select class="cp-target"></select>
+      <p class="muted cp-chars"></p>`;
+    const sel = $(".cp-target", body);
+    (plan.projects || []).forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.name;
+      if (p.id === plan.target_project_id) o.selected = true;
+      sel.appendChild(o);
+    });
+    const chars = $(".cp-chars", body);
+    const paintChars = async () => {
+      const target = Number(sel.value);
+      if (target === plan.target_project_id && plan.same_project) {
+        chars.textContent = "";
+        return;
+      }
+      try {
+        const p2 = await api(`/api/tracks/${tr.id}/copy/plan?target_project_id=${target}`);
+        // ЛОВУШКА, о которой обязательно сказать заранее: имена героев в
+        // кадрах — это текст, а описания и модельки лежат в ПРОЕКТЕ. Без
+        // переноса героев копия выглядит целой, но генерация в ней молча
+        // теряет лицо.
+        chars.textContent = (p2.bring_characters || []).length
+          ? t("copy.bringChars", { list: p2.bring_characters.join(", ") })
+          : "";
+      } catch (e) { chars.textContent = ""; }
+    };
+    sel.addEventListener("change", paintChars);
+    paintChars();
+    const paint = copyModeRow(body, mode);
+    const disk = document.createElement("p");
+    disk.className = "muted";
+    disk.textContent = t("copy.disk", { media: fmtBytes(plan.media_bytes),
+                                        n: tNum(plan.media_files) });
+    body.appendChild(disk);
+    body.querySelectorAll(".copy-modes .ev-chip").forEach((c) =>
+      c.addEventListener("click", () => {
+        paint(mode.value);
+        disk.textContent = mode.value === "none" ? t("copy.diskNone")
+          : t("copy.disk", { media: fmtBytes(plan.media_bytes), n: tNum(plan.media_files) });
+      }));
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = t("copy.go");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      go.textContent = t("copy.going");
+      try {
+        const r = await api(`/api/tracks/${tr.id}/copy`, {
+          method: "POST",
+          body: { media: mode.value, target_project_id: Number(sel.value) },
+        });
+        closeModal();
+        if ((r.brought_characters || []).length) {
+          alert(t("copy.broughtChars", { list: r.brought_characters.join(", ") }));
+        }
+        if (Number(sel.value) !== activeProjectId) {
+          activeProjectId = Number(sel.value);
+          localStorage.setItem("rc_project", activeProjectId);
+        }
+        await loadProject();
+      } catch (e) { fail(e); go.disabled = false; go.textContent = t("copy.go"); }
+    });
+    body.appendChild(go);
+  }, { medium: true });
+}
+
+/* ═══════════════════ ПРОДЛИТЬ КАДР / КОПИЯ КАДРА ═══════════════════
+
+   Оба действия удлиняют раскадровку, поэтому оба обязаны спросить одно и
+   то же: что сделать с таймингом. Молчать нельзя — сборка вешает звук с
+   -shortest, и лишние секунды раскадровки просто исчезают из клипа вместе
+   с последними кадрами. */
+function retimeLabel(p) {
+  const name = t("retime." + p.policy);
+  if (p.policy === "squeeze") return name + " — " + t("retime.squeezeNote", { n: p.new_duration });
+  if (p.policy === "spread") return name + " — " + t("retime.spreadNote", { n: p.new_duration });
+  return name + " — " + t("retime.tailNote", { n: p.track_delta_sec });
+}
+
+async function openSceneRetimeModal(s, mode) {
+  const url = mode === "extend"
+    ? `/api/scenes/${s.id}/extend/plan` : `/api/scenes/${s.id}/copy/plan`;
+  let plan = null;
+  try { plan = await api(url); } catch (e) { return fail(e); }
+  openModal(t(mode === "extend" ? "extend.title" : "copy.sceneTitle"), (body) => {
+    const chosen = { value: plan.default };
+    body.innerHTML = `<p class="muted">${escHtml(
+      t(mode === "extend" ? "extend.intro" : "copy.sceneIntro", { n: plan.position }))}</p>`;
+    const list = document.createElement("div");
+    list.className = "retime-list";
+    (plan.policies || []).forEach((p) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "kind-card" + (p.policy === chosen.value ? " on" : "");
+      b.dataset.policy = p.policy;
+      const warn = p.fell_back ? `<span class="muted">${escHtml(t("retime.fellBack"))}</span>` : "";
+      const stale = (p.video_stale_ids || []).length
+        ? `<span class="muted">${escHtml(t("retime.videoStale", { n: p.video_stale_ids.length }))}</span>` : "";
+      b.innerHTML = `<b>${escHtml(retimeLabel(p))}</b>${warn}${stale}`;
+      b.addEventListener("click", () => {
+        chosen.value = p.policy;
+        $$(".kind-card", list).forEach((x) => x.classList.toggle("on", x === b));
+      });
+      list.appendChild(b);
+    });
+    body.appendChild(list);
+    if (mode === "extend") {
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = plan.points
+        ? t("extend.cost", { n: tNum(plan.points), engine: plan.text_engine })
+        : t("extend.free");
+      body.appendChild(note);
+      if (plan.storyboard_stale_after) {
+        const w = document.createElement("p");
+        w.className = "muted";
+        w.textContent = t("extend.sheetWarn");
+        body.appendChild(w);
+      }
+      if (!plan.has_frames) {
+        const w = document.createElement("p");
+        w.className = "status error";
+        w.textContent = t("extend.noFrames");
+        body.appendChild(w);
+      }
+    }
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.disabled = mode === "extend" && !plan.has_frames;
+    go.textContent = t(mode === "extend" ? "extend.go" : "copy.go");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      go.textContent = t("copy.going");
+      try {
+        const path = mode === "extend"
+          ? `/api/scenes/${s.id}/extend` : `/api/scenes/${s.id}/copy`;
+        await api(path, { method: "POST", body: { policy: chosen.value } });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        fail(e);
+        go.disabled = false;
+        go.textContent = t(mode === "extend" ? "extend.go" : "copy.go");
+      }
+    });
+    body.appendChild(go);
+  }, { medium: true });
+}
+
+/* Пакетная перерисовка со сметой: по умолчанию платим только за кадры,
+   которые реально изменились. «Все подряд» осталось — но отдельным выбором
+   и с ценой на виду, а не молча за весь трек. */
+async function openFramesScopeModal(tr) {
+  let q = null;
+  try {
+    q = await api(`/api/tracks/${tr.id}/frames/quote?engine=${encodeURIComponent(effImageEngine(tr))}`);
+  } catch (e) { return fail(e); }
+  openModal(t("framesScope.title"), (body) => {
+    const chosen = { value: "dirty" };
+    body.innerHTML = `<p class="muted">${escHtml(t("framesScope.intro", {
+      engine: engineTitle(q.engine), n: tNum(q.per_scene) }))}</p>`;
+    const list = document.createElement("div");
+    list.className = "retime-list";
+    (q.scopes || []).forEach((row) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "kind-card" + (row.scope === chosen.value ? " on" : "");
+      b.disabled = !row.scenes;
+      b.innerHTML = `<b>${escHtml(t("framesScope." + row.scope))}</b>
+        <span class="muted">${escHtml(t("framesScope.line", {
+          scenes: tNum(row.scenes), total: tNum(row.total) }))}</span>`;
+      b.addEventListener("click", () => {
+        chosen.value = row.scope;
+        $$(".kind-card", list).forEach((x) => x.classList.toggle("on", x === b));
+      });
+      list.appendChild(b);
+    });
+    body.appendChild(list);
+    const bal = document.createElement("p");
+    bal.className = "muted";
+    bal.textContent = t("framesScope.balance", { n: tNum(q.balance) });
+    body.appendChild(bal);
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = t("framesScope.go");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        const eng = encodeURIComponent(effImageEngine(tr));
+        await api(`/api/tracks/${tr.id}/generate-all-frames?engine=${eng}&scope=${chosen.value}`,
+                  { method: "POST" });
+        closeModal();
+        await loadProject();
+      } catch (e) { fail(e); go.disabled = false; }
+    });
+    body.appendChild(go);
+  }, { medium: true });
 }
 
 async function saveProject({ quiet = false } = {}) {
@@ -7551,19 +8131,31 @@ onLangChange(() => {
 });
 
 
-// ═════════════════════════ ЧАТ: одно окно, переключается модель ═════════════════════════
+// ═════════════════════ МАСТЕРСКАЯ — основное окно генерации ═════════════════════
 //
-// Ключевое решение, ради которого это не «ещё три вкладки»: ВЫБРАННАЯ МОДЕЛЬ И
-// ЕСТЬ НАМЕРЕНИЕ. Селектор живёт внутри строки ввода; текстовая модель отвечает
-// текстом, движок картинок рисует по тому же промпту, движок видео оживляет
-// картинку. Никаких режимов экрана.
+// ГРАНИЦА, КОТОРАЯ ДЕРЖИТ ВСЁ ОСТАЛЬНОЕ: мастерская — окно на ОДИН результат
+// (кадр, ролик, ответ), а режим (rap clips, UGC, сериалы, мокапы) — конвейер на
+// работу, которая длиннее одного результата. Отсюда прямое правило: здесь
+// НЕЛЬЗЯ породить объект режима — ни трек, ни серию, ни товар. Мастерская
+// порождает ровно одно: медиа в ленте. Всё, что должно жить дольше ленты,
+// уезжает в режим кнопкой «В проект».
 //
-// Цена видна ДО отправки и пересчитывается на каждое движение селектора. Сервер
-// остаётся авторитетом по деньгам — клиент только показывает то же число.
+// ВЫБРАННАЯ МОДЕЛЬ И ЕСТЬ НАМЕРЕНИЕ. Селектор живёт внутри строки ввода;
+// текстовая модель отвечает текстом, движок картинок рисует по тому же промпту,
+// движок видео оживляет картинку. Вкладок «текст / картинки / видео» сверху нет
+// намеренно (антипаттерн №11 дизайн-системы): они убивают главный приём одного
+// окна — «написал → получил кадр → оживил его», не выходя из ленты.
 //
-// Авто-режима «сам решу, что ты хотел» здесь нет намеренно: текст стоит 2 токена,
-// картинка 8, видео до 154. Автороутер, промахнувшийся в видео, стоит человеку
-// месячной нормы тарифа — цена ошибки несимметрична, поэтому решает человек.
+// ЦЕНУ СЧИТАЕТ СЕРВЕР. Клиент её только показывает. Прежний пересчёт
+// `points * dur / 6` расходился со списанием на любой длительности, кроме
+// шести секунд (Grok 10 с: показывал 4, списывал 2), и нарушал первый закон
+// системы — «цена до запуска».
+//
+// Авто-режима «сам решу, что ты хотел» здесь нет намеренно: текст стоит 2
+// токена, картинка 8, видео до 252. Автороутер, промахнувшийся в видео, стоит
+// человеку месячной нормы тарифа — цена ошибки несимметрична, решает человек.
+
+const MK_PANEL_KEY = "lolq_mk_panel";
 
 const chatState = {
   models: [],          // плоский список позиций селектора с /api/chat/models
@@ -7573,11 +8165,25 @@ const chatState = {
   messages: [],
   files: [],           // залитые вложения, ещё не отправленные
   sourceId: 0,         // «Оживить»: из какого сообщения берём первый кадр
+  lastId: 0,           // второй кадр для интерполяции (first_last-движки)
   search: "",
-  hasMore: false,     // есть ли сообщения РАНЬШЕ загруженного куска
+  hasMore: false,      // есть ли сообщения РАНЬШЕ загруженного куска
   loadingMore: false,
   poll: null,
   busy: false,
+  // ── параметры правой панели ──
+  tab: "chats",        // chats | projects
+  aspect: "",          // пусто = дефолт движка
+  resolution: "",
+  variants: 1,
+  target: { target: "" },   // «куда положить»: пусто = оставить в ленте
+  targets: null,            // дерево проектов с /api/chat/targets
+  panelHidden: localStorage.getItem(MK_PANEL_KEY) === "off",
+  panelOpen: false,         // шторка на узком экране
+  fromScene: null,          // «Доснять в мастерской»: откуда пришли
+  enhanceBackup: "",        // промпт ДО «улучшить» — чтобы вернуть как было
+  hint: "",                 // почему «Отправить» сейчас не сработает
+  error: "",                // последняя ошибка — под полем, не в alert
 };
 
 function chatEl(id) { return document.getElementById(id); }
@@ -7596,15 +8202,22 @@ function chatScrollBottom() {
 function showChat() {
   hideScreens();
   $("#chat").classList.remove("hidden");
-  // Поллинг студии гасим: пока человек в чате, дёргать проект незачем.
+  // Поллинг студии гасим: пока человек в мастерской, дёргать проект незачем.
   clearTimeout(pollTimer);
-  if (location.hash !== "#/chat") history.replaceState(null, "", "#/chat");
+  // #/make — канонический адрес окна, #/chat продолжает работать: он лежит в
+  // закладках владельца и в state.lastStep, и ломать его переименованием
+  // нельзя. Один экран, два входа.
+  if (location.hash !== "#/make" && location.hash !== "#/chat") {
+    history.replaceState(null, "", "#/make");
+  }
   chatBoot();
 }
 
 function chatLeave() {
   clearTimeout(chatState.poll);
-  if (location.hash === "#/chat") history.replaceState(null, "", location.pathname);
+  if (location.hash === "#/chat" || location.hash === "#/make") {
+    history.replaceState(null, "", location.pathname);
+  }
   showApp();
 }
 
@@ -7620,8 +8233,12 @@ async function chatBoot() {
       chatRenderFeed();
     }
     chatRenderAll();
+    // Дерево «куда положить» тянем фоном: без него окно работает, а ждать
+    // его на входе — задерживать первое поле ввода ради группы, которую
+    // трогают раз в десять запусков.
+    mkLoadTargets();
   } catch (e) {
-    fail(e);
+    mkFail(e);
   }
 }
 
@@ -7629,6 +8246,14 @@ async function chatLoadModels() {
   const data = await api("/api/chat/models");
   chatState.models = data.models || [];
   chatState.meta = data;
+}
+
+async function mkLoadTargets() {
+  try {
+    const data = await api("/api/chat/targets");
+    chatState.targets = data.projects || [];
+    mkRenderParams();
+  } catch (e) { /* нет дерева — группа честно скажет «проектов пока нет» */ }
 }
 
 function chatModel(id) {
@@ -7639,6 +8264,107 @@ function chatCurrentModel() {
   const sel = chatEl("cc-model");
   return chatModel(sel && sel.value) || chatState.models[0] || null;
 }
+
+// ────────── параметры: текущее значение и дефолт ──────────
+// Правило одно на все группы: значение берём из состояния, если движок его
+// вообще принимает, иначе — дефолт движка. Так смена модели не оставляет
+// висеть формат, которого у неё нет.
+
+function mkAspect(model) {
+  const list = (model && model.aspects) || [];
+  if (!list.length) return "";
+  return list.includes(chatState.aspect) ? chatState.aspect : list[0];
+}
+
+function mkAspectDefault(model) {
+  const list = (model && model.aspects) || [];
+  return list.length ? list[0] : "";
+}
+
+function mkResolution(model) {
+  const list = (model && model.resolutions) || [];
+  if (!list.length) return "";
+  if (list.includes(chatState.resolution)) return chatState.resolution;
+  return mkResolutionDefault(model);
+}
+
+function mkResolutionDefault(model) {
+  const list = (model && model.resolutions) || [];
+  if (!list.length) return "";
+  const want = (chatState.meta && chatState.meta.default_resolution) || "";
+  return list.includes(want) ? want : list[0];
+}
+
+function mkDuration() {
+  return Number((chatEl("cc-duration") || {}).value || 6) || 6;
+}
+
+function mkVariants(model) {
+  // Текст вариантами не гоняем: четыре ответа шлюза — это четыре разговора,
+  // а лента у нас одна.
+  if (model && model.kind === "text") return 1;
+  return Math.max(1, Math.min(mkMaxVariants(), chatState.variants || 1));
+}
+
+function mkMaxVariants() {
+  return Number((chatState.meta && chatState.meta.max_variants) || 4);
+}
+
+// Цена ДО запуска — ГОТОВЫМ ЧИСЛОМ С СЕРВЕРА. Никакой арифметики здесь нет
+// намеренно: вторая касса в сервисе — это расхождение показанного и списанного.
+function chatPrice() {
+  const model = chatCurrentModel();
+  if (!model) return 0;
+  if (model.kind === "video") {
+    const table = model.points_by_duration || {};
+    const key = String(mkDuration());
+    return Number(table[key] != null ? table[key] : model.points) || 0;
+  }
+  if (model.kind === "image") {
+    const table = model.points_by_resolution || {};
+    const key = mkResolution(model);
+    return Number(table[key] != null ? table[key] : model.points) || 0;
+  }
+  return Number(model.points) || 0;
+}
+
+function chatTotal() {
+  return chatPrice() * mkVariants(chatCurrentModel());
+}
+
+function mkHave() {
+  return chatState.meta ? Number(chatState.meta.points || 0) : 0;
+}
+
+function mkAdmin() {
+  return Boolean(chatState.meta && chatState.meta.is_admin);
+}
+
+// Есть ли из чего делать видео. Видео у нас всегда стартует с картинки: явно
+// указанный кадр, вложение или последняя картинка ЭТОЙ ленты.
+function mkHasFrame() {
+  if (chatState.sourceId || chatState.files.length) return true;
+  return chatState.messages.some((m) => m.kind === "image" && m.url);
+}
+
+// ПОЧЕМУ КНОПКА НЕ СРАБОТАЕТ — до нажатия, а не 400-й ошибкой после.
+// Нехватка токенов сюда НЕ попадает намеренно: гасить продажу нельзя, там
+// краснеет цена и появляется «Пополнить».
+function mkBlockReason() {
+  const model = chatCurrentModel();
+  if (!model) return t("make.needModel");
+  if (!model.live) return t("make.offlineWhy", { title: model.title });
+  if (!model.allowed) return t("make.lockedWhy", { plan: mkPlanName(model.plan) });
+  const text = ((chatEl("cc-text") || {}).value || "").trim();
+  if (!text && model.kind !== "video") return t("make.needText");
+  if (model.kind === "video" && !mkHasFrame()) return t("make.needFrame");
+  return "";
+}
+
+function mkPlanName(plan) {
+  return String(plan || "pro").toUpperCase().replace("_", " ");
+}
+
 
 // ────────── селектор модели внутри строки ввода ──────────
 
@@ -7665,7 +8391,7 @@ function chatRenderModelSelect() {
         // читается как поломка, а видимый замок работает витриной.
         o.textContent = t("chat.locked", {
           title: m.title, n: tNum(m.points), unit: chatUnit(m.points),
-          plan: (m.plan || "pro").toUpperCase().replace("_", " "),
+          plan: mkPlanName(m.plan),
         });
         o.disabled = true;
       } else {
@@ -7694,7 +8420,6 @@ function chatRenderDuration() {
   const model = chatCurrentModel();
   if (!box || !chatState.meta) return;
   const on = Boolean(model && model.kind === "video");
-  box.classList.toggle("hidden", !on);
   if (!on) return;
   if (!box.options.length) {
     (chatState.meta.durations || [6]).forEach((d) => {
@@ -7704,40 +8429,97 @@ function chatRenderDuration() {
       box.appendChild(o);
     });
     box.value = "6";
-  } else {
-    Array.from(box.options).forEach((o) => {
-      o.textContent = t("chat.duration", { n: Number(o.value) });
-    });
   }
 }
 
-// Цена ДО отправки. Видео считается пропорционально длительности — ровно так
-// же, как на сервере (video_engine_usd), поэтому число совпадает с тем, что
-// реально спишется.
-function chatPrice() {
-  const model = chatCurrentModel();
-  if (!model) return 0;
-  if (model.kind !== "video") return model.points;
-  const dur = Number((chatEl("cc-duration") || {}).value || 6) || 6;
-  return Math.max(2, Math.ceil(model.points * (dur / 6)));
-}
-
+// Цена и главное действие. ПРИ НЕХВАТКЕ ТОКЕНОВ КНОПКА НЕ ГАСНЕТ: гасить
+// продажу нельзя — краснеет цена и рядом встаёт «Пополнить».
 function chatRenderPrice() {
   const price = chatEl("cc-price");
   const send = chatEl("cc-send");
   if (!price || !send) return;
-  send.textContent = t("chat.send");
-  const admin = chatState.meta && chatState.meta.is_admin;
-  const have = chatState.meta ? Number(chatState.meta.points || 0) : 0;
-  const need = chatPrice();
-  price.textContent = admin
-    ? ""
-    : `${t("chat.price", { n: tNum(need), unit: chatUnit(need) })} · `
-      + `${t("chat.priceHave", { n: tNum(have) })}`;
-  price.classList.toggle("short", !admin && need > have);
+  send.textContent = chatState.busy ? t("chat.sending") : t("chat.send");
+  const need = chatTotal();
+  const have = mkHave();
+  const n = mkVariants(chatCurrentModel());
+  price.innerHTML = "";
+  if (!mkAdmin()) {
+    const line = document.createElement("span");
+    line.textContent = n > 1
+      ? `${t("make.priceEach", { n, each: tNum(chatPrice()) })} = ${tNum(need)} · `
+        + t("chat.priceHave", { n: tNum(have) })
+      : `${t("chat.price", { n: tNum(need), unit: chatUnit(need) })} · `
+        + t("chat.priceHave", { n: tNum(have) });
+    price.appendChild(line);
+    if (need > have) {
+      const top = document.createElement("button");
+      top.type = "button";
+      top.className = "ghost mk-topup";
+      top.textContent = t("make.topUp");
+      top.addEventListener("click", () => openAccountModal("plan"));
+      price.appendChild(top);
+    }
+  }
+  price.classList.toggle("short", !mkAdmin() && need > have);
+
+  // Погашение — только по причинам, которые деньгами не лечатся.
+  const why = mkBlockReason();
+  chatState.hint = why;
+  send.disabled = Boolean(why) || chatState.busy;
+  mkRenderNote();
 }
 
-// ────────── сайдбар: чаты по датам ──────────
+// Под полем живут ТРИ разные строки, и путать их нельзя: подсказка «почему
+// нельзя» (муть), ошибка последнего запроса (чернила ошибки) и постоянное
+// обещание про деньги. Показываем не больше одной сверху вниз по важности.
+function mkRenderNote() {
+  const box = chatEl("mk-error");
+  const note = chatEl("cc-note");
+  if (box) {
+    const err = chatState.error;
+    const hint = chatState.hint;
+    const text = err || hint;
+    box.textContent = text;
+    box.classList.toggle("hidden", !text);
+    box.classList.toggle("hint", !err && Boolean(hint));
+  }
+  if (note) note.textContent = t("chat.payNote");
+}
+
+// Единая точка «не получилось» ВНУТРИ мастерской: строка под полем вместо
+// alert. В окне, где одно нажатие стоит 252 токена, модальное окно поверх
+// работы особенно неуместно (DESIGN_SYSTEM §4.3).
+function mkFail(e) {
+  chatState.error = errText(e);
+  mkRenderNote();
+}
+
+function mkClearError() {
+  if (!chatState.error) return;
+  chatState.error = "";
+  mkRenderNote();
+}
+
+// ────────── ЛЕВО: вкладки, ленты, проекты ──────────
+
+function mkRenderTabs() {
+  const box = chatEl("mk-tabs");
+  if (!box) return;
+  box.innerHTML = "";
+  [["chats", "make.tabChats"], ["projects", "make.tabProjects"]].forEach(([id, key]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = chatState.tab === id ? "on" : "";
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", chatState.tab === id ? "true" : "false");
+    b.textContent = t(key);
+    b.addEventListener("click", () => {
+      chatState.tab = id;
+      chatRenderAll();
+    });
+    box.appendChild(b);
+  });
+}
 
 function chatDayGroup(iso) {
   const d = new Date(iso);
@@ -7750,71 +8532,244 @@ function chatDayGroup(iso) {
   return "chat.groupOlder";
 }
 
+function mkGroupHead(box, label) {
+  const h = document.createElement("div");
+  h.className = "chat-list-group";
+  h.textContent = label;
+  box.appendChild(h);
+}
+
 function chatRenderList() {
   const box = chatEl("chat-list");
+  const search = chatEl("chat-search");
   if (!box) return;
+  const onChats = chatState.tab === "chats";
+  box.classList.toggle("hidden", !onChats);
+  if (search) search.classList.toggle("hidden", !onChats);
+  const nw = chatEl("chat-new");
+  if (nw) nw.classList.toggle("hidden", !onChats);
+  if (!onChats) return;
+
   box.innerHTML = "";
-  const q = chatState.search.trim().toLowerCase();
-  const rows = chatState.chats.filter((c) => !q || (c.title || "").toLowerCase().includes(q));
+  const rows = chatState.chats;
   if (!rows.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted chat-list-empty";
-    empty.textContent = t("chat.noChats");
+    // Пустое состояние по §4.10: что здесь будет → почему пусто → одно
+    // действие. Действие уже стоит выше огненной кнопкой «Новая лента»,
+    // второй здесь не рисуем.
+    const empty = document.createElement("div");
+    empty.className = "chat-list-empty muted";
+    const a = document.createElement("p");
+    a.textContent = chatState.search ? t("make.searchNone", { q: chatState.search }) : t("make.emptyChats");
+    const b = document.createElement("p");
+    b.textContent = chatState.search ? t("make.searchWhere") : t("make.emptyChatsWhy");
+    empty.appendChild(a);
+    empty.appendChild(b);
     box.appendChild(empty);
     return;
   }
   let group = "";
-  for (const c of rows) {
+  const pinned = rows.filter((c) => c.pinned);
+  const rest = rows.filter((c) => !c.pinned);
+  if (pinned.length) {
+    mkGroupHead(box, t("make.groupPinned"));
+    pinned.forEach((c) => box.appendChild(mkChatRow(c)));
+  }
+  for (const c of rest) {
     const g = chatDayGroup(c.updated_at || c.created_at);
     if (g !== group) {
       group = g;
-      const h = document.createElement("div");
-      h.className = "chat-list-group";
-      h.textContent = t(g);
-      box.appendChild(h);
+      mkGroupHead(box, t(g));
     }
-    const row = document.createElement("div");
-    row.className = "chat-row" + (c.id === chatState.activeId ? " on" : "");
-    const name = document.createElement("button");
-    name.type = "button";
-    name.className = "chat-row-name";
-    name.textContent = c.title || t("chat.untitled");
-    name.addEventListener("click", () => chatOpen(c.id));
-    const spent = document.createElement("span");
-    spent.className = "chat-row-spent";
-    spent.textContent = c.spent ? tNum(c.spent) : "";
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "ghost danger chat-row-del";
-    del.textContent = "✕";
-    del.title = t("chat.del");
-    del.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm(t("chat.delConfirm"))) return;
-      try {
-        await api(`/api/chats/${c.id}`, { method: "DELETE" });
-        if (chatState.activeId === c.id) {
-          chatState.activeId = 0;
-          chatState.messages = [];
-        }
-        await chatLoadList();
-        chatRenderAll();
-      } catch (err) { fail(err); }
-    });
-    row.appendChild(name);
-    row.appendChild(spent);
-    row.appendChild(del);
-    box.appendChild(row);
+    box.appendChild(mkChatRow(c));
   }
 }
 
+function mkChatRow(c) {
+  const row = document.createElement("div");
+  row.className = "chat-row" + (c.id === chatState.activeId ? " on" : "");
+  // Миниатюра последнего кадра: глаз узнаёт ленту по картинке быстрее, чем
+  // читает авто-заголовок из первых сорока символов промпта.
+  if (c.thumb_url) {
+    const img = document.createElement("img");
+    img.className = "mk-row-thumb";
+    img.src = c.thumb_url;
+    img.loading = "lazy";
+    img.alt = "";
+    row.appendChild(img);
+  } else {
+    const dot = document.createElement("span");
+    dot.className = "mk-row-dot";
+    dot.textContent = "✎";
+    row.appendChild(dot);
+  }
+  const name = document.createElement("button");
+  name.type = "button";
+  name.className = "chat-row-name";
+  name.textContent = c.title || t("chat.untitled");
+  name.title = c.title || t("chat.untitled");
+  name.addEventListener("click", () => chatOpen(c.id));
+  // Переименование двойным кликом: авто-заголовок из первых сорока символов
+  // промпта — рабочая догадка, а не название работы.
+  name.addEventListener("dblclick", async () => {
+    const next = prompt(t("make.renamePrompt"), c.title || "");
+    if (next === null) return;
+    try {
+      await api(`/api/chats/${c.id}`, { method: "PATCH", body: { title: next } });
+      await chatLoadList();
+      chatRenderAll();
+    } catch (e) { mkFail(e); }
+  });
+  const spent = document.createElement("span");
+  spent.className = "chat-row-spent";
+  spent.textContent = c.spent ? tNum(c.spent) : "";
+
+  const star = document.createElement("button");
+  star.type = "button";
+  star.className = "ghost mk-star" + (c.pinned ? " on" : "");
+  star.textContent = c.pinned ? "★" : "☆";
+  // Звезда обещает СРОК ХРАНЕНИЯ, а не сортировку: закреплённое не подметает
+  // ретенция. Подсказка говорит ровно это, иначе контрол врёт.
+  star.title = t("make.pinTitle");
+  star.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await api(`/api/chats/${c.id}`, { method: "PATCH", body: { pinned: !c.pinned } });
+      await chatLoadList();
+      chatRenderAll();
+    } catch (err) { mkFail(err); }
+  });
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "ghost danger chat-row-del";
+  del.textContent = "✕";
+  del.title = t("chat.del");
+  del.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm(t("chat.delConfirm"))) return;
+    try {
+      await api(`/api/chats/${c.id}`, { method: "DELETE" });
+      if (chatState.activeId === c.id) {
+        chatState.activeId = 0;
+        chatState.messages = [];
+      }
+      await chatLoadList();
+      chatRenderAll();
+    } catch (err) { mkFail(err); }
+  });
+  row.appendChild(name);
+  row.appendChild(spent);
+  row.appendChild(star);
+  row.appendChild(del);
+  return row;
+}
+
+// Вкладка «Проекты» — НАСТОЯЩИЕ проекты, сгруппированные по режимам. Клик =
+// уйти в режим: выставляем #project-select и отдаём change, ровно тем же
+// путём, что и тумблер режимов. Второй копии этой логики не заводим.
+function mkRenderProjects() {
+  const box = chatEl("mk-projects");
+  if (!box) return;
+  const on = chatState.tab === "projects";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  box.innerHTML = "";
+  const sel = $("#project-select");
+  const opts = sel ? Array.from(sel.options) : [];
+  const R = window.QlolModes;
+  if (!opts.length) {
+    const empty = document.createElement("div");
+    empty.className = "chat-list-empty muted";
+    const a = document.createElement("p");
+    a.textContent = t("make.emptyProjects");
+    const b = document.createElement("p");
+    b.textContent = t("make.emptyProjectsWhy");
+    empty.appendChild(a);
+    empty.appendChild(b);
+    box.appendChild(empty);
+    return;
+  }
+  const byMode = new Map();
+  opts.forEach((o) => {
+    const mode = R ? (R.ofKind(o.dataset.kind || "album") || {}) : {};
+    const id = mode.id || "clip";
+    if (!byMode.has(id)) byMode.set(id, { mode, rows: [] });
+    byMode.get(id).rows.push(o);
+  });
+  byMode.forEach(({ mode, rows }) => {
+    const head = document.createElement("div");
+    head.className = "mk-proj-group";
+    head.textContent = `${mode.icon || "🎬"} ${mode.title || mode.id || ""}`;
+    box.appendChild(head);
+    rows.forEach((o) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-proj" + (o.selected ? " on" : "");
+      const name = document.createElement("span");
+      name.className = "mk-proj-name";
+      name.textContent = o.textContent;
+      const meta = document.createElement("span");
+      meta.className = "mk-proj-meta";
+      meta.textContent = kindLabel(o.dataset.kind || "album");
+      b.appendChild(name);
+      b.appendChild(meta);
+      b.addEventListener("click", () => {
+        if (sel.value !== o.value) {
+          sel.value = o.value;
+          sel.dispatchEvent(new Event("change"));
+        }
+        chatLeave();
+      });
+      box.appendChild(b);
+    });
+  });
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "mk-proj-add";
+  add.textContent = t("make.newProject");
+  add.addEventListener("click", () => {
+    chatLeave();
+    const btn = $("#new-project-btn");
+    if (btn) btn.click();
+  });
+  box.appendChild(add);
+}
+
+// Подвал левой панели: срок хранения и занятое место. Обе строки про одно —
+// сколько живёт результат; упереться в квоту посреди генерации без единого
+// предупреждения — тот же 402, только про диск.
+function mkRenderSideFoot() {
+  const retention = chatEl("chat-retention");
+  if (retention && chatState.meta) {
+    retention.textContent = chatState.meta.retention_days
+      ? t("chat.retention", { n: chatState.meta.retention_days })
+      : t("chat.retentionAdmin");
+  }
+  const box = chatEl("mk-storage");
+  if (!box) return;
+  const q = (chatState.meta && chatState.meta.storage) || null;
+  if (!q || !q.limit_bytes) { box.textContent = ""; return; }
+  box.textContent = t("make.storage", {
+    used: fmtBytes(q.used_bytes), limit: fmtBytes(q.limit_bytes),
+  });
+  box.classList.toggle("mk-over", Number(q.pct) >= 90);
+}
+
+
+// ────────── загрузка лент и сообщений ──────────
+
 async function chatLoadList() {
-  chatState.chats = await api("/api/chats");
+  // Поиск идёт НА СЕРВЕРЕ и по названиям, и по промптам: клиентский фильтр
+  // искал только по заголовку, а заголовок — это первые сорок символов
+  // первого промпта, то есть почти всегда не то слово, которое ищут.
+  const q = chatState.search.trim();
+  chatState.chats = await api(`/api/chats${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 }
 
 async function chatOpen(id) {
   chatState.activeId = id;
   chatState.sourceId = 0;
+  chatState.lastId = 0;
   await chatLoadMessages();
   const active = chatState.chats.find((c) => c.id === id);
   if (active && active.model && chatModel(active.model)) {
@@ -7857,66 +8812,209 @@ async function chatLoadOlder() {
     // Возвращаем взгляд на то же сообщение, а не в начало ленты.
     if (feed) feed.scrollTop = feed.scrollHeight - keepHeight;
   } catch (e) {
-    fail(e);
+    mkFail(e);
   } finally {
     chatState.loadingMore = false;
   }
 }
 
-// ────────── лента ──────────
+// ────────── ЦЕНТР: карточка модели ──────────
 
-function chatBubble(m) {
-  const wrap = document.createElement("div");
-  wrap.className = `chat-msg chat-${m.role}` + (m.status === "error" ? " chat-failed" : "");
+function mkFactRow(box, key, value) {
+  if (!value) return;
+  const k = document.createElement("div");
+  k.className = "mk-fact-k";
+  k.textContent = t(key);
+  const v = document.createElement("div");
+  v.className = "mk-fact-v";
+  v.textContent = value;
+  box.appendChild(k);
+  box.appendChild(v);
+}
 
-  if (m.role === "assistant" && m.engine_title) {
-    const head = document.createElement("div");
-    head.className = "chat-msg-head";
-    head.textContent = m.engine_title + (m.points ? ` · ${tNum(m.points)}` : "");
-    if (m.params && m.params.provider) {
-      head.title = t("chat.provider", { name: m.params.provider });
-    }
-    wrap.appendChild(head);
+// Описание движка живёт в словаре, а не приезжает с сервера строкой: реестр
+// движков написан по-русски, и англоязычный интерфейс получал бы русский
+// абзац. Нет ключа — берём серверную заметку, чтобы новый движок не остался
+// вовсе без объяснения.
+function mkEngineNote(model) {
+  const raw = String(model.id || "").split(":")[1] || "";
+  const key = `make.engineNote.${raw}`;
+  if (tHas(key)) return t(key);
+  return model.note || "";
+}
+
+function mkCan(model) {
+  const out = [];
+  if (model.kind === "video") {
+    if (model.first_last) out.push(t("make.canFirstLast"));
+    const durs = Object.keys(model.points_by_duration || {}).map(Number).sort((a, b) => a - b);
+    if (durs.length) out.push(durs.join(" / ") + " " + t("make.secShort"));
+    if (model.quality) out.push(model.quality);
+  } else if (model.kind === "image") {
+    if ((model.aspects || []).length) out.push(model.aspects.join(" · "));
+    if ((model.resolutions || []).length) out.push(model.resolutions.join(" / "));
+    if (model.max_refs > 1) out.push(t("make.canRefs", { n: model.max_refs }));
+  } else {
+    out.push(t("make.canText"));
+  }
+  return out.join(" · ");
+}
+
+function mkCannot(model) {
+  if (model.kind === "video") return t("make.cannotVideo");
+  if (model.kind === "image") return t("make.cannotImage");
+  return t("make.cannotText");
+}
+
+function mkInput(model) {
+  if (model.kind === "video") return t("make.inputVideo");
+  if (model.kind === "image") {
+    return model.max_refs > 1
+      ? t("make.inputImageRefs", { n: model.max_refs })
+      : t("make.inputImage");
+  }
+  return t("make.inputText");
+}
+
+function mkPriceFact(model) {
+  if (model.kind === "video") {
+    const table = model.points_by_duration || {};
+    return Object.keys(table).map(Number).sort((a, b) => a - b)
+      .map((d) => `${d} ${t("make.secShort")} — ${tNum(table[d])}`).join(" · ");
+  }
+  if (model.kind === "image" && Object.keys(model.points_by_resolution || {}).length) {
+    const table = model.points_by_resolution;
+    return Object.keys(table).map((r) => `${r} — ${tNum(table[r])}`).join(" · ");
+  }
+  return `${tNum(model.points)} ${chatUnit(model.points)}`;
+}
+
+// Карточка выбранной модели ДО первого запуска. Пустое поле в экономике, где
+// одно нажатие стоит от 0 до 252 токенов, — это лотерея: разброс цены
+// тридцатикратный, и знать её человек обязан до нажатия, а не после.
+function mkRenderCard(feed) {
+  const model = chatCurrentModel();
+  const hello = document.createElement("div");
+  hello.className = "mk-hello";
+  const h = document.createElement("h2");
+  h.textContent = t("chat.hello");
+  hello.appendChild(h);
+  feed.appendChild(hello);
+  if (!model) return;
+
+  const card = document.createElement("div");
+  card.className = "mk-card" + ((!model.allowed || !model.live) ? " off" : "");
+
+  const head = document.createElement("div");
+  head.className = "mk-card-head";
+  const title = document.createElement("span");
+  title.className = "mk-card-title";
+  title.textContent = model.title;
+  head.appendChild(title);
+  const kind = document.createElement("span");
+  kind.className = "kind-badge";
+  kind.textContent = t(`chat.opt${model.kind.charAt(0).toUpperCase()}${model.kind.slice(1)}`);
+  head.appendChild(kind);
+  if (!model.allowed) {
+    const lock = document.createElement("span");
+    lock.className = "kind-badge";
+    lock.textContent = `🔒 ${mkPlanName(model.plan)}`;
+    head.appendChild(lock);
+  }
+  card.appendChild(head);
+
+  const note = mkEngineNote(model);
+  if (note) {
+    const p = document.createElement("p");
+    p.className = "mk-card-note";
+    p.textContent = note;
+    card.appendChild(p);
   }
 
-  if (m.text) {
-    const p = document.createElement("div");
-    p.className = "chat-msg-text";
-    p.textContent = m.text;
-    wrap.appendChild(p);
+  const facts = document.createElement("div");
+  facts.className = "mk-facts";
+  mkFactRow(facts, "make.factCan", mkCan(model));
+  mkFactRow(facts, "make.factCannot", mkCannot(model));
+  mkFactRow(facts, "make.factInput", mkInput(model));
+  mkFactRow(facts, "make.factPrice", mkPriceFact(model));
+  card.appendChild(facts);
+
+  // ЧЕТЫРЕ РАЗНЫХ ЧЕСТНЫХ СОСТОЯНИЯ. Закрытое тарифом ведёт к тарифам,
+  // неподключённое честно говорит «включим — заработает», не подходящее
+  // вводу объясняет, чего не хватает. Молчаливый запрет читается как поломка.
+  if (!model.live) {
+    const warn = document.createElement("div");
+    warn.className = "mk-warn";
+    warn.textContent = t("make.offlineWhy", { title: model.title });
+    card.appendChild(warn);
+  } else if (!model.allowed) {
+    const warn = document.createElement("div");
+    warn.className = "mk-warn";
+    warn.textContent = t("make.lockedCard", {
+      title: model.title, plan: mkPlanName(model.plan),
+      mine: mkPlanName((chatState.meta && chatState.meta.plan) || "free"),
+    });
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "ghost";
+    go.textContent = t("make.seePlans");
+    go.addEventListener("click", () => openAccountModal("plan"));
+    warn.appendChild(go);
+    card.appendChild(warn);
+  } else if (model.kind === "video" && !mkHasFrame()) {
+    const warn = document.createElement("div");
+    warn.className = "mk-warn";
+    warn.textContent = t("make.needFrame");
+    card.appendChild(warn);
   }
+  feed.appendChild(card);
+}
 
-  (m.files || []).forEach((f) => {
-    const img = document.createElement("img");
-    img.className = "chat-attach";
-    img.src = f.thumb_url || f.url;
-    img.loading = "lazy";
-    wrap.appendChild(img);
-  });
+// ────────── ЛЕНТА ──────────
 
+function mkElapsed(iso) {
+  const started = new Date(iso);
+  if (isNaN(started)) return "";
+  const sec = Math.max(0, Math.round((Date.now() - started.getTime()) / 1000));
+  if (sec < 60) return t("make.elapsedSec", { n: sec });
+  return t("make.elapsedMin", { m: Math.floor(sec / 60), s: sec % 60 });
+}
+
+// Строка меты у ответа. Без параметров кнопки «повторить» и «повторить иначе»
+// бессмысленны: непонятно, что именно повторяется.
+function mkMetaLine(m) {
+  const bits = [];
+  if (m.engine_title) bits.push(m.engine_title);
+  const p = m.params || {};
+  if (p.duration) bits.push(`${p.duration} ${t("make.secShort")}`);
+  if (p.aspect) bits.push(p.aspect);
+  if (p.resolution && m.kind === "image") bits.push(p.resolution);
+  if (m.points) bits.push(`${tNum(m.points)} ⚡`);
   if (m.status === "queued" || m.status === "running") {
-    const s = document.createElement("div");
+    const el = mkElapsed(m.created_at);
+    if (el) bits.push(el);
+  }
+  return bits.join(" · ");
+}
+
+function mkStatusLine(m) {
+  const s = document.createElement("div");
+  if (m.status === "queued" || m.status === "running") {
     s.className = "status";
     s.textContent = t(m.status === "queued" ? "chat.queued" : "chat.running");
-    wrap.appendChild(s);
-  }
-
-  if (m.status === "error") {
-    const s = document.createElement("div");
+  } else if (m.status === "canceled") {
+    s.className = "status";
+    s.textContent = t("make.canceled");
+  } else if (m.status === "error") {
     s.className = "status error";
     s.textContent = `${t("chat.failed")}: ${m.error || ""}`.slice(0, 300);
-    wrap.appendChild(s);
+  } else {
+    return null;
   }
+  return s;
+}
 
-  if (m.expired) {
-    // Файла нет, промпт есть: срок хранения не должен выглядеть как потеря
-    // работы — повторить можно в один клик.
-    const s = document.createElement("div");
-    s.className = "muted chat-expired";
-    s.textContent = t("chat.expired");
-    wrap.appendChild(s);
-  }
-
+function mkMedia(m) {
   if (m.url && m.kind === "image") {
     const a = document.createElement("a");
     a.href = m.url;
@@ -7933,46 +9031,196 @@ function chatBubble(m) {
     }, { once: true });
     img.addEventListener("load", chatScrollBottom, { once: true });
     a.appendChild(img);
-    wrap.appendChild(a);
-  } else if (m.url && m.kind === "video") {
+    return a;
+  }
+  if (m.url && m.kind === "video") {
     const v = document.createElement("video");
     v.className = "chat-media";
     v.src = m.url;
     v.controls = true;
     v.playsInline = true;
     v.addEventListener("loadeddata", chatScrollBottom, { once: true });
-    wrap.appendChild(v);
+    return v;
+  }
+  return null;
+}
+
+function mkBtn(bar, label, handler, title) {
+  const b = document.createElement("button");
+  b.className = "ghost";
+  b.textContent = label;
+  if (title) b.title = title;
+  b.addEventListener("click", handler);
+  bar.appendChild(b);
+  return b;
+}
+
+function mkActionBar(m) {
+  const bar = document.createElement("div");
+  bar.className = "chat-msg-bar";
+
+  // ОТМЕНА. Две разные подписи, потому что это два разных обещания: пока
+  // задача в очереди — движок не тронут и деньги вернутся полностью; как
+  // только он считает, отменить можно только ожидание.
+  if (m.status === "queued" || m.status === "running") {
+    mkBtn(bar, m.status === "queued"
+      ? t("make.cancelQueued", { n: tNum(m.points) })
+      : t("make.cancelRunning"), () => mkCancel(m.id));
+    return bar;
+  }
+
+  if (m.url && m.kind === "image") {
+    // ГЛАВНЫЙ приём одного окна: картинка → ролик, не выходя из ленты.
+    mkBtn(bar, t("chat.animate"), () => chatPickSource(m.id), t("chat.animateTitle"));
+    const cur = chatCurrentModel();
+    if (cur && cur.kind === "video" && cur.first_last && chatState.sourceId
+        && chatState.sourceId !== m.id) {
+      mkBtn(bar, t("make.asLast"), () => mkPickLast(m.id), t("make.asLastTitle"));
+    }
+    // Мост мастерская → режим: удачный кадр не остаётся в переписке.
+    mkBtn(bar, t("chat.saveTo"), () => chatSaveModal(m), t("chat.saveToTitle"));
+  }
+  if (m.url) {
+    const dl = document.createElement("a");
+    dl.className = "ghost mk-dl";
+    dl.href = m.url;
+    dl.download = "";
+    dl.textContent = t("make.download");
+    bar.appendChild(dl);
+  }
+  if (m.status === "error" || m.expired || m.status === "canceled") {
+    mkBtn(bar, m.points ? t("make.retryCost", { n: tNum(m.points) }) : t("chat.retry"),
+      () => chatRetry(m.id));
+  }
+  if (m.status !== "error") {
+    // «Повторить иначе» ничего не списывает: промпт возвращается в поле,
+    // параметры — в правую панель. Это единственный способ поиграть
+    // формулировкой, не платя за каждую попытку вслепую.
+    mkBtn(bar, t("make.again"), () => mkAgain(m), t("make.againTitle"));
+  }
+  if (m.url) {
+    const star = document.createElement("button");
+    star.className = "ghost" + (m.pinned ? " on" : "");
+    star.textContent = m.pinned ? "★" : "☆";
+    star.title = t("make.pinTitle");
+    star.addEventListener("click", () => mkPin(m));
+    bar.appendChild(star);
+  }
+  return bar;
+}
+
+function chatBubble(m) {
+  const wrap = document.createElement("div");
+  wrap.className = `chat-msg chat-${m.role}` + (m.status === "error" ? " chat-failed" : "");
+
+  if (m.role === "assistant" && m.engine_title) {
+    const head = document.createElement("div");
+    head.className = "chat-msg-head";
+    head.textContent = mkMetaLine(m);
+    if (m.params && m.params.provider) {
+      head.title = t("chat.provider", { name: m.params.provider });
+    }
+    wrap.appendChild(head);
+  }
+
+  if (m.text) {
+    const p = document.createElement("div");
+    p.className = "chat-msg-text";
+    p.textContent = m.text;
+    wrap.appendChild(p);
+  }
+
+  (m.files || []).forEach((f) => {
+    const box = document.createElement("span");
+    box.className = "mk-attach-box";
+    const img = document.createElement("img");
+    img.className = "chat-attach";
+    img.src = f.thumb_url || f.url;
+    img.loading = "lazy";
+    img.title = t(`make.ref.${f.kind || "vibe"}`);
+    box.appendChild(img);
+    wrap.appendChild(box);
+  });
+
+  // СРАБОТАЛ ФОЛБЭК — И ЭТО НАПИСАНО НА ОБЪЕКТЕ. Цепочка движков откатывается
+  // на шлюз молча, и без этой строки человек платил бы за Nano Banana Pro,
+  // получая картинку со шлюза. Разницу в цене сервер уже вернул.
+  if (m.engine_actual_title) {
+    const swap = document.createElement("div");
+    swap.className = "mk-swap";
+    swap.textContent = t("make.swapped", {
+      want: m.engine_title, got: m.engine_actual_title,
+    });
+    wrap.appendChild(swap);
+  }
+
+  const st = mkStatusLine(m);
+  if (st) wrap.appendChild(st);
+
+  if (m.expired) {
+    // Файла нет, промпт есть: срок хранения не должен выглядеть как потеря
+    // работы — повторить можно в один клик.
+    const s = document.createElement("div");
+    s.className = "muted chat-expired";
+    s.textContent = t("chat.expired");
+    wrap.appendChild(s);
+  }
+
+  const media = mkMedia(m);
+  if (media) wrap.appendChild(media);
+
+  // Куда уехал результат — если «куда положить» сработало.
+  const saved = (m.params || {}).saved_to;
+  if (saved && saved.target) {
+    const s = document.createElement("div");
+    s.className = "muted chat-expired";
+    s.textContent = t(`make.savedTo.${saved.target}`);
+    wrap.appendChild(s);
+  }
+  const saveErr = (m.params || {}).save_error;
+  if (saveErr) {
+    const s = document.createElement("div");
+    s.className = "status error";
+    s.textContent = t("make.saveFailed", { why: saveErr });
+    wrap.appendChild(s);
   }
 
   if (m.role === "assistant") {
-    const bar = document.createElement("div");
-    bar.className = "chat-msg-bar";
-    if (m.url && m.kind === "image") {
-      // ГЛАВНЫЙ приём одного окна: картинка → ролик, не выходя из ленты.
-      const anim = document.createElement("button");
-      anim.className = "ghost";
-      anim.textContent = t("chat.animate");
-      anim.title = t("chat.animateTitle");
-      anim.addEventListener("click", () => chatPickSource(m.id));
-      bar.appendChild(anim);
-
-      // Мост чат → студия: удачный кадр не остаётся в переписке.
-      const save = document.createElement("button");
-      save.className = "ghost";
-      save.textContent = t("chat.saveTo");
-      save.title = t("chat.saveToTitle");
-      save.addEventListener("click", () => chatSaveModal(m));
-      bar.appendChild(save);
-    }
-    if (m.status === "error" || m.expired) {
-      const again = document.createElement("button");
-      again.className = "ghost";
-      again.textContent = t("chat.retry");
-      again.addEventListener("click", () => chatRetry(m.id));
-      bar.appendChild(again);
-    }
+    const bar = mkActionBar(m);
     if (bar.childNodes.length) wrap.appendChild(bar);
   }
+  return wrap;
+}
+
+// Полоса вариантов: N ответов одного запуска показываются одной строкой
+// миниатюр, а не N пузырями. Четыре отдельных пузыря разносят ленту, и
+// сравнить варианты глазом становится нечем — а именно ради сравнения их и
+// заказывали.
+function mkVariantStrip(group) {
+  const wrap = document.createElement("div");
+  wrap.className = "chat-msg chat-assistant";
+  const head = document.createElement("div");
+  head.className = "chat-msg-head";
+  head.textContent = t("make.variantsOf", { n: group.length }) + " · " + mkMetaLine(group[0]);
+  wrap.appendChild(head);
+
+  const strip = document.createElement("div");
+  strip.className = "mk-variants";
+  group.forEach((m) => {
+    const cell = document.createElement("div");
+    cell.className = "mk-variant";
+    const media = mkMedia(m);
+    if (media) {
+      media.classList.remove("chat-media");
+      cell.appendChild(media);
+    }
+    const st = mkStatusLine(m);
+    if (st) cell.appendChild(st);
+    const bar = mkActionBar(m);
+    if (bar.childNodes.length) cell.appendChild(bar);
+    strip.appendChild(cell);
+  });
+  wrap.appendChild(strip);
   return wrap;
 }
 
@@ -7981,16 +9229,7 @@ function chatRenderFeed() {
   if (!feed) return;
   feed.innerHTML = "";
   if (!chatState.messages.length) {
-    const hello = document.createElement("div");
-    hello.className = "chat-hello";
-    const h = document.createElement("h2");
-    h.textContent = t("chat.hello");
-    const p = document.createElement("p");
-    p.className = "muted";
-    p.textContent = t("chat.helloHint");
-    hello.appendChild(h);
-    hello.appendChild(p);
-    feed.appendChild(hello);
+    mkRenderCard(feed);
     return;
   }
   if (chatState.hasMore) {
@@ -8000,63 +9239,562 @@ function chatRenderFeed() {
     more.addEventListener("click", chatLoadOlder);
     feed.appendChild(more);
   }
-  chatState.messages.forEach((m) => feed.appendChild(chatBubble(m)));
+  const rows = chatState.messages;
+  for (let i = 0; i < rows.length; i += 1) {
+    const m = rows[i];
+    if (m.role === "assistant" && m.group_id) {
+      const group = [m];
+      while (i + 1 < rows.length && rows[i + 1].group_id === m.group_id) {
+        i += 1;
+        group.push(rows[i]);
+      }
+      feed.appendChild(group.length > 1 ? mkVariantStrip(group) : chatBubble(m));
+      continue;
+    }
+    feed.appendChild(chatBubble(m));
+  }
   chatScrollBottom();
 }
 
-function chatRenderCompose() {
-  const files = chatEl("cc-files");
-  if (files) {
-    files.innerHTML = "";
-    chatState.files.forEach((f) => {
-      const chip = document.createElement("span");
-      chip.className = "cc-file";
-      const img = document.createElement("img");
-      img.src = f.thumb_url || f.url;
-      chip.appendChild(img);
-      const x = document.createElement("button");
-      x.className = "ghost danger";
-      x.textContent = "✕";
-      x.addEventListener("click", () => {
-        chatState.files = chatState.files.filter((y) => y.id !== f.id);
-        chatRenderCompose();
-      });
-      chip.appendChild(x);
-      files.appendChild(chip);
+
+// ────────── ПРАВО: панель параметров ──────────
+//
+// Группы идут сверху вниз В ПОРЯДКЕ ВЛИЯНИЯ НА ЦЕНУ: модель, версия, формат,
+// качество, длительность, варианты, адрес результата. «Сбросить» у группы
+// появляется ТОЛЬКО когда группа отличается от значения по умолчанию: пять
+// всегда мёртвых кнопок сброса — это пять контролов, которые ничего не
+// делают, а система запрещает такое ровно так же, как выключенную кнопку.
+
+function mkGroup(box, titleKey, changed, onReset) {
+  const g = document.createElement("div");
+  g.className = "mk-group";
+  const head = document.createElement("div");
+  head.className = "mk-group-head";
+  const title = document.createElement("span");
+  title.className = "mk-group-title";
+  title.textContent = t(titleKey);
+  head.appendChild(title);
+  if (changed && onReset) {
+    const r = document.createElement("button");
+    r.type = "button";
+    r.className = "ghost mk-group-reset";
+    r.textContent = t("make.reset");
+    r.addEventListener("click", onReset);
+    head.appendChild(r);
+  }
+  g.appendChild(head);
+  box.appendChild(g);
+  return g;
+}
+
+function mkChips(parent) {
+  const box = document.createElement("div");
+  box.className = "mk-chips";
+  parent.appendChild(box);
+  return box;
+}
+
+function mkChip(box, label, cost, on, handler, state) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "mk-chip" + (on ? " on" : "") + (state && state.locked ? " locked" : "");
+  const cap = document.createElement("span");
+  cap.textContent = label;
+  b.appendChild(cap);
+  if (cost != null && cost !== "") {
+    const c = document.createElement("span");
+    c.className = "mk-cost";
+    c.textContent = String(cost);
+    b.appendChild(c);
+  }
+  if (state && state.lock) {
+    const l = document.createElement("span");
+    l.className = "mk-cost";
+    l.textContent = "🔒";
+    b.appendChild(l);
+  }
+  if (state && state.disabled) b.disabled = true;
+  else b.addEventListener("click", handler);
+  box.appendChild(b);
+  return b;
+}
+
+function mkWhy(parent, text) {
+  if (!text) return;
+  const p = document.createElement("p");
+  p.className = "mk-why";
+  p.textContent = text;
+  parent.appendChild(p);
+}
+
+function mkFactLine(parent, text) {
+  const p = document.createElement("p");
+  p.className = "mk-fact-line";
+  p.textContent = text;
+  parent.appendChild(p);
+}
+
+function mkGroupModel(box) {
+  const model = chatCurrentModel();
+  const changed = Boolean(model && model.id !== chatDefaultModelId());
+  const g = mkGroup(box, "make.grpModel", changed, () => {
+    const sel = chatEl("cc-model");
+    if (sel) sel.value = chatDefaultModelId();
+    mkAfterModelChange();
+  });
+  let dead = "";
+  [["text", "chat.optText"], ["image", "chat.optImage"], ["video", "chat.optVideo"]].forEach(([kind, key]) => {
+    const items = chatState.models.filter((m) => m.kind === kind);
+    if (!items.length) return;
+    const cap = document.createElement("div");
+    cap.className = "mk-group-title";
+    cap.style.marginTop = "6px";
+    cap.textContent = t(key);
+    g.appendChild(cap);
+    const chips = mkChips(g);
+    items.forEach((m) => {
+      const on = Boolean(model && m.id === model.id);
+      // Закрытое тарифом ВИДНО — с ценой, замком и именем тарифа. Мёртвое по
+      // ключам погашено, и причина написана текстом под группой, а не в
+      // тултипе: тултипа не существует на телефоне.
+      const state = { disabled: !m.live || !m.allowed, lock: !m.allowed, locked: !m.allowed };
+      mkChip(chips, m.title, tNum(m.points), on, () => {
+        const sel = chatEl("cc-model");
+        if (sel) sel.value = m.id;
+        mkAfterModelChange();
+      }, state);
+      if (!m.live) dead = t("make.offlineWhy", { title: m.title });
+    });
+  });
+  mkWhy(g, dead);
+}
+
+function mkGroupVersion(box) {
+  const model = chatCurrentModel();
+  const list = (model && model.versions) || [];
+  // Версий нет — ГРУППЫ НЕТ ВОВСЕ, а не пустая рамка. Версией у нас
+  // называется только то, что физически является одной моделью в разных
+  // режимах (720p ↔ 480p, std ↔ pro); отдельного яруса каталога мы не заводим.
+  if (list.length < 2) return;
+  // Дефолт версии — ТОТ ЖЕ, что у группы «Модель», если он вообще из этой
+  // семьи. Иначе две группы спорили бы между собой: «Модель» считала бы
+  // выбор дефолтным, а «Версия» рядом предлагала бы его сбросить.
+  const def = chatDefaultModelId();
+  const base = list.includes(def) ? def : list[0];
+  const g = mkGroup(box, "make.grpVersion", model.id !== base, () => {
+    const sel = chatEl("cc-model");
+    if (sel) sel.value = base;
+    mkAfterModelChange();
+  });
+  const chips = mkChips(g);
+  list.forEach((id) => {
+    const m = chatModel(id);
+    if (!m) return;
+    const state = { disabled: !m.live || !m.allowed, lock: !m.allowed, locked: !m.allowed };
+    mkChip(chips, m.quality || m.title, tNum(m.points), m.id === model.id, () => {
+      const sel = chatEl("cc-model");
+      if (sel) sel.value = m.id;
+      mkAfterModelChange();
+    }, state);
+  });
+}
+
+function mkGroupAspect(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind === "text") return;
+  const list = model.aspects || [];
+  if (!list.length) {
+    const g = mkGroup(box, "make.grpAspect", false, null);
+    mkFactLine(g, t("make.aspectFixed"));
+    return;
+  }
+  const def = mkAspectDefault(model);
+  const cur = mkAspect(model);
+  const g = mkGroup(box, "make.grpAspect", cur !== def, () => {
+    chatState.aspect = "";
+    chatRenderAll();
+  });
+  const chips = mkChips(g);
+  list.forEach((a) => {
+    mkChip(chips, a, "", a === cur, () => {
+      chatState.aspect = a;
+      mkRefresh();
+    });
+  });
+}
+
+function mkGroupQuality(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind === "text") return;
+  const g = mkGroup(box, "make.grpQuality",
+    model.kind === "image" && (model.resolutions || []).length
+      && mkResolution(model) !== mkResolutionDefault(model),
+    () => { chatState.resolution = ""; mkRefresh(); });
+  if (model.kind === "video") {
+    // Разрешение видео у нас — ЧАСТЬ ВЫБОРА ДВИЖКА и часть цены (720p против
+    // 480p у Seedance 2.5 — это 152 токена против 68). Переключатель, молча
+    // меняющий движок и цену, — тихое понижение движка, оно запрещено.
+    mkFactLine(g, model.quality
+      ? t("make.qualityByEngine", { q: model.quality })
+      : t("make.qualityByEngineAny"));
+    return;
+  }
+  const list = model.resolutions || [];
+  if (!list.length) {
+    mkFactLine(g, t("make.qualityByEngineAny"));
+    return;
+  }
+  const cur = mkResolution(model);
+  const chips = mkChips(g);
+  const table = model.points_by_resolution || {};
+  list.forEach((r) => {
+    mkChip(chips, r, table[r] != null ? tNum(table[r]) : "", r === cur, () => {
+      chatState.resolution = r;
+      mkRefresh();
+    });
+  });
+}
+
+function mkGroupDuration(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind !== "video") return;
+  const cur = mkDuration();
+  const g = mkGroup(box, "make.grpDuration", cur !== 6, () => {
+    const sel = chatEl("cc-duration");
+    if (sel) sel.value = "6";
+    mkRefresh();
+  });
+  const chips = mkChips(g);
+  const table = model.points_by_duration || {};
+  Object.keys(table).map(Number).sort((a, b) => a - b).forEach((d) => {
+    mkChip(chips, `${d} ${t("make.secShort")}`, tNum(table[d]), d === cur, () => {
+      const sel = chatEl("cc-duration");
+      if (sel) sel.value = String(d);
+      mkRefresh();
+    });
+  });
+}
+
+function mkGroupVariants(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind === "text") return;
+  const cur = mkVariants(model);
+  const g = mkGroup(box, "make.grpVariants", cur !== 1, () => {
+    chatState.variants = 1;
+    mkRefresh();
+  });
+  const chips = mkChips(g);
+  const each = chatPrice();
+  const have = mkHave();
+  let why = "";
+  for (let n = 1; n <= mkMaxVariants(); n += 1) {
+    // Чип, который не влезает в остаток, гаснет и говорит почему: узнать про
+    // нехватку из 402-й ошибки после нажатия — это узнать поздно.
+    const tooMuch = !mkAdmin() && each * n > have;
+    mkChip(chips, String(n), "", n === cur, () => {
+      chatState.variants = n;
+      mkRefresh();
+    }, { disabled: tooMuch });
+    if (tooMuch && !why) why = t("make.variantsShort", { n, need: tNum(each * n) });
+  }
+  mkWhy(g, why);
+  if (cur > 1) {
+    const total = document.createElement("div");
+    total.className = "mk-total";
+    total.textContent = `${cur} × ${tNum(each)} = ${tNum(each * cur)}`;
+    g.appendChild(total);
+  }
+}
+
+// «Куда положить». Селект, а не капсулы: вариантов больше восьми и цена у
+// них одинаковая — ровно тот случай, когда система разрешает селект.
+function mkGroupTarget(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind !== "image") return;
+  const cur = chatState.target || {};
+  const g = mkGroup(box, "make.grpTarget", Boolean(cur.target), () => {
+    chatState.target = { target: "" };
+    mkRefresh();
+  });
+  const projects = chatState.targets;
+  if (projects === null) {
+    mkFactLine(g, t("make.targetsLoading"));
+    return;
+  }
+  if (!projects.length) {
+    mkFactLine(g, t("make.emptyProjects"));
+    return;
+  }
+  const sel = document.createElement("select");
+  const opts = [{ key: "", label: t("make.targetFeed"), spec: { target: "" } }];
+  if (chatState.fromScene) {
+    const fs = chatState.fromScene;
+    opts.push({
+      key: `scene:${fs.sceneId}`,
+      label: t("make.targetScene", { n: fs.position, title: fs.trackTitle }),
+      spec: { target: "scene_frame", scene_id: fs.sceneId },
     });
   }
+  projects.forEach((p) => {
+    (p.characters || []).forEach((c) => {
+      opts.push({
+        key: `char:${c.id}`,
+        label: `${p.name} · ${c.name || t("character.noName")} — ${t("chat.saveAsPhoto")}`,
+        spec: { target: "character", character_id: c.id, as: "photo" },
+      });
+    });
+    opts.push({
+      key: `cover:${p.id}`,
+      label: `${p.name} — ${t("make.targetCover")}`,
+      spec: { target: "cover", project_id: p.id },
+    });
+  });
+  const curKey = cur.target === "character" ? `char:${cur.character_id}`
+    : cur.target === "cover" ? `cover:${cur.project_id}`
+      : cur.target === "scene_frame" ? `scene:${cur.scene_id}` : "";
+  opts.forEach((o) => {
+    const el = document.createElement("option");
+    el.value = o.key;
+    el.textContent = o.label;
+    if (o.key === curKey) el.selected = true;
+    sel.appendChild(el);
+  });
+  sel.addEventListener("change", () => {
+    const picked = opts.find((o) => o.key === sel.value);
+    chatState.target = picked ? picked.spec : { target: "" };
+    mkRefresh();
+  });
+  g.appendChild(sel);
+  if (cur.target) mkWhy(g, t("make.targetKeeps"));
+}
+
+function mkAnyChanged() {
+  const model = chatCurrentModel();
+  if (!model) return false;
+  if (model.id !== chatDefaultModelId()) return true;
+  if (model.aspects && model.aspects.length && mkAspect(model) !== mkAspectDefault(model)) return true;
+  if (model.resolutions && model.resolutions.length
+      && mkResolution(model) !== mkResolutionDefault(model)) return true;
+  if (model.kind === "video" && mkDuration() !== 6) return true;
+  if (mkVariants(model) !== 1) return true;
+  if ((chatState.target || {}).target) return true;
+  return false;
+}
+
+function mkResetAll() {
+  const sel = chatEl("cc-model");
+  if (sel) sel.value = chatDefaultModelId();
+  const dur = chatEl("cc-duration");
+  if (dur) dur.value = "6";
+  chatState.aspect = "";
+  chatState.resolution = "";
+  chatState.variants = 1;
+  chatState.target = { target: "" };
+  mkAfterModelChange();
+}
+
+function mkRenderParams() {
+  const box = chatEl("mk-groups");
+  const panel = chatEl("mk-panel");
+  const root = $("#chat");
+  if (!box || !panel || !chatState.meta) return;
+  // Скрытая панель отдаёт место центру, а не оставляет дыру. Состояние живёт
+  // в localStorage: спрятал один раз — не показываем на каждый вход.
+  const wide = window.innerWidth > 1200;
+  if (root) root.classList.toggle("mk-narrow", wide && chatState.panelHidden);
+  panel.classList.toggle("hidden", wide && chatState.panelHidden);
+  panel.classList.toggle("open", !wide && chatState.panelOpen);
+
+  box.innerHTML = "";
+  mkGroupModel(box);
+  mkGroupVersion(box);
+  mkGroupAspect(box);
+  mkGroupQuality(box);
+  mkGroupDuration(box);
+  mkGroupVariants(box);
+  mkGroupTarget(box);
+
+  const resetAll = chatEl("mk-reset-all");
+  if (resetAll) {
+    resetAll.textContent = t("make.resetAll");
+    resetAll.classList.toggle("hidden", !mkAnyChanged());
+  }
+  const hide = chatEl("mk-hide");
+  if (hide) hide.textContent = wide ? t("make.hidePanel") : t("common.close");
+}
+
+// Смена модели тянет за собой всё: у новой могут быть другие форматы, другие
+// длительности и другая цена, а «Оживить» на не-видео теряет силу.
+function mkAfterModelChange() {
+  const cur = chatCurrentModel();
+  if (!cur || cur.kind !== "video") {
+    chatState.sourceId = 0;
+    chatState.lastId = 0;
+  }
+  mkRefresh();
+}
+
+// ────────── строка ввода ──────────
+
+function mkRenderFiles() {
+  const box = chatEl("cc-files");
+  if (!box) return;
+  box.innerHTML = "";
+  const model = chatCurrentModel();
+  const maxRefs = model ? Number(model.max_refs || 1) : 1;
+  chatState.files.forEach((f, i) => {
+    const chip = document.createElement("span");
+    chip.className = "cc-file";
+    const img = document.createElement("img");
+    img.src = f.thumb_url || f.url;
+    chip.appendChild(img);
+    // ВИД РЕФЕРЕНСА у каждого чипа. Без него промпт трактовал ЛЮБУЮ картинку
+    // как «композиция, но не палитра»: сказать «вот так выглядит место» или
+    // «повтори этот кадр целиком» было нечем. Тексты правил общие со студией.
+    const kinds = (chatState.meta && chatState.meta.ref_kinds) || ["vibe", "style", "place", "copy"];
+    const sel = document.createElement("select");
+    sel.className = "cc-file-kind";
+    kinds.forEach((k) => {
+      const o = document.createElement("option");
+      o.value = k;
+      o.textContent = t(`make.ref.${k}`);
+      if (k === (f.kind || "vibe")) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", () => { f.kind = sel.value; });
+    // Движок берёт одну картинку — второй и далее чипы гаснут с причиной.
+    if (i >= maxRefs) {
+      chip.classList.add("off");
+      chip.title = t("make.refsMax", { n: maxRefs });
+      sel.disabled = true;
+    }
+    chip.appendChild(sel);
+    const x = document.createElement("button");
+    x.className = "ghost danger";
+    x.textContent = "✕";
+    x.addEventListener("click", () => {
+      chatState.files = chatState.files.filter((y) => y.id !== f.id);
+      mkRefresh();
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+}
+
+function mkRenderSource() {
   const src = chatEl("cc-source");
-  if (src) {
-    src.classList.toggle("hidden", !chatState.sourceId);
-    if (chatState.sourceId) {
-      src.innerHTML = "";
-      const label = document.createElement("span");
-      label.textContent = t("chat.source");
-      const clear = document.createElement("button");
-      clear.className = "ghost";
-      clear.textContent = t("chat.sourceClear");
-      clear.addEventListener("click", () => { chatState.sourceId = 0; chatRenderCompose(); });
-      src.appendChild(label);
-      src.appendChild(clear);
+  if (!src) return;
+  const on = Boolean(chatState.sourceId || chatState.lastId);
+  src.classList.toggle("hidden", !on);
+  if (!on) return;
+  src.innerHTML = "";
+  if (chatState.sourceId) {
+    const label = document.createElement("span");
+    label.textContent = t("chat.source");
+    src.appendChild(label);
+  }
+  if (chatState.lastId) {
+    const label = document.createElement("span");
+    label.textContent = t("make.sourceLast");
+    src.appendChild(label);
+  }
+  const clear = document.createElement("button");
+  clear.className = "ghost";
+  clear.textContent = t("chat.sourceClear");
+  clear.addEventListener("click", () => {
+    chatState.sourceId = 0;
+    chatState.lastId = 0;
+    chatRenderAll();
+  });
+  src.appendChild(clear);
+}
+
+// Счётчик символов ПОЯВЛЯЕТСЯ С 80 % ЛИМИТА. Постоянный «0/5000» — шум в
+// девяноста девяти процентах случаев; лимит при этом настоящий, тот же, по
+// которому сервер режет текст.
+function mkRenderCount() {
+  const box = chatEl("mk-count");
+  const ta = chatEl("cc-text");
+  const model = chatCurrentModel();
+  if (!box || !ta) return;
+  const limit = Number((model && model.limit)
+    || (chatState.meta && chatState.meta.prompt_limit) || 2000);
+  const len = (ta.value || "").length;
+  const show = len >= limit * 0.8;
+  box.classList.toggle("hidden", !show);
+  box.classList.toggle("over", len >= limit);
+  if (show) box.textContent = `${len}/${limit}`;
+}
+
+function mkRenderBar() {
+  const model = chatCurrentModel();
+  const asp = chatEl("mk-aspect-btn");
+  if (asp) {
+    const list = (model && model.aspects) || [];
+    asp.classList.toggle("hidden", !list.length);
+    asp.textContent = mkAspect(model);
+    asp.title = t("make.grpAspect");
+  }
+  const dur = chatEl("mk-dur-btn");
+  if (dur) {
+    const on = Boolean(model && model.kind === "video");
+    dur.classList.toggle("hidden", !on);
+    if (on) dur.textContent = `${mkDuration()} ${t("make.secShort")}`;
+    dur.title = t("make.grpDuration");
+  }
+  const enh = chatEl("mk-enhance");
+  if (enh) {
+    enh.textContent = "✨";
+    enh.title = t("make.enhanceTitle");
+    enh.disabled = !((chatEl("cc-text") || {}).value || "").trim();
+  }
+  const par = chatEl("mk-params");
+  if (par) {
+    par.textContent = "⚙";
+    par.title = t("make.grpParams");
+  }
+  const back = chatEl("mk-back-scene");
+  if (back) {
+    const fs = chatState.fromScene;
+    back.classList.toggle("hidden", !fs);
+    if (fs) back.textContent = t("make.backToScene", { n: fs.position, title: fs.trackTitle });
+  }
+  const enhanced = chatEl("mk-enhanced");
+  if (enhanced) {
+    enhanced.classList.toggle("hidden", !chatState.enhanceBackup);
+    if (chatState.enhanceBackup) {
+      enhanced.innerHTML = "";
+      const s = document.createElement("span");
+      s.textContent = t("make.enhanced");
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "ghost";
+      undo.textContent = t("make.undo");
+      undo.addEventListener("click", () => {
+        const ta = chatEl("cc-text");
+        if (ta) ta.value = chatState.enhanceBackup;
+        chatState.enhanceBackup = "";
+        chatRenderAll();
+      });
+      enhanced.appendChild(s);
+      enhanced.appendChild(undo);
     }
   }
+}
+
+function chatRenderCompose() {
+  mkRenderFiles();
+  mkRenderSource();
+  mkRenderCount();
+  mkRenderBar();
   const meter = chatEl("cc-meter");
   const active = chatState.chats.find((c) => c.id === chatState.activeId);
   const spent = active ? Number(active.spent || 0) : 0;
   if (meter) meter.textContent = t("chat.meter", { n: tNum(spent), unit: chatUnit(spent) });
-  // Под полем — про деньги, в сайдбаре — про срок хранения: две разные
-  // обязанности, и дублировать одну и ту же строку дважды незачем.
-  const note = chatEl("cc-note");
-  if (note) note.textContent = t("chat.payNote");
-  const retention = chatEl("chat-retention");
-  if (retention && chatState.meta) {
-    retention.textContent = chatState.meta.retention_days
-      ? t("chat.retention", { n: chatState.meta.retention_days })
-      : t("chat.retentionAdmin");
-  }
+  mkRenderSideFoot();
   const points = chatEl("chat-points");
   if (points && chatState.meta) {
-    points.classList.toggle("hidden", Boolean(chatState.meta.is_admin));
+    points.classList.toggle("hidden", mkAdmin());
     points.textContent = `${tNum(chatState.meta.points || 0)} ${t("top.pointsUnit")}`;
   }
   const title = chatEl("chat-head-title");
@@ -8067,10 +9805,27 @@ function chatRenderAll() {
   chatRenderModelSelect();
   chatRenderDuration();
   chatRenderPrice();
+  mkRenderTabs();
   chatRenderList();
+  mkRenderProjects();
   chatRenderFeed();
   chatRenderCompose();
+  mkRenderParams();
   chatSchedulePoll();
+}
+
+
+// Лёгкая перерисовка после движения параметра. Ленту НЕ трогаем: полная
+// перерисовка бросала бы взгляд в конец и перезапускала плееры на каждый
+// клик по чипу. Исключение — пустая лента: там стоит карточка модели, и она
+// обязана меняться вместе с выбором.
+function mkRefresh() {
+  chatRenderModelSelect();
+  chatRenderDuration();
+  chatRenderPrice();
+  chatRenderCompose();
+  mkRenderParams();
+  if (!chatState.messages.length) chatRenderFeed();
 }
 
 // ────────── действия ──────────
@@ -8087,18 +9842,101 @@ function chatPickSource(messageId) {
     const first = chatState.models.find((m) => m.kind === "video" && m.allowed && m.live);
     if (first) sel.value = first.id;
   }
-  chatRenderDuration();
-  chatRenderPrice();
-  chatRenderCompose();
+  mkClearError();
+  chatRenderAll();
   const ta = chatEl("cc-text");
   if (ta) ta.focus();
+}
+
+// Второй кадр для интерполяции. Движку без first_last он не показывается
+// вовсе (см. mkActionBar): Grok оживляет только первый кадр, и молча съесть
+// указанный человеком последний значило бы взять деньги за работу, которой
+// не было.
+function mkPickLast(messageId) {
+  chatState.lastId = messageId;
+  chatRenderAll();
 }
 
 async function chatRetry(messageId) {
   try {
     await api(`/api/chats/${chatState.activeId}/messages/${messageId}/retry`, { method: "POST" });
+    mkClearError();
     await chatAfterSend();
-  } catch (e) { fail(e); }
+  } catch (e) { mkFail(e); }
+}
+
+// «Повторить иначе»: промпт возвращается в поле, параметры — в панель, НИЧЕГО
+// не списывается. Это единственный способ поиграть формулировкой, не платя
+// за каждую попытку вслепую.
+function mkAgain(m) {
+  const rows = chatState.messages;
+  const idx = rows.findIndex((x) => x.id === m.id);
+  let ask = null;
+  for (let i = idx - 1; i >= 0; i -= 1) {
+    if (rows[i].role === "user") { ask = rows[i]; break; }
+  }
+  const ta = chatEl("cc-text");
+  if (ta) ta.value = (ask && ask.text) || m.text || "";
+  const sel = chatEl("cc-model");
+  if (sel && m.engine && chatModel(m.engine)) sel.value = m.engine;
+  const p = m.params || {};
+  if (p.duration) {
+    const dur = chatEl("cc-duration");
+    if (dur) dur.value = String(p.duration);
+  }
+  if (p.aspect) chatState.aspect = p.aspect;
+  if (p.resolution) chatState.resolution = p.resolution;
+  chatState.variants = 1;
+  chatState.enhanceBackup = "";
+  mkClearError();
+  chatRenderAll();
+  if (ta) ta.focus();
+}
+
+// ОТМЕНА. Два разных обещания, и оба написаны на кнопке ДО нажатия: из
+// очереди задача снимается целиком с полным возвратом, у работающей отменяем
+// только ожидание — движок уже считает и уже выставит нам счёт.
+async function mkCancel(messageId) {
+  try {
+    const res = await api(`/api/chats/messages/${messageId}/cancel`, { method: "POST" });
+    if (chatState.meta && res.points !== undefined) chatState.meta.points = res.points;
+    mkClearError();
+    await chatAfterSend();
+  } catch (e) { mkFail(e); }
+}
+
+// Звезда на результате. Обещает СРОК ХРАНЕНИЯ, а не сортировку: закреплённое
+// не подметается ретенцией — ровно это написано в подсказке.
+async function mkPin(m) {
+  try {
+    await api(`/api/chats/messages/${m.id}`, { method: "PATCH", body: { pinned: !m.pinned } });
+    await chatLoadMessages();
+    chatRenderFeed();
+  } catch (e) { mkFail(e); }
+}
+
+// «Улучшить промпт» — через шлюз, 0 токенов. Результат кладётся В ПОЛЕ, а под
+// полем встаёт «вернуть как было»: молча подменять промпт нельзя, человек
+// заплатит за текст, которого не читал.
+async function mkEnhance() {
+  const ta = chatEl("cc-text");
+  const btn = chatEl("mk-enhance");
+  if (!ta) return;
+  const text = (ta.value || "").trim();
+  if (!text) { chatState.error = t("make.needPrompt"); mkRenderNote(); return; }
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    const res = await api("/api/chat/enhance", { method: "POST", body: { text } });
+    chatState.enhanceBackup = text;
+    ta.value = res.text || text;
+    mkClearError();
+  } catch (e) {
+    chatState.error = t("make.enhanceFailed");
+    mkRenderNote();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "✨"; }
+    chatRenderAll();
+  }
 }
 
 async function chatAfterSend() {
@@ -8115,8 +9953,10 @@ async function chatSend() {
   const ta = chatEl("cc-text");
   const model = chatCurrentModel();
   if (!model) return;
+  // Причина, по которой отправлять нечего, уже показана под полем — здесь
+  // просто не идём в сеть.
+  if (mkBlockReason()) return;
   const text = (ta.value || "").trim();
-  if (!text && model.kind !== "video") return;
   const send = chatEl("cc-send");
   chatState.busy = true;
   send.disabled = true;
@@ -8126,68 +9966,128 @@ async function chatSend() {
       const created = await api("/api/chats", { method: "POST", body: {} });
       chatState.activeId = created.id;
     }
+    const fileKinds = {};
+    chatState.files.forEach((f) => { fileKinds[String(f.id)] = f.kind || "vibe"; });
     const body = {
       text,
       engine: model.id,
       file_ids: chatState.files.map((f) => f.id),
-      duration: Number((chatEl("cc-duration") || {}).value || 6),
+      file_kinds: fileKinds,
+      duration: mkDuration(),
+      aspect: mkAspect(model),
+      resolution: mkResolution(model),
+      variants: mkVariants(model),
     };
     if (chatState.sourceId) body.from_message_id = chatState.sourceId;
+    if (chatState.lastId) body.last_message_id = chatState.lastId;
+    if ((chatState.target || {}).target) body.save_to = chatState.target;
     await api(`/api/chats/${chatState.activeId}/messages`, { method: "POST", body });
     ta.value = "";
     chatState.files = [];
     chatState.sourceId = 0;
+    chatState.lastId = 0;
+    chatState.enhanceBackup = "";
+    mkClearError();
     await chatAfterSend();
   } catch (e) {
     // Нехватка токенов приходит структурой (402 not_enough_points) — открываем
-    // тарифы прямо отсюда, а не оставляем человека в тупике с alert'ом.
+    // тарифы прямо отсюда, а не оставляем человека в тупике.
     if (e && e.code === "not_enough_points") openAccountModal("plan");
-    fail(e);
+    mkFail(e);
   } finally {
     chatState.busy = false;
-    send.disabled = false;
     chatRenderPrice();
   }
 }
 
 async function chatUpload(fileList) {
-  for (const file of Array.from(fileList || []).slice(0, 8)) {
+  const meta = chatState.meta || {};
+  const maxMb = Number(meta.max_file_mb || 12);
+  const maxFiles = Number(meta.max_files || 8);
+  for (const file of Array.from(fileList || []).slice(0, maxFiles)) {
+    // Лимит проверяем ДО загрузки: гонять двадцать мегабайт по сети, чтобы
+    // услышать «файл больше 12 МБ», — это платить временем человека за то,
+    // что мы знали заранее.
+    if (file.size > maxMb * 1024 * 1024) {
+      chatState.error = t("make.fileTooBig", { name: file.name, n: maxMb });
+      mkRenderNote();
+      continue;
+    }
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("kind", (chatState.meta && chatState.meta.ref_default) || "vibe");
     try {
       const res = await api("/api/chat/upload", { method: "POST", body: fd });
       chatState.files.push(res);
-    } catch (e) { fail(e); }
+    } catch (e) { mkFail(e); }
   }
-  chatRenderCompose();
+  chatRenderAll();
 }
 
-// «В проект»: картинка из чата уезжает персонажу — фотографией или разворотом.
+// «В проект»: картинка из ленты уезжает В РАБОТУ. Четыре адреса, и все
+// четыре — уже существующие сущности студии, пятой мастерская не заводит.
 function chatSaveModal(m) {
   openModal(t("chat.saveTitle"), (body) => {
-    const chars = (project && project.characters) || [];
-    if (!chars.length) {
+    const projects = chatState.targets || [];
+    if (!projects.length) {
       const p = document.createElement("p");
       p.className = "muted";
-      p.textContent = t("chat.saveNoChars");
+      p.textContent = t("make.emptyProjects");
       body.appendChild(p);
+      const go = document.createElement("button");
+      go.className = "primary";
+      go.textContent = t("make.newProject");
+      go.addEventListener("click", () => {
+        closeModal();
+        chatLeave();
+        const btn = $("#new-project-btn");
+        if (btn) btn.click();
+      });
+      body.appendChild(go);
       return;
     }
     const sel = document.createElement("select");
-    chars.forEach((c) => {
-      const o = document.createElement("option");
-      o.value = String(c.id);
-      o.textContent = c.name || t("character.noName");
-      sel.appendChild(o);
+    const opts = [];
+    projects.forEach((p) => {
+      (p.characters || []).forEach((c) => {
+        opts.push({
+          label: `${p.name} · ${c.name || t("character.noName")} — ${t("chat.saveAsPhoto")}`,
+          spec: { target: "character", character_id: c.id, as: "photo" },
+        });
+        opts.push({
+          label: `${p.name} · ${c.name || t("character.noName")} — ${t("chat.saveAsModel")}`,
+          spec: { target: "character", character_id: c.id, as: "model" },
+        });
+      });
+      (p.tracks || []).forEach((tr) => {
+        (tr.scenes || []).forEach((sc) => {
+          opts.push({
+            label: `${p.name} · ${tr.title} · ${t("make.sceneNo", { n: sc.position })} — ${t("make.targetFrame")}`,
+            spec: { target: "scene_frame", scene_id: sc.id },
+          });
+          opts.push({
+            label: `${p.name} · ${tr.title} · ${t("make.sceneNo", { n: sc.position })} — ${t("make.targetRef")}`,
+            spec: { target: "scene_ref", scene_id: sc.id, kind: "vibe" },
+          });
+        });
+      });
+      opts.push({
+        label: `${p.name} — ${t("make.targetCover")}`,
+        spec: { target: "cover", project_id: p.id },
+      });
+    });
+    opts.forEach((o, i) => {
+      const el = document.createElement("option");
+      el.value = String(i);
+      el.textContent = o.label;
+      sel.appendChild(el);
     });
     body.appendChild(sel);
 
-    const asSel = document.createElement("select");
-    [["photo", "chat.saveAsPhoto"], ["model", "chat.saveAsModel"]].forEach(([v, key]) => {
-      const o = document.createElement("option");
-      o.value = v; o.textContent = t(key); asSel.appendChild(o);
-    });
-    body.appendChild(asSel);
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.textContent = t("make.targetKeeps");
+    body.appendChild(hint);
 
     const row = document.createElement("div");
     row.className = "row";
@@ -8198,17 +10098,16 @@ function chatSaveModal(m) {
       go.disabled = true;
       try {
         await api(`/api/chats/messages/${m.id}/save-to`, {
-          method: "POST",
-          body: { character_id: Number(sel.value), as: asSel.value },
+          method: "POST", body: opts[Number(sel.value)].spec,
         });
         closeModal();
         await loadProject();
+        await mkLoadTargets();
         await chatLoadMessages();
         chatRenderFeed();
-        alert(t("chat.saved"));
       } catch (e) {
         go.disabled = false;
-        fail(e);
+        mkFail(e);
       }
     });
     const cancel = document.createElement("button");
@@ -8220,6 +10119,32 @@ function chatSaveModal(m) {
     body.appendChild(row);
   });
 }
+
+// ────────── мост «режим → мастерская» ──────────
+// «Доснять в мастерской» на карточке кадра. Закрывает единственный настоящий
+// сценарий, ради которого сегодня уходят из студии: «одна сцена не вышла,
+// хочу поиграть промптом, не гоняя конвейер целиком». Возврат — всегда туда,
+// откуда пришли.
+function mkFromScene(scene, track) {
+  chatState.fromScene = {
+    sceneId: scene.id,
+    position: scene.position,
+    trackTitle: (track && track.title) || "",
+  };
+  chatState.target = { target: "scene_frame", scene_id: scene.id };
+  showChat();
+  const ta = chatEl("cc-text");
+  if (ta) {
+    ta.value = scene.image_prompt || scene.shot_note || "";
+    ta.focus();
+  }
+  // Движок кадров, а не текстовый: человек пришёл сюда за картинкой.
+  const sel = chatEl("cc-model");
+  const want = (chatState.meta && chatState.meta.default_image) || "";
+  if (sel && chatModel(want)) sel.value = want;
+  chatRenderAll();
+}
+window.mkFromScene = mkFromScene;
 
 // Статусы тянем тем же приёмом, что и в студии: пока что-то в работе —
 // перечитываем ленту раз в три секунды. SSE ради этого не заводим.
@@ -8251,54 +10176,118 @@ function chatSchedulePoll() {
   const toggle = chatEl("chat-side-toggle");
   if (toggle) toggle.addEventListener("click", () => $("#chat-side").classList.toggle("open"));
 
+  const backScene = chatEl("mk-back-scene");
+  if (backScene) backScene.addEventListener("click", () => {
+    chatState.fromScene = null;
+    chatState.target = { target: "" };
+    chatLeave();
+  });
+
   const nw = chatEl("chat-new");
   if (nw) nw.addEventListener("click", async () => {
     chatState.activeId = 0;
     chatState.messages = [];
     chatState.files = [];
     chatState.sourceId = 0;
+    chatState.lastId = 0;
+    chatState.enhanceBackup = "";
+    mkClearError();
     chatRenderAll();
     const ta = chatEl("cc-text");
     if (ta) ta.focus();
   });
 
+  // Поиск идёт на сервер — по названиям И по промптам. Дребезг гасим: иначе
+  // каждый символ уезжал бы запросом.
+  let searchTimer = null;
   const search = chatEl("chat-search");
   if (search) search.addEventListener("input", () => {
     chatState.search = search.value;
-    chatRenderList();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      try {
+        await chatLoadList();
+        chatRenderList();
+      } catch (e) { /* сеть моргнула — следующий ввод повторит */ }
+    }, 250);
   });
 
   const model = chatEl("cc-model");
-  if (model) model.addEventListener("change", () => {
-    // Сменили модель на не-видео — «Оживить» больше не в силе.
-    const cur = chatCurrentModel();
-    if (!cur || cur.kind !== "video") chatState.sourceId = 0;
-    chatRenderDuration();
-    chatRenderPrice();
-    chatRenderCompose();
-  });
+  if (model) model.addEventListener("change", mkAfterModelChange);
 
   const dur = chatEl("cc-duration");
-  if (dur) dur.addEventListener("change", chatRenderPrice);
+  if (dur) dur.addEventListener("change", mkRefresh);
+
+  // Мини-кнопки строки — показывают значение и ведут в группу параметров:
+  // второй копии контрола здесь нет, есть один и тот же параметр в двух
+  // видах — коротким ярлыком и полной группой с ценами.
+  const aspBtn = chatEl("mk-aspect-btn");
+  if (aspBtn) aspBtn.addEventListener("click", mkTogglePanel);
+  const durBtn = chatEl("mk-dur-btn");
+  if (durBtn) durBtn.addEventListener("click", mkTogglePanel);
+  const parBtn = chatEl("mk-params");
+  if (parBtn) parBtn.addEventListener("click", mkTogglePanel);
+  const enh = chatEl("mk-enhance");
+  if (enh) enh.addEventListener("click", mkEnhance);
+
+  const resetAll = chatEl("mk-reset-all");
+  if (resetAll) resetAll.addEventListener("click", mkResetAll);
+  const hide = chatEl("mk-hide");
+  if (hide) hide.addEventListener("click", () => {
+    if (window.innerWidth > 1200) {
+      chatState.panelHidden = true;
+      localStorage.setItem(MK_PANEL_KEY, "off");
+    } else {
+      chatState.panelOpen = false;
+    }
+    mkRenderParams();
+  });
 
   const send = chatEl("cc-send");
   if (send) send.addEventListener("click", chatSend);
 
   const ta = chatEl("cc-text");
-  if (ta) ta.addEventListener("keydown", (e) => {
-    // Enter отправляет, Shift+Enter переносит строку — как во всех чатах.
-    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      chatSend();
-    }
-  });
+  if (ta) {
+    ta.addEventListener("keydown", (e) => {
+      // Enter отправляет, Shift+Enter переносит строку — как во всех чатах.
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        chatSend();
+      }
+    });
+    ta.addEventListener("input", () => {
+      mkRenderCount();
+      chatRenderPrice();
+      mkRenderBar();
+    });
+  }
 
   const file = chatEl("cc-file");
   if (file) file.addEventListener("change", async () => {
     await chatUpload(file.files);
     file.value = "";
   });
+
+  // Ширина экрана меняет смысл кнопки «скрыть»: на широком она прячет
+  // колонку, на узком закрывает шторку. Пересобираем панель, а не оставляем
+  // её в состоянии от прошлой ширины.
+  window.addEventListener("resize", () => {
+    if (!$("#chat").classList.contains("hidden")) mkRenderParams();
+  });
 }
 
-// Вход по адресу /#/chat разбирает showApp(): к моменту его вызова сессия уже
-// проверена, а до неё открывать чат нечем — /api/chat/models требует входа.
+// Открыть или закрыть панель параметров. На широком экране это «скрыть /
+// показать колонку» с памятью в localStorage, на узком — шторка.
+function mkTogglePanel() {
+  if (window.innerWidth > 1200) {
+    chatState.panelHidden = !chatState.panelHidden;
+    localStorage.setItem(MK_PANEL_KEY, chatState.panelHidden ? "off" : "on");
+  } else {
+    chatState.panelOpen = !chatState.panelOpen;
+  }
+  mkRenderParams();
+}
+
+// Вход по адресу /#/make (и по старому /#/chat) разбирает showApp(): к моменту
+// его вызова сессия уже проверена, а до неё открывать мастерскую нечем —
+// /api/chat/models требует входа.

@@ -41,13 +41,14 @@ from threading import Thread
 from types import SimpleNamespace
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 import mediagen
+import refs as refs_mod
 from db import (
     Chat, ChatFile, ChatMessage, Character, CharacterPhoto, FileOwner,
-    SessionLocal, User, now,
+    Project, Scene, SceneRef, SessionLocal, User, now,
 )
 
 log = logging.getLogger("rapclips.chat")
@@ -72,6 +73,15 @@ CHAT_IMAGE_RESOLUTION = os.environ.get("CHAT_IMAGE_RESOLUTION", "2K")
 CHAT_VIDEO_DURATIONS = (4, 6, 8, 10)
 CHAT_MAX_FILES = 8
 CHAT_MAX_FILE_MB = int(os.environ.get("CHAT_MAX_FILE_MB", "12"))
+# Сколько вариантов за один запуск. Четыре — потолок не от движка, а от глаза:
+# больше четырёх миниатюр в полосе перестают сравниваться, а цена умножается
+# ровно на N и на дорогом движке уходит за тысячу токенов одним нажатием.
+CHAT_MAX_VARIANTS = 4
+# НАСТОЯЩИЕ лимиты поля ввода. Раз мы режем текст на сервере — обязаны
+# написать, где именно: счётчик «0/5000» из чужого интерфейса, не совпадающий
+# с обрезкой, хуже отсутствия счётчика.
+CHAT_TEXT_LIMIT = 8000        # разговор с текстовой моделью
+CHAT_PROMPT_LIMIT = 2000      # промпт картинки и промпт движения
 
 # Срок хранения медиа по тарифу (дни). Текст не удаляется никогда.
 RETENTION_DAYS = {"free": 7, "pro": 30, "pro_max": 90, "studio": 90}
@@ -170,8 +180,8 @@ def _allowed_video_engines(user: User) -> list[str]:
     return _ctx.plan_engine_ids(_plan_id(user))
 
 
-def _image_points(user: User, engine: str) -> int:
-    return int(_ctx.image_cost(user, engine, CHAT_IMAGE_RESOLUTION))
+def _image_points(user: User, engine: str, resolution: str = "") -> int:
+    return int(_ctx.image_cost(user, engine, resolution or CHAT_IMAGE_RESOLUTION))
 
 
 def _video_points(engine: str, duration: int) -> int:
@@ -179,6 +189,54 @@ def _video_points(engine: str, duration: int) -> int:
     добирать нечего."""
     usd = mediagen.video_engine_usd(engine, int(duration or 6))
     return int(_ctx.points_of_usd(usd))
+
+
+def _image_resolutions(engine: str) -> list[str]:
+    """Разрешения, которые движок реально умеет. Пусто — разрешение задаёт
+    сам движок, и переключателя быть не должно: контрол, который ничего не
+    меняет, врёт дороже отсутствующего."""
+    spec = mediagen.IMAGE_ENGINES.get(engine) or {}
+    return [r for r in (spec.get("resolutions") or ())]
+
+
+def _image_aspects(engine: str) -> list[str]:
+    """Форматы кадра движка. Шлюзы формат не принимают вовсе (payload у них
+    — один prompt), у nano-banana-edit поля aspect_ratio нет в доках."""
+    spec = mediagen.IMAGE_ENGINES.get(engine) or {}
+    if spec.get("channel") == "gateway" or spec.get("aspect") is False:
+        return []
+    return list(mediagen.ASPECTS.keys())
+
+
+def _video_aspects(engine: str) -> list[str]:
+    spec = mediagen.VIDEO_ENGINES.get(engine) or {}
+    if spec.get("channel") == "gateway":
+        return []
+    return list(mediagen.ASPECTS.keys())
+
+
+def _norm_aspect(value, allowed: list[str]) -> str:
+    want = str(value or "").strip()
+    if want in allowed:
+        return want
+    return allowed[0] if allowed else "9:16"
+
+
+def _norm_resolution(value, allowed: list[str]) -> str:
+    want = str(value or "").strip().upper()
+    if want in allowed:
+        return want
+    if CHAT_IMAGE_RESOLUTION in allowed:
+        return CHAT_IMAGE_RESOLUTION
+    return allowed[0] if allowed else CHAT_IMAGE_RESOLUTION
+
+
+def _norm_variants(value) -> int:
+    try:
+        n = int(value or 1)
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, min(CHAT_MAX_VARIANTS, n))
 
 
 def _norm_duration(value) -> int:
@@ -239,6 +297,12 @@ def _models_payload(user: User) -> list[dict]:
     Закрытые тарифом позиции НЕ выкидываются — они приезжают с allowed=false
     и ценой. Молчаливый запрет выглядит как поломка; видимый замок с ценником
     работает витриной.
+
+    ЦЕНУ СЧИТАЕТ ТОЛЬКО СЕРВЕР. Раньше клиент домножал базовую цену на
+    длительность сам (`points * dur / 6`) и расходился со списанием на любой
+    длине, кроме шести секунд: Grok 10 с показывал 4 при списании 2, Seedance
+    2.5 — 254 при 252. Здесь уезжает ГОТОВАЯ таблица цен, и второй кассы в
+    сервисе больше нет — ровно то же правило, что записано в textgen.py.
     """
     items: list[dict] = [{
         "id": _model_id("text", TEXT_MODEL_ID), "kind": "text",
@@ -246,11 +310,15 @@ def _models_payload(user: User) -> list[dict]:
         "live": True, "points": _text_points(), "allowed": True,
         "needs_image": False, "first_last": False, "max_refs": 0,
         "note": "", "plan": "",
+        "aspects": [], "resolutions": [], "versions": [],
+        "points_by_duration": {}, "points_by_resolution": {},
+        "limit": CHAT_TEXT_LIMIT,
     }]
 
     img_allowed = _allowed_image_engines(user)
     img_live = mediagen.image_engines_live()
     for eid, spec in mediagen.IMAGE_ENGINES.items():
+        resolutions = _image_resolutions(eid)
         items.append({
             "id": _model_id("image", eid), "kind": "image", "title": spec["title"],
             "live": eid in img_live,
@@ -259,6 +327,16 @@ def _models_payload(user: User) -> list[dict]:
             "needs_image": False, "first_last": False,
             "max_refs": int(spec.get("max_refs") or 1),
             "note": "", "plan": "" if eid in img_allowed else "pro_max",
+            "aspects": _image_aspects(eid),
+            "resolutions": resolutions,
+            # Цена зависит от разрешения (у Nano Banana 2 — 1K $0.04 против
+            # 4K $0.09), поэтому чип разрешения обязан носить свою цену.
+            "points_by_resolution": {r: _image_points(user, eid, r) for r in resolutions},
+            "points_by_duration": {},
+            # Версий у картиночных движков нет: nano-banana-2 и pro — разные
+            # модели, а не режимы одной. Пустой список = группы «Версия» нет.
+            "versions": [],
+            "limit": CHAT_PROMPT_LIMIT,
         })
 
     vid_allowed = _allowed_video_engines(user)
@@ -275,6 +353,16 @@ def _models_payload(user: User) -> list[dict]:
             "max_refs": 1,
             "note": spec.get("note", ""),
             "plan": "" if eid in vid_allowed else _cheapest_plan_with(eid),
+            "aspects": _video_aspects(eid),
+            # Разрешение видео — часть ВЫБОРА ДВИЖКА и часть цены (720p против
+            # 480p у Seedance 2.5 — это 152 токена против 68). Переключателя
+            # качества здесь нет намеренно: он молча менял бы движок и цену.
+            "resolutions": [],
+            "quality": spec.get("resolution", "") or ("1080p" if spec.get("mode") == "pro" else ""),
+            "points_by_duration": {str(d): _video_points(eid, d) for d in CHAT_VIDEO_DURATIONS},
+            "points_by_resolution": {},
+            "versions": [_model_id("video", v) for v in mediagen.engine_versions(eid)],
+            "limit": CHAT_PROMPT_LIMIT,
         })
     return items
 
@@ -309,8 +397,20 @@ def _check_allowed(user: User, model_id: str) -> tuple[str, str]:
     return kind, engine
 
 
+def _storage(db: Session, user: User) -> dict:
+    """Занято / доступно. Считается по ФИЗИЧЕСКИМ файлам — копия проекта живёт
+    жёсткими ссылками и второй раз не весит ничего."""
+    try:
+        used = int(_ctx.storage_used(db, user.id))
+        limit = int(_ctx.storage_quota(user))
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"used_bytes": used, "limit_bytes": limit,
+            "pct": round(100.0 * used / limit, 1) if limit else 0.0}
+
+
 @router.get("/api/chat/models")
-def chat_models(user: User = Depends(current_user)):
+def chat_models(user: User = Depends(current_user), db: Session = Depends(db_session)):
     plan_id = _plan_id(user)
     return {
         "models": _models_payload(user),
@@ -324,6 +424,20 @@ def chat_models(user: User = Depends(current_user)):
         "is_admin": bool(user.is_admin),
         "retention_days": _retention_days(user),
         "max_files": CHAT_MAX_FILES,
+        "max_file_mb": CHAT_MAX_FILE_MB,
+        "max_variants": CHAT_MAX_VARIANTS,
+        "text_limit": CHAT_TEXT_LIMIT,
+        "prompt_limit": CHAT_PROMPT_LIMIT,
+        # Виды референса — те же четыре, что у кадров студии, и те же тексты
+        # правил (backend/refs.py). Один реестр на оба места.
+        "ref_kinds": list(refs_mod.REF_KINDS),
+        "ref_default": refs_mod.REF_DEFAULT,
+        "aspects": list(mediagen.ASPECTS.keys()),
+        "default_resolution": CHAT_IMAGE_RESOLUTION,
+        # Занятое место — тем же ответом, а не отдельным запросом: строка про
+        # диск стоит рядом со строкой про срок хранения, и обе они про то,
+        # сколько живёт результат.
+        "storage": _storage(db, user),
     }
 
 
@@ -336,10 +450,18 @@ def _msg_dict(m: ChatMessage) -> dict:
         params = json.loads(m.params_json or "{}")
     except ValueError:
         params = {}
+    # ЧЕМ НАРИСОВАНО НА САМОМ ДЕЛЕ. Пусто — сработал запрошенный движок;
+    # заполнено — цепочка фолбэков ушла на шлюз, и человек обязан это увидеть
+    # на самом кадре, а не догадываться, почему картинка «другая».
+    actual = (m.engine_actual or "").strip()
     return {
         "id": m.id, "role": m.role, "kind": m.kind, "text": m.text,
         "engine": _model_id(m.kind, m.engine) if m.engine else "",
         "engine_title": _engine_title(m.engine, m.kind) if m.engine else "",
+        "engine_actual": actual,
+        "engine_actual_title": _engine_title(actual, m.kind) if actual else "",
+        "group_id": m.group_id or "",
+        "pinned": bool(m.pinned),
         "points": int(m.points or 0),
         "status": m.status or "done", "error": m.error or "",
         "url": f"/api/media/{media}" if media else "",
@@ -350,14 +472,19 @@ def _msg_dict(m: ChatMessage) -> dict:
         "created_at": m.created_at.isoformat() if m.created_at else "",
         "params": params,
         "files": [{"id": f.id, "url": f"/api/media/{f.filename}",
-                   "thumb_url": f"/api/thumb/{f.filename}"} for f in m.files],
+                   "thumb_url": f"/api/thumb/{f.filename}",
+                   "kind": f.kind or refs_mod.REF_DEFAULT} for f in m.files],
     }
 
 
-def _chat_dict(c: Chat, spent: int = 0) -> dict:
+def _chat_dict(c: Chat, spent: int = 0, thumb: str = "") -> dict:
     return {
         "id": c.id, "title": c.title or "", "model": c.model or "",
         "spent": int(spent or 0),
+        "pinned": bool(c.pinned),
+        # Миниатюра последнего медиа. Глаз узнаёт ленту по картинке быстрее,
+        # чем читает авто-заголовок из первых сорока символов промпта.
+        "thumb_url": f"/api/thumb/{thumb}" if thumb else "",
         "created_at": c.created_at.isoformat() if c.created_at else "",
         "updated_at": c.updated_at.isoformat() if c.updated_at else "",
     }
@@ -371,15 +498,39 @@ def _auto_title(text: str) -> str:
 # ─────────────────────────── список чатов ───────────────────────────
 
 @router.get("/api/chats")
-def list_chats(user: User = Depends(current_user), db: Session = Depends(db_session)):
+def list_chats(q: str = "", user: User = Depends(current_user),
+               db: Session = Depends(db_session)):
+    """Ленты человека. q ищет и по названию, и ПО ТЕКСТУ СООБЩЕНИЙ.
+
+    Клиентский фильтр искал только по названию, а название — это авто-заголовок
+    из первых сорока символов первого промпта. То есть поиск по «трасса» не
+    находил ленту, где это слово стоит во втором промпте, — и человек делал
+    вывод, что поиска нет.
+
+    ФИЛЬТРУЕМ В PYTHON, А НЕ В SQL. База у нас SQLite, и её lower() работает
+    только с латиницей: «Трасса» осталась бы «Трассой», а иголка приехала бы
+    строчной — русский поиск не находил бы ничего и молчал бы об этом.
+    Сообщения ленты всё равно перебираются здесь же (расход и миниатюра), так
+    что второго прохода это не стоит.
+    """
     rows = (db.query(Chat)
             .filter(Chat.owner_id == user.id, Chat.archived.is_(False))
-            .order_by(Chat.updated_at.desc(), Chat.id.desc())
+            .order_by(Chat.pinned.desc(), Chat.updated_at.desc(), Chat.id.desc())
             .limit(200).all())
+    needle = str(q or "").strip().lower()
     out = []
     for c in rows:
-        spent = sum(int(m.points or 0) for m in c.messages)
-        out.append(_chat_dict(c, spent))
+        spent = 0
+        thumb = ""
+        hit = not needle or needle in (c.title or "").lower()
+        for m in c.messages:
+            spent += int(m.points or 0)
+            if m.media_filename and m.kind == "image":
+                thumb = m.media_filename
+            if not hit and needle in (m.text or "").lower():
+                hit = True
+        if hit:
+            out.append(_chat_dict(c, spent, thumb))
     return out
 
 
@@ -405,8 +556,34 @@ async def update_chat(chat_id: int, request: Request,
         chat.title = str(body.get("title") or "")[:120]
     if "model" in body:
         chat.model = str(body.get("model") or "")[:60]
+    if "pinned" in body:
+        chat.pinned = bool(body.get("pinned"))
     db.commit()
     return _chat_dict(chat)
+
+
+@router.patch("/api/chats/messages/{message_id}")
+async def update_message(message_id: int, request: Request,
+                         user: User = Depends(current_user),
+                         db: Session = Depends(db_session)):
+    """Пока здесь ровно одно поле — «избранное».
+
+    И оно не про сортировку: закреплённое сообщение перестаёт подметаться
+    ретенцией (sweep_expired). Звезда, которая только красит строку, а файл
+    под ней всё равно исчезает по сроку, — это врущий контрол."""
+    msg = _own_message(db, user, message_id)
+    body = await _body(request)
+    if "pinned" in body:
+        msg.pinned = bool(body.get("pinned"))
+        # Закрепили — срок снимаем сразу, а не «начиная со следующего прохода»;
+        # открепили — возвращаем обычный срок тарифа от сегодняшнего дня.
+        if msg.pinned:
+            msg.expires_at = None
+        elif msg.kind in ("image", "video") and msg.media_filename:
+            days = _retention_days(user)
+            msg.expires_at = (now() + timedelta(days=days)) if days else None
+    db.commit()
+    return _msg_dict(msg)
 
 
 @router.delete("/api/chats/{chat_id}")
@@ -454,7 +631,8 @@ def chat_messages(chat_id: int, before: int = 0, limit: int = 50,
 # ─────────────────────────── вложения ───────────────────────────
 
 @router.post("/api/chat/upload")
-async def chat_upload(file: UploadFile, user: User = Depends(current_user),
+async def chat_upload(file: UploadFile, kind: str = Form(refs_mod.REF_DEFAULT),
+                      user: User = Depends(current_user),
                       db: Session = Depends(db_session)):
     """Файл кнопкой «+». Живёт без сообщения, пока его не отправят —
     невостребованные подметает сборщик."""
@@ -468,22 +646,34 @@ async def chat_upload(file: UploadFile, user: User = Depends(current_user),
     with open(os.path.join(_ctx.upload_dir, fname), "wb") as f:
         f.write(data)
     _ctx.reg_file(db, fname, user.id, kind="chat")
-    row = ChatFile(owner_id=user.id, filename=fname, position=0)
+    row = ChatFile(owner_id=user.id, filename=fname, position=0,
+                   kind=refs_mod.ref_norm_kind(kind))
     db.add(row)
     db.commit()
     db.refresh(row)
     return {"id": row.id, "url": f"/api/media/{fname}",
-            "thumb_url": f"/api/thumb/{fname}"}
+            "thumb_url": f"/api/thumb/{fname}", "kind": row.kind}
 
 
-def _take_files(db: Session, user: User, file_ids: list) -> list[ChatFile]:
+def _take_files(db: Session, user: User, file_ids: list,
+                kinds: dict | None = None) -> list[ChatFile]:
+    """Вложения запроса + ВИД каждого референса.
+
+    Вид приезжает вместе с отправкой, а не при заливке: человек ставит его
+    чипом уже после того, как увидел картинку в строке. Список kinds —
+    {"12": "style"}, ключ строкой, потому что это JSON."""
+    kinds = kinds or {}
     out = []
     for raw in (file_ids or [])[:CHAT_MAX_FILES]:
         try:
-            row = db.get(ChatFile, int(raw))
+            fid = int(raw)
         except (TypeError, ValueError):
             continue
+        row = db.get(ChatFile, fid)
         if row and row.owner_id == user.id and row.message_id is None:
+            want = kinds.get(str(fid)) or kinds.get(fid)
+            if want:
+                row.kind = refs_mod.ref_norm_kind(want)
             out.append(row)
     return out
 
@@ -541,27 +731,69 @@ def _source_frame(db: Session, chat: Chat, files: list, from_id) -> str:
     raise HTTPException(400, "для видео нужна картинка: приложи файл или сгенерируй кадр в этом чате")
 
 
+def _last_frame(db: Session, chat: Chat, files: list, last_id, engine: str) -> str:
+    """ВТОРОЙ кадр для интерполяции. Пусто — обычное оживление одного кадра.
+
+    Движку без first_last второй кадр не показываем даже если он пришёл: Grok
+    оживляет только первый, и молча съесть указанный человеком последний кадр
+    значило бы взять деньги за работу, которой не было."""
+    spec = mediagen.VIDEO_ENGINES.get(engine) or {}
+    if not spec.get("first_last"):
+        return ""
+    if last_id:
+        src = db.get(ChatMessage, int(last_id))
+        if src and src.chat_id == chat.id and src.media_filename:
+            path = os.path.join(_ctx.upload_dir, src.media_filename)
+            if os.path.exists(path):
+                return path
+    paths = _file_paths(files)
+    return paths[1] if len(paths) > 1 else ""
+
+
 def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
     """Общий путь отправки: и обычная реплика, и «Оживить» приходят сюда."""
-    text = str(body.get("text") or "").strip()
     model_id = str(body.get("engine") or chat.model or "").strip()
     kind, engine = _check_allowed(user, model_id)
-    files = _take_files(db, user, body.get("file_ids") or [])
+    limit = CHAT_TEXT_LIMIT if kind == "text" else CHAT_PROMPT_LIMIT
+    text = str(body.get("text") or "").strip()[:limit]
+    files = _take_files(db, user, body.get("file_ids") or [], body.get("file_kinds") or {})
     duration = _norm_duration(body.get("duration"))
+    variants = _norm_variants(body.get("variants"))
 
     if not text and kind != "video":
         raise HTTPException(400, "напиши, что нужно сделать")
+    if kind == "text":
+        # Текст вариантами не гоняем: четыре ответа шлюза — это четыре
+        # разговора, а лента у нас одна. Контрол на фронте для текста скрыт,
+        # но запрос может прийти и мимо него.
+        variants = 1
 
     params: dict = {}
     source_path = ""
+    last_path = ""
     if kind == "video":
         source_path = _source_frame(db, chat, files, body.get("from_message_id"))
+        last_path = _last_frame(db, chat, files, body.get("last_message_id"), engine)
+        aspect = _norm_aspect(body.get("aspect"), _video_aspects(engine))
         params["duration"] = duration
         params["source"] = os.path.basename(source_path)
+        if last_path:
+            params["last"] = os.path.basename(last_path)
+        if _video_aspects(engine):
+            params["aspect"] = aspect
         cost = _video_points(engine, duration)
     elif kind == "image":
-        params["resolution"] = CHAT_IMAGE_RESOLUTION
-        cost = _image_points(user, engine)
+        resolution = _norm_resolution(body.get("resolution"), _image_resolutions(engine))
+        aspect = _norm_aspect(body.get("aspect"), _image_aspects(engine))
+        params["resolution"] = resolution
+        if _image_aspects(engine):
+            params["aspect"] = aspect
+        if files:
+            params["refs"] = [f.kind or refs_mod.REF_DEFAULT for f in files]
+        save_to = body.get("save_to")
+        if isinstance(save_to, dict) and save_to.get("target"):
+            params["save_to"] = save_to
+        cost = _image_points(user, engine, resolution)
     else:
         cost = _text_points()
 
@@ -569,12 +801,17 @@ def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
     # ленте сообщение-призрак, на которое человек потом смотрит и не понимает.
     # Вид и движок уезжают в журнал токенов ЯВНО: без них кабинет не может
     # разложить расход по движкам, а спорную генерацию не с чем сверить.
-    _ctx.charge(db, user, cost, f"чат {chat.id}: {engine}",
-                kind="chat", engine=engine, ref_type="chat", ref_id=chat.id,
-                cost_cents=_ctx.cost_cents(
-                    "video" if kind == "video" else ("image" if kind == "image" else "text"),
-                    engine, seconds=duration if kind == "video" else 0,
-                    resolution=CHAT_IMAGE_RESOLUTION if kind == "image" else ""))
+    #
+    # Каждый вариант оплачивается ОТДЕЛЬНОЙ проводкой, а не одной на пачку:
+    # упавший третий вариант обязан вернуть ровно свою долю, а не всю сумму
+    # и не ноль.
+    for _ in range(variants):
+        _ctx.charge(db, user, cost, f"чат {chat.id}: {engine}",
+                    kind="chat", engine=engine, ref_type="chat", ref_id=chat.id,
+                    cost_cents=_ctx.cost_cents(
+                        "video" if kind == "video" else ("image" if kind == "image" else "text"),
+                        engine, seconds=duration if kind == "video" else 0,
+                        resolution=params.get("resolution", "") if kind == "image" else ""))
 
     pos = (db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).count()) + 1
     ask = ChatMessage(chat_id=chat.id, position=pos, role="user", kind="text",
@@ -586,13 +823,17 @@ def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
         f.position = i
 
     days = _retention_days(user)
-    answer = ChatMessage(
-        chat_id=chat.id, position=pos + 1, role="assistant", kind=kind,
-        text="", engine=engine, points=cost, status="queued",
-        params_json=json.dumps(params, ensure_ascii=False),
-        expires_at=(now() + timedelta(days=days)) if (days and kind != "text") else None,
-    )
-    db.add(answer)
+    group = uuid.uuid4().hex if variants > 1 else ""
+    answers: list[ChatMessage] = []
+    for i in range(variants):
+        answer = ChatMessage(
+            chat_id=chat.id, position=pos + 1 + i, role="assistant", kind=kind,
+            text="", engine=engine, points=cost, status="queued", group_id=group,
+            params_json=json.dumps(params, ensure_ascii=False),
+            expires_at=(now() + timedelta(days=days)) if (days and kind != "text") else None,
+        )
+        db.add(answer)
+        answers.append(answer)
     if not chat.title:
         chat.title = _auto_title(text) or _engine_title(engine, kind)
     # В чате запоминается ИМЕННО позиция селектора (с префиксом вида), а не
@@ -601,16 +842,23 @@ def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
     chat.updated_at = now()
     db.commit()
     db.refresh(ask)
-    db.refresh(answer)
+    for answer in answers:
+        db.refresh(answer)
 
-    if kind == "text":
-        Thread(target=_run_text, args=(answer.id,), daemon=True).start()
-    elif kind == "image":
-        Thread(target=_run_image, args=(answer.id, _file_paths(files)), daemon=True).start()
-    else:
-        Thread(target=_run_video, args=(answer.id, source_path, duration), daemon=True).start()
+    ref_kinds = [f.kind or refs_mod.REF_DEFAULT for f in files]
+    for answer in answers:
+        if kind == "text":
+            Thread(target=_run_text, args=(answer.id,), daemon=True).start()
+        elif kind == "image":
+            Thread(target=_run_image,
+                   args=(answer.id, _file_paths(files), ref_kinds), daemon=True).start()
+        else:
+            Thread(target=_run_video,
+                   args=(answer.id, source_path, last_path, duration), daemon=True).start()
 
-    return {"chat": _chat_dict(chat), "ask": _msg_dict(ask), "answer": _msg_dict(answer),
+    return {"chat": _chat_dict(chat), "ask": _msg_dict(ask),
+            "answer": _msg_dict(answers[0]),
+            "answers": [_msg_dict(a) for a in answers],
             "points": None if user.is_admin else int(user.gen_points or 0)}
 
 
@@ -672,16 +920,87 @@ def retry_message(chat_id: int, message_id: int,
         params = json.loads(msg.params_json or "{}")
     except ValueError:
         params = {}
+    # Повтор идёт ТЕМИ ЖЕ параметрами, а не дефолтными: человек нажал
+    # «повторить», а не «сделай что-нибудь ещё раз». Формат и разрешение
+    # лежат в params с первой попытки.
     body = {
         "text": ask.text if ask else msg.text,
         "engine": _model_id(msg.kind, msg.engine) if msg.engine else chat.model,
         "duration": params.get("duration"),
+        "aspect": params.get("aspect"),
+        "resolution": params.get("resolution"),
+        "variants": 1,
     }
     if msg.kind == "video":
         prev_img = _last_image_message(db, chat)
         if prev_img:
             body["from_message_id"] = prev_img.id
     return _post_message(db, user, chat, body)
+
+
+@router.post("/api/chats/messages/{message_id}/cancel")
+def cancel_message(message_id: int, user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    """Отмена задачи. Два РАЗНЫХ случая, и врать про них нельзя.
+
+    queued — движок ещё не тронут, задача снимается целиком и очки
+    возвращаются полностью.
+    running — движок уже считает и уже выставит нам счёт. Отменить можно
+    только ожидание: очки не возвращаются, и кнопка об этом прямо написана
+    ДО нажатия, а не после."""
+    msg = _own_message(db, user, message_id)
+    if msg.role != "assistant" or msg.status not in ("queued", "running"):
+        raise HTTPException(400, "отменять нечего: задача уже завершилась")
+    was = msg.status
+    msg.status = "canceled"
+    refunded = 0
+    if was == "queued":
+        points = int(msg.points or 0)
+        chat = db.get(Chat, msg.chat_id)
+        owner = db.get(User, chat.owner_id) if chat else None
+        if owner and points > 0:
+            _ctx.refund(db, owner, points, f"чат {msg.chat_id}: отмена {msg.engine}",
+                        kind="refund", engine=msg.engine or "",
+                        ref_type="chat_message", ref_id=msg.id)
+            msg.points = 0
+            refunded = points
+    db.commit()
+    return {"ok": True, "refunded": refunded, "was": was,
+            "message": _msg_dict(msg),
+            "points": None if user.is_admin else int(user.gen_points or 0)}
+
+
+# ─────────────────────────── улучшение промпта ───────────────────────────
+
+# Инструкция шлюзу. Отдельной моделью не платим: шлюз стоит нам ноль, как и
+# текстовые шаги студии (TEXT_COST), поэтому кнопка бесплатная.
+ENHANCE_SYSTEM = (
+    "You rewrite short user prompts into precise prompts for an image or video "
+    "generator. Keep the user's intent and subject exactly. Add only what a camera "
+    "would see: framing, lens, light, colour, texture, mood. No preamble, no "
+    "explanation, no quotes, no markdown — return the rewritten prompt only, "
+    "in English, under 120 words."
+)
+
+
+@router.post("/api/chat/enhance")
+async def enhance_prompt(request: Request, user: User = Depends(current_user)):
+    """«✨ Улучшить промпт» — 0 токенов, потому что шлюз стоит нам ноль.
+
+    Результат НЕ подменяет промпт молча: он возвращается наверх, кладётся в
+    поле, и под полем остаётся «вернуть как было». Человек платит за кадр до
+    252 токенов — читать текст, за который он платит, он обязан до отправки."""
+    body = await _body(request)
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "сначала напиши промпт")
+    messages = [{"role": "system", "content": ENHANCE_SYSTEM},
+                {"role": "user", "content": text[:CHAT_PROMPT_LIMIT]}]
+    try:
+        out, _provider = await _ask_gateway(messages)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"не получилось улучшить промпт: {str(e)[:200]}")
+    return {"text": out.strip()[:CHAT_PROMPT_LIMIT], "points": 0}
 
 
 # ─────────────────────────── фоновые исполнители ───────────────────────────
@@ -697,6 +1016,10 @@ def _fail(message_id: int, err: str) -> None:
     try:
         msg = db.get(ChatMessage, message_id)
         if not msg:
+            return
+        if msg.status == "canceled":
+            # Отменённую задачу ошибкой не перекрашиваем: человек уже знает,
+            # что её нет, а очки за неё уже разобраны в cancel_message.
             return
         msg.status = "error"
         msg.error = str(err)[:500]
@@ -715,10 +1038,21 @@ def _fail(message_id: int, err: str) -> None:
         db.close()
 
 
-def _mark_running(db: Session, msg: ChatMessage) -> None:
+def _mark_running(db: Session, msg: ChatMessage) -> bool:
+    """False — задачу отменили, пока она стояла в очереди: работать не над чем."""
+    if msg.status == "canceled":
+        return False
     msg.status = "running"
     msg.error = ""
     db.commit()
+    return True
+
+
+def _canceled(db: Session, message_id: int) -> bool:
+    """Отменили, пока движок считал? Тогда результат не сохраняем — человек
+    нажал «отменить», а не «поставь это в ленту чуть позже»."""
+    msg = db.get(ChatMessage, message_id)
+    return bool(msg and msg.status == "canceled")
 
 
 def _history_messages(db: Session, chat_id: int, upto_id: int) -> list[dict]:
@@ -766,7 +1100,8 @@ def _run_text(message_id: int) -> None:
         msg = db.get(ChatMessage, message_id)
         if not msg:
             return
-        _mark_running(db, msg)
+        if not _mark_running(db, msg):
+            return
         # Свежая реплика человека УЖЕ лежит в базе к этому моменту, поэтому
         # она приходит последней строкой истории. Дописывать её отдельно
         # нельзя: вопрос уезжал бы в модель дважды.
@@ -797,30 +1132,83 @@ def _run_text(message_id: int) -> None:
             pass
 
 
-def _run_image(message_id: int, ref_paths: list[str]) -> None:
+def _refund_diff(db: Session, msg: ChatMessage, actual_engine: str) -> None:
+    """Сработал НЕ ТОТ движок — вернуть разницу в цене.
+
+    generate_image_ex откатывается по цепочке «запрошенный → ChatGPT-шлюз →
+    Grok-шлюз» и честно возвращает поле engine, но до этого места его никто не
+    читал: человек платил 8 токенов за Nano Banana Pro и мог получить картинку
+    со шлюза, которая стоит нам ноль. Это не только «не тот движок» — это
+    чужие деньги. Разницу возвращаем той же кассой, что и упавшую генерацию."""
+    chat = db.get(Chat, msg.chat_id)
+    owner = db.get(User, chat.owner_id) if chat else None
+    if not owner:
+        return
+    paid = int(msg.points or 0)
+    real = _image_points(owner, actual_engine, _msg_resolution(msg))
+    if real >= paid:
+        return
+    back = paid - real
+    _ctx.refund(db, owner, back,
+                f"чат {msg.chat_id}: {msg.engine} → {actual_engine}",
+                kind="refund", engine=actual_engine,
+                ref_type="chat_message", ref_id=msg.id)
+    msg.points = real
+
+
+def _msg_resolution(msg: ChatMessage) -> str:
+    try:
+        params = json.loads(msg.params_json or "{}")
+    except ValueError:
+        params = {}
+    return str(params.get("resolution") or CHAT_IMAGE_RESOLUTION)
+
+
+def _run_image(message_id: int, ref_paths: list[str], ref_kinds: list[str] | None = None) -> None:
     db = SessionLocal()
     try:
         msg = db.get(ChatMessage, message_id)
         if not msg:
             return
-        _mark_running(db, msg)
+        if not _mark_running(db, msg):
+            return
         chat = db.get(Chat, msg.chat_id)
         owner_id = chat.owner_id if chat else 0
+        try:
+            params = json.loads(msg.params_json or "{}")
+        except ValueError:
+            params = {}
         ask = (db.query(ChatMessage)
                .filter(ChatMessage.chat_id == msg.chat_id, ChatMessage.id < msg.id,
                        ChatMessage.role == "user")
                .order_by(ChatMessage.id.desc()).first())
         prompt = (ask.text if ask else "").strip() or "cinematic vertical image"
+        live_refs = [p for p in ref_paths if os.path.exists(p)]
+        # ЛЕГЕНДА РЕФЕРЕНСОВ. Без неё модель получала пачку картинок и пачку
+        # правил, никак не связанных между собой, — и клеила стиль к локации.
+        # Тексты правил общие со студией (backend/refs.py), нумерация обязана
+        # совпадать с порядком картинок в запросе.
+        if live_refs and ref_kinds:
+            prompt = prompt + "\n\n" + refs_mod.ref_legend(ref_kinds[:len(live_refs)])
         res = asyncio.run(mediagen.generate_image_ex(
-            prompt, reference_paths=[p for p in ref_paths if os.path.exists(p)] or None,
-            engine=msg.engine, resolution=CHAT_IMAGE_RESOLUTION, aspect="9:16"))
+            prompt, reference_paths=live_refs or None,
+            engine=msg.engine,
+            resolution=params.get("resolution") or CHAT_IMAGE_RESOLUTION,
+            aspect=params.get("aspect") or "9:16"))
+        if _canceled(db, message_id):
+            return
         # upscale=False намеренно: 4К-картинка в ленте не нужна, а её вес
         # платится диском на весь срок хранения.
         fname = _ctx.save_image(res["data"], res["mime"], upscale=False)
         msg = db.get(ChatMessage, message_id)
         msg.media_filename = fname
         msg.status = "done"
+        actual = str(res.get("engine") or "")
+        if actual and actual != msg.engine:
+            msg.engine_actual = actual
+            _refund_diff(db, msg, actual)
         _ctx.reg_file(db, fname, owner_id, kind="chat")
+        _auto_save(db, msg)
         db.commit()
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -834,15 +1222,20 @@ def _run_image(message_id: int, ref_paths: list[str]) -> None:
             pass
 
 
-def _run_video(message_id: int, first_path: str, duration: int) -> None:
+def _run_video(message_id: int, first_path: str, last_path: str, duration: int) -> None:
     db = SessionLocal()
     try:
         msg = db.get(ChatMessage, message_id)
         if not msg:
             return
-        _mark_running(db, msg)
+        if not _mark_running(db, msg):
+            return
         chat = db.get(Chat, msg.chat_id)
         owner_id = chat.owner_id if chat else 0
+        try:
+            params = json.loads(msg.params_json or "{}")
+        except ValueError:
+            params = {}
         ask = (db.query(ChatMessage)
                .filter(ChatMessage.chat_id == msg.chat_id, ChatMessage.id < msg.id,
                        ChatMessage.role == "user")
@@ -850,9 +1243,13 @@ def _run_video(message_id: int, first_path: str, duration: int) -> None:
         prompt = (ask.text if ask else "").strip() or "subtle cinematic motion"
         spec = mediagen.VIDEO_ENGINES.get(msg.engine) or {}
         fname = asyncio.run(mediagen.animate_scene(
-            prompt=prompt, first_path=first_path, last_path=None,
+            prompt=prompt, first_path=first_path,
+            last_path=last_path or None,
             duration_sec=int(duration or 6),
-            provider=spec.get("family") or "grok", engine=msg.engine))
+            provider=spec.get("family") or "grok", engine=msg.engine,
+            aspect=params.get("aspect") or "9:16"))
+        if _canceled(db, message_id):
+            return
         msg = db.get(ChatMessage, message_id)
         msg.media_filename = fname
         msg.status = "done"
@@ -872,43 +1269,174 @@ def _run_video(message_id: int, first_path: str, duration: int) -> None:
 
 # ─────────────────────── мост «чат → студия» ───────────────────────
 
+def _copy_media(src_name: str, prefix: str) -> str:
+    """Копия БАЙТАМИ под новым именем. Именно копия, а не ссылка на тот же
+    файл: удаление ленты не должно уносить фото персонажа или кадр сцены."""
+    src = os.path.join(_ctx.upload_dir, src_name)
+    if not os.path.exists(src):
+        raise HTTPException(404, "файл отсутствует на диске")
+    ext = os.path.splitext(src_name)[1] or ".png"
+    fname = f"{prefix}_{uuid.uuid4().hex}{ext}"
+    shutil.copyfile(src, os.path.join(_ctx.upload_dir, fname))
+    return fname
+
+
+def _own_scene_for_chat(db: Session, user: User, scene_id: int) -> Scene:
+    scene = db.get(Scene, int(scene_id or 0))
+    if not scene or not _ctx.owned(user, scene.track.project):
+        raise HTTPException(404, "кадр не найден")
+    return scene
+
+
+@router.get("/api/chat/targets")
+def save_targets(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Куда можно положить результат — «Куда положить» в панели параметров.
+
+    Только то, что реально существует у ЭТОГО человека: пустой список честно
+    означает «проектов пока нет», а не выпадашку из четырёх мёртвых строк."""
+    rows = (db.query(Project)
+            .filter(Project.owner_id == user.id)
+            .order_by(Project.id.desc()).limit(50).all())
+    out = []
+    for p in rows:
+        out.append({
+            "id": p.id, "name": p.name or "", "kind": p.kind or "album",
+            "characters": [{"id": c.id, "name": c.name or ""} for c in p.characters],
+            "tracks": [{
+                "id": t.id, "title": t.title or "",
+                "scenes": [{"id": sc.id, "position": sc.position,
+                            "note": (sc.shot_note or sc.lyric_line or "")[:60],
+                            "has_first": bool(sc.image_filename),
+                            "has_last": bool(sc.image_last_filename)}
+                           for sc in t.scenes],
+            } for t in p.tracks],
+        })
+    return {"projects": out}
+
+
 @router.post("/api/chats/messages/{message_id}/save-to")
 async def save_to_project(message_id: int, request: Request,
                           user: User = Depends(current_user),
                           db: Session = Depends(db_session)):
-    """Картинку из чата — персонажу (фото или разворот), со снятием срока.
-
-    Это и есть смысл чата ВНУТРИ этого сервиса, а не отдельным продуктом:
-    удачный кадр не остаётся в переписке, а уезжает в проект."""
+    """Ручное «В проект» на карточке результата."""
     msg = _own_message(db, user, message_id)
+    where = _save_media_to(db, user, msg, await _body(request))
+    db.commit()
+    return {"ok": True, **where}
+
+
+def _save_media_to(db: Session, user: User, msg: ChatMessage, body: dict) -> dict:
+    """Картинку из ленты — В РАБОТУ, со снятием срока хранения.
+
+    Это и есть смысл мастерской ВНУТРИ этого сервиса, а не отдельным
+    продуктом: удачный кадр не остаётся в переписке, а уезжает в проект.
+    Четыре адреса, и все четыре — уже существующие сущности студии:
+      character   — фото персонажа или его разворот;
+      scene_ref   — референс кадра (с видом: вайб / стиль / локация / копия);
+      scene_frame — сам кадр сцены (ДОБАВЛЯЕТСЯ, а не затирает — см. ниже);
+      cover       — обложка проекта.
+    Пятой сущности мастерская не заводит: она порождает медиа, а всё, что
+    должно жить дольше ленты, уезжает в режим.
+
+    Вызывается из ДВУХ мест: кнопкой на карточке результата и автоматически,
+    когда в панели параметров выбрано «куда положить». Второе идёт сервером, а
+    не клиентом, ровно потому, что обещание «положу в сцену 12» обязано
+    пережить закрытую вкладку."""
     if not msg.media_filename or msg.kind != "image":
         raise HTTPException(400, "сохранить можно только картинку")
-    body = await _body(request)
-    char_id = int(body.get("character_id") or 0)
-    as_kind = "model" if str(body.get("as") or "photo") == "model" else "photo"
-    ch = db.get(Character, char_id)
-    if not ch or not _ctx.owned(user, ch.project):
-        raise HTTPException(404, "персонаж не найден")
+    target = str(body.get("target") or "character").strip()
 
-    src = os.path.join(_ctx.upload_dir, msg.media_filename)
-    if not os.path.exists(src):
-        raise HTTPException(404, "файл отсутствует на диске")
-    ext = os.path.splitext(msg.media_filename)[1] or ".png"
-    # Копия БАЙТАМИ под новым именем: удаление чата не должно уносить фото
-    # персонажа (та же логика, что у клонирования героев в студии).
-    fname = f"char_{uuid.uuid4().hex}{ext}"
-    shutil.copyfile(src, os.path.join(_ctx.upload_dir, fname))
-    _ctx.reg_file(db, fname, ch.project.owner_id, kind="photo",
-                  project_id=ch.project_id)
-    max_pos = max((p.position for p in ch.photos), default=0)
-    db.add(CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname,
-                          kind=as_kind, pose_kind="3d" if as_kind == "model" else "",
-                          from_photos=0))
-    # Сообщение сохранено в проект — срок хранения снимаем: файл теперь не
-    # мусор переписки, а часть работы.
+    if target == "character":
+        char_id = int(body.get("character_id") or 0)
+        as_kind = "model" if str(body.get("as") or "photo") == "model" else "photo"
+        ch = db.get(Character, char_id)
+        if not ch or not _ctx.owned(user, ch.project):
+            raise HTTPException(404, "персонаж не найден")
+        fname = _copy_media(msg.media_filename, "char")
+        _ctx.reg_file(db, fname, ch.project.owner_id, kind="photo",
+                      project_id=ch.project_id)
+        max_pos = max((p.position for p in ch.photos), default=0)
+        db.add(CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname,
+                              kind=as_kind, pose_kind="3d" if as_kind == "model" else "",
+                              from_photos=0))
+        where = {"character_id": ch.id, "as": as_kind}
+
+    elif target == "scene_ref":
+        scene = _own_scene_for_chat(db, user, body.get("scene_id"))
+        fname = _copy_media(msg.media_filename, "sref")
+        pos = 1 + max([r.position for r in scene.refs] or [0])
+        db.add(SceneRef(scene_id=scene.id, position=pos, filename=fname,
+                        kind=refs_mod.ref_norm_kind(body.get("kind"))))
+        _ctx.reg_file(db, fname, scene.track.project.owner_id, kind="ref",
+                      project_id=scene.track.project_id, track_id=scene.track_id,
+                      scene_id=scene.id)
+        where = {"scene_id": scene.id}
+
+    elif target == "scene_frame":
+        scene = _own_scene_for_chat(db, user, body.get("scene_id"))
+        fname = _copy_media(msg.media_filename, "slice")
+        # ДОБАВЛЯЕМ, А НЕ ЗАМЕНЯЕМ — тот же закон, что у ячеек листа
+        # раскадровки (main.py, apply_sheet_cells): затирая занятый кадр, мы
+        # уносили с диска работу, за которую человек уже заплатил токенами.
+        slot = str(body.get("slot") or "").strip()
+        if slot == "last" or (not slot and scene.image_filename and not scene.image_last_filename):
+            if scene.image_last_filename:
+                raise HTTPException(400, "последний кадр сцены уже занят")
+            scene.image_last_filename = fname
+            put = "last"
+        elif not scene.image_filename:
+            scene.image_filename = fname
+            scene.image_status = "done"
+            scene.image_error = ""
+            put = "first"
+        else:
+            pos = 1 + max([r.position for r in scene.refs] or [0])
+            db.add(SceneRef(scene_id=scene.id, position=pos, filename=fname, kind="vibe"))
+            put = "ref"
+        _ctx.reg_file(db, fname, scene.track.project.owner_id, kind="frame",
+                      project_id=scene.track.project_id, track_id=scene.track_id,
+                      scene_id=scene.id)
+        where = {"scene_id": scene.id, "slot": put}
+
+    elif target == "cover":
+        pr = db.get(Project, int(body.get("project_id") or 0))
+        if not pr or not _ctx.owned(user, pr):
+            raise HTTPException(404, "проект не найден")
+        fname = _copy_media(msg.media_filename, "cover")
+        pr.cover_filename = fname
+        _ctx.reg_file(db, fname, pr.owner_id, kind="cover", project_id=pr.id)
+        where = {"project_id": pr.id}
+
+    else:
+        raise HTTPException(400, "неизвестный адрес сохранения")
+
+    # Сообщение сохранено в работу — срок хранения снимаем: файл теперь не
+    # мусор переписки, а часть проекта.
     msg.expires_at = None
-    db.commit()
-    return {"ok": True, "character_id": ch.id, "as": as_kind}
+    return {"target": target, **where}
+
+
+def _auto_save(db: Session, msg: ChatMessage) -> None:
+    """«Куда положить» из панели параметров. Ошибку сюда пускать нельзя:
+    кадр уже сгенерирован и оплачен, и не доехавший адрес — повод написать об
+    этом в сообщении, а не потерять картинку вместе с деньгами."""
+    try:
+        params = json.loads(msg.params_json or "{}")
+    except ValueError:
+        return
+    spec = params.get("save_to")
+    if not isinstance(spec, dict) or not spec.get("target"):
+        return
+    chat = db.get(Chat, msg.chat_id)
+    owner = db.get(User, chat.owner_id) if chat else None
+    if not owner:
+        return
+    try:
+        params["saved_to"] = _save_media_to(db, owner, msg, spec)
+    except Exception as e:  # noqa: BLE001
+        params["save_error"] = str(getattr(e, "detail", e))[:200]
+    params.pop("save_to", None)
+    msg.params_json = json.dumps(params, ensure_ascii=False)
 
 
 # ─────────────────────── ретенция: ночной сборщик ───────────────────────
@@ -931,10 +1459,16 @@ def sweep_expired() -> int:
     db = SessionLocal()
     dropped = 0
     try:
+        # ЗАКРЕПЛЁННОЕ НЕ ПОДМЕТАЕМ. Звезда в интерфейсе прямо обещает «в
+        # избранном файл не удаляется по сроку» — без этих двух условий она
+        # была бы враньём: сортировка меняется, а файл всё равно исчезает.
         rows = (db.query(ChatMessage)
+                .join(Chat, Chat.id == ChatMessage.chat_id)
                 .filter(ChatMessage.media_filename != "",
                         ChatMessage.expires_at.isnot(None),
-                        ChatMessage.expires_at < now())
+                        ChatMessage.expires_at < now(),
+                        ChatMessage.pinned.is_(False),
+                        Chat.pinned.is_(False))
                 .limit(500).all())
         for m in rows:
             _drop_media(db, m.media_filename)

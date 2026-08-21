@@ -149,9 +149,9 @@ const I18N = {
     // ОДНО окно: намерение задаёт выбранная модель, а не вкладка экрана.
     chat: {
       toStudio: "← Studio",
-      new: "+ New chat",
-      searchPh: "Search chats",
-      noChats: "No chats yet",
+      new: "+ New feed",
+      searchPh: "Search feeds and prompts",
+      noChats: "No feeds yet",
       hello: "What are we making today?",
       helloHint: "Pick the model right inside the input line: a text answer, an image, or video made from an image.",
       inputPh: "Write what you need…",
@@ -161,7 +161,7 @@ const I18N = {
       // Единица токенов — формами: «2 токена», а не «2 токенов». Цену человек
       // читает по десять раз за разговор, кривое склонение бьёт по глазам.
       unit: ["token", "tokens", "tokens"],
-      price: "Send — {n} {unit}",
+      price: "{n} {unit}",
       priceHave: "you have {n}",
       meter: "This chat: {n} {unit}",
       groupToday: "Today",
@@ -201,6 +201,136 @@ const I18N = {
       queued: "queued…",
       running: "generating…",
       failed: "did not work out",
+    },
+
+    // ─────────────────────── МАСТЕРСКАЯ ───────────────────────
+    // Основное окно генерации. Ключи chat.* НЕ трогаем — на них завязана
+    // лента и строка ввода, которые уже работают; всё новое живёт здесь.
+    make: {
+      tabChats: "Feeds",
+      tabProjects: "Projects",
+      groupPinned: "Pinned",
+      renamePrompt: "Name for this feed",
+      pinTitle: "Pinned files are never deleted by the storage window",
+      emptyChats: "Your generations will show up here.",
+      emptyChatsWhy: "Every feed keeps its prompts — even when a file expires, the image can be repeated.",
+      emptyProjects: "No projects yet.",
+      emptyProjectsWhy: "A project is for work longer than one frame: a clip for a track, a series of reels, a season.",
+      newProject: "+ New project",
+      searchNone: "Nothing found for “{q}”.",
+      searchWhere: "Search runs over feed names and prompts.",
+      storage: "{used} of {limit} used.",
+
+      // Карточка модели
+      factCan: "Can",
+      factCannot: "Cannot",
+      factInput: "Input",
+      factPrice: "Price",
+      canFirstLast: "first and last frame",
+      canRefs: "up to {n} separate references",
+      canText: "a written answer, dialogue with context",
+      cannotVideo: "starting without an image",
+      cannotImage: "motion — this is a picture, not a clip",
+      cannotText: "images and video — that is another model",
+      inputVideo: "one image: an attachment or a frame from this feed",
+      inputImage: "a prompt, references optional",
+      inputImageRefs: "a prompt and up to {n} references",
+      inputText: "text",
+      secShort: "sec",
+      seePlans: "See the plans",
+      lockedCard: "{title} opens on {plan}. Your plan is {mine}.",
+      lockedWhy: "This model opens on {plan}.",
+      offlineWhy: "{title} is not connected: the key is missing. Once it is, it just works — nothing for you to do.",
+      needModel: "Pick a model.",
+      needText: "Write what you need.",
+      needFrame: "Video needs an image: attach a file or make a frame in this feed.",
+      needPrompt: "Write the prompt first.",
+
+      // Панель параметров
+      grpModel: "Model",
+      grpVersion: "Version",
+      grpAspect: "Frame format",
+      grpQuality: "Quality",
+      grpDuration: "Length",
+      grpVariants: "Variants",
+      grpTarget: "Where it goes",
+      grpParams: "Parameters",
+      reset: "reset",
+      resetAll: "Reset everything",
+      hidePanel: "Hide panel",
+      aspectFixed: "This engine always returns its own format.",
+      qualityByEngine: "{q} — set by the engine.",
+      qualityByEngineAny: "Resolution is set by the engine.",
+      variantsShort: "{n} variants would cost {need} — that is more than you have.",
+      targetFeed: "keep it in the feed",
+      targetCover: "project cover",
+      targetFrame: "scene frame",
+      targetRef: "scene reference",
+      targetScene: "scene {n} of “{title}”",
+      targetsLoading: "loading projects…",
+      targetKeeps: "Saved into a project, the file loses its storage window.",
+      sceneNo: "scene {n}",
+
+      // Строка ввода
+      priceEach: "{n} × {each}",
+      topUp: "Top up",
+      enhanceTitle: "Rewrite the prompt — free",
+      enhanced: "Prompt rewritten",
+      enhanceFailed: "Could not rewrite it — your prompt is untouched.",
+      undo: "put it back",
+      refsMax: "This engine takes {n} image(s).",
+      fileTooBig: "“{name}” is over {n} MB.",
+      sourceLast: "Last frame: chosen",
+      ref: {
+        vibe: "vibe",
+        style: "style",
+        place: "location",
+        copy: "full copy",
+      },
+
+      // Лента
+      canceled: "canceled",
+      cancelQueued: "Cancel · {n} back",
+      cancelRunning: "Cancel · the engine is already running, tokens stay spent",
+      retryCost: "Repeat · {n}",
+      again: "Repeat differently",
+      againTitle: "prompt and settings come back to the input line — nothing is charged",
+      download: "Download",
+      asLast: "+ last frame",
+      asLastTitle: "use this image as the last frame of the interpolation",
+      variantsOf: "{n} variants",
+      elapsedSec: "{n} sec in",
+      elapsedMin: "{m} min {s} sec in",
+      swapped: "Drawn on {got} instead of {want} — the difference in tokens is back.",
+      saveFailed: "Could not put it into the project: {why}",
+      savedTo: {
+        character: "Put into the character card.",
+        scene_ref: "Put into the scene as a reference.",
+        scene_frame: "Put into the scene as a frame.",
+        cover: "Set as the project cover.",
+      },
+      backToScene: "← To scene {n} of “{title}”",
+      fromScene: "Shoot it in the workshop",
+      fromSceneTitle: "play with the prompt for this one frame without running the whole pipeline",
+
+      // Описания движков живут здесь, а не приезжают строкой с сервера:
+      // реестр движков написан по-русски, и англоязычный интерфейс получал
+      // бы русский абзац.
+      engineNote: {
+        auto: "The owner's subscription. Answers in text, keeps the conversation in context.",
+        chatgpt: "The owner's subscription. Free for you, one reference image, format set by the engine.",
+        grok: "The owner's subscription. Free for you, one reference image.",
+        "nano-banana": "Editing model: it reworks the picture you attach.",
+        "nano-banana-2": "Native vertical 1K/2K/4K and up to 14 separate references instead of one glued collage.",
+        "nano-banana-pro": "Native vertical 1K/2K/4K, up to 8 separate references. The strongest of the paid ones.",
+        "seedance-2-mini": "Interpolation between the first and the last frame, 720p. The workhorse of the paid plans.",
+        "seedance-2-0": "First place on the blind image-to-video arena. Expensive.",
+        "seedance-2-5": "The most expensive line on the price list. A showcase engine, not a workhorse.",
+        "seedance-2-5-480": "The same model at half the price — at the cost of resolution.",
+        "kling-3.0": "Kling 3.0 in standard mode, first and last frame.",
+        "kling-3.0-pro": "Kling 3.0 Pro, 1080p, first and last frame.",
+        "minimax-h3": "Second place on the arena, 768p.",
+      },
     },
 
     story: {
@@ -247,7 +377,7 @@ const I18N = {
       // Чат и аудио — тоже режимы: у чата свой экран (#chat), у звука пока
       // только внутренние ручки. В рейке они есть, чтобы человек видел весь
       // набор инструментов, а не половину.
-      chat: { title: "chat", full: "Chat with a model",
+      chat: { title: "Workshop", full: "Workshop — one frame, one clip, one answer",
               note: "Text, images and video from an image — in one window." },
       music: { title: "music", full: "A track: upload, mastering, release",
                note: "Your own screen: measurements and a waveform on arrival, "
@@ -271,9 +401,7 @@ const I18N = {
         note: "Logline, season arc, beat sheet, an act-by-act script for each episode.",
       },
       object: {
-        track: {
-      coverageShort: "Scenes cover {covered} of {total} — the rest of the track has no picture yet.",
-      extendScenes: "Add {n} more scenes", one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
+        track: { one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
                  save: "Save track", style: "Clip style", chars: "Album characters" },
         reel: { one: "video", many: "Videos", add: "+ add video", empty: "no videos yet",
                 save: "Save video", style: "Video style", chars: "Channel characters" },
@@ -421,6 +549,71 @@ const I18N = {
       go: "Redraw · {cost} tokens",
     },
 
+    // ─────────── копии: проект, объект, кадр ───────────
+    // Главное, что здесь обязано быть видно: копия НЕ ЗАНИМАЕТ МЕСТА. Медиа
+    // переезжает жёсткими ссылками, поэтому «4.1 ГБ материала, на диске 0
+    // байт» — не фигура речи. Без этой строки копировать боятся.
+    copy: {
+      projectTitle: "Copy the project",
+      trackTitle: "Copy this one",
+      sceneTitle: "Copy the frame",
+      sceneIntro: "The copy goes right after frame {n}. Choose what happens to the timing.",
+      nameLabel: "Name of the copy",
+      targetLabel: "Into which project",
+      untitled: "untitled",
+      projectSum: "{tracks} objects · {scenes} frames · {chars} characters",
+      trackSum: "«{title}» · {scenes} frames",
+      modeLink: "With all the material",
+      modeLinkNote: "Frames, video, sheets and the track come along. They take no extra disk space: the copy shares the same files.",
+      modeNone: "Template",
+      modeNoneNote: "Structure, prompts, timings and characters only — no frames and no video. Draw it from scratch in a new style.",
+      disk: "{media} of material · 0 bytes on disk",
+      diskNone: "no media — 0 bytes on disk",
+      bringChars: "These characters will be brought along: {list}. Without them the frames keep the names but lose the faces.",
+      broughtChars: "Characters brought along: {list}",
+      go: "Copy",
+      going: "copying…",
+    },
+
+    // ─────────── продлить кадр ───────────
+    extend: {
+      title: "Continue the shot",
+      intro: "A new frame appears after frame {n} and starts exactly where this one ends: its first frame IS the last frame of this shot.",
+      cost: "The model writes the end of the new shot — {n} tokens ({engine}).",
+      free: "The model writes the end of the new shot. On the built-in engine that is free.",
+      noFrames: "generate the frames first — there is nothing to continue from yet",
+      sheetWarn: "The storyboard sheet was drawn for a different number of frames — it will have to be redrawn.",
+      contMark: "continues the previous shot",
+      go: "Continue",
+    },
+
+    // ─────────── тайминги при вставке кадра ───────────
+    // Молчать здесь нельзя: assembly lays the audio with -shortest, so extra
+    // storyboard seconds silently vanish from the clip with the last frames.
+    retime: {
+      squeeze: "Split the slot",
+      spread: "Take it from the next frames",
+      tail: "Make the clip longer",
+      squeezeNote: "this frame and the new one get {n}s each, the track length stays the same",
+      spreadNote: "the new frame gets {n}s, the following ones give them up (none goes under 2s)",
+      tailNote: "the storyboard grows by {n}s and becomes longer than the audio",
+      fellBack: "not possible here — falls back to making the clip longer",
+      videoStale: "{n} frames already have video: it was shot for a different slot and will be trimmed on assembly",
+      videoStaleOne: "the video was shot for a different length — assembly trims it to {n}s",
+    },
+
+    // ─────────── пакетная перерисовка кадров ───────────
+    framesScope: {
+      title: "Redraw frames",
+      intro: "{engine} · {n} tokens per pair of frames",
+      todo: "Only the ones without frames",
+      dirty: "The ones that changed",
+      all: "Every frame",
+      line: "{scenes} frames · {total} tokens",
+      balance: "you have {n}",
+      go: "Redraw",
+    },
+
     // ─────────── снимки прежних стилей ───────────
     // Перерисовка не стирает кадры: она обменивает их на новые, а старые
     // кладёт рядом. Откат — тоже обмен, поэтому он откатывается.
@@ -429,8 +622,22 @@ const I18N = {
       unknown: "unknown style",
       withVideo: "with video",
       restore: "Bring back",
+      restoreTitle: "swap the current state for this variant",
+      restoreVideo: "Video only",
+      restoreVideoTitle: "bring back this take of the video, keep the current frames",
       restoreConfirm: "Swap the current frames for this version? The current ones stay as a version too.",
-      note: "We keep the last {n} versions of a frame — a pair of 4K frames is about 30 MB.",
+      pinTitle: "pin: retention will not evict it",
+      unpinTitle: "unpin",
+      cost: "{n} tokens",
+      note: "We keep the last {n} variants of a frame for {days} days. Pinned ones stay.",
+      total: "{n} variants · {size}",
+      empty: "no variants yet — they appear as soon as you redraw a frame",
+      where: "frame {n}",
+      onlyPinned: "Pinned only",
+      kind: {
+        frames: "Frames", video: "Video", restyle: "Restyle",
+        midframes: "In-between", extend: "Continuation", manual: "Manual",
+      },
     },
 
     // ─────────── движки: один выбор на объект ───────────
@@ -507,6 +714,11 @@ const I18N = {
       word: ["file", "files", "files"],
       empty: "nothing generated yet",
       all: "All",
+      allProjects: "All projects",
+      // Место считается по ФИЗИЧЕСКИМ файлам: a copied project is hard
+      // links, so it does not weigh a second time.
+      quota: "{used} of {limit} used",
+      quotaClips: "assembled clips are cleared after {n} days — reassembly is free",
       allTime: "All time",
       days7: "7 days",
       days30: "30 days",
@@ -677,6 +889,12 @@ const I18N = {
     },
 
     track: {
+      coverageShort: "Scenes cover {covered} of {total} — the rest of the track has no picture yet.",
+      extendScenes: "Add {n} more scenes",
+      // Обратный случай и куда опаснее: assembly lays the audio with
+      // -shortest, so the extra seconds take the last frames with them.
+      timingOver: "The storyboard is {n} longer than the track — assembly cuts the tail off with the music.",
+      fitTimings: "Fit to the track",
       coverTitle: "track cover — click to replace",
       titlePh: "Title",
       supergen: "⚡ One-click clip",
@@ -708,6 +926,10 @@ const I18N = {
       scenesCount: "scenes: {n}",
       scenesDone: "done, scenes: {n}",
       sheetTitle: "Storyboard sheet",
+      // Лист нарисован под другое число кадров: резать его нельзя — куски
+      // поедут мимо панелей и захватят соседей.
+      sheetStale: "The sheet was drawn for {a} frames, and now there are {b} — redraw it before slicing.",
+      sheetStaleTitle: "the sheet does not match the current frames",
       sheetEmpty: "no sheet yet",
       sheetOpen: "Open large",
       sheetOpenTitle: "open the sheet full screen",
@@ -978,6 +1200,7 @@ const I18N = {
         account: "Account",
         plan: "Plan",
         files: "Files",
+        versions: "History",
         ref: "Ambassador",
         // Админских вкладок в кабинете больше нет — они уехали на /admin.
         // Ключ admin остался ради подписи ссылки в полке верстака.
@@ -2109,9 +2332,9 @@ const I18N = {
     // ОДНО окно: намерение задаёт выбранная модель, а не вкладка экрана.
     chat: {
       toStudio: "← Студия",
-      new: "+ Новый чат",
-      searchPh: "Поиск по чатам",
-      noChats: "Чатов пока нет",
+      new: "+ Новая лента",
+      searchPh: "Поиск по лентам и промптам",
+      noChats: "Лент пока нет",
       hello: "Чем займёмся сегодня?",
       helloHint: "Модель переключается прямо в строке ввода: текстовый ответ, картинка или видео из картинки.",
       inputPh: "Напиши, что нужно…",
@@ -2121,7 +2344,7 @@ const I18N = {
       // Единица токенов — формами: «2 токена», а не «2 токенов». Цену человек
       // читает по десять раз за разговор, кривое склонение бьёт по глазам.
       unit: ["токен", "токена", "токенов"],
-      price: "Отправить — {n} {unit}",
+      price: "{n} {unit}",
       priceHave: "у тебя {n}",
       meter: "Этот чат: {n} {unit}",
       groupToday: "Сегодня",
@@ -2161,6 +2384,136 @@ const I18N = {
       queued: "в очереди…",
       running: "генерирую…",
       failed: "не получилось",
+    },
+
+    // ─────────────────────── МАСТЕРСКАЯ ───────────────────────
+    // Основное окно генерации. Ключи chat.* НЕ трогаем — на них завязана
+    // лента и строка ввода, которые уже работают; всё новое живёт здесь.
+    make: {
+      tabChats: "Ленты",
+      tabProjects: "Проекты",
+      groupPinned: "Избранное",
+      renamePrompt: "Название ленты",
+      pinTitle: "В избранном файл не удаляется по сроку хранения",
+      emptyChats: "Здесь будут ваши генерации.",
+      emptyChatsWhy: "Каждая лента помнит промпты — даже когда файл удалится по сроку, картинку можно повторить.",
+      emptyProjects: "Проектов пока нет.",
+      emptyProjectsWhy: "Проект нужен, когда работа длиннее одного кадра: клип под трек, серия роликов, сезон сериала.",
+      newProject: "+ Новый проект",
+      searchNone: "По «{q}» ничего нет.",
+      searchWhere: "Поиск идёт по названиям лент и по промптам.",
+      storage: "Занято {used} из {limit}.",
+
+      // Карточка модели
+      factCan: "Умеет",
+      factCannot: "Не умеет",
+      factInput: "Вход",
+      factPrice: "Цена",
+      canFirstLast: "первый и последний кадр",
+      canRefs: "до {n} отдельных референсов",
+      canText: "текстовый ответ, разговор с контекстом",
+      cannotVideo: "старт без картинки",
+      cannotImage: "движение — это картинка, не ролик",
+      cannotText: "картинки и видео — это другая модель",
+      inputVideo: "одна картинка: вложение или кадр из этой ленты",
+      inputImage: "промпт, референсы по желанию",
+      inputImageRefs: "промпт и до {n} референсов",
+      inputText: "текст",
+      secShort: "с",
+      seePlans: "Посмотреть тарифы",
+      lockedCard: "{title} открыт с {plan}. Ваш тариф — {mine}.",
+      lockedWhy: "Эта модель открывается с тарифа {plan}.",
+      offlineWhy: "{title} не подключён: нет ключа. Включим — заработает без вашего участия.",
+      needModel: "Выберите модель.",
+      needText: "Напишите, что нужно сделать.",
+      needFrame: "Для видео нужна картинка: приложите файл или сгенерируйте кадр в этой ленте.",
+      needPrompt: "Сначала напишите промпт.",
+
+      // Панель параметров
+      grpModel: "Модель",
+      grpVersion: "Версия",
+      grpAspect: "Формат кадра",
+      grpQuality: "Качество",
+      grpDuration: "Длительность",
+      grpVariants: "Вариантов",
+      grpTarget: "Куда положить",
+      grpParams: "Параметры",
+      reset: "сбросить",
+      resetAll: "Сбросить всё",
+      hidePanel: "Скрыть панель",
+      aspectFixed: "Этот движок всегда отдаёт свой формат.",
+      qualityByEngine: "{q} — задано движком.",
+      qualityByEngineAny: "Разрешение задаёт движок.",
+      variantsShort: "На {n} варианта нужно {need} — это больше, чем у вас есть.",
+      targetFeed: "оставить в ленте",
+      targetCover: "обложка проекта",
+      targetFrame: "кадр сцены",
+      targetRef: "референс сцены",
+      targetScene: "сцена {n} трека «{title}»",
+      targetsLoading: "загружаю проекты…",
+      targetKeeps: "Сохранённый в проект файл перестаёт удаляться по сроку.",
+      sceneNo: "сцена {n}",
+
+      // Строка ввода
+      priceEach: "{n} × {each}",
+      topUp: "Пополнить",
+      enhanceTitle: "Переписать промпт — бесплатно",
+      enhanced: "Промпт улучшен",
+      enhanceFailed: "Не получилось улучшить, промпт не тронут.",
+      undo: "вернуть как было",
+      refsMax: "Этот движок берёт {n} картинку.",
+      fileTooBig: "«{name}» больше {n} МБ.",
+      sourceLast: "Последний кадр: выбран",
+      ref: {
+        vibe: "вайб",
+        style: "стиль",
+        place: "локация",
+        copy: "полная копия",
+      },
+
+      // Лента
+      canceled: "отменено",
+      cancelQueued: "Отменить · вернём {n}",
+      cancelRunning: "Отменить · движок уже считает, токены не вернутся",
+      retryCost: "Повторить · {n}",
+      again: "Повторить иначе",
+      againTitle: "промпт и параметры вернутся в строку ввода — ничего не списывается",
+      download: "Скачать",
+      asLast: "+ последний кадр",
+      asLastTitle: "взять эту картинку последним кадром интерполяции",
+      variantsOf: "{n} варианта",
+      elapsedSec: "идёт {n} с",
+      elapsedMin: "идёт {m} мин {s} с",
+      swapped: "Нарисовано на {got} вместо {want} — разница в токенах возвращена.",
+      saveFailed: "Не удалось положить в проект: {why}",
+      savedTo: {
+        character: "Положено в карточку персонажа.",
+        scene_ref: "Положено референсом сцены.",
+        scene_frame: "Положено кадром сцены.",
+        cover: "Поставлено обложкой проекта.",
+      },
+      backToScene: "← К сцене {n} трека «{title}»",
+      fromScene: "Доснять в мастерской",
+      fromSceneTitle: "поиграть промптом одного кадра, не гоняя весь конвейер",
+
+      // Описания движков живут в словаре, а не приезжают строкой с сервера:
+      // реестр движков написан по-русски, и англоязычный интерфейс получал
+      // бы русский абзац.
+      engineNote: {
+        auto: "Подписка владельца. Отвечает текстом, держит контекст разговора.",
+        chatgpt: "Подписка владельца. Для вас бесплатно, одна картинка-референс, формат задаёт движок.",
+        grok: "Подписка владельца. Для вас бесплатно, одна картинка-референс.",
+        "nano-banana": "Редактирующая модель: перерабатывает приложенную картинку.",
+        "nano-banana-2": "Нативная вертикаль 1K/2K/4K и до 14 отдельных референсов вместо склеенного коллажа.",
+        "nano-banana-pro": "Нативная вертикаль 1K/2K/4K, до 8 отдельных референсов. Сильнейшая из платных.",
+        "seedance-2-mini": "Интерполяция между первым и последним кадром, 720p. Рабочая лошадь платных тарифов.",
+        "seedance-2-0": "Первое место слепой арены image-to-video. Дорогая.",
+        "seedance-2-5": "Самая дорогая позиция прайса. Витринный движок, не поточный.",
+        "seedance-2-5-480": "Та же модель вдвое дешевле — ценой разрешения.",
+        "kling-3.0": "Kling 3.0 в стандартном режиме, первый и последний кадр.",
+        "kling-3.0-pro": "Kling 3.0 Pro, 1080p, первый и последний кадр.",
+        "minimax-h3": "Второе место арены, 768p.",
+      },
     },
 
     story: {
@@ -2204,7 +2557,7 @@ const I18N = {
         full: "UGC и ИИ-блогеры",
         note: "Один виртуальный блогер во всех роликах: обзоры, распаковки, говорящая голова.",
       },
-      chat: { title: "чат", full: "Чат с моделью",
+      chat: { title: "Мастерская", full: "Мастерская — один кадр, ролик или ответ",
               note: "Текст, картинки и видео из картинки — в одном окне." },
       music: { title: "музыка", full: "Трек: загрузка, мастеринг, релиз",
                note: "Отдельный экран: замеры и волна сразу после загрузки, "
@@ -2373,6 +2726,71 @@ const I18N = {
       go: "Перерисовать · {cost} токенов",
     },
 
+    // ─────────── копии: проект, объект, кадр ───────────
+    // Главное, что здесь обязано быть видно: копия НЕ ЗАНИМАЕТ МЕСТА. Медиа
+    // переезжает жёсткими ссылками, поэтому «4.1 ГБ материала, на диске 0
+    // байт» — не фигура речи. Без этой строки копировать боятся.
+    copy: {
+      projectTitle: "Копия проекта",
+      trackTitle: "Копия объекта",
+      sceneTitle: "Копия кадра",
+      sceneIntro: "Копия встанет сразу после кадра {n}. Выбери, что будет с таймингом.",
+      nameLabel: "Название копии",
+      targetLabel: "В какой проект",
+      untitled: "без названия",
+      projectSum: "{tracks} объектов · {scenes} кадров · {chars} персонажей",
+      trackSum: "«{title}» · {scenes} кадров",
+      modeLink: "Со всем материалом",
+      modeLinkNote: "Кадры, видео, листы и дорожка переезжают вместе. Места на диске не занимают: копия смотрит на те же файлы.",
+      modeNone: "Шаблон",
+      modeNoneNote: "Только структура, промпты, тайминги и персонажи — без кадров и видео. Отрисовать заново в новом стиле.",
+      disk: "{media} материала · 0 байт на диске",
+      diskNone: "без медиа — 0 байт на диске",
+      bringChars: "Вместе с объектом приедут герои: {list}. Без них кадры сохранят имена, но потеряют лица.",
+      broughtChars: "Перенесены герои: {list}",
+      go: "Скопировать",
+      going: "копирую…",
+    },
+
+    // ─────────── продлить кадр ───────────
+    extend: {
+      title: "Продолжить кадр",
+      intro: "После кадра {n} появится новый, и он начнётся ровно там, где этот закончился: его первый кадр И ЕСТЬ последний кадр этого плана.",
+      cost: "Конец нового плана пишет модель — {n} токенов ({engine}).",
+      free: "Конец нового плана пишет модель. На встроенном движке это бесплатно.",
+      noFrames: "сначала сгенерируй кадры — продолжать пока не от чего",
+      sheetWarn: "Лист раскадровки нарисован под другое число кадров — его придётся пересобрать.",
+      contMark: "продолжение предыдущего кадра",
+      go: "Продолжить",
+    },
+
+    // ─────────── тайминги при вставке кадра ───────────
+    // Молчать здесь нельзя: сборка вешает звук с -shortest, и лишние секунды
+    // раскадровки просто исчезают из клипа вместе с последними кадрами.
+    retime: {
+      squeeze: "Поделить слот",
+      spread: "Забрать у следующих",
+      tail: "Удлинить клип",
+      squeezeNote: "этому кадру и новому достанется по {n} с, длина трека не изменится",
+      spreadNote: "новый кадр получит {n} с, следующие отдадут их (никто не короче 2 с)",
+      tailNote: "раскадровка вырастет на {n} с и станет длиннее дорожки",
+      fellBack: "здесь так не выйдет — вырождается в «удлинить клип»",
+      videoStale: "у {n} кадров уже есть видео: оно снято под другой слот и будет подрезано при сборке",
+      videoStaleOne: "видео снято под другую длину — сборка подрежет его до {n} с",
+    },
+
+    // ─────────── пакетная перерисовка кадров ───────────
+    framesScope: {
+      title: "Перерисовать кадры",
+      intro: "{engine} · {n} токенов за пару кадров",
+      todo: "Только те, где кадров нет",
+      dirty: "Те, что изменились",
+      all: "Все подряд",
+      line: "{scenes} кадров · {total} токенов",
+      balance: "у тебя {n}",
+      go: "Перерисовать",
+    },
+
     // ─────────── снимки прежних стилей ───────────
     // Перерисовка не стирает кадры: она обменивает их на новые, а старые
     // кладёт рядом. Откат — тоже обмен, поэтому он откатывается.
@@ -2381,8 +2799,22 @@ const I18N = {
       unknown: "стиль неизвестен",
       withVideo: "с видео",
       restore: "Вернуть",
+      restoreTitle: "поменять нынешнее состояние на этот вариант",
+      restoreVideo: "Только видео",
+      restoreVideoTitle: "вернуть этот дубль видео, кадры оставить нынешние",
       restoreConfirm: "Поменять нынешние кадры на эту версию? Нынешние тоже останутся версией.",
-      note: "Храним последние {n} версии кадра — пара 4К-кадров весит около 30 МБ.",
+      pinTitle: "закрепить: ретенция его не вытеснит",
+      unpinTitle: "открепить",
+      cost: "{n} токенов",
+      note: "Храним последние {n} вариантов кадра {days} дней. Закреплённые остаются.",
+      total: "{n} вариантов · {size}",
+      empty: "вариантов пока нет — они появляются, как только кадр перерисован",
+      where: "кадр {n}",
+      onlyPinned: "Только закреплённые",
+      kind: {
+        frames: "Кадры", video: "Видео", restyle: "Рестайл",
+        midframes: "Промежуточные", extend: "Продолжение", manual: "Вручную",
+      },
     },
 
     // ─────────── движки: один выбор на объект ───────────
@@ -2459,6 +2891,11 @@ const I18N = {
       word: ["файл", "файла", "файлов"],
       empty: "пока ничего не сгенерировано",
       all: "Все",
+      allProjects: "Все проекты",
+      // Место считается по ФИЗИЧЕСКИМ файлам: копия проекта — жёсткие
+      // ссылки, второй раз она не весит ничего.
+      quota: "занято {used} из {limit}",
+      quotaClips: "собранные клипы снимаются через {n} дней — пересборка бесплатна",
       allTime: "За всё время",
       days7: "7 дней",
       days30: "30 дней",
@@ -2626,6 +3063,10 @@ const I18N = {
     track: {
       coverageShort: "Кадры покрывают {covered} из {total} — остаток трека пока без картинки.",
       extendScenes: "Дописать ещё {n} кадров",
+      // Обратный случай и куда опаснее: сборка вешает звук с -shortest, и
+      // лишние секунды уносят с собой последние кадры.
+      timingOver: "Раскадровка на {n} длиннее дорожки — сборка обрежет хвост по музыке.",
+      fitTimings: "Подогнать под трек",
       coverTitle: "обложка трека — клик, чтобы заменить",
       titlePh: "Название",
       supergen: "⚡ Супергенерация",
@@ -2657,6 +3098,10 @@ const I18N = {
       scenesCount: "кадров: {n}",
       scenesDone: "готово, кадров: {n}",
       sheetTitle: "Лист раскадровки",
+      // Лист нарисован под другое число кадров: резать его нельзя — куски
+      // поедут мимо панелей и захватят соседей.
+      sheetStale: "Лист нарисован на {a} кадров, а сейчас их {b} — пересобери его перед нарезкой.",
+      sheetStaleTitle: "лист не соответствует нынешним кадрам",
       sheetEmpty: "листа ещё нет",
       sheetOpen: "Открыть крупно",
       sheetOpenTitle: "показать лист во весь экран",
@@ -2924,6 +3369,7 @@ const I18N = {
         account: "Аккаунт",
         plan: "Тариф",
         files: "Файлы",
+        versions: "История",
         ref: "Амбассадор",
         // Админских вкладок в кабинете больше нет — они уехали на /admin.
         admin: "Админка",
