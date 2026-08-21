@@ -59,6 +59,13 @@
     return (m && m.id) || "clip";
   }
 
+  /* Уйти из мастерской, если человек сейчас в ней. Ручку даёт app.js: тумблер
+     лежит в отдельном файле и до внутренностей чата не дотягивается. Нет
+     ручки (страница без мастерской) — молча ничего не делаем. */
+  function leaveMake() {
+    if (typeof window.qlolLeaveMake === "function") window.qlolLeaveMake();
+  }
+
   function projectsOf(mode) {
     const sel = $("#project-select");
     if (!sel || !mode || !(mode.projectKinds || []).length) return [];
@@ -189,6 +196,7 @@
       b.type = "button";
       b.addEventListener("click", () => {
         close();
+        leaveMake();
         if (typeof window.openNewProjectModal === "function") {
           window.openNewProjectModal(m.defaultKind || (m.projectKinds || [])[0] || "album");
         } else {
@@ -206,9 +214,15 @@
       close();
       const sel = $("#project-select");
       if (!sel) return;
-      if (String(sel.value) === String(target.id)) return;   // уже открыт
-      sel.value = target.id;
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      // Проект переключаем, только если он ДРУГОЙ, а из мастерской уходим
+      // ВСЕГДА: «уже открыт» — это про проект, а не про то, на каком экране
+      // человек стоит. Ровно так же устроена своя вкладка «Проекты» в
+      // мастерской (mkRenderProjects в app.js), и расходиться им нельзя.
+      if (String(sel.value) !== String(target.id)) {
+        sel.value = target.id;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      leaveMake();
     });
     return b;
   }

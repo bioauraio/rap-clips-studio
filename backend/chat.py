@@ -177,6 +177,15 @@ def _allowed_image_engines(user: User) -> list[str]:
 
 
 def _allowed_video_engines(user: User) -> list[str]:
+    """Движки видео, открытые ЭТОМУ человеку.
+
+    Админу открыто всё — ровно как в _allowed_image_engines выше. Без этой
+    оговорки список врал в одну сторону: _check_allowed пропускает админа на
+    любой движок и не берёт с него денег, а панель тем временем гасила
+    seedance-2-0 замком «открывается с тарифа STUDIO». Владелец видел запрет
+    на то, что у него прямо сейчас работает и стоит ноль."""
+    if user.is_admin:
+        return list(mediagen.VIDEO_ENGINES)
     return _ctx.plan_engine_ids(_plan_id(user))
 
 
