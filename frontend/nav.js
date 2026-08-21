@@ -132,8 +132,21 @@
       { when: () => S("story") === "empty", label: T("story.gen", "Сгенерировать сюжет"), step: "story", cost: 2 },
       { when: () => S("board") === "empty", label: T("track.genScenes", "Разбить на сцены"), step: "board", cost: 3 },
       { when: () => S("board") !== "done", label: "Сгенерировать кадры", step: "board", cost: 8 },
+      // Стиль сменили, а кадры остались прежними — это и есть следующее
+      // действие. Раньше на смене чипов «что дальше» молчало, и человек
+      // видел ровно то, на что жаловался: другой стиль, те же картинки.
+      { when: () => styleDirty(), label: T("restyle.next", "Перерисовать в новом стиле"), step: "board", cost: 8 },
       { when: () => S("anim") !== "done", label: "Оживить кадры", step: "anim", cost: 12 },
     ];
+  }
+
+  /* Есть ли у активного объекта кадры, снятые НЕ нынешним стилем. Читаем
+     атрибут карточки, который проставляет app.js по ответу сервера
+     (track.scenes_stale): второй счётчик на фронте однажды разойдётся с
+     первым, и разойдётся молча. */
+  function styleDirty() {
+    const tr = activeTrack();
+    return Boolean(tr && Number(tr.stale || 0) > 0);
   }
 
   function ugcNext(st, S) {
@@ -258,6 +271,9 @@
           board: states.board || "empty",
           anim: states.anim || "empty",
         },
+        // Сколько кадров объекта сняты прежним стилем. Число считает сервер,
+        // карточка кладёт его в data-stale — верстак только читает.
+        stale: Number(card.dataset.stale || 0),
       };
     });
   }

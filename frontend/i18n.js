@@ -140,6 +140,8 @@ const I18N = {
       chatTitle: "one window: text, images and video, model switched in the input line",
       music: "Music",
       musicTitle: "upload a track, master it, prepare the release",
+      admin: "Admin",
+      adminTitle: "clients, broadcasts, styles and service settings",
     },
 
     // ─────────────────────── чат ───────────────────────
@@ -292,6 +294,7 @@ const I18N = {
         create: "Create a project",
         applyShortcut: "Shoot in this style",
         openChat: "Open chat",
+        openMusic: "Open the music section",
         shortcutWait: "The style is saved — it will be applied to the first object of the project.",
         soon: "soon",
         soonNote: "The mode is being built. Nothing to press here yet.",
@@ -376,6 +379,53 @@ const I18N = {
       formatLabel: "Format",
       seasonLabel: "Season",
       episodeLabel: "Episode number",
+    },
+
+    // ─────────── текстовая модель сценарного блока ───────────
+    // Позиции без ключа сюда не приезжают вовсе: показывать «Claude» там,
+    // где его на сервере нет, — значит врать ярлыком.
+    textModel: {
+      label: "Text model",
+      lockedIn: "opens on {plan}",
+      freeNote: "Runs on the service subscription — free, and it is what writes the story, the bible and the storyboard.",
+      paidNote: "{n} tokens per scripting step: story, season bible, episode script, storyboard.",
+    },
+
+    // ─────────── перерисовка в новом стиле ───────────
+    // Раскадровка остаётся: сцены, тайминги, крупности и текст не трогаются,
+    // меняется только визуал.
+    restyle: {
+      title: "Redraw in the new style",
+      button: "Redraw {n} frames in the new style",
+      next: "Redraw in the new style",
+      busy: "redrawing…",
+      redraw: "Redraw frames",
+      redrawN: "Redraw {n} frames",
+      redrawTitle: "same storyboard, new look",
+      frames: "{n} scenes on {engine} — {cost} tokens",
+      prompts: "The storyboard is an old one: its prompts still carry the previous style and have to be rewritten — {cost} tokens.",
+      videoWarn: "{n} scenes have finished video. New frames make it incompatible: it stays in the “{label}” version but will not go into the cut. Redoing the video costs {cost} tokens.",
+      withVideo: "redo the video too, right away",
+      clipWarn: "The assembled clip was cut from the old frames — reassemble it when you are happy with the new ones.",
+      clipStale: "the clip was assembled in the previous style",
+      staleScenes: "{n} frames were shot in the previous style",
+      staleTile: "this frame was shot in the previous style",
+      promptsDirty: "prompts still carry the previous style",
+      total: "Total: {cost} tokens",
+      balance: "· you have {n}",
+      go: "Redraw · {cost} tokens",
+    },
+
+    // ─────────── снимки прежних стилей ───────────
+    // Перерисовка не стирает кадры: она обменивает их на новые, а старые
+    // кладёт рядом. Откат — тоже обмен, поэтому он откатывается.
+    versions: {
+      summary: "Previous versions ({n})",
+      unknown: "unknown style",
+      withVideo: "with video",
+      restore: "Bring back",
+      restoreConfirm: "Swap the current frames for this version? The current ones stay as a version too.",
+      note: "We keep the last {n} versions of a frame — a pair of 4K frames is about 30 MB.",
     },
 
     // ─────────── движки: один выбор на объект ───────────
@@ -921,10 +971,12 @@ const I18N = {
         plan: "Plan",
         files: "Files",
         ref: "Ambassador",
-        payouts: "Payouts",
-        crm: "Clients",
-        broadcast: "Broadcast",
+        // Админских вкладок в кабинете больше нет — они уехали на /admin.
+        // Ключ admin остался ради подписи ссылки в полке верстака.
+        admin: "Admin panel",
       },
+      adminLink: "Open the admin panel →",
+      adminNote: "clients, broadcasts, payouts, style editor and service settings",
       guest: "guest",
       noContacts: "account with no email and no login",
       statPlan: "plan",
@@ -1434,6 +1486,8 @@ const I18N = {
     mus: {
       // Форма слова считается по числу: «1 трек», «2 трека», «5 треков».
       nav: { back: "← Studio", count: ["track", "tracks", "tracks"] },
+      // Единица списания склоняется по числу — как и всё остальное в словаре.
+      unit: ["token", "tokens", "tokens"],
 
       drop: {
         titleHtml: "Drop a track here or <u>choose a file</u>",
@@ -1452,7 +1506,7 @@ const I18N = {
         instr: "instrumental only",
         run: "Generate",
         running: "generating…",
-        cost: "{n} tokens",
+        cost: "{n} {unit}",
         off: "Music generation is not connected: the service has no ElevenLabs key yet. "
              + "Everything else here works — upload your own track and master it.",
       },
@@ -1530,8 +1584,8 @@ const I18N = {
         refWas: "last used: {name}",
         shelfEmpty: "Our reference shelf is empty — no reference files have been "
                     + "uploaded to the server. Any track you want to sound like works.",
-        run: "Master · {n} tokens",
-        costNote: "{n} tokens, charged when the master is ready",
+        run: "Master · {n} {unit}",
+        costNote: "{n} {unit}, charged when the master is ready",
         cloudNote: "The cloud engine spends real money per track. That is why it is a "
                    + "separate button and why it costs more than a whole clip.",
         running: "mastering…",
@@ -1614,7 +1668,7 @@ const I18N = {
         title: "Video for socials",
         note: "Instagram, YouTube and TikTok do not accept bare audio, so the cover and "
               + "the track are rendered into a vertical video first.",
-        build: "Build the video · {n} tokens",
+        build: "Build the video · {n} {unit}",
         buildNote: "1080×1920, first 60 seconds",
         noCover: "No cover yet — the video will be built on a plain background.",
         building: "rendering the video…",
@@ -2038,6 +2092,8 @@ const I18N = {
       chatTitle: "одно окно: текст, картинки и видео, модель переключается в строке ввода",
       music: "Музыка",
       musicTitle: "загрузить трек, отмастерить, собрать релиз",
+      admin: "Админка",
+      adminTitle: "клиенты, рассылки, стили и настройки сервиса",
     },
 
     // ─────────────────────── чат ───────────────────────
@@ -2183,6 +2239,7 @@ const I18N = {
         create: "Создать проект",
         applyShortcut: "Снимать в этом стиле",
         openChat: "Открыть чат",
+        openMusic: "Открыть раздел «Музыка»",
         shortcutWait: "Стиль запомнен — применим к первому объекту проекта.",
         soon: "скоро",
         soonNote: "Режим готовится. Нажимать тут пока нечего.",
@@ -2267,6 +2324,53 @@ const I18N = {
       formatLabel: "Формат",
       seasonLabel: "Сезон",
       episodeLabel: "Номер серии",
+    },
+
+    // ─────────── текстовая модель сценарного блока ───────────
+    // Позиции без ключа сюда не приезжают вовсе: показывать «Claude» там,
+    // где его на сервере нет, — значит врать ярлыком.
+    textModel: {
+      label: "Текстовая модель",
+      lockedIn: "открывается на {plan}",
+      freeNote: "Идёт через подписку сервиса — бесплатно, и именно она пишет сюжет, библию и раскадровку.",
+      paidNote: "{n} токенов за сценарный шаг: сюжет, библия сезона, сценарий серии, раскадровка.",
+    },
+
+    // ─────────── перерисовка в новом стиле ───────────
+    // Раскадровка остаётся: сцены, тайминги, крупности и текст не трогаются,
+    // меняется только визуал.
+    restyle: {
+      title: "Перерисовать в новом стиле",
+      button: "Перерисовать {n} кадров в новом стиле",
+      next: "Перерисовать в новом стиле",
+      busy: "перерисовываю…",
+      redraw: "Перерисовать кадры",
+      redrawN: "Перерисовать {n} кадров",
+      redrawTitle: "та же раскадровка, новый вид",
+      frames: "{n} сцен на {engine} — {cost} токенов",
+      prompts: "Раскадровка старая: в её промптах остался прежний стиль, их придётся переписать — {cost} токенов.",
+      videoWarn: "У {n} сцен есть готовое видео. Новые кадры делают его несовместимым: оно останется в версии «{label}», но в сборку не попадёт. Пересобрать видео — ещё {cost} токенов.",
+      withVideo: "сразу пересобрать и видео",
+      clipWarn: "Собранный клип склеен из прежних кадров — пересоберёшь, когда новые устроят.",
+      clipStale: "клип собран в прежнем стиле",
+      staleScenes: "{n} кадров сняты в прежнем стиле",
+      staleTile: "этот кадр снят в прежнем стиле",
+      promptsDirty: "в промптах остался прежний стиль",
+      total: "Итого: {cost} токенов",
+      balance: "· у тебя {n}",
+      go: "Перерисовать · {cost} токенов",
+    },
+
+    // ─────────── снимки прежних стилей ───────────
+    // Перерисовка не стирает кадры: она обменивает их на новые, а старые
+    // кладёт рядом. Откат — тоже обмен, поэтому он откатывается.
+    versions: {
+      summary: "Прежние версии ({n})",
+      unknown: "стиль неизвестен",
+      withVideo: "с видео",
+      restore: "Вернуть",
+      restoreConfirm: "Поменять нынешние кадры на эту версию? Нынешние тоже останутся версией.",
+      note: "Храним последние {n} версии кадра — пара 4К-кадров весит около 30 МБ.",
     },
 
     // ─────────── движки: один выбор на объект ───────────
@@ -2804,10 +2908,11 @@ const I18N = {
         plan: "Тариф",
         files: "Файлы",
         ref: "Амбассадор",
-        payouts: "Выплаты",
-        crm: "Клиенты",
-        broadcast: "Рассылка",
+        // Админских вкладок в кабинете больше нет — они уехали на /admin.
+        admin: "Админка",
       },
+      adminLink: "Открыть админку →",
+      adminNote: "клиенты, рассылки, выплаты, редактор стилей и настройки сервиса",
       guest: "гость",
       noContacts: "аккаунт без почты и логина",
       statPlan: "тариф",
@@ -3314,6 +3419,7 @@ const I18N = {
     // ──────────── Раздел «Музыка» в приложении (экран #music) ────────────
     mus: {
       nav: { back: "← Студия", count: ["трек", "трека", "треков"] },
+      unit: ["токен", "токена", "токенов"],
 
       drop: {
         titleHtml: "Перетащи трек сюда или <u>выбери файл</u>",
@@ -3331,7 +3437,7 @@ const I18N = {
         instr: "только инструментал",
         run: "Сгенерировать",
         running: "генерирую…",
-        cost: "{n} токенов",
+        cost: "{n} {unit}",
         off: "Генерация музыки не подключена: у сервиса пока нет ключа ElevenLabs. "
              + "Всё остальное здесь работает — загрузи свой трек и отмастерь его.",
       },
@@ -3408,8 +3514,8 @@ const I18N = {
         refWas: "в прошлый раз: {name}",
         shelfEmpty: "Наша полка эталонов пуста — файлов на сервер никто не заливал. "
                     + "Подойдёт любой трек, на который ты хочешь быть похож.",
-        run: "Отмастерить · {n} токенов",
-        costNote: "{n} токенов, спишем по готовому мастеру",
+        run: "Отмастерить · {n} {unit}",
+        costNote: "{n} {unit}, спишем по готовому мастеру",
         cloudNote: "Облачный движок тратит живые деньги за каждый трек. Поэтому он "
                    + "отдельной кнопкой и стоит дороже целого клипа.",
         running: "мастерю…",
@@ -3492,7 +3598,7 @@ const I18N = {
         title: "Видео для соцсетей",
         note: "Ни Instagram, ни YouTube, ни TikTok не принимают голое аудио — поэтому "
               + "из обложки и дорожки сначала собирается вертикальное видео.",
-        build: "Собрать видео · {n} токенов",
+        build: "Собрать видео · {n} {unit}",
         buildNote: "1080×1920, первые 60 секунд",
         noCover: "Обложки нет — видео соберётся на ровном фоне.",
         building: "собираю видео…",

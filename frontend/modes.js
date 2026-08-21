@@ -24,7 +24,7 @@
                  проекта значило бы получить album, отличающийся одной
                  строкой стиля. Владелец при этом ждёт его в тумблере — и
                  ярлык даёт ему там место, не размывая реестр.
-     external  — ПЕРЕХОД: свой экран в app.js (чат). Плитка обязана вести
+     external  — ПЕРЕХОД: свой экран в app.js (чат, музыка). Плитка обязана вести
                  туда, а не гасить рабочую область под пустой режим.
 
    ПОДПИСЕЙ ЗДЕСЬ НЕТ. Только i18n-ключи (modes.<id>.*) — иначе перевод
@@ -156,6 +156,9 @@
       get title() { return T("modes.chat.title", "чат"); },
       get full() { return T("modes.chat.full", "Чат с моделью"); },
       get note() { return T("modes.chat.note", ""); },
+      // Подпись кнопки перехода — своя у каждого экрана. Общая («Открыть
+      // чат») была верна ровно до появления второго перехода.
+      goKey: "modes.menu.openChat",
       external() {
         const b = document.querySelector("#chat-btn");
         if (b) b.click();
@@ -173,6 +176,7 @@
       get title() { return T("modes.music.title", "музыка"); },
       get full() { return T("modes.music.full", "Трек: загрузка, мастеринг, релиз"); },
       get note() { return T("modes.music.note", ""); },
+      goKey: "modes.menu.openMusic",
       external() {
         const b = document.querySelector("#music-btn");
         if (b) { b.click(); return; }
@@ -189,9 +193,11 @@
     { id: "plan", num: 2, icon: "⚡", acc: "plan", get title() { return T("account.tabs.plan", "Тариф"); } },
     { id: "files", num: 3, icon: "🗃", acc: "files", get title() { return T("account.tabs.files", "Файлы"); } },
     { id: "ref", num: 4, icon: "🤝", acc: "ref", get title() { return T("account.tabs.ref", "Амбассадор"); } },
-    { id: "payouts", num: 5, icon: "💸", acc: "payouts", admin: true, get title() { return T("account.tabs.payouts", "Выплаты"); } },
-    { id: "crm", num: 6, icon: "👥", acc: "crm", admin: true, get title() { return T("account.tabs.crm", "Клиенты"); } },
-    { id: "bc", num: 7, icon: "📣", acc: "broadcast", admin: true, get title() { return T("account.tabs.broadcast", "Рассылка"); } },
+    // Админское больше НЕ вкладки кабинета: CRM, рассылка, выплаты и
+    // редактор стилей уехали на отдельную страницу /admin. Здесь остался
+    // один вход — ссылка, а не вкладка (href вместо acc): работа над
+    // сервисом и работа над клипом не должны жить в одном модальном окне.
+    { id: "admin", num: 5, icon: "🛠", href: "/admin", admin: true, get title() { return T("account.tabs.admin", "Админка"); } },
   ];
 
   const byId = (id) => MODES.find((m) => m.id === String(id || "")) || null;

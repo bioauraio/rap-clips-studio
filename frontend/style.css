@@ -11,7 +11,17 @@
   --border: rgba(255, 122, 41, .28);
   --border-bright: rgba(255, 61, 61, .55);
   --text: #241a14;
+  /* --muted (#9b8a7d) на бумаге даёт 3.1:1 — ниже нормы 4.5:1. Он остаётся
+     ТОЛЬКО как декоративная заливка (точки, торцы). Весь текст берёт
+     --ink-muted (5.7:1). См. DESIGN_SYSTEM §2.1 «Правило чернил». */
   --muted: #9b8a7d;
+  --ink-muted: #6f5f52;
+  --gold-ink: #8a5a2b;
+  --ok-ink: #0f7a52;
+  --danger-ink: #c0392b;
+  --accent-wash: rgba(207, 34, 34, .08);
+  --gold-wash: rgba(255, 181, 69, .18);
+  --ok-wash: rgba(20, 160, 107, .14);
   --accent: #ff3d3d;
   --accent-2: #ff7a29;
   --gold: #ffb545;
@@ -76,7 +86,7 @@ body {
   background: var(--inset); color: var(--text); font-size: 14px; line-height: 1.5;
 }
 .blocked-reason.hidden { display: none; }
-.blocked-help { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.blocked-help { font-size: 13px; color: var(--ink-muted); line-height: 1.5; }
 /* ОДНА огненная кнопка на экран — и это «войти».
    Раньше здесь стоял `.login-box button`, то есть КАЖДАЯ кнопка внутри
    коробки входа: и EN/RU, и «Продолжить в Telegram», и Яндекс, и Google.
@@ -251,7 +261,7 @@ body {
   text-transform: uppercase; color: var(--accent-2); margin: 0 0 14px;
 }
 
-label { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
+label { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-muted); margin: 8px 0 4px; }
 textarea, input[type=text], input[type=number], input:not([type]), select {
   width: 100%; padding: 8px 10px; border-radius: 11px; border: 1.5px solid rgba(45,33,26,.35);
   background: var(--inset); color: var(--text); font-family: inherit; font-size: 13.5px;
@@ -277,11 +287,11 @@ button.primary {
   box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(200, 96, 20, .26);
 }
 button.primary:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
-button.ghost { background: transparent; border: none; color: var(--muted); padding: 5px 9px; }
+button.ghost { background: transparent; border: none; color: var(--ink-muted); padding: 5px 9px; }
 button.danger, button.ghost.danger { color: var(--danger); }
 button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
-.status { font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em; color: var(--muted); }
+.status { font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em; color: var(--ink-muted); }
 .status::before { content: "◉ "; color: var(--accent-2); }
 .status:empty::before { content: ""; }
 .status.error { color: var(--danger); } .status.error::before { color: var(--danger); }
@@ -301,12 +311,19 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 /* Название — по содержимому, а не во всю ширину: рядом теперь этапы. */
 .t-title { flex: 0 1 260px; min-width: 120px; font-weight: 700; font-size: 15.5px; }
-.track-head .stage-tabs { flex: 1 1 auto; min-width: 0; margin: 0; }
+/* Этапы живут в строке названия. Прокручиваются, если не влезают, но НЕ
+   переносятся на свою строку — она съедала высоту впустую. */
+.track-head .stage-tabs {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+}
+.track-head .stage-tabs::-webkit-scrollbar { display: none; }
+.track-head .stage-tab { flex: none; }
 .order-btns { display: flex; gap: 2px; }
 .track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
 .t-audio { width: 100%; }
-.t-duration { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.t-duration { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); }
 
 /* ────────── степпер трека: 5 этапов ────────── */
 .stage-tabs {
@@ -349,7 +366,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .final-scenes { width: 100%; margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--border); }
 .final-scenes > summary {
   cursor: pointer; font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
   padding: 3px 0; user-select: none;
 }
 .final-scenes > summary:hover { color: var(--accent-2-ink); }
@@ -373,7 +390,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
 /* ────────── лист раскадровки / клип ────────── */
 .storyboard-block, .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--border); }
-.media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
 .storyboard-box, .media-box {
   background: var(--inset); border: 2px dashed rgba(45,33,26,.4); border-radius: 16px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
@@ -519,7 +536,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .char-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
 .s-prompt-details summary, .style-desc summary {
   cursor: pointer; font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
   padding: 3px 0; user-select: none;
 }
 .s-prompt-details summary:hover, .style-desc summary:hover { color: var(--accent-2-ink); }
@@ -535,7 +552,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
 .scene-head { display: flex; align-items: center; gap: 10px; }
 .s-pos { font-family: var(--font-mono); font-weight: 800; color: var(--accent-2); text-shadow: 0 0 12px rgba(255,122,41,.4); }
-.s-time { font-family: var(--font-mono); font-size: 11px; color: var(--muted); flex: 1; }
+.s-time { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); flex: 1; }
 .s-duration { width: 72px; }
 .s-play { font-size: 13px; color: var(--accent); }
 
@@ -551,7 +568,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
 .scene-audio-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .scene-audio-row audio { height: 32px; flex: 1; }
-.muted { color: var(--muted); font-size: 12.5px; }
+.muted { color: var(--ink-muted); font-size: 12.5px; }
 .s-provider { width: auto; }
 
 .approve-check {
@@ -592,7 +609,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .cc-meta {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-family: var(--font-mono); font-size: 9px; font-weight: 700;
-  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted);
 }
 .cc-main {
   color: #fff; padding: 2px 8px; border-radius: 999px;
@@ -623,7 +640,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .attrs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .attrs-title {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--ink-muted);
 }
 .attr-add { padding: 3px 9px; font-size: 11px; border-radius: 999px; box-shadow: 0 2px 0 #2d211a; flex: none; }
 .attr-add:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
@@ -859,7 +876,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .made-with {
   position: fixed; right: 14px; bottom: 10px; z-index: 5;
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em;
-  color: var(--muted); opacity: .75; pointer-events: none; user-select: none;
+  color: var(--ink-muted); opacity: .75; pointer-events: none; user-select: none;
   text-shadow: 0 1px 0 rgba(255,255,255,.7);
 }
 @media (max-width: 700px) {
@@ -954,7 +971,7 @@ textarea { transition: min-height .15s; }
 .wl-plan-top { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; margin-bottom: 3px; }
 .wl-plan-top b { font-size: 11.5px; letter-spacing: .04em; }
 .wl-plan-top span { font-family: var(--font-mono); font-size: 11px; color: var(--accent-2); font-weight: 800; }
-.wl-plan p { margin: 0; color: var(--muted); }
+.wl-plan p { margin: 0; color: var(--ink-muted); }
 @media (max-width: 700px) { .wl-plans { grid-template-columns: 1fr; gap: 5px; } .wl-plan { font-size: 10.5px; padding: 6px 8px; } }
 
 /* ────────── компактные кнопки внутри карточки кадра ────────── */
@@ -1020,7 +1037,7 @@ textarea { transition: min-height .15s; }
 .acc-stat b { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
 .acc-stat span {
   font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--ink-muted);
 }
 .acc-stat-hi {
   background: linear-gradient(180deg, var(--gold), var(--accent-2)); color: #fff;
@@ -1031,7 +1048,7 @@ textarea { transition: min-height .15s; }
 .acc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .acc-chip {
   font-size: 11.5px; font-weight: 700; padding: 5px 10px; border-radius: 999px;
-  background: var(--inset); border: 1.5px solid rgba(45, 33, 26, .3); color: var(--muted);
+  background: var(--inset); border: 1.5px solid rgba(45, 33, 26, .3); color: var(--ink-muted);
 }
 .acc-chip.on {
   color: #fff; border-color: #2d211a; box-shadow: 0 2px 0 #2d211a;
@@ -1048,14 +1065,14 @@ textarea { transition: min-height .15s; }
 .acc-plan-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .acc-plan-top b { font-size: 12.5px; letter-spacing: .04em; }
 .acc-plan-top span { font-family: var(--font-mono); font-size: 12px; font-weight: 800; color: var(--accent-2); }
-.acc-plan-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.acc-plan-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--ink-muted); }
 .acc-plan-points { margin: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--accent-2); }
 .acc-plan button { margin-top: auto; width: 100%; }
 .acc-plan-cur {
   margin-top: auto; text-align: center; font-family: var(--font-mono); font-size: 9.5px;
   letter-spacing: .12em; text-transform: uppercase; font-weight: 800; color: var(--accent);
 }
-.acc-plan-cur.muted { color: var(--muted); }
+.acc-plan-cur.muted { color: var(--ink-muted); }
 
 /* промокод и ссылка амбассадора */
 .acc-copy-row { display: flex; align-items: center; gap: 8px; }
@@ -1078,7 +1095,7 @@ textarea { transition: min-height .15s; }
 .acc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .acc-table td { padding: 7px 9px; border-bottom: 1px solid rgba(45, 33, 26, .12); white-space: nowrap; }
 .acc-table tr:last-child td { border-bottom: none; }
-.acc-td-date { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.acc-td-date { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted); }
 .acc-td-who { font-weight: 700; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 .acc-td-sum { text-align: right; font-family: var(--font-mono); font-weight: 800; color: var(--ok); }
 
@@ -1157,7 +1174,7 @@ button.primary:hover:not(:disabled) {
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
   letter-spacing: .06em; line-height: 1; white-space: nowrap;
   padding: 6px 8px; border: none; border-radius: 999px;
-  background: transparent; color: var(--muted); box-shadow: none;
+  background: transparent; color: var(--ink-muted); box-shadow: none;
 }
 .lang-switch button:hover:not(:disabled) { background: rgba(45, 33, 26, .07); color: var(--text); }
 .lang-switch button:active:not(:disabled) { transform: none; box-shadow: none; }
@@ -1352,7 +1369,7 @@ button.primary:hover:not(:disabled) {
   background: transparent;
   border: 2px dashed rgba(45, 33, 26, .28);
   box-shadow: none;
-  color: var(--muted);
+  color: var(--ink-muted);
   transition: border-color .15s ease, color .15s ease, background .15s ease;
 }
 .char-card.char-add:hover {
@@ -1437,7 +1454,7 @@ button.primary:hover:not(:disabled) {
 .chat-list-empty { font-size: 12.5px; margin: 8px 2px; }
 .chat-list-group {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted); margin: 10px 2px 2px;
+  text-transform: uppercase; color: var(--ink-muted); margin: 10px 2px 2px;
 }
 .chat-row {
   display: flex; align-items: center; gap: 4px; border-radius: 10px; padding: 2px 4px;
@@ -1450,7 +1467,7 @@ button.primary:hover:not(:disabled) {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chat-row-name:hover { background: none; }
-.chat-row-spent { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+.chat-row-spent { font-family: var(--font-mono); font-size: 10px; color: var(--ink-muted); }
 .chat-row-del { opacity: 0; padding: 2px 6px; }
 .chat-row:hover .chat-row-del { opacity: 1; }
 .chat-retention { font-size: 11px; line-height: 1.35; margin: 0; }
@@ -1496,7 +1513,7 @@ button.primary:hover:not(:disabled) {
 .chat-failed { border-color: var(--danger); box-shadow: 0 3px 0 #f3d7d7, 0 3px 0 2px var(--danger); }
 .chat-msg-head {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  text-transform: uppercase; color: var(--ink-muted); margin-bottom: 6px;
 }
 .chat-msg-text { font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 /* Вертикальный кадр 9:16 при ширине 320 вырастает до 570 и выпихивает
@@ -1512,7 +1529,7 @@ button.primary:hover:not(:disabled) {
 .chat-msg-bar button { padding: 4px 8px; font-size: 12px; }
 
 .chat-compose { border-top: 1px dashed var(--border); padding: 10px 16px 12px; }
-.cc-meter { font-family: var(--font-mono); font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+.cc-meter { font-family: var(--font-mono); font-size: 10px; color: var(--ink-muted); margin-bottom: 4px; }
 .cc-source {
   display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
   font-size: 12px; color: var(--accent-2);
@@ -1534,7 +1551,7 @@ button.primary:hover:not(:disabled) {
 /* Длительность — короткий контрол, а не растяжка на всю строку: без
    явного flex-basis он в перенесённой строке занимал её целиком. */
 .cc-duration { flex: 0 0 auto; width: 96px; font-size: 12.5px; }
-.cc-price { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.cc-price { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); }
 /* Не хватает очков — говорим об этом ДО нажатия, а не 402-й ошибкой после. */
 .cc-price.short { color: var(--danger); }
 .cc-send { margin-left: auto; }
@@ -1564,7 +1581,7 @@ button.primary:hover:not(:disabled) {
 .ob-head h2 { margin: 0; flex: 1; }
 .ob-count {
   font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em;
-  color: var(--muted); white-space: nowrap;
+  color: var(--ink-muted); white-space: nowrap;
 }
 .onboarding .ob-hide { min-height: 28px; padding: 0 8px; line-height: 1; }
 .ob-bar {
@@ -1585,22 +1602,22 @@ button.primary:hover:not(:disabled) {
    что человек снова выбирает, с чего начать, а это и есть то, от чего
    чеклист должен избавлять. */
 .ob-steps li.now { background: var(--inset); border-color: var(--border); }
-.ob-steps li.done .ob-text b { color: var(--muted); text-decoration: line-through; }
+.ob-steps li.done .ob-text b { color: var(--ink-muted); text-decoration: line-through; }
 .ob-mark {
   flex: none; width: 22px; height: 22px; border-radius: 50%;
   display: grid; place-items: center; font-family: var(--font-mono); font-size: 12px;
-  background: rgba(255, 122, 41, .12); color: var(--muted);
+  background: rgba(255, 122, 41, .12); color: var(--ink-muted);
 }
 .ob-steps li.done .ob-mark { background: rgba(20, 160, 107, .16); color: var(--ok); }
 .ob-steps li.now .ob-mark { background: var(--accent-2); color: #fff; }
 .ob-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ob-text b { font-weight: 600; font-size: 14px; }
-.ob-text em { font-style: normal; font-size: 12px; color: var(--muted); }
+.ob-text em { font-style: normal; font-size: 12px; color: var(--ink-muted); }
 .ob-cost {
   margin-left: auto; flex: none; font-family: var(--font-mono); font-size: 12px;
   color: var(--accent); white-space: nowrap;
 }
-.ob-note { margin: 12px 0 10px; font-size: 13px; color: var(--muted); }
+.ob-note { margin: 12px 0 10px; font-size: 13px; color: var(--ink-muted); }
 .ob-actions { gap: 8px; }
 
 /* Замок на чипе стиля: тариф закрывает СЪЁМКУ, а не просмотр карточки. */
@@ -1618,7 +1635,7 @@ button.primary:hover:not(:disabled) {
 .acc-tier { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin: 6px 0; }
 .acc-tier button {
   min-height: 28px; padding: 0 2px; border: 1px solid var(--border);
-  background: transparent; color: var(--muted); border-radius: 8px;
+  background: transparent; color: var(--ink-muted); border-radius: 8px;
   font-family: var(--font-mono); font-size: 11px;
 }
 .acc-tier button.on {
@@ -1661,7 +1678,7 @@ button.primary:hover:not(:disabled) {
 }
 .acc-scale-marks button b { font-size: 14px; font-weight: 800; }
 .acc-scale-marks button i {
-  font-family: var(--font-mono); font-size: 11px; font-style: normal; color: var(--muted);
+  font-family: var(--font-mono); font-size: 11px; font-style: normal; color: var(--ink-muted);
 }
 .acc-scale-marks button.on {
   border-color: #2d211a; border-width: 2px;
@@ -1707,9 +1724,9 @@ button.primary:hover:not(:disabled) {
 }
 .t-engines-head b {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--muted); font-weight: 800;
+  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
 }
-.t-engines-head .eng-hint { font-size: 11.5px; color: var(--muted); }
+.t-engines-head .eng-hint { font-size: 11.5px; color: var(--ink-muted); }
 .eng-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .eng-row > label {
   margin: 0; min-width: 62px; flex: none;
@@ -1734,7 +1751,7 @@ button.primary:hover:not(:disabled) {
 .eng-chip:disabled { opacity: .4; cursor: default; box-shadow: none; }
 .eng-forecast {
   margin-top: 10px; font-family: var(--font-mono); font-size: 11.5px;
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 .eng-forecast b { color: var(--accent-ink); }
 
@@ -1743,7 +1760,7 @@ button.primary:hover:not(:disabled) {
    треке из тридцати сцен они занимают экран тридцать раз. */
 .s-engine-line {
   display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--muted);
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
   margin-top: 2px; line-height: 1.35;
 }
 .s-engine-line .s-engine-name {
@@ -1753,13 +1770,13 @@ details.s-engine-override { margin-top: 0; }
 details.s-engine-override > summary {
   cursor: pointer; list-style: none;
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 500;
-  color: var(--muted); text-decoration: underline;
+  color: var(--ink-muted); text-decoration: underline;
   text-decoration-color: rgba(45,33,26,.25); text-underline-offset: 3px;
   padding: 1px 0;
 }
 details.s-engine-override > summary:hover { color: var(--accent-2-ink); }
 details.s-engine-override > summary::-webkit-details-marker { display: none; }
-details.s-engine-override[open] > summary { color: var(--muted); }
+details.s-engine-override[open] > summary { color: var(--ink-muted); }
 details.s-engine-override .eng-tabs { margin-top: 6px; }
 details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 
@@ -1779,7 +1796,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .add-track-panel .add-track[open] > summary { margin-bottom: 10px; color: var(--text); }
 
 /* ────────── сценарные документы (сериал и UGC) ────────── */
-.docs-lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.docs-lead { margin: 0 0 12px; font-size: 13px; color: var(--ink-muted); }
 .docs-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
 .docs-form .docs-idea { flex: 1; min-width: 220px; }
 .docs-form .docs-eps { width: 88px; flex: none; }
@@ -1817,14 +1834,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   font-family: var(--font-mono); font-size: 10px; color: var(--accent-ink);
   letter-spacing: .08em;
 }
-.ep-card .ep-line { color: var(--muted); margin-top: 4px; }
+.ep-card .ep-line { color: var(--ink-muted); margin-top: 4px; }
 .ep-card .ep-line i { font-style: normal; color: var(--text); }
 
 /* Серии группируются по сезонам — заголовок сезона над лентой. */
 .season-head {
   display: flex; align-items: center; gap: 10px; margin: 18px 0 10px;
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--muted); font-weight: 800;
+  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
 }
 .season-head::after {
   content: ""; flex: 1; height: 2px; border-radius: 2px;
@@ -1839,7 +1856,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 /* Акт кадра — метка в углу карточки сцены. */
 .s-act {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--ink-muted);
 }
 .s-speaker { font-size: 11px; font-weight: 700; color: var(--accent-2-ink); }
 
@@ -1861,10 +1878,10 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .dash-unit {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted); font-weight: 800;
+  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
 }
 .dash-hero-lines { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
-.dash-line { font-size: 13px; color: var(--muted); }
+.dash-line { font-size: 13px; color: var(--ink-muted); }
 .dash-line b { color: var(--text); }
 .dash-hero .row { margin-top: 12px; }
 
@@ -1878,10 +1895,10 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .dash-card > span:first-child {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--muted); font-weight: 800;
+  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
 }
 .dash-card b { font-family: var(--font-head); font-size: 19px; line-height: 1.1; }
-.dash-card .dash-sub { font-size: 12px; color: var(--muted); }
+.dash-card .dash-sub { font-size: 12px; color: var(--ink-muted); }
 .dash-card button { align-self: flex-start; margin-top: 6px; }
 
 /* График: столбики по дням, сегментированные по виду работы. Абсолютные
@@ -1913,14 +1930,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .dash-seg-other { background: rgba(45, 33, 26, .35); }
 .dash-legend {
   display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;
-  font-size: 11.5px; color: var(--muted);
+  font-size: 11.5px; color: var(--ink-muted);
 }
 .dash-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .dash-legend i {
   width: 10px; height: 10px; border-radius: 3px; display: inline-block;
   border: 1px solid rgba(45, 33, 26, .3);
 }
-.dash-approx { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.dash-approx { margin-top: 8px; font-size: 11.5px; color: var(--ink-muted); }
 
 .dash-recent { display: flex; flex-direction: column; gap: 2px; }
 .dash-ev {
@@ -1930,7 +1947,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .dash-ev:last-child { border-bottom: none; }
 .dash-ev .dash-ev-kind {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--muted); min-width: 74px; flex: none;
+  text-transform: uppercase; color: var(--ink-muted); min-width: 74px; flex: none;
 }
 .dash-ev .dash-ev-what {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1940,7 +1957,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .dash-ev .dash-ev-delta.minus { color: var(--text); }
 .dash-ev .dash-ev-delta.plus { color: var(--ok); }
-.dash-ev .dash-ev-when { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.dash-ev .dash-ev-when { color: var(--ink-muted); font-size: 11px; white-space: nowrap; }
 
 @media (max-width: 700px) {
   .dash-cards { grid-template-columns: 1fr; }
@@ -1968,7 +1985,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .view-btn {
   border: none; border-radius: 0; box-shadow: none; background: transparent;
   font-size: 11.5px; padding: 5px 13px; font-family: var(--font-mono);
-  letter-spacing: .04em; color: var(--muted); cursor: pointer;
+  letter-spacing: .04em; color: var(--ink-muted); cursor: pointer;
 }
 .view-btn.on { background: #2d211a; color: #fff; }
 .view-btn:active { transform: none; }
@@ -2020,7 +2037,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .st-meta {
   display: flex; align-items: center; gap: 6px; padding: 5px 8px 6px;
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--muted);
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
 }
 .st-no { font-weight: 700; color: var(--text); }
 .st-time { margin-left: auto; }
@@ -2057,10 +2074,10 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .lim-card > span:first-child {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--ink-muted);
 }
 .lim-card b { font-family: var(--font-head); font-size: 18px; line-height: 1.1; }
-.lim-card .lim-sub { font-size: 11.5px; color: var(--muted); }
+.lim-card .lim-sub { font-size: 11.5px; color: var(--ink-muted); }
 .lim-bar {
   height: 7px; border-radius: 999px; background: rgba(45,33,26,.12);
   overflow: hidden; margin-top: 4px;
@@ -2096,7 +2113,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 @media (max-width: 620px) { .arc-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); } }
 .arc-day {
   grid-column: 1 / -1; font-family: var(--font-mono); font-size: 10.5px;
-  letter-spacing: .06em; color: var(--muted); margin-top: 8px;
+  letter-spacing: .06em; color: var(--ink-muted); margin-top: 8px;
 }
 .arc-cell {
   position: relative; border: 2px solid #2d211a; border-radius: 12px;
@@ -2123,7 +2140,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   background: rgba(45,33,26,.6); display: flex; align-items: center; justify-content: center;
 }
 .arc-view { width: 100%; max-height: 68vh; border-radius: 12px; display: block; }
-.arc-meta { font-size: 12px; color: var(--muted); margin: 10px 0; }
+.arc-meta { font-size: 12px; color: var(--ink-muted); margin: 10px 0; }
 
 /* ═══════════════ CRM: список и карточка клиента ═══════════════ */
 .crm-search { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -2138,7 +2155,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .crm-row.blocked { opacity: .55; }
 .crm-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .crm-who b { font-size: 13.5px; overflow-wrap: anywhere; }
-.crm-who span { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.crm-who span { font-size: 11px; color: var(--ink-muted); overflow-wrap: anywhere; }
 .crm-plan {
   font-family: var(--font-mono); font-size: 10.5px; padding: 3px 8px;
   border-radius: 999px; border: 1.5px solid #2d211a;
@@ -2150,7 +2167,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   gap: 8px; margin-bottom: 12px;
 }
 .crm-note {
-  font-size: 12px; color: var(--muted); background: var(--inset);
+  font-size: 12px; color: var(--ink-muted); background: var(--inset);
   border-left: 3px solid var(--gold); padding: 8px 10px; border-radius: 8px;
   margin: 8px 0;
 }
@@ -2167,7 +2184,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .bc-chan.on { background: #2d211a; color: #fff; }
 .bc-chan.off { opacity: .5; cursor: not-allowed; }
 .bc-warn {
-  font-size: 12px; color: var(--muted); background: var(--inset);
+  font-size: 12px; color: var(--ink-muted); background: var(--inset);
   border-left: 3px solid var(--bad, #d05a4a); padding: 8px 10px;
   border-radius: 8px; margin: 8px 0;
 }
@@ -2179,14 +2196,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .bc-seg-row.on { border-color: #2d211a; }
 .bc-seg-row b { font-size: 12.5px; }
-.bc-seg-row span { font-size: 11px; color: var(--muted); }
+.bc-seg-row span { font-size: 11px; color: var(--ink-muted); }
 .bc-seg-n { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; }
 .bc-list { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
 .bc-item {
   display: flex; gap: 8px; align-items: center; padding: 7px 10px;
   border-radius: 10px; background: var(--inset); font-size: 12px;
 }
-.bc-item .bc-when { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.bc-item .bc-when { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted); }
 
 /* Плашка входящего сообщения в приложении (канал inapp). */
 .notice-dock {
@@ -2330,7 +2347,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .mode-sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .mode-sheet-head b {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--ink-muted);
 }
 .mode-sheet-x {
   margin-left: auto; padding: 2px 8px; border-radius: 999px;
@@ -2352,17 +2369,17 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .mode-card-ttl b { font-size: 16px; }
 .mode-card-badge {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--ink-muted);
   padding: 2px 7px; border-radius: 999px; border: 1px dashed var(--border-bright);
 }
 .mode-card-note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text); }
-.mode-card-soon { margin: 0; font-size: 12px; color: var(--muted); }
+.mode-card-soon { margin: 0; font-size: 12px; color: var(--ink-muted); }
 .mode-card-h {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted); margin-top: 4px;
+  text-transform: uppercase; color: var(--ink-muted); margin-top: 4px;
 }
 .mode-card-fact { display: flex; gap: 8px; font-size: 12px; }
-.mc-fact-k { color: var(--muted); min-width: 96px; flex: none; }
+.mc-fact-k { color: var(--ink-muted); min-width: 96px; flex: none; }
 .mc-fact-v { font-weight: 700; }
 .mode-card-route { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .mc-route-step {
@@ -2370,7 +2387,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   padding: 3px 8px; border-radius: 999px;
   border: 1.5px solid #2d211a; background: var(--inset); font-size: 11.5px;
 }
-.mc-route-sep { color: var(--muted); font-style: normal; }
+.mc-route-sep { color: var(--ink-muted); font-style: normal; }
 .mode-card-go { margin-top: 6px; }
 .mode-sheet-soon { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
 .mode-soon-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 3px 0; }
@@ -2393,7 +2410,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .ms-h, .ms-fold > summary {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--muted); font-weight: 800;
+  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
   margin: 0 0 8px;
 }
 .ms-fold > summary { cursor: pointer; margin: 0; }
@@ -2405,6 +2422,73 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-row > label { margin: 0; min-width: 120px; flex: none; }
 .ms-frame-note:empty { display: none; }
 .ms-foot { margin: 0; }
+
+/* ТЕКСТОВАЯ МОДЕЛЬ — в первом блоке сценария, тем же примитивом чипов, что
+   и движки картинок: это тоже «чем и почём», просто про текст. Своей формы
+   у ряда нет намеренно — третья форма выбора на одном экране читалась бы
+   как третий вид решения. */
+.ms-text-models { align-items: flex-start; margin: 0 0 10px; }
+.ms-text-models > label { padding-top: 6px; }
+.ms-text-note {
+  flex: 1 1 100%; margin: 6px 0 0; font-size: 11.5px; line-height: 1.5;
+}
+.ms-text-note:empty { display: none; }
+/* Закрытая тарифом позиция — приглушена и с замком, но КЛИКАБЕЛЬНА: клик
+   ведёт туда, где замок снимают. Мёртвая кнопка без объяснения — это тупик. */
+.eng-chip.locked { opacity: .62; }
+.eng-chip.locked:hover { opacity: .85; }
+
+/* ПЕРЕРИСОВАТЬ В НОВОМ СТИЛЕ. Живёт под чипами стиля — там, где человек
+   только что поменял решение и ждёт следующего шага. */
+.ms-restyle { margin-top: 10px; }
+.t-restyle-warn {
+  margin: 6px 0 0; font-size: 11.5px; line-height: 1.5;
+}
+.t-restyle-warn:empty { display: none; }
+/* Смета в модалке: цена и потери ДО нажатия, а не после списания. */
+.restyle-quote p { margin: 6px 0; font-size: 13px; line-height: 1.55; }
+.restyle-quote .warn-line { color: var(--accent-2-ink); }
+
+/* Ссылка в админку из кабинета: одна строка, а не вкладка. Два входа в один
+   экран разъезжаются за месяц. */
+.acc-admin-row {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 9px 12px; border-radius: 12px;
+  border: 1.5px dashed var(--border-bright); background: var(--inset);
+  font-size: 12.5px;
+}
+.acc-admin-link { color: var(--accent-2-ink); font-weight: 700; text-decoration: none; }
+.acc-admin-link:hover { text-decoration: underline; }
+
+/* Лента снимков прежних стилей в карточке кадра. Свёрнута по умолчанию:
+   у большинства кадров истории нет вовсе, и раскрытая полоса на каждой
+   карточке была бы шумом. */
+.s-versions { margin-top: 10px; }
+.s-versions > summary {
+  cursor: pointer; font-size: 11px; color: var(--ink-muted); list-style: none;
+}
+.s-versions > summary::-webkit-details-marker { display: none; }
+.s-versions > summary::before { content: "▸ "; }
+.s-versions[open] > summary::before { content: "▾ "; }
+.s-versions-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.s-version {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--inset);
+}
+.s-version img { width: 30px; height: 53px; object-fit: cover; border-radius: 6px; }
+.s-version-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; font-size: 10.5px; }
+.s-versions-note { margin: 2px 0 0; font-size: 10px; line-height: 1.5; }
+
+/* Кадр, снятый прежним стилем. Ромбик, а не восклицательный знак: это не
+   ошибка, а факт — так и было задумано, если перерисовали не весь трек. */
+.scene-tile.stale .st-img { opacity: .82; }
+.st-stale {
+  position: absolute; left: 4px; top: 4px; z-index: 2;
+  font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 6px;
+  color: var(--accent-2-ink); background: rgba(255, 252, 247, .92);
+  border: 1px solid var(--border);
+}
 
 /* Каркасы сюжета — ЛЕНТА, а не стена карточек.
    Тринадцать карточек с описаниями занимали весь экран и читались как
@@ -2589,7 +2673,7 @@ details.s-engine-override { border-top: 1px dashed rgba(45,33,26,.14); padding-t
    не должен упираться в тупик из логина и пароля, которых у него нет. */
 .login-signup {
   margin: 10px 0 0; text-align: center;
-  font-size: 12.5px; color: var(--muted);
+  font-size: 12.5px; color: var(--ink-muted);
 }
 .link-btn {
   background: none; border: none; box-shadow: none; padding: 0 0 0 4px;

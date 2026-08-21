@@ -369,6 +369,10 @@
            (релиз), другой конвейер и свои состояния. Тот же ярус, что и чат. -->
       <button id="music-btn" class="account-btn" data-i18n-title="top.musicTitle" data-i18n="top.music"></button>
       <button id="account-btn" class="account-btn hidden" data-i18n-title="top.accountTitle" data-i18n="top.account"></button>
+      <!-- Вход в админку. Отдельная страница, а не вкладка кабинета: CRM,
+           рассылка, выплаты и редактор стилей — работа над сервисом, а не
+           над клипом. Видна только владельцу (is_admin). -->
+      <button id="admin-btn" class="account-btn hidden" data-i18n-title="top.adminTitle" data-i18n="top.admin"></button>
       <button id="save-account-btn" class="hidden" data-i18n="top.saveAccount"></button>
       <button id="logout-btn" class="ghost" data-i18n="top.logout"></button>
     </div>
@@ -597,8 +601,10 @@
       <span class="pos"></span>
       <input class="t-title" data-i18n-ph="track.titlePh" />
       <!-- Этапы стоят в одной строке с названием: отдельной строкой они
-           съедали высоту, а название растягивалось на весь экран впустую. -->
-        <button class="s-supergen primary" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
+           съедали высоту, а название растягивалось на весь экран впустую.
+           НЕ ВЫНОСИТЬ обратно — владелец просил дважды. -->
+      <div class="stage-tabs"></div>
+      <button class="s-supergen primary" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
       <div class="order-btns">
         <button class="up ghost" data-i18n-title="common.moveUp">↑</button>
         <button class="down ghost" data-i18n-title="common.moveDown">↓</button>
@@ -606,8 +612,6 @@
       </div>
     </div>
     <span class="supergen-note status"></span>
-
-    <div class="stage-tabs"></div>
 
     <div class="stage-panes">
       <!-- 1. Настройка -->
@@ -639,6 +643,17 @@
                  состояние по-прежнему держит .t-format ниже: карточки пишут
                  в него и дёргают его же обработчик. -->
             <div class="ms-presets"></div>
+            <!-- ТЕКСТОВАЯ МОДЕЛЬ. Стоит здесь, а не в блоке движков, потому
+                 что это решение о СЦЕНАРИИ: кто пишет сюжет, библию и
+                 раскадровку. Движки ниже отвечают за картинку и видео —
+                 другой вопрос и другой кошелёк.
+                 Позиции без ключа сюда не приезжают вовсе (продавать то,
+                 чего нет, нельзя), закрытые тарифом приезжают с замком. -->
+            <div class="ms-row ms-text-models">
+              <label data-i18n="textModel.label"></label>
+              <div class="t-text-models eng-tabs"></div>
+              <p class="ms-text-note muted"></p>
+            </div>
             <!-- Сюжет проекта. Это ЗЕРКАЛО #story, а не переезд: панель сюжета
                  живёт вне #tracks, а #tracks поллинг перерисовывает целиком —
                  перенесённый сюда узел был бы уничтожен первой же
@@ -693,6 +708,18 @@
             <label class="ms-style-label" data-i18n-title="track.styleLabelTitle" data-i18n="track.styleLabel"></label>
             <div class="t-style-picker style-picker style-picker-wide"></div>
             <input type="hidden" class="t-style" />
+            <!-- ПЕРЕРИСОВАТЬ В НОВОМ СТИЛЕ. Появляется ровно тогда, когда у
+                 объекта уже есть кадры, а стиль сменили: раньше смена чипов
+                 не давала никакого следующего действия, и человек честно
+                 видел «поставил другой стиль — картинки те же».
+                 Цена и потери показываются ДО нажатия. -->
+            <div class="ms-restyle hidden">
+              <div class="row">
+                <button type="button" class="t-restyle primary"></button>
+                <span class="t-restyle-status status"></span>
+              </div>
+              <p class="t-restyle-warn muted"></p>
+            </div>
           </section>
 
           <!-- 3. КАДР: геометрия, разрешение, зерно. Схлопнуто у всех, кроме
@@ -831,6 +858,9 @@
           <button class="add-scene" data-i18n="track.addScene"></button>
           <button class="gen-all-frames primary" data-i18n="track.allFrames"></button>
           <button class="gen-all-videos primary" data-i18n-title="track.allVideosTitle" data-i18n="track.allVideos"></button>
+          <!-- Перерисовать ВСЁ в нынешнем стиле: то же действие, что кнопка в
+               «Как выглядит», но доступное с ленты кадров. -->
+          <button class="redraw-frames" data-i18n-title="restyle.redrawTitle" data-i18n="restyle.redraw"></button>
           <span class="all-frames-note muted"></span>
         </div>
       </section>

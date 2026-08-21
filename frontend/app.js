@@ -336,12 +336,18 @@ function renderUserBar() {
   const badge = $("#points-badge");
   const saveBtn = $("#save-account-btn");
   const accBtn = $("#account-btn");
+  const admBtn = $("#admin-btn");
   if (!u) {
     badge.classList.add("hidden");
     saveBtn.classList.add("hidden");
     if (accBtn) accBtn.classList.add("hidden");
+    if (admBtn) admBtn.classList.add("hidden");
     return;
   }
+  // Вход в админку показываем только владельцу. Это не защита (её держит
+  // сервер: не админу /admin отвечает 404), а честность интерфейса — кнопка,
+  // ведущая в 404, хуже отсутствующей кнопки.
+  if (admBtn) admBtn.classList.toggle("hidden", !u.is_admin);
   // Кабинет открыт всем, включая гостя: тариф и партнёрка живут на его id.
   if (accBtn) accBtn.classList.remove("hidden");
   badge.classList.toggle("hidden", Boolean(u.is_admin));
@@ -433,6 +439,13 @@ $("#logout-btn").addEventListener("click", async () => {
 });
 
 $("#account-btn").addEventListener("click", () => openAccountModal("account"));
+// Админка — переход на отдельную страницу, а не модалка поверх студии.
+// Кнопка это <button>, а не <a>, ровно затем, чтобы взять форму и высоту
+// соседей по шапке из общего правила кнопок, а не заводить вторую.
+{
+  const admBtn = $("#admin-btn");
+  if (admBtn) admBtn.addEventListener("click", () => { location.href = "/admin"; });
+}
 
 // Гость превращается в постоянный аккаунт: тот же user id, проекты остаются.
 $("#save-account-btn").addEventListener("click", () => {
@@ -608,9 +621,10 @@ const ACC_TABS = [
   // проект, поллинг и несохранённые поля остаются на месте.
   { key: "files" },
   { key: "ref" },
-  { key: "payouts", admin: true },
-  { key: "crm", admin: true },
-  { key: "broadcast", admin: true },
+  // Админских вкладок здесь БОЛЬШЕ НЕТ. CRM, рассылка и выплаты уехали на
+  // отдельную страницу /admin: два входа в один экран разъезжаются за месяц,
+  // а CRM в модалке поверх открытого проекта — то, что владелец просил
+  // развести. Осталась одна строка-ссылка внутри вкладки «Аккаунт».
 ];
 
 const PAYOUT_STATUS = { new: "new", paid: "paid", rejected: "rejected" };
@@ -826,8 +840,7 @@ function openAccountModal(initial = "account") {
 
     const loaders = {
       account: renderAccountPane, plan: renderPlanPane,
-      files: renderFilesPane, ref: renderRefPane, payouts: renderPayoutsPane,
-      crm: renderCrmPane, broadcast: renderBroadcastPane,
+      files: renderFilesPane, ref: renderRefPane,
     };
     // Вкладка грузится один раз при первом открытии: лишних запросов нет,
     // а перерисовку после действий делают сами обработчики.
@@ -1062,6 +1075,11 @@ async function renderAccountPane(pane) {
       </div>
       <div class="row dash-hero-acts"></div>
     </div>
+
+    ${(me && me.user && me.user.is_admin) ? `<div class="acc-admin-row">
+      <a class="acc-admin-link" href="/admin">${escHtml(t("account.adminLink"))}</a>
+      <span class="muted">${escHtml(t("account.adminNote"))}</span>
+    </div>` : ""}
 
     <div class="dash-cards">
       <div class="dash-card">
@@ -2596,6 +2614,10 @@ let project = null;
 let projects = [];
 let activeProjectId = Number(localStorage.getItem("rc_project") || 0) || null;
 let providers = { video: ["grok"], seedance: false };
+// ТЕКСТОВЫЕ МОДЕЛИ сценарного конвейера (GET /api/text-models). Своей копии
+// реестра здесь нет: сервер решает, что показывать и почём, — он же знает
+// про ключи и тариф. Фронт рисует то, что приехало, и ничего не додумывает.
+let textModels = { engines: [], current: "gateway", chosen: "", plan: "free" };
 
 // ═══════════════════════════ РЕЖИМЫ (КЛИЕНТ) ═══════════════════════════
 // Реестр приезжает с сервера (GET /api/modes → backend/formats.py) и НЕ
@@ -2711,6 +2733,10 @@ async function loadProject() {
   if (!providers.loaded) {
     providers = { ...(await api("/api/providers")), loaded: true };
   }
+  // Текстовые модели — на КАЖДУЮ загрузку проекта, а не один раз: выбор
+  // хранится на проекте, и при переключении проектов он меняется.
+  textModels = await api(`/api/text-models?project_id=${activeProjectId}`)
+    .catch(() => ({ engines: [], current: "gateway", chosen: "", plan: "free" }));
   await loadModes();
   // До отрисовки: автосборка может поставить клип в очередь, и карточка
   // должна показать это сразу, а поллер — не погаснуть.
@@ -2957,6 +2983,9 @@ function projectBusy() {
         ["queued", "running"].includes(t.storyboard_status) ||
         ["queued", "running"].includes(t.clip_status) ||
         ["queued", "running"].includes(t.supergen_status) ||
+        // Перерисовка идёт очередью в фоне — без неё поллер гаснет, и
+        // прогресс «12 из 30» замирает на нуле до ручной перезагрузки.
+        ["queued", "running"].includes(t.restyle_status) ||
         (t.scenes || []).some(sceneBusy),
     );
 }
@@ -3048,6 +3077,18 @@ function trackStatus(tr, ts, card) {
     const finished = busy(tr.supergen_status) && !busy(ts.supergen_status);
     tr.supergen_status = ts.supergen_status;
     if (finished) reload = true;
+  }
+  // Перерисовка: прогресс «12 из 30» рисуем на месте, а полную перезагрузку
+  // делаем только когда она закончилась — тогда приехали новые файлы.
+  if (tr.restyle_status !== ts.restyle_status) {
+    const finished = busy(tr.restyle_status) && !busy(ts.restyle_status);
+    tr.restyle_status = ts.restyle_status;
+    if (finished) reload = true;
+  }
+  if (card && tr.restyle_note !== ts.restyle_note) {
+    tr.restyle_note = ts.restyle_note;
+    const rn = $(".t-restyle-status", card);
+    if (rn) rn.textContent = ts.restyle_note || "";
   }
   if (card && tr.supergen_note !== ts.supergen_note) {
     tr.supergen_note = ts.supergen_note;
@@ -4091,6 +4132,176 @@ function msSummary(card, tr, mode) {
 /* Сборка блока. Зовётся из renderTrack после движков и полей режима: к этому
    моменту все секции уже наполнены штатным кодом, и здесь остаётся только
    то, чего до единого блока в студии не было вовсе. */
+/* Выбор текстовой модели — в ПЕРВОМ блоке сценария, как просил владелец.
+   Хранится на проекте: сюжет, библия, сценарий серии и раскадровка — один
+   конвейер, и разные модели на соседних шагах дают разъезд тона. Поэтому
+   ряд рисуем у одного объекта, как сюжет и библию: десять копий одного
+   выбора на экране — это десять способов не понять, какой из них главный. */
+function msTextModels(card, isFirst) {
+  const box = $(".ms-text-models", card);
+  if (!box) return;
+  const list = textModels.engines || [];
+  // Ни одной живой платной модели — ряд не показываем вовсе. Показывать
+  // выбор из одной позиции значит изображать выбор.
+  const on = isFirst && list.length > 1;
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  const tabs = $(".t-text-models", card);
+  const note = $(".ms-text-note", card);
+  tabs.innerHTML = "";
+  const chosen = textModels.chosen || textModels.current || "gateway";
+  list.forEach((e) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "eng-chip" + (e.id === chosen ? " on" : "")
+      + (e.locked ? " locked" : "");
+    chip.textContent = e.title;
+    const cost = document.createElement("span");
+    cost.className = "eng-cost";
+    cost.textContent = e.points;
+    chip.appendChild(cost);
+    if (e.locked) {
+      const lock = document.createElement("span");
+      lock.className = "style-chip-lock";
+      lock.textContent = "🔒";
+      chip.appendChild(lock);
+      chip.title = t("textModel.lockedIn", { plan: planTitle(e.min_plan) });
+    } else {
+      chip.title = e.note || e.title;
+    }
+    chip.addEventListener("click", async () => {
+      // Замок — не мёртвая кнопка: он ведёт туда, где его снимают. Тот же
+      // жест, что у закрытых стилей в пикере.
+      if (e.locked) { openAccountModal("plan"); return; }
+      try {
+        // project_id ОБЯЗАТЕЛЕН: без него сервер берёт первый проект
+        // человека, а не открытый, и выбор молча уезжает в чужой альбом.
+        await api(`/api/project?project_id=${activeProjectId}`,
+                  { method: "PATCH", body: { text_engine: e.id } });
+        textModels.chosen = e.id;
+        msTextModels(card, isFirst);
+      } catch (err) { fail(err); }
+    });
+    tabs.appendChild(chip);
+  });
+  const cur = list.find((e) => e.id === chosen);
+  note.textContent = cur && cur.points
+    ? t("textModel.paidNote", { n: tNum(cur.points) })
+    : t("textModel.freeNote");
+}
+
+/* Подпись тарифа по его id — для замка «в PRO». Берём из словаря плана,
+   а не выдумываем вторую лестницу тарифов на фронте. */
+function planTitle(id) {
+  const map = { free: "FREE", pro: "PRO", pro_max: "PRO MAX", studio: "ULTRA" };
+  return map[id] || String(id || "").toUpperCase();
+}
+
+/* ─────────────── ПЕРЕРИСОВАТЬ В НОВОМ СТИЛЕ ───────────────
+   Кнопка появляется ровно тогда, когда она осмысленна: у объекта уже есть
+   нарисованные кадры. Цену и потери спрашиваем у сервера (одна касса на
+   витрину и на списание) и показываем ДО нажатия. */
+function renderRestyle(card, tr) {
+  const box = $(".ms-restyle", card);
+  if (!box) return;
+  const drawn = (tr.scenes || []).filter((s) => s.image_url).length;
+  const busy = ["queued", "running"].includes(tr.restyle_status);
+  box.classList.toggle("hidden", !drawn && !busy);
+  if (!drawn && !busy) return;
+  const btn = $(".t-restyle", card);
+  const st = $(".t-restyle-status", card);
+  const warn = $(".t-restyle-warn", card);
+  btn.textContent = t("restyle.button", { n: drawn });
+  btn.disabled = busy || ["queued", "running"].includes(tr.scenes_status)
+    || ["queued", "running"].includes(tr.supergen_status);
+  st.textContent = busy ? (tr.restyle_note || t("restyle.busy"))
+    : (tr.restyle_status === "error" ? tr.restyle_note || "" : "");
+  st.className = "status t-restyle-status "
+    + (tr.restyle_status === "error" ? "error" : busy ? "busy" : "");
+  const notes = [];
+  if (tr.scenes_stale) notes.push(t("restyle.staleScenes", { n: tr.scenes_stale }));
+  if (tr.prompts_dirty) notes.push(t("restyle.promptsDirty"));
+  if (tr.clip_stale) notes.push(t("restyle.clipStale"));
+  warn.textContent = notes.join(" · ");
+  if (btn.dataset.bound) return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", () => openRestyleModal(tr.id));
+}
+
+/* Смета рестайла: что будет стоить и что при этом потеряется.
+   Ни одно число здесь не считается на фронте — всё приезжает из
+   /restyle/quote, который считает теми же функциями, что и списание. */
+async function openRestyleModal(trackId) {
+  let quote;
+  try {
+    quote = await api(`/api/tracks/${trackId}/restyle/quote`, { method: "POST", body: {} });
+  } catch (e) { return fail(e); }
+  openModal(t("restyle.title"), (body) => {
+    const paint = (q) => {
+      const lines = [];
+      lines.push(`<div class="adm-row"><b>${escHtml(q.style_label)}</b></div>`);
+      lines.push(`<p>${escHtml(t("restyle.frames", {
+        n: q.scenes_selected, engine: engineTitle(q.frames.engine),
+        cost: tNum(q.frames.total) }))}</p>`);
+      if (q.prompts.needed) {
+        lines.push(`<p>${escHtml(t("restyle.prompts", { cost: tNum(q.prompts.points) }))}</p>`);
+      }
+      if (q.video.scenes_with_video) {
+        lines.push(`<p class="warn-line">${escHtml(t("restyle.videoWarn", {
+          n: q.video.scenes_with_video, label: q.style_label,
+          cost: tNum(q.video.total_if_included) }))}</p>`);
+      }
+      if (q.warn.includes("clip_stale")) {
+        lines.push(`<p>${escHtml(t("restyle.clipWarn"))}</p>`);
+      }
+      lines.push(`<p><b>${escHtml(t("restyle.total", { cost: tNum(q.total) }))}</b>
+        <span class="muted">${escHtml(t("restyle.balance", { n: tNum(q.balance) }))}</span></p>`);
+      return lines.join("");
+    };
+    body.innerHTML = `
+      <div class="restyle-quote">${paint(quote)}</div>
+      ${quote.video.scenes_with_video ? `<label class="approve-check">
+        <input type="checkbox" class="r-video" />
+        <span>${escHtml(t("restyle.withVideo"))}</span></label>` : ""}
+      <div class="row">
+        <button type="button" class="r-go primary"></button>
+        <button type="button" class="r-cancel ghost">${escHtml(t("common.cancel"))}</button>
+        <span class="r-msg status"></span>
+      </div>`;
+    const go = $(".r-go", body);
+    const cb = $(".r-video", body);
+    const sync = async () => {
+      if (!cb) return;
+      try {
+        quote = await api(`/api/tracks/${trackId}/restyle/quote`,
+                          { method: "POST", body: { with_video: cb.checked } });
+        $(".restyle-quote", body).innerHTML = paint(quote);
+        go.textContent = t("restyle.go", { cost: tNum(quote.total) });
+        go.disabled = !quote.enough;
+      } catch (e) { fail(e); }
+    };
+    if (cb) cb.addEventListener("change", sync);
+    go.textContent = t("restyle.go", { cost: tNum(quote.total) });
+    go.disabled = !quote.enough;
+    $(".r-cancel", body).addEventListener("click", closeModal);
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      $(".r-msg", body).textContent = t("common.generating");
+      try {
+        await api(`/api/tracks/${trackId}/restyle`, {
+          method: "POST", body: { with_video: Boolean(cb && cb.checked) },
+        });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        go.disabled = false;
+        $(".r-msg", body).textContent = errText(e);
+        if (e && e.code === "not_enough_points") openAccountModal("plan");
+      }
+    });
+  }, { medium: true });
+}
+
 function mountModeSetup(card, tr, isFirst) {
   const mode = curMode();
   const box = $(".mode-setup", card);
@@ -4100,6 +4311,7 @@ function mountModeSetup(card, tr, isFirst) {
   if (hint) hint.textContent = t(`modes.${mode.id}.note`) || "";
   msBindFold(card, tr, mode);
   msPresets(card, tr, mode);
+  msTextModels(card, isFirst);
   msStory(card, tr, mode, isFirst);
   msBible(card, mode, isFirst);
   msFrame(card, tr, mode);
@@ -4113,6 +4325,9 @@ function renderTrack(tr) {
   const card = tpl.querySelector(".track-card");
   applyI18n(card);   // содержимое <template> обходом документа не задевается
   card.dataset.id = tr.id;
+  // Сколько кадров сняты НЕ нынешним стилем — верстак (nav.js) читает это
+  // из атрибута, чтобы предложить перерисовку следующим действием.
+  card.dataset.stale = String(tr.scenes_stale || 0);
   $(".pos", card).textContent = `#${tr.position}`;
   // Обложка трека: клик по квадрату = заменить (скрытый file input в label).
   if (tr.cover_url) {
@@ -4188,9 +4403,16 @@ function renderTrack(tr) {
   buildStylePicker($(".t-style-picker", card), tr.style_keys || [], async (keys) => {
     $(".t-style", card).value = keys.join(",");
     try {
-      await api(`/api/tracks/${tr.id}/style`, { method: "POST", body: { style_keys: keys } });
+      const fresh = await api(`/api/tracks/${tr.id}/style`,
+                              { method: "POST", body: { style_keys: keys } });
+      // Стиль сменили — а кадры остались прежними. Раньше на этом всё и
+      // заканчивалось: следующего действия человеку никто не предлагал, и
+      // он честно видел «поставил другой стиль, картинки те же».
+      Object.assign(tr, fresh);
+      renderRestyle(card, tr);
     } catch (e) { fail(e); }
   });
+  renderRestyle(card, tr);
   // ── движки объекта, поля режима и единый блок параметров ──
   renderTrackEngines(card, tr);
   renderTrackModeFields(card, tr);
@@ -4287,6 +4509,17 @@ function renderTrack(tr) {
       } catch (e) { fail(e); }
       await loadProject();
     });
+  }
+  // «Перерисовать кадры» на ленте раскадровки — то же действие, что кнопка в
+  // «Как выглядит», но под рукой у самих кадров. Раньше «Все кадры» на треке
+  // с готовыми кадрами отвечала 400 и была тупиком.
+  const redrawBtn = $(".redraw-frames", card);
+  if (redrawBtn) {
+    const drawn = (tr.scenes || []).filter((s) => s.image_url).length;
+    redrawBtn.classList.toggle("hidden", !drawn);
+    redrawBtn.disabled = framesBusy || ["queued", "running"].includes(tr.restyle_status);
+    redrawBtn.textContent = t("restyle.redrawN", { n: drawn });
+    redrawBtn.addEventListener("click", () => openRestyleModal(tr.id));
   }
   const genBtn = $(".gen-scenes", card);
   const busy = tr.scenes_status === "queued" || tr.scenes_status === "running";
@@ -4622,6 +4855,19 @@ function renderSceneTile(s, tr, mode, audioEl) {
     ok.className = "st-ok";
     ok.textContent = "✓";
     $(".st-shot", tile).appendChild(ok);
+  }
+  // КАДР СНЯТ ПРЕЖНИМ СТИЛЕМ. Смешанный трек (перерисовали только припев) —
+  // законное состояние, но оно обязано быть видимым: иначе человек смотрит
+  // на ленту и не понимает, почему половина кадров «не поменялась».
+  const trKeys = (tr.style_keys || []).join(",");
+  const scKeys = (s.style_keys || []).join(",");
+  if (s.image_url && scKeys && trKeys && scKeys !== trKeys) {
+    tile.classList.add("stale");
+    const mark = document.createElement("span");
+    mark.className = "st-stale";
+    mark.textContent = "◈";
+    mark.title = t("restyle.staleTile");
+    $(".st-shot", tile).appendChild(mark);
   }
   tile.title = (s.shot_note || s.lyric_line || "").slice(0, 140);
   tile.addEventListener("click", () => openSceneModal(s, tr, mode, audioEl));
@@ -5034,7 +5280,65 @@ function renderScene(s, audioEl, mode = "board") {
   if (!s.video_url) approveBox.title = t("scene.approveNeedVideo");
   approveBox.addEventListener("change", () => approveScene(s.id, approveBox.checked));
 
+  mountSceneVersions(card, s);
+
   return card;
+}
+
+/* СНИМКИ ПРЕЖНИХ СТИЛЕЙ. Перерисовка не стирает кадры и видео — они уезжают
+   в версию. Лента раскрывается по требованию: у кадра без истории её нет
+   вовсе, а пустая свёрнутая строка на тридцати карточках — это шум. */
+function mountSceneVersions(card, s) {
+  if (!Number(s.versions || 0)) return;
+  const box = document.createElement("details");
+  box.className = "s-versions";
+  const sum = document.createElement("summary");
+  sum.textContent = t("versions.summary", { n: s.versions });
+  const body = document.createElement("div");
+  body.className = "s-versions-body";
+  box.append(sum, body);
+  card.appendChild(box);
+  let loaded = false;
+  box.addEventListener("toggle", async () => {
+    if (!box.open || loaded) return;
+    loaded = true;
+    body.textContent = t("common.loading");
+    try {
+      const d = await api(`/api/scenes/${s.id}/versions`);
+      body.innerHTML = "";
+      (d.versions || []).forEach((v) => {
+        const row = document.createElement("div");
+        row.className = "s-version";
+        row.innerHTML = `
+          ${v.image_thumb_url ? `<img src="${escHtml(v.image_thumb_url)}" alt="" loading="lazy" />` : ""}
+          <span class="s-version-meta">
+            <b>${escHtml(v.style_label || t("versions.unknown"))}</b>
+            <span class="muted">${escHtml(fmtDate(v.at))}${v.video_url ? " · " + escHtml(t("versions.withVideo")) : ""}</span>
+          </span>`;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = t("versions.restore");
+        btn.addEventListener("click", async () => {
+          if (!confirm(t("versions.restoreConfirm"))) return;
+          btn.disabled = true;
+          try {
+            await api(`/api/scenes/${s.id}/versions/${v.id}/restore`, { method: "POST" });
+            await loadProject();
+            closeModal();
+          } catch (e) { fail(e); btn.disabled = false; }
+        });
+        row.appendChild(btn);
+        body.appendChild(row);
+      });
+      const note = document.createElement("p");
+      note.className = "muted s-versions-note";
+      note.textContent = t("versions.note", { n: d.keep });
+      body.appendChild(note);
+    } catch (e) {
+      body.textContent = errText(e);
+    }
+  });
 }
 
 async function saveProject() {

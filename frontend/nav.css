@@ -31,12 +31,14 @@
   --lift-btn: 0 3px 0 var(--edge);
   --lift-btn-lg: 0 4px 0 var(--edge);
 
-  /* ── огонь: два градиента вместо одного ──
-     hot  — декоративный (полоски, заливки прогресса), контраст не важен
-     ink  — под БЕЛЫЙ ТЕКСТ: нижний стоп уведён в --accent-deep (белый ≈4.9:1) */
-  --accent-deep: #d92626;
+  /* ── огонь: НЕ ОБЪЯВЛЯЕТСЯ ЗДЕСЬ. ──
+     Этот файл грузится последним (index.html), поэтому любой свой --fire-ink
+     в :root перебивает канон из style.css:26 и landing.css:56. Здесь стоял
+     красный (--accent-deep #d92626), дважды забракованный владельцем: красное
+     в системе значит только ошибку. Огонь наследуется, см. DESIGN_SYSTEM §3.
+     --fire-hot оставлен: он декоративный (полоски, заливки прогресса), текста
+     не несёт, в лимит трёх огненных пятен не входит. */
   --fire-hot: linear-gradient(180deg, var(--accent-2), var(--accent));
-  --fire-ink: linear-gradient(180deg, var(--accent), var(--accent-deep));
 
   /* ── стекло: фильтр. На светлом фоне главный тут saturate, не blur:
         он вытягивает огненные засветы body в тело панели, и стекло
@@ -634,10 +636,10 @@ body.glass-quiet .wb-next {
 .wb-next:hover { background: var(--glass-tint-strong); }
 .wb-next[hidden] { display: none; }
 .wb-next .wb-next-cost {
-  font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
-  color: var(--accent-deep);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: var(--gold-ink);
   padding: 3px 7px; border-radius: 999px;
-  background: rgba(255,181,69,.30);
+  background: var(--gold-wash);
   border: 1.5px solid rgba(45,33,26,.25);
 }
 

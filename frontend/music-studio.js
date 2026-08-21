@@ -50,6 +50,10 @@
   };
 
   const byId = (id) => document.getElementById(id);
+  /* Сводка раздела может не доехать (сеть моргнула на первом кадре). Все
+     обращения к ней идут через эту функцию: экран без цен и лимитов лучше,
+     чем экран, упавший на чтении поля у null. */
+  const S = (key) => ((M.status && M.status[key]) || {});
   const T = (key, vars) => (typeof t === "function" ? t("mus." + key, vars) : key);
 
   function el(tag, cls, text) {
@@ -57,6 +61,13 @@
     if (cls) n.className = cls;
     if (text !== undefined && text !== null) n.textContent = String(text);
     return n;
+  }
+
+  /* Единица списания в нужной форме: «1 токен», «2 токена», «6 токенов».
+     Шаблон в словаре — «{n} {unit}»: язык, которому нужен другой порядок,
+     переставит его у себя, а не в коде. */
+  function unit(n) {
+    return typeof tPlural === "function" ? tPlural(n, tRaw("mus.unit")) : "";
   }
 
   function apiErr(e) {
@@ -137,7 +148,11 @@
     const pts = (typeof me === "object" && me && me.user) ? me.user.gen_points : null;
     if (p) {
       const admin = M.status && M.status.is_admin;
-      p.textContent = (pts === null || admin) ? "" : "⚡ " + tNum(pts);
+      // Формат ровно как в шапке студии (app.js renderUserBar): «1 000
+      // токенов», а монетку марки рисует сама .points-badge фоном. Своя
+      // молния рядом с монеткой смотрелась бы вторым значком валюты.
+      p.textContent = (pts === null || admin)
+        ? "" : `${tNum(pts)} ${t("top.pointsUnit")}`;
       p.classList.toggle("hidden", pts === null || Boolean(admin));
     }
   }
@@ -235,7 +250,7 @@
   function renderIntake() {
     const drop = byId("mus-drop");
     if (!drop || !M.status) return;
-    const u = M.status.upload || {};
+    const u = S("upload");
     const hint = byId("mus-drop-hint");
     if (hint) {
       hint.textContent = T("drop.hint", {
@@ -272,7 +287,7 @@
      — это издевательство, а не валидация. Серверные проверки при этом
      остаются: клиент никогда не последняя линия. */
   function preCheck(file) {
-    const u = (M.status && M.status.upload) || {};
+    const u = S("upload");
     const name = (file.name || "").toLowerCase();
     const ext = name.slice(name.lastIndexOf(".") + 1);
     const formats = u.formats || [];
@@ -330,7 +345,7 @@
   function renderGen() {
     const card = byId("mus-gen");
     if (!card || !M.status) return;
-    const g = M.status.generation || {};
+    const g = S("generation");
     card.classList.toggle("is-off", !g.enabled);
     const off = byId("mus-gen-off");
     if (off) {
@@ -359,9 +374,10 @@
     const price = byId("mus-gen-price");
     const sel = byId("mus-gen-secs");
     if (!price || !M.status) return;
-    const per30 = (M.status.cost || {}).music_per_30_sec || 0;
+    const per30 = S("cost").music_per_30_sec || 0;
     const secs = Number(sel && sel.value) || 60;
-    price.textContent = T("gen.cost", { n: Math.max(1, Math.ceil(secs / 30)) * per30 });
+    const n = Math.max(1, Math.ceil(secs / 30)) * per30;
+    price.textContent = T("gen.cost", { n, unit: unit(n) });
   }
 
   async function runGen() {
@@ -437,6 +453,15 @@
       .some((s) => s === "queued" || s === "running");
   }
 
+  /* Слепок изменчивого состояния. Перерисовывать карточку на каждый тик
+     опроса нельзя: пока идёт мастеринг, человек заполняет метаданные, а
+     перерисовка пересобирает поля — и набранное исчезает под руками. */
+  function pulse(o) {
+    return [o.probe_status, o.master_status, o.video_status, o.social_status,
+            o.master_filename, o.video_filename, o.social_url,
+            o.lufs, o.bpm, (o.wave || []).length].join("|");
+  }
+
   function schedulePoll() {
     clearTimeout(M.poll);
     if (!M.open || !busyNow(M.open) || !visible()) return;
@@ -444,8 +469,9 @@
       try {
         const fresh = await api("/api/music/tracks/" + M.open.id);
         const wasMaster = M.open.master_status;
+        const changed = pulse(fresh) !== pulse(M.open);
         M.open = fresh;
-        renderDetail();
+        if (changed) renderDetail();
         if (wasMaster !== fresh.master_status && fresh.master_status === "done") {
           me = await api("/api/me").catch(() => me);
           renderTop();
@@ -453,6 +479,27 @@
         schedulePoll();
       } catch (e) { /* сеть моргнула — следующий тик разберётся */ }
     }, 3000);
+  }
+
+  /* Фокус и набранное переживают перерисовку. Поля помечены data-mus-field —
+     без метки восстанавливать было бы нечего: после render это уже другие
+     узлы DOM. */
+  function captureFocus() {
+    const a = document.activeElement;
+    if (!a || !a.closest || !a.closest("#mus-detail")) return null;
+    const key = a.getAttribute("data-mus-field");
+    if (!key) return null;
+    return { key, value: a.value, start: a.selectionStart, end: a.selectionEnd };
+  }
+
+  function restoreFocus(snap) {
+    if (!snap) return;
+    const node = document.querySelector('#mus-detail [data-mus-field="' + snap.key + '"]');
+    if (!node) return;
+    node.value = snap.value;
+    node.focus();
+    // У input[type=date] выделения нет — попытка его поставить бросает.
+    try { node.setSelectionRange(snap.start, snap.end); } catch (e) { /* не текст */ }
   }
 
   function renderAll() {
@@ -464,6 +511,7 @@
   function renderDetail() {
     const det = byId("mus-detail");
     if (!det) return;
+    const snap = captureFocus();
     det.innerHTML = "";
     const o = M.open;
     if (!o) return;
@@ -474,9 +522,11 @@
     back.type = "button";
     back.addEventListener("click", closeTrack);
     const title = el("input", "mus-title-in");
+    title.setAttribute("data-mus-field", "title");
     title.value = o.title || "";
     title.placeholder = T("open.titlePh");
     const artist = el("input", "mus-artist-in");
+    artist.setAttribute("data-mus-field", "artist");
     artist.value = o.artist || "";
     artist.placeholder = T("open.artistPh");
     const save = (field, input) => {
@@ -518,6 +568,7 @@
     if (M.tab === "master") paneMaster(pane, o);
     if (M.tab === "release") paneRelease(pane, o);
     if (M.tab === "social") paneSocial(pane, o);
+    restoreFocus(snap);
   }
 
   async function patchMeta(patch) {
@@ -637,7 +688,7 @@
         legend.appendChild(el("span", null, T("sound.bpmAlt", { n: a.bpm_alt })));
       }
       card.appendChild(legend);
-    } else if (M.status && M.status.analysis && !M.status.analysis.enabled) {
+    } else if (M.status && M.status.analysis && !S("analysis").enabled) {
       card.appendChild(el("p", "mus-fh", T("sound.tempoOff")));
     }
 
@@ -657,7 +708,7 @@
   // ────────────────────────── раздел «Мастеринг» ──────────────────────────
 
   function engineRow(id) {
-    const list = ((M.status || {}).mastering || {}).engines || [];
+    const list = S("mastering").engines || [];
     return list.find((x) => x.id === id) || null;
   }
 
@@ -666,7 +717,7 @@
     card.appendChild(el("h3", null, T("master.profile")));
     card.appendChild(el("p", "mus-sub", T("master.profileNote")));
 
-    const targets = ((M.status || {}).mastering || {}).targets || [];
+    const targets = S("mastering").targets || [];
     const chips = el("div", "mus-chips");
     targets.forEach((tg) => {
       const b = el("button", "mus-chip" + (M.target === tg.id ? " on" : ""));
@@ -761,22 +812,22 @@
     // ── запуск ──
     const run = el("div", "mus-run");
     const cost = M.engine === "roex"
-      ? (M.status.cost || {}).master_cloud
-      : (M.status.cost || {}).master;
-    const btn = el("button", "primary",
-      T("master.run", { n: cost }));
+      ? S("cost").master_cloud
+      : S("cost").master;
+    const btn = el("button", "primary", T("master.run", { n: cost, unit: unit(cost) }));
     btn.type = "button";
     const busy = o.master_status === "queued" || o.master_status === "running";
     btn.disabled = busy;
     btn.addEventListener("click", () => runMaster(o));
     run.appendChild(btn);
-    run.appendChild(el("span", "mus-price", T("master.costNote", { n: cost })));
+    run.appendChild(el("span", "mus-price", T("master.costNote", { n: cost, unit: unit(cost) })));
     card.appendChild(run);
     if (M.engine === "roex") card.appendChild(el("p", "mus-fh", T("master.cloudNote")));
 
     if (busy) card.appendChild(status("run", T("master.running")));
     if (o.master_status === "error") {
-      card.appendChild(status("err", o.master_note || T("master.error")));
+      card.appendChild(status("err", [T("master.error"), o.master_note]
+        .filter(Boolean).join(" ")));
     }
 
     // ── до/после ──
@@ -968,6 +1019,7 @@
         input = el("input");
         input.type = kind;
       }
+      input.setAttribute("data-mus-field", key);
       input.value = (o.meta && o.meta[key]) || "";
       input.addEventListener("change", () => patchMeta({ [key]: input.value }));
       wrap.appendChild(input);
@@ -996,7 +1048,7 @@
     txt.appendChild(el("b", null, o.cover_url ? T("release.coverHave") : T("release.coverNone")));
     txt.appendChild(el("span", null, o.cover_w
       ? T("release.coverSize", { w: o.cover_w, h: o.cover_h })
-      : T("release.coverHint", { px: (M.status.upload || {}).cover_target || 3000 })));
+      : T("release.coverHint", { px: S("upload").cover_target || 3000 })));
     const file = el("input");
     file.type = "file";
     file.accept = "image/jpeg,image/png,image/webp";
@@ -1063,7 +1115,7 @@
     out.appendChild(el("p", "mus-fh", T("release.packNote")));
 
     const dist = el("div", "mus-dist");
-    const d = (M.status && M.status.distribution) || {};
+    const d = S("distribution");
     dist.appendChild(el("b", null, T("release.distTitle")));
     dist.appendChild(el("span", null,
       d.ready ? T("release.distReady", { name: d.distributor })
@@ -1080,6 +1132,7 @@
     } else {
       const send = el("div", "mus-run");
       const contact = el("input");
+      contact.setAttribute("data-mus-field", "contact");
       contact.placeholder = T("release.contactPh");
       contact.style.flex = "1 1 200px";
       const btn = el("button", "primary", T("release.submit"));
@@ -1152,7 +1205,8 @@
 
     // 1. видео
     const vrow = el("div", "mus-run");
-    const build = el("button", "primary", T("social.build", { n: (M.status.cost || {}).video }));
+    const vcost = S("cost").video;
+    const build = el("button", "primary", T("social.build", { n: vcost, unit: unit(vcost) }));
     build.type = "button";
     const vbusy = o.video_status === "queued" || o.video_status === "running";
     build.disabled = vbusy;
@@ -1172,7 +1226,12 @@
     card.appendChild(vrow);
     if (!o.cover_url) card.appendChild(el("p", "mus-fh", T("social.noCover")));
     if (vbusy) card.appendChild(status("run", T("social.building")));
-    if (o.video_status === "error") card.appendChild(status("err", o.video_note || T("social.videoError")));
+    if (o.video_status === "error") {
+      // Человеческая фраза + технический хвост: без первой непонятно, что
+      // случилось, без второго нечего показать в поддержку.
+      card.appendChild(status("err", [T("social.videoError"), o.video_note]
+        .filter(Boolean).join(" ")));
+    }
     if (o.video_url) {
       const v = el("video", "mus-video");
       v.src = o.video_url;
@@ -1192,7 +1251,7 @@
     pub.appendChild(state);
 
     const chips = el("div", "mus-chips");
-    const platforms = ((M.status || {}).social || {}).platforms || ["instagram"];
+    const platforms = S("social").platforms || ["instagram"];
     let picked = platforms[0];
     platforms.forEach((p, i) => {
       const b = el("button", "mus-chip" + (i === 0 ? " on" : ""), T("social.p_" + p));
@@ -1206,6 +1265,7 @@
     pub.appendChild(chips);
 
     const caption = el("textarea");
+    caption.setAttribute("data-mus-field", "caption");
     caption.rows = 2;
     caption.placeholder = T("social.captionPh");
     caption.value = [o.artist, o.title].filter(Boolean).join(" — ");
@@ -1232,7 +1292,8 @@
     if (o.social_status === "queued" || o.social_status === "running") {
       pub.appendChild(status("run", T("social.publishing")));
     } else if (o.social_status === "error") {
-      pub.appendChild(status("err", o.social_note || T("social.publishError")));
+      pub.appendChild(status("err", [T("social.publishError"), o.social_note]
+        .filter(Boolean).join(" ")));
     } else if (o.social_status === "done") {
       const ok = status("ok", T("social.published"));
       if (o.social_url) {
@@ -1255,9 +1316,11 @@
       M.social = { at: Date.now(), data };
       const ready = Boolean(data.ready);
       dot.className = "mus-live " + (ready ? "on" : "off");
-      state.lastChild.textContent = ready
-        ? T("social.on")
-        : T("social.off") + (data.detail ? " " + data.detail : "");
+      // Техническая подробность («подними службу командой…») адресована
+      // владельцу сервиса, а не артисту: обычному человеку она ничего не
+      // объясняет и выглядит как утечка внутренностей.
+      const detail = (M.status && M.status.is_admin && data.detail) ? " " + data.detail : "";
+      state.lastChild.textContent = ready ? T("social.on") : T("social.off") + detail;
       send.disabled = !ready || !o.video_url || o.social_status === "running";
       if (!o.video_url && ready) {
         send.title = T("social.needVideo");

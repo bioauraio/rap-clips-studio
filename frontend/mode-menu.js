@@ -169,7 +169,10 @@
       return b;
     }
     if (R().isExternal(m)) {
-      const b = el("button", "primary mode-card-go", T("modes.menu.openChat", "Открыть чат"));
+      // Подпись берём из записи режима: переходов теперь два, и «Открыть
+      // чат» на карточке музыки было бы прямым враньём.
+      const b = el("button", "primary mode-card-go",
+        T(m.goKey || "modes.menu.openChat", "Открыть"));
       b.type = "button";
       b.addEventListener("click", () => { close(); m.external(); });
       return b;
