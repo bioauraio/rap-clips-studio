@@ -4027,10 +4027,14 @@ def _run_scene_generation(track_id: int) -> None:
             chars = [str(n) for n in (sc.get("characters") or []) if str(n).strip()]
             if speaker and speaker not in chars:
                 chars.append(speaker)
+            # Имена от модели сводим к реальным персонажам проекта: выдуманная
+            # роль («Гонщик» вместо «лол4к») не находится и молча откатывает
+            # кадр на главного героя — весь клип выходит с одним человеком.
+            names = _normalize_scene_characters(", ".join(chars), track.project)
             db.add(Scene(
                 track_id=track.id, position=i, start_sec=cursor, duration_sec=dur,
                 lyric_line=line,
-                characters=", ".join(chars),
+                characters=names,
                 act=str(sc.get("act") or ""),
                 speaker=speaker,
                 shot_size=str(sc.get("shot_size") or ""),
@@ -4581,6 +4585,43 @@ def generate_storyboard(track_id: int, user: User = Depends(current_user), db: S
     db.commit()
     _spawn_gen(user, _run_storyboard, track_id, kind="storyboard")
     return {"ok": True}
+
+
+def _normalize_scene_characters(raw: str, project: Project) -> str:
+    """Свести имена из ответа модели к РЕАЛЬНЫМ персонажам проекта.
+
+    Модель регулярно выдумывает роли: в поле уезжало «Гонщик», хотя героя зовут
+    «лол4к». Такое имя не находится, кадр молча откатывается на главного героя —
+    и весь клип выходит с одним и тем же человеком, сколько бы персонажей ни
+    выбрали. Инструкция «имена используй дословно» в промпте есть, но она
+    мягкая, а это проверка.
+
+    Порядок: точное совпадение → без регистра и пробелов → вхождение подстрокой
+    (модель любит писать «Анька в шлеме»). Что не опознано — выбрасываем, и
+    если не осталось ничего, поле пустеет: пустое поле честно означает «берём
+    главного», а выдуманное имя означало то же самое, но молча."""
+    names = [n.strip() for n in str(raw or "").split(",") if n.strip()]
+    if not names:
+        return ""
+    real = [c for c in project.characters if (c.name or "").strip()]
+    if not real:
+        return ""
+    exact = {c.name.strip().lower(): c.name for c in real}
+    out, seen = [], set()
+    for n in names:
+        low = n.strip().lower()
+        hit = exact.get(low)
+        if not hit:
+            # «Анька в шлеме» → Анька; «гонщик» → ничего.
+            for c in real:
+                cn = c.name.strip().lower()
+                if cn and (cn in low or low in cn):
+                    hit = c.name
+                    break
+        if hit and hit not in seen:
+            seen.add(hit)
+            out.append(hit)
+    return ",".join(out)
 
 
 def _scene_characters(scene: Scene, project: Project) -> list[Character]:
@@ -6851,7 +6892,8 @@ def _run_scenes_extend(track_id: int, count: int) -> None:
             db.add(Scene(
                 track_id=track.id, position=pos, duration_sec=dur,
                 lyric_line=str(sc.get("lyric_line") or ""),
-                characters=str(sc.get("characters") or ""),
+                characters=_normalize_scene_characters(
+                    str(sc.get("characters") or ""), track.project),
                 shot_size=str(sc.get("shot_size") or ""),
                 camera_move=str(sc.get("camera_move") or ""),
                 shot_note=str(sc.get("shot_note") or ""),

@@ -2542,7 +2542,7 @@ SCRIPTS: list[dict] = [
              "label": {"en": "Room one", "ru": "Комната первая"},
              "en": "Establish the first person entirely: their light, their objects, their rhythm.",
              "ru": "Полностью заявляем первого: его свет, его предметы, его ритм.",
-             "boards": ["interior_window_light", "portrait_hold_still", "detail_object_pickup"]},
+             "boards": ["interior_window_side", "portrait_hold_still", "detail_object_pickup"]},
             {"key": "right", "share": 0.3, "shot": "medium",
              "label": {"en": "Room two", "ru": "Комната вторая"},
              "en": "The mirrored version: same framings, opposite light, opposite tempo.",
@@ -2560,7 +2560,7 @@ SCRIPTS: list[dict] = [
              "boards": ["final_pull_to_wide"]},
         ],
         "scenes": {"min": 16, "typ": 30, "max": 42},
-        "open_board": "interior_window_light", "close_board": "final_pull_to_wide",
+        "open_board": "interior_window_side", "close_board": "final_pull_to_wide",
         "styles_fit": ["cinema", "katsumi", "longheads", "flat2d", "clay"],
         "preset": "two_worlds",
         "story": "Две комнаты, разделённые одной стеной, и два героя, которые не встречаются ни в одном кадре. "
@@ -2750,7 +2750,7 @@ SCRIPTS: list[dict] = [
              "label": {"en": "Back", "ru": "Обратно"},
              "en": "Return to the opening frame, changed. Say nothing about what was said.",
              "ru": "Возврат в первый кадр, изменившимся. О содержании звонка не говорим.",
-             "boards": ["final_rhyme_open", "interior_window_light"]},
+             "boards": ["final_rhyme_open", "interior_window_side"]},
         ],
         "scenes": {"min": 14, "typ": 28, "max": 38},
         "open_board": "interior_table_sit", "close_board": "final_rhyme_open",
@@ -3317,12 +3317,12 @@ SCRIPTS: list[dict] = [
              "label": {"en": "First look", "ru": "Первый взгляд"},
              "en": "Establish the exact framing that will be repeated three more times.",
              "ru": "Заявляем ту самую композицию, которая повторится ещё трижды.",
-             "boards": ["interior_mirror", "interior_window_light", "detail_hands_work"]},
+             "boards": ["interior_mirror", "interior_window_side", "detail_hands_work"]},
             {"key": "change", "share": 0.3, "shot": "close-up",
              "label": {"en": "Changing", "ru": "Меняется"},
              "en": "Same frame, different hair, different light, different posture.",
              "ru": "Тот же кадр, другие волосы, другой свет, другая осанка.",
-             "boards": ["portrait_profile_to_front", "detail_texture_macro", "portrait_hold_still"]},
+             "boards": ["portrait_profile_to_front", "portrait_turn_to_lens", "detail_texture_macro"]},
             {"key": "break", "share": 0.25, "shot": "extreme close-up",
              "label": {"en": "The break", "ru": "Слом"},
              "en": "The one act where he cannot look at himself.",
@@ -3457,7 +3457,7 @@ SCRIPTS: list[dict] = [
              "label": {"en": "In use", "ru": "В деле"},
              "en": "The object in the world, with the person, in real light.",
              "ru": "Предмет в мире, с человеком, в реальном свете.",
-             "boards": ["interior_window_light", "portrait_hold_still", "travel_side_track"]},
+             "boards": ["interior_window_side", "portrait_hold_still", "travel_side_track"]},
             {"key": "hero", "share": 0.2, "shot": "close-up",
              "label": {"en": "Hero frame", "ru": "Герой-кадр"},
              "en": "One frontal frame worth freezing as a cover.",
@@ -3578,6 +3578,12 @@ SCRIPTS: list[dict] = [
 #              отправляется.
 #   traits   — черты для миксования, см. TRAITS и CONFLICT_PAIRS.
 #
+# `styles_fit` — это СОВМЕСТИМОСТЬ, а не вкус составителя. Карточка, которая
+# держится композицией (деталь, портрет, проём, пустой финальный кадр),
+# работает на любом стиле, включая рисованные, и обязана быть им помечена:
+# человек, выбравший Пиксар, не должен видеть каталог из трёх сцен. Сужаем
+# только там, где сцена опирается на свет или фактуру, которых у стиля нет.
+#
 # ЧЕГО В ТЕКСТАХ НЕТ. Ни грейда, ни плёнки, ни палитры, ни зерна: их ставит
 # стиль трека, и дублирование ломало картинку — это уже чинилось. Проверяется
 # машинно списком _BAN_GRADE. Свет здесь есть, но только ГЕОМЕТРИЕЙ: откуда
@@ -3671,7 +3677,7 @@ BOARDS: list[dict] = [
         "needs_last": False, "engines": _ANY,
         "fits_with": ["m_smoke_curl", "m_pan_link", "l_blue_hour", "l_deep_night", "l_first_light"],
         "conflicts_with": ["m_handheld_drift", "m_arc_quarter"],
-        "styles_fit": ["cinema", "shinkai", "ghibli", "noir", "longheads"],
+        "styles_fit": ["cinema", "shinkai", "ghibli", "noir", "longheads", "flat2d"],
         "tags": ["deadpan", "muted", "street"],
     },
     {
@@ -3697,7 +3703,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_rack_focus", "m_hand_raise", "l_hard_single", "l_window_motivated"],
         "conflicts_with": ["m_crane_rise", "m_steadi_follow"],
-        "styles_fit": ["cinema", "noir", "clay", "katsumi", "longheads"],
+        "styles_fit": ["cinema", "noir", "clay", "katsumi", "longheads", "embroidery"],
         "tags": ["deadpan", "muted", "clean"],
     },
     {
@@ -3724,7 +3730,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_eyes_to_lens", "m_head_snap", "l_rim_back", "l_screen_glow"],
         "conflicts_with": ["m_steadi_follow", "m_crane_rise"],
-        "styles_fit": ["cinema", "punkrf", "noir", "spike", "munir"],
+        "styles_fit": ["cinema", "punkrf", "noir", "spike", "munir", "pixar", "flat2d"],
         "tags": ["menacing", "deadpan", "street"],
     },
     {
@@ -3836,7 +3842,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_truck_side", "m_weight_step", "l_golden_hour", "l_overcast_flat"],
         "conflicts_with": ["m_arc_quarter", "m_rack_focus"],
-        "styles_fit": ["cinema", "longheads", "ghibli", "katsumi", "punkrf"],
+        "styles_fit": ["cinema", "longheads", "ghibli", "katsumi", "punkrf", "flat2d", "pixar"],
         "tags": ["deadpan", "street", "daylight"],
     },
     {
@@ -3863,7 +3869,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_handheld_drift", "m_pedestal_down", "l_window_motivated", "l_practical_only"],
         "conflicts_with": ["m_crane_rise", "l_harsh_noon"],
-        "styles_fit": ["noir", "cinema", "punkrf", "dreamclad", "longheads"],
+        "styles_fit": ["noir", "cinema", "punkrf", "dreamclad", "longheads", "pixar"],
         "tags": ["menacing", "muted", "night"],
     },
     {
@@ -3947,7 +3953,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_push_settle", "m_shoulder_drop", "l_rim_back", "l_hard_single", "l_soft_wrap"],
         "conflicts_with": ["m_whip_out", "m_crane_rise"],
-        "styles_fit": ["cinema", "noir", "longheads", "katsumi", "fanuel"],
+        "styles_fit": ["cinema", "noir", "longheads", "katsumi", "fanuel", "flat2d"],
         "tags": ["melancholy", "muted", "deadpan"],
     },
     {
@@ -3974,7 +3980,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_turn_to_lens", "m_hair_lag", "l_rim_back", "l_window_motivated"],
         "conflicts_with": ["m_truck_side", "m_body_wipe"],
-        "styles_fit": ["cinema", "katsumi", "noir", "dreamclad", "shinkai"],
+        "styles_fit": ["cinema", "katsumi", "noir", "dreamclad", "shinkai", "pixar", "flat2d"],
         "tags": ["melancholy", "deadpan", "muted"],
     },
     {
@@ -4055,7 +4061,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_turn_to_lens", "m_shoulder_drop", "l_practical_only", "l_soft_wrap"],
         "conflicts_with": ["m_arc_quarter", "m_whip_out"],
-        "styles_fit": ["cinema", "katsumi", "longheads", "clay", "noir"],
+        "styles_fit": ["cinema", "katsumi", "longheads", "clay", "noir", "pixar"],
         "tags": ["melancholy", "deadpan", "muted"],
     },
 
@@ -4084,7 +4090,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_hand_raise", "m_rack_focus", "l_hard_single", "l_window_motivated"],
         "conflicts_with": ["m_crane_rise", "m_steadi_follow"],
-        "styles_fit": ["cinema", "clay", "ghibli", "longheads", "katsumi"],
+        "styles_fit": ["cinema", "clay", "ghibli", "longheads", "katsumi", "embroidery", "pixar"],
         "tags": ["cozy", "warm", "handmade"],
     },
     {
@@ -4111,7 +4117,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_hand_raise", "m_rack_focus", "l_rim_back", "l_hard_single"],
         "conflicts_with": ["m_truck_side", "m_handheld_drift"],
-        "styles_fit": ["cinema", "noir", "clay", "flat2d", "longheads"],
+        "styles_fit": ["cinema", "noir", "clay", "flat2d", "longheads", "embroidery", "pixar"],
         "tags": ["deadpan", "clean", "muted"],
     },
     {
@@ -4166,7 +4172,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_hand_raise", "m_hem_settle", "l_hard_single", "l_practical_only"],
         "conflicts_with": ["m_crane_rise", "m_arc_quarter"],
-        "styles_fit": ["noir", "cinema", "punkrf", "munir", "longheads"],
+        "styles_fit": ["noir", "cinema", "punkrf", "munir", "longheads", "flat2d"],
         "tags": ["menacing", "muted", "street"],
     },
     {
@@ -4302,7 +4308,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_hand_raise", "m_paper_scatter", "l_overcast_flat", "l_golden_hour"],
         "conflicts_with": ["m_rack_focus", "m_body_wipe"],
-        "styles_fit": ["cinema", "punkrf", "longheads", "katsumi", "clay"],
+        "styles_fit": ["cinema", "punkrf", "longheads", "katsumi", "clay", "pixar", "flat2d"],
         "tags": ["melancholy", "street", "muted"],
     },
     {
@@ -4358,7 +4364,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_push_settle", "m_body_wipe", "l_rim_back", "l_practical_only"],
         "conflicts_with": ["m_rack_focus", "l_chiaroscuro"],
-        "styles_fit": ["cinema", "munir", "spike", "punkrf", "fanuel"],
+        "styles_fit": ["cinema", "munir", "spike", "punkrf", "fanuel", "flat2d"],
         "tags": ["epic", "crowd", "saturated"],
     },
     {
@@ -4440,13 +4446,13 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_pan_link", "m_weight_step", "l_overcast_flat", "l_practical_only"],
         "conflicts_with": ["m_arc_quarter", "m_whip_out"],
-        "styles_fit": ["longheads", "cinema", "katsumi", "flat2d", "noir"],
+        "styles_fit": ["longheads", "cinema", "katsumi", "flat2d", "noir", "pixar"],
         "tags": ["deadpan", "crowd", "muted"],
     },
 
     # ══════════════ ИНТЕРЬЕРЫ ══════════════
     {
-        "key": "interior_window_light",
+        "key": "interior_window_side",
         "group": "interior", "tier": "free",
         "label": {"en": "By the window", "ru": "У окна"},
         "desc": {"en": "One window, one person, one direction of light. The most reliable interior there is.",
@@ -4470,7 +4476,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_push_settle", "m_breath_fog", "l_window_motivated", "l_soft_wrap"],
         "conflicts_with": ["m_steadi_follow", "l_deep_night"],
-        "styles_fit": ["cinema", "katsumi", "ghibli", "shinkai", "longheads"],
+        "styles_fit": ["cinema", "katsumi", "ghibli", "shinkai", "longheads", "clay", "pixar"],
         "tags": ["melancholy", "warm", "cozy"],
     },
     {
@@ -4497,7 +4503,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_push_settle", "m_enter_frame", "l_chiaroscuro", "l_practical_only"],
         "conflicts_with": ["m_handheld_drift", "l_overcast_flat"],
-        "styles_fit": ["noir", "cinema", "fanuel", "dreamclad", "munir"],
+        "styles_fit": ["noir", "cinema", "fanuel", "dreamclad", "munir", "clay", "pixar"],
         "tags": ["menacing", "monochrome", "night"],
     },
     {
@@ -4524,7 +4530,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_shoulder_drop", "m_hand_raise", "l_practical_only", "l_hard_single"],
         "conflicts_with": ["m_crane_rise", "l_harsh_noon"],
-        "styles_fit": ["cinema", "noir", "longheads", "katsumi", "clay"],
+        "styles_fit": ["cinema", "noir", "longheads", "katsumi", "clay", "pixar", "embroidery"],
         "tags": ["melancholy", "warm", "cozy"],
     },
     {
@@ -4748,7 +4754,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_coat_inertia", "m_smoke_curl", "l_blue_hour", "l_practical_only"],
         "conflicts_with": ["m_steadi_follow", "m_push_settle"],
-        "styles_fit": ["cinema", "longheads", "noir", "katsumi", "shinkai"],
+        "styles_fit": ["cinema", "longheads", "noir", "katsumi", "shinkai", "flat2d", "pixar"],
         "tags": ["melancholy", "deadpan", "muted"],
     },
     {
@@ -4775,7 +4781,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_pull_open", "m_smoke_curl", "l_first_light", "l_blue_hour"],
         "conflicts_with": ["m_handheld_drift", "m_whip_out"],
-        "styles_fit": ["cinema", "shinkai", "longheads", "fanuel", "ghibli"],
+        "styles_fit": ["cinema", "shinkai", "longheads", "fanuel", "ghibli", "flat2d", "clay"],
         "tags": ["nostalgic", "muted", "epic"],
     },
     {
@@ -4886,7 +4892,7 @@ BOARDS: list[dict] = [
         "needs_last": True, "engines": _CHEAP,
         "fits_with": ["m_enter_frame", "m_hand_raise", "l_chiaroscuro", "l_window_motivated"],
         "conflicts_with": ["m_arc_quarter", "m_truck_side"],
-        "styles_fit": ["cinema", "noir", "ghibli", "dreamclad", "clay"],
+        "styles_fit": ["cinema", "noir", "ghibli", "dreamclad", "clay", "pixar", "flat2d"],
         "tags": ["nostalgic", "warm", "night"],
     },
     {
@@ -5638,7 +5644,7 @@ LIGHTS: list[dict] = [
         "note": {"en": "The only scheme that forgives a badly generated face.",
                  "ru": "Единственная схема, прощающая плохо сгенерённое лицо."},
         "slots": [], "traits": ["soft_light"],
-        "fits_with": ["interior_window_light", "portrait_two_shot", "portrait_hold_still"],
+        "fits_with": ["interior_window_side", "portrait_two_shot", "portrait_hold_still"],
         "conflicts_with": ["l_hard_single", "l_chiaroscuro", "l_rim_back"],
     },
     {
@@ -5677,7 +5683,7 @@ LIGHTS: list[dict] = [
         "note": {"en": "Interiors read best with one direction of light and one direction only.",
                  "ru": "Интерьеры лучше всего читаются при одном и только одном направлении света."},
         "slots": [], "traits": ["soft_light", "interior"],
-        "fits_with": ["interior_window_light", "detail_hands_work", "travel_car_window"],
+        "fits_with": ["interior_window_side", "detail_hands_work", "travel_car_window"],
         "conflicts_with": ["l_deep_night", "l_screen_glow"],
     },
     {
@@ -6365,7 +6371,7 @@ EXAMPLES: list[dict] = [
     {
         "key": "ex_interior", "of": "board", "group": "interior",
         "label": {"en": "Interior: by the window", "ru": "Интерьер: у окна"},
-        "script": "two_rooms", "board": "interior_window_light",
+        "script": "two_rooms", "board": "interior_window_side",
         "motion": "m_breath_fog", "lights": ["l_window_motivated"],
         "slots": {"character": "woman in a knitted jumper", "location": "one-room flat",
                   "time": "first light"},
@@ -6504,6 +6510,17 @@ def _validate_v2() -> list[str]:                         # noqa: C901
     board_groups = {g["key"] for g in BOARD_GROUPS}
     motion_groups = {g["key"] for g in MOTION_GROUPS}
     light_groups = {g["key"] for g in LIGHT_GROUPS}
+
+    # Ключи всех слоёв живут в разных словарях, но в одном URL-пространстве и в
+    # одной голове. Совпадение ключа заготовки с ключом приёма — это две разные
+    # карточки по одному адресу, и первый же «применить по ключу» применит не то.
+    seen_keys: dict[str, str] = {k: "приём" for k in SHOT_KEYS}
+    for label, keys in (("сценарий", SCRIPT_KEYS), ("заготовка", BOARD_KEYS),
+                        ("движение", MOTION_KEYS), ("свет", LIGHT_KEYS)):
+        for k in keys:
+            if k in seen_keys:
+                err.append(f"{label} {k}: ключ уже занят ({seen_keys[k]})")
+            seen_keys[k] = label
 
     for pair in CONFLICT_PAIRS:
         for t in pair:
