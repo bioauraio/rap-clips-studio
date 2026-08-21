@@ -213,6 +213,47 @@ def _bootstrap_users() -> None:
 _bootstrap_users()
 
 
+def _reset_orphan_jobs() -> None:
+    """Сбросить статусы задач, чьи потоки не пережили перезапуск.
+
+    Генерации живут в daemon-тредах: при рестарте контейнера (а он бывает при
+    каждом деплое) поток исчезает, а строка в базе остаётся в 'running' — и
+    кнопка навсегда превращается в «рисую лист…». Человек ждёт того, чего уже
+    никто не делает. На старте честно помечаем такие задачи прерванными,
+    чтобы их можно было запустить заново."""
+    db = SessionLocal()
+    try:
+        note = "прервано перезапуском сервиса — запусти заново"
+        n = 0
+        for model, pairs in (
+            (Track, (("scenes_status", "scenes_error"),
+                     ("storyboard_status", "storyboard_error"),
+                     ("clip_status", "clip_error"),
+                     ("supergen_status", "supergen_note"))),
+            (Scene, (("image_status", "image_error"),
+                     ("video_status", "video_error"))),
+            (Project, (("story_status", "story_error"),)),
+        ):
+            for col, err in pairs:
+                rows = db.query(model).filter(
+                    getattr(model, col).in_(("queued", "running"))).all()
+                for row in rows:
+                    setattr(row, col, "error")
+                    if hasattr(row, err):
+                        setattr(row, err, note)
+                    n += 1
+        if n:
+            db.commit()
+            log.info("сброшено зависших задач после рестарта: %s", n)
+    except Exception as e:  # noqa: BLE001 — старт сервиса важнее уборки
+        log.warning("не смог сбросить зависшие задачи: %s", e)
+    finally:
+        db.close()
+
+
+_reset_orphan_jobs()
+
+
 def _reg_file(db: Session, filename: str, owner_id: int | None, *,
               kind: str = "", project_id: int = 0, track_id: int = 0,
               scene_id: int = 0) -> None:

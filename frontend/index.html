@@ -47,9 +47,9 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=58" />
-<link rel="stylesheet" href="/landing.css?v=58" />
-<link rel="stylesheet" href="/tg.css?v=58" />
+<link rel="stylesheet" href="/style.css?v=54" />
+<link rel="stylesheet" href="/landing.css?v=54" />
+<link rel="stylesheet" href="/tg.css?v=54" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -67,7 +67,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=58"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=54"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -627,15 +627,10 @@
             </div>
           </div>
         </div>
-        <!-- Вид ленты кадров. Сетка — по умолчанию: она и компактнее, и
-             дешевле для браузера (плитка = 12 узлов против 110 у карточки).
-             Лента остаётся: под музыку с подсветкой текущего кадра
-             горизонтальная прокрутка честно удобнее. -->
+        <!-- Кадры идут лентой: под музыку с подсветкой текущего кадра
+             горизонтальная прокрутка удобнее, а переключатель вида владелец
+             просил убрать. -->
         <div class="scenes-toolbar">
-          <div class="view-toggle" role="group">
-            <button type="button" class="view-btn" data-view="grid" data-i18n="track.viewGrid"></button>
-            <button type="button" class="view-btn" data-view="strip" data-i18n="track.viewStrip"></button>
-          </div>
           <span class="scenes-count muted"></span>
         </div>
         <div class="strip-wrap">
@@ -946,8 +941,8 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=58"></script>
-<script src="/app.js?v=58"></script>
+<script src="/i18n.js?v=54"></script>
+<script src="/app.js?v=54"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -971,10 +966,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=58";
+  css.href = "/nav.css?v=54";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=58";
+  js.src = "/nav.js?v=54";
   document.body.appendChild(js);
 })();
 </script>

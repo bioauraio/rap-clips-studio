@@ -4118,7 +4118,9 @@ function viewMap() {
 }
 
 function sceneView(trackId) {
-  return viewMap()[String(trackId)] === "strip" ? "strip" : "grid";
+  // Владелец просил вернуть как было: кадры лентой, без переключателя вида.
+  // Функция оставлена, чтобы не переписывать вызовы по всему рендеру.
+  return "strip";
 }
 
 function setSceneView(trackId, view) {
