@@ -32,7 +32,7 @@
   --lift-3: 0 3px 0 var(--edge);
   --shadow-soft: 0 8px 20px -14px rgba(90, 52, 24, .28);
   --shadow-lift: 0 18px 40px -26px rgba(90, 52, 24, .40);
-  --glow-cta: 0 6px 16px -8px rgba(207, 34, 34, .28);
+  --glow-cta: 0 6px 16px -8px rgba(200, 96, 20, .26);
 
   /* ── радиусы: потолок 18 ── */
   --r-1: 8px; --r-2: 10px; --r-3: 14px; --r-4: 18px;
@@ -53,7 +53,7 @@
   --on-accent: #fff;
 
   /* ── огонь: один сплошной на экран ── */
-  --fire-ink: linear-gradient(180deg, #d92626, #b3261e);
+  --fire-ink: linear-gradient(180deg, #e5761b, #c85a14);
   --fire-hot: linear-gradient(90deg, var(--gold), var(--accent-2), var(--accent));
 
   --ring: 0 0 0 3px rgba(207, 34, 34, .22);

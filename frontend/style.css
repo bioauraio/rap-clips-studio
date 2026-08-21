@@ -17,13 +17,13 @@
   --gold: #ffb545;
   --danger: #e5484d;
   --ok: #14a06b;
-  /* ОГОНЬ ОДИН НА ВЕСЬ СЕРВИС. Раньше студия заливала акцентные кнопки
-     градиентом #ff7a29 → #ff3d3d: белый текст на нём даёт 2.6:1 — не читается
-     и выглядит неоном, из-за чего экран входа и назывался «красным».
-     Лендинг уже жил на чернильном огне (landing.css:--fire-ink), студия —
-     нет. Теперь токен один, и правится он в двух файлах одинаково.
-     Белый на #d92626 — 4.95:1, на #b3261e — 6.4:1. */
-  --fire-ink: linear-gradient(180deg, #d92626, #b3261e);
+  /* ОГОНЬ ОДИН НА ВЕСЬ СЕРВИС, И ОН ОРАНЖЕВЫЙ. Красный вариант (#d92626 →
+     #b3261e) владелец забраковал дважды: марка приложения оранжевая, красные
+     кнопки читаются как ошибка. Исходный #ff7a29 → #ff3d3d давал белым текстом
+     2.6:1 — неон и нечитаемо. Взят тот же оранжевый, но глубже: белый на
+     #e5761b — 3.03:1, на #c85a14 — 4.26:1, то есть читается и остаётся тёплым.
+     МЕНЯТЬ ТОЛЬКО ВМЕСТЕ с landing.css и только в сторону оранжевого. */
+  --fire-ink: linear-gradient(180deg, #e5761b, #c85a14);
   --on-accent: #fff;
   /* Чернильные дублёры марки для ТЕКСТА: сам --accent (#ff3d3d) на тёплой
      бумаге даёт 3.4:1, --accent-2 (#ff7a29) — 2.4:1. Заливкам это не мешает,
@@ -89,7 +89,7 @@ body {
   padding: 10px 14px; border-radius: 12px; border: 2px solid #2d211a;
   cursor: pointer; font-weight: 800; font-size: 13.5px;
   color: var(--on-accent); background: var(--fire-ink);
-  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(207, 34, 34, .28);
+  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(200, 96, 20, .26);
 }
 .login-box > button[type="submit"]:hover:not(:disabled) {
   background: var(--fire-ink);
@@ -274,7 +274,7 @@ button:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #2d
 button.primary {
   color: var(--on-accent); border: 2px solid #2d211a;
   background: var(--fire-ink);
-  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(207, 34, 34, .28);
+  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(200, 96, 20, .26);
 }
 button.primary:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
 button.ghost { background: transparent; border: none; color: var(--muted); padding: 5px 9px; }
@@ -294,12 +294,14 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   padding: 14px; margin-bottom: 14px;
   box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px #2d211a;
 }
-.track-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.track-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .pos {
   font-family: var(--font-mono); font-weight: 800; font-size: 15px; min-width: 34px;
   color: var(--accent); text-shadow: 0 0 14px rgba(255,61,61,.35);
 }
-.t-title { flex: 1; font-weight: 700; font-size: 15.5px; }
+/* Название — по содержимому, а не во всю ширину: рядом теперь этапы. */
+.t-title { flex: 0 1 260px; min-width: 120px; font-weight: 700; font-size: 15.5px; }
+.track-head .stage-tabs { flex: 1 1 auto; min-width: 0; margin: 0; }
 .order-btns { display: flex; gap: 2px; }
 .track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
@@ -729,7 +731,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .kind-card .kind-emoji { font-size: 26px; }
 .kind-card.on {
   color: #fff; background: var(--fire-ink);
-  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(207, 34, 34, .28);
+  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(200, 96, 20, .26);
 }
 .kind-card.on .muted { color: rgba(255, 255, 255, .85); }
 

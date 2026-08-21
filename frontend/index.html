@@ -47,9 +47,9 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=54" />
-<link rel="stylesheet" href="/landing.css?v=54" />
-<link rel="stylesheet" href="/tg.css?v=54" />
+<link rel="stylesheet" href="/style.css?v=55" />
+<link rel="stylesheet" href="/landing.css?v=55" />
+<link rel="stylesheet" href="/tg.css?v=55" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -67,7 +67,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=54"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=55"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -504,7 +504,9 @@
       </label>
       <span class="pos"></span>
       <input class="t-title" data-i18n-ph="track.titlePh" />
-      <button class="s-supergen primary" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
+      <!-- Этапы стоят в одной строке с названием: отдельной строкой они
+           съедали высоту, а название растягивалось на весь экран впустую. -->
+        <button class="s-supergen primary" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
       <div class="order-btns">
         <button class="up ghost" data-i18n-title="common.moveUp">↑</button>
         <button class="down ghost" data-i18n-title="common.moveDown">↓</button>
@@ -941,8 +943,8 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=54"></script>
-<script src="/app.js?v=54"></script>
+<script src="/i18n.js?v=55"></script>
+<script src="/app.js?v=55"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -966,10 +968,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=54";
+  css.href = "/nav.css?v=55";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=54";
+  js.src = "/nav.js?v=55";
   document.body.appendChild(js);
 })();
 </script>

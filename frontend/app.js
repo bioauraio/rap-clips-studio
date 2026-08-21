@@ -3589,7 +3589,9 @@ function buildEngineTabs(box, list, current, costOf, onPick) {
     box.appendChild(chip);
     return chip;
   };
-  mk("", t("engines.auto"), null).title = t("engines.autoNote");
+  // Чипа «По тарифу» нет: на объекте всегда стоит КОНКРЕТНАЯ модель, иначе
+  // человек не понимает, чем именно рисует и сколько это стоит. Дефолт тарифа
+  // просто подсвечен как выбранный.
   list.forEach((e) => {
     const chip = mk(e.id, e.title, costOf(e));
     chip.title = e.note || e.title;
