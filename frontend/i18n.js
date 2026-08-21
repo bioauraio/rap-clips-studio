@@ -145,6 +145,103 @@ const I18N = {
       adminTitle: "clients, broadcasts, styles and service settings",
     },
 
+    // ─────────── ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ (sections.js) ───────────
+    // Первый ярус: «где я». Второй ярус — тумблер режимов (modes.*): «чем я
+    // снимаю». Подписи здесь короткие намеренно: строка разделов читается
+    // одним взглядом, а объяснение живёт в title.
+    nav: {
+      aria: "Service sections",
+      sections: {
+        studio: "Studio",
+        academy: "Academy",
+        prompts: "Prompts",
+      },
+      titles: {
+        studio: "projects, tracks, storyboard and assembly",
+        academy: "courses, lessons and ready-made shot kits",
+        prompts: "shots: first frame, last frame, motion — copy or apply",
+      },
+    },
+
+    // ─────────── АКАДЕМИЯ ───────────
+    academy: {
+      title: "Academy",
+      lead: "Everything we know about the pipeline, in the order you actually need it. Every lesson is open on every plan — what the plan decides is whether the lesson's kit can be applied to your project.",
+      progressAll: "{done} of {total} {word} · {percent}%",
+      courseMeta: "{n} {word} · {min} min",
+      // Формы множественного числа: массив всегда из трёх (см. tPlural).
+      // Английскому хватает двух, русскому нужны все три — «1 урок»,
+      // «2 урока», «5 уроков», — и без них витрина писала «1 уроков».
+      lessonWord: ["lesson", "lessons", "lessons"],
+      packWord: ["kit", "kits", "kits"],
+      sceneWord: ["scene", "scenes", "scenes"],
+      sceneWordDat: ["scene", "scenes", "scenes"],
+      minutes: "{n} min",
+      hasPack: "with a kit",
+      outcome: "By the end of this course",
+      lockedPacks: "{n} {word} on a paid plan",
+      lockedTier: "opens on {plan}",
+      artifact: "Lesson kit",
+      withPreset: "Story frame",
+      apply: "Apply to a project",
+      applyNote: "The kit lands on the scenes as text: the first frame, the last one and the motion between them. Nothing is generated and nothing is charged — you see the result on the cards first.",
+      back: "← All courses",
+      markDone: "Mark as read",
+      undone: "Mark as unread",
+      openPage: "open as a page",
+      chooseTrack: "Where to apply",
+      chooseTrackHint: "The kit lands on the scenes of one track, in order — the order is what makes it a kit rather than six separate cards.",
+      scenesN: "{n} {word}",
+      slotsNote: "Leave a field empty and the example from the card is used. These are placeholders inside the prompt, not settings.",
+      applied: "Applied to {n} {word}",
+      appliedPart: "Applied to {n} {word} out of {total} — the track has fewer scenes than the kit",
+      needScenes: "This track has no scenes yet — generate the storyboard first.",
+      noTracks: "Create a track first: shots land on scenes.",
+      failed: "The academy did not load. Reload the page.",
+    },
+
+    // ─────────── КАТАЛОГ ПРИЁМОВ ───────────
+    library: {
+      title: "Prompts",
+      lead: "A shot is how one scene is filmed. Ours describe the difference between the first and the last frame, because that is how a scene is built here — not a camera path inside one clip.",
+      searchPh: "Search: push-in, backlight, cut on motion…",
+      all: "All",
+      packs: "Kits",
+      first: "First frame",
+      last: "Last frame",
+      motion: "Motion",
+      gain: "What it gives",
+      slotsTitle: "Slots",
+      slotPh: "leave empty for the example",
+      copy: "Copy",
+      copied: "copied",
+      apply: "Apply",
+      seePlans: "See the plans",
+      locked: "Opens on {plan}",
+      chooseScene: "Which scene",
+      sceneN: "Scene {n}",
+      empty: "Nothing found.",
+      failed: "The catalogue did not load. Reload the page.",
+      signatureNote: "The fifteen signature styles are not here on purpose: their prompt text stays closed — seven of them were reverse-engineered from viral accounts and are the only moat this service has. Open here is craft: camera, light, cutting. It is in every cinematography textbook, it gives no one an edge, and hiding it would only cost us readers.",
+      slot: {
+        character: "character",
+        location: "location",
+        time: "time of day",
+        weather: "weather",
+        emotion: "state",
+        object: "object",
+        product: "product",
+        colour: "accent colour",
+        surface: "surface",
+        action: "action",
+        detail: "detail",
+        clothing: "clothing",
+        crowd: "crowd",
+        light: "light source",
+        texture: "texture",
+      },
+    },
+
     // ─────────────────────── чат ───────────────────────
     // ОДНО окно: намерение задаёт выбранная модель, а не вкладка экрана.
     chat: {
@@ -484,6 +581,7 @@ const I18N = {
       empty: "nothing here yet",
       edit: "Edit",
       save: "Save",
+      saved: "saved",
       ideaLabel: "Idea (optional)",
       ideaPh: "One or two sentences: what this is about",
       episodesLabel: "Episodes in the season",
@@ -1243,6 +1341,20 @@ const I18N = {
       pay: "Pay",
       promoLabel: "Promo code",
       promoPh: "ambassador code — a discount on your first payment",
+      // ── очередь генераций ──
+      speedTitle: "Speed of your plan",
+      parallel: "{n} {word} at once",
+      genWord: ["generation", "generations", "generations"],
+      clipMinutes: "a clip in ~{n} min",
+      assemblyNote: "Generation runs in parallel; the final assembly runs one at a time for the whole service.",
+      queueRunning: "{n} running now",
+      queueWaiting: "{n} waiting in the queue",
+      queueIdle: "nothing running",
+      queueNote: "Over the limit a job waits its turn instead of being refused: the tokens are already charged, and the work will be done.",
+      // ── две даты, а не одна ──
+      paidUntil: "Paid until {date}",
+      pointsNext: "Next {n} tokens on {date}",
+      pointsDripLeft: "{n} monthly grants left in this year",
       creating: "creating the payment…",
       payOff: "payments are not connected yet",
       payOffTitle: "payment processing is not set up yet — ping the owner",
@@ -1521,6 +1633,20 @@ const I18N = {
         yearHint: "or {mo} a month billed yearly",
         yearNote: "{total} a year · billed once",
         pointsLine: "{points} tokens a month",
+        // СКОРОСТЬ ТАРИФА. Первая строка — механизм, вторая — то, во что он
+        // превращается. Про сборку сказано отдельно и честно: склейка идёт по
+        // одной на весь сервис, и умолчать об этом значит соврать на
+        // последнем шаге — ровно то, за что ругают конкурентов.
+        parallel: "{n} {word} at once",
+        // Формы множественного числа: «1 генерация», а не «1 генераций».
+        // Английскому хватает двух, массив всегда из трёх — так словарь
+        // одинаков для любого языка (см. tPlural в i18n.js).
+        genWord: ["generation", "generations", "generations"],
+        clipMinutes: "a clip in ~{n} min",
+        assemblyNote: "Generation runs in parallel; the final assembly runs one at a time for the whole service.",
+        promoLabel: "Have a promo code?",
+        promoPh: "ambassador or press code",
+        promoSaved: "Code {code} saved — the discount is applied at checkout.",
         clipsLine: "≈ {clips} {word} of 3 minutes",
         clipsLineOne: "≈ 1 clip of 3 minutes",
         clipWord: ["clip", "clips", "clips"],
@@ -1591,6 +1717,10 @@ const I18N = {
       },
 
       topup: {
+        // 1000 токенов, а не один: токен стоит меньше цента, и «1 токен =
+        // $0.04» после округления врёт на четверть цены. Тысяча — единица,
+        // которую видно без дробей и которую человек может проверить делением.
+        perPoint: "1000 tokens = {price}",
         eyebrow: "Top up",
         title: "Out of tokens halfway through the album? Top up without changing plan",
         lead: "A pack sits on top of your subscription. The bigger the pack, the cheaper the token.",
@@ -2327,6 +2457,98 @@ const I18N = {
       musicTitle: "загрузить трек, отмастерить, собрать релиз",
       admin: "Админка",
       adminTitle: "клиенты, рассылки, стили и настройки сервиса",
+    },
+
+    // ─────────── ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ (sections.js) ───────────
+    nav: {
+      aria: "Разделы сервиса",
+      sections: {
+        studio: "Студия",
+        academy: "Академия",
+        prompts: "Промты",
+      },
+      titles: {
+        studio: "проекты, треки, раскадровка и сборка",
+        academy: "курсы, уроки и готовые наборы приёмов",
+        prompts: "приёмы: первый кадр, последний, движение — скопировать или применить",
+      },
+    },
+
+    // ─────────── АКАДЕМИЯ ───────────
+    academy: {
+      title: "Академия",
+      lead: "Всё, что мы знаем про конвейер, в том порядке, в котором это реально нужно. Уроки открыты на любом тарифе — тариф решает не «покажем ли текст», а применится ли набор приёмов в проект.",
+      progressAll: "{done} из {total} {word} · {percent}%",
+      courseMeta: "{n} {word} · {min} мин",
+      lessonWord: ["урок", "урока", "уроков"],
+      packWord: ["набор", "набора", "наборов"],
+      sceneWord: ["сцена", "сцены", "сцен"],
+      // Дательный падеж: «применено к 1 сцене», «к 2 сценам».
+      sceneWordDat: ["сцене", "сценам", "сценам"],
+      minutes: "{n} мин",
+      hasPack: "с набором",
+      outcome: "В конце курса",
+      lockedPacks: "{n} {word} по тарифу",
+      lockedTier: "откроется на {plan}",
+      artifact: "Артефакт урока",
+      withPreset: "Каркас",
+      apply: "Применить в проект",
+      applyNote: "Набор ложится на сцены текстом: первый кадр, последний и движение между ними. Ничего не генерится и ничего не списывается — сначала ты видишь результат на карточках.",
+      back: "← Все курсы",
+      markDone: "Прочитал",
+      undone: "Снять отметку",
+      openPage: "открыть страницей",
+      chooseTrack: "Куда применить",
+      chooseTrackHint: "Набор ложится на сцены одного трека по порядку — именно порядок и отличает набор от шести отдельных карточек.",
+      scenesN: "{n} {word}",
+      slotsNote: "Оставишь поле пустым — подставится пример из карточки. Это места внутри промпта, а не настройки.",
+      applied: "Применено к {n} {word}",
+      appliedPart: "Применено к {n} {word} из {total} — в треке меньше сцен, чем приёмов в наборе",
+      needScenes: "У трека пока нет сцен — сначала раскадровка.",
+      noTracks: "Сначала создай трек: приёмы ложатся на сцены.",
+      failed: "Академия не загрузилась. Обнови страницу.",
+    },
+
+    // ─────────── КАТАЛОГ ПРИЁМОВ ───────────
+    library: {
+      title: "Промты",
+      lead: "Приём — это как снята одна сцена. Наши описывают разницу между первым и последним кадром, потому что сцена здесь собирается именно так, а не траекторией камеры внутри одного ролика.",
+      searchPh: "Поиск: наезд, контровой, склейка на движении…",
+      all: "Все",
+      packs: "Наборы",
+      first: "Первый кадр",
+      last: "Последний кадр",
+      motion: "Движение",
+      gain: "Что даёт",
+      slotsTitle: "Слоты",
+      slotPh: "пусто — подставим пример",
+      copy: "Скопировать",
+      copied: "скопировано",
+      apply: "Применить",
+      seePlans: "Посмотреть тарифы",
+      locked: "Открывается на {plan}",
+      chooseScene: "На какую сцену",
+      sceneN: "Сцена {n}",
+      empty: "Ничего не нашлось.",
+      failed: "Каталог не загрузился. Обнови страницу.",
+      signatureNote: "Пятнадцати фирменных стилей здесь нет намеренно: текст их промптов закрыт — семь сняты покадровым разбором виральных аккаунтов и являются единственным рвом сервиса. Открыто здесь ремесло: камера, свет, монтаж. Оно есть в любом учебнике операторского мастерства, преимущества никому не даёт, а спрятав его, мы потеряли бы только читателей.",
+      slot: {
+        character: "персонаж",
+        location: "локация",
+        time: "время суток",
+        weather: "погода",
+        emotion: "состояние",
+        object: "объект",
+        product: "товар",
+        colour: "цвет акцента",
+        surface: "поверхность",
+        action: "действие",
+        detail: "деталь",
+        clothing: "одежда",
+        crowd: "толпа",
+        light: "источник света",
+        texture: "фактура",
+      },
     },
 
     // ─────────────────────── чат ───────────────────────
@@ -3412,6 +3634,20 @@ const I18N = {
       pay: "Оплатить",
       promoLabel: "Промокод",
       promoPh: "код амбассадора — скидка на первую оплату",
+      // ── очередь генераций ──
+      speedTitle: "Скорость твоего тарифа",
+      parallel: "{n} {word} одновременно",
+      genWord: ["генерация", "генерации", "генераций"],
+      clipMinutes: "клип за ~{n} мин",
+      assemblyNote: "Генерация идёт параллельно, финальная сборка — по одной на весь сервис.",
+      queueRunning: "{n} в работе",
+      queueWaiting: "{n} ждут очереди",
+      queueIdle: "сейчас ничего не считается",
+      queueNote: "Сверх лимита задача встаёт в очередь, а не получает отказ: токены уже списаны, и работа будет сделана.",
+      // ── две даты, а не одна ──
+      paidUntil: "Оплачено до {date}",
+      pointsNext: "Следующие {n} токенов {date}",
+      pointsDripLeft: "осталось {n} месячных начислений в этом году",
       creating: "создаю платёж…",
       payOff: "оплата пока не подключена",
       payOffTitle: "приём платежей ещё не настроен — напиши владельцу",
@@ -3690,6 +3926,13 @@ const I18N = {
         yearHint: "или {mo} в месяц при оплате за год",
         yearNote: "{total} в год · счёт раз в год",
         pointsLine: "{points} токенов в месяц",
+        parallel: "{n} {word} одновременно",
+        genWord: ["генерация", "генерации", "генераций"],
+        clipMinutes: "клип за ~{n} мин",
+        assemblyNote: "Генерация идёт параллельно, финальная сборка — по одной на весь сервис.",
+        promoLabel: "Есть промокод?",
+        promoPh: "код амбассадора или прессы",
+        promoSaved: "Код {code} сохранён — скидка применится при оплате.",
         clipsLine: "≈ {clips} {word} по 3 минуты",
         clipsLineOne: "≈ 1 клип на 3 минуты",
         clipWord: ["клип", "клипа", "клипов"],
@@ -3760,6 +4003,7 @@ const I18N = {
       },
 
       topup: {
+        perPoint: "1000 токенов = {price}",
         eyebrow: "Докупка токенов",
         title: "Кончились токены посреди альбома — добери, не меняя тариф",
         lead: "Пакет докупается поверх подписки. Чем больше пакет, тем дешевле токен.",

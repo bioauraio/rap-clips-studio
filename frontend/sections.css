@@ -1,0 +1,582 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   lolq.ai — ЛЕНТА РАЗДЕЛОВ, АКАДЕМИЯ И КАТАЛОГ ПРИЁМОВ
+
+   Подключается ПОСЛЕ style.css: здесь только новое и ровно те правки шапки,
+   которые нужны ленте. Ни один существующий селектор не переопределяется без
+   класса .has-sections на шапке — без sections.js вёрстка обязана остаться
+   ровно такой, какой была.
+
+   ═══════════════════════════ РЕЖИМ МИНИМАЛИЗМА ═══════════════════════════
+   Требование владельца, и оно про экономию внимания, а не про вкус:
+
+     1. ОГНЯ В НАВИГАЦИИ НЕТ. --fire-ink живёт на главном действии экрана
+        (снять, оплатить, применить) — ровно одном. Подсветить огнём ещё и
+        активную вкладку значит уравнять «где я» с «что сделать», и главная
+        кнопка перестаёт находиться взглядом.
+     2. АКТИВНОЕ СОСТОЯНИЕ — РАМКА И ВЕС ТЕКСТА, НЕ ЗАЛИВКА. Заливка на
+        светлой бумаге тянет на себя всё внимание строки.
+     3. ТОНКИЕ ОБВОДКИ. У студии обводка 2–2.5px и «подушка» снизу — это язык
+        рабочих карточек, объектов, которые двигают. Навигация ничего не
+        двигает, ей хватает 1px.
+     4. СПОКОЙНЫЕ ФОНЫ. Никакого второго стекла поверх стекла шапки.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────── лента разделов ─────────────────────────── */
+
+.tb-sections {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  /* Лента НЕ ПЕРЕНОСИТСЯ и не растёт: она прокручивается. Перенос второй
+     строкой ломает требование «шапка в одну строку», а сжатие подписей
+     превращает разделы в нечитаемые огрызки. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+.tb-sections::-webkit-scrollbar { display: none; }
+
+/* Кнопка раздела. Одинаковая и для своих кнопок, и для перенесённых
+   (#chat-btn, #music-btn, #account-btn, #admin-btn): у них остался класс
+   .account-btn, поэтому обводку и тень студийной кнопки надо снять явно. */
+.topbar.has-sections .tb-sec {
+  flex: none;
+  scroll-snap-align: start;
+  height: var(--tb-h);
+  min-height: var(--tb-h);
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  font-family: var(--font-head);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  line-height: 1;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  box-shadow: none;
+  cursor: pointer;
+  transition: color .14s ease, border-color .14s ease;
+}
+.topbar.has-sections .tb-sec:hover:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+  border-color: rgba(45, 33, 26, .16);
+}
+/* Нажатие не «проваливает» кнопку: у студийных кнопок это подушка объекта,
+   а вкладка — не объект, её не вдавливают. */
+.topbar.has-sections .tb-sec:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+.topbar.has-sections .tb-sec.on {
+  color: var(--text);
+  font-weight: 800;
+  border-color: rgba(45, 33, 26, .55);
+  background: transparent;
+}
+.topbar.has-sections .tb-sec:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+}
+
+/* Шапка с лентой: три группы в одну строку — марка, разделы, личное.
+   Проектная строка и тумблер режимов уезжают во ВТОРОЙ ряд: это второй ярус
+   навигации («чем снимаю»), и стоять в одной строке с первым он не должен. */
+.topbar.has-sections {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  column-gap: 10px;
+}
+.topbar.has-sections > #brand { order: 1; }
+.topbar.has-sections > .tb-sections { order: 2; flex: 1 1 auto; }
+/* Без margin-left:auto: автоотступ съедает ВСЁ свободное место, и лента
+   разделов, честно объявленная гибкой, схлопывается до 29 пикселей. Правый
+   край и так за ней — ленты достаточно, чтобы прижать личный блок. */
+.topbar.has-sections > .tb-user { order: 3; }
+.topbar.has-sections > .tb-project { order: 4; flex: 1 1 320px; }
+.topbar.has-sections > .mode-seg { order: 5; }
+
+/* Разделитель между разделами и личным блоком — волосяная линия, не рамка. */
+.topbar.has-sections > .tb-user::before {
+  content: "";
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin-right: 4px;
+  background: rgba(45, 33, 26, .16);
+}
+
+@media (max-width: 900px) {
+  /* Телефон: шапка ОДНОЙ строкой. Лента прокручивается пальцем, личный блок
+     ужимается до бейджа токенов и языка — кнопки «Кабинет» и «Мастерская»
+     уже стоят в ленте, и дублировать их справа незачем. */
+  .topbar.has-sections { row-gap: 6px; }
+  .topbar.has-sections .tb-sec { padding: 0 9px; font-size: 12.5px; }
+  .topbar.has-sections > .tb-user::before { display: none; }
+  .topbar.has-sections > .tb-user { gap: 6px; }
+  .topbar.has-sections > .tb-project { flex-basis: 100%; }
+}
+@media (max-width: 560px) {
+  /* Совсем узкий экран: марка сжимается до знака, чтобы разделам осталось
+     место. Слово «lolq.ai» на 360px съедает треть строки и не сообщает
+     ничего — человек уже внутри приложения. */
+  .topbar.has-sections > #brand .brand-word { display: none; }
+}
+
+/* Тост: единственный в обычной студии (тост верстака живёт под ?nav=1). */
+.sec-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translate(-50%, 12px);
+  z-index: 300;
+  max-width: min(440px, 92vw);
+  padding: 10px 16px;
+  border: 2px solid #2d211a;
+  border-radius: 14px;
+  background: var(--inset);
+  box-shadow: 0 5px 0 #2d211a, 0 14px 30px rgba(180, 90, 30, .18);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.sec-toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* ═══════════════════════════════ АКАДЕМИЯ ═══════════════════════════════ */
+
+.ac-head { margin-bottom: 18px; }
+.ac-lead { margin: 0 0 12px; color: var(--ink-muted); font-size: 13.5px; max-width: 70ch; }
+
+/* Полоса прогресса — линия, а не «заряженная батарея»: цвет здесь означает
+   факт («прочитано столько»), а не призыв. */
+.ac-bar {
+  height: 4px;
+  border-radius: 3px;
+  background: rgba(45, 33, 26, .12);
+  overflow: hidden;
+}
+.ac-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent-2-ink);
+  transition: width .3s ease;
+}
+.ac-bar.sm { height: 3px; margin: 8px 0 10px; }
+.ac-prog {
+  margin: 7px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .05em;
+  color: var(--ink-muted);
+}
+
+.ac-courses { display: grid; gap: 14px; }
+@media (min-width: 860px) {
+  .ac-courses { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ac-course {
+  border: 1px solid rgba(45, 33, 26, .22);
+  border-radius: 16px;
+  padding: 15px 16px;
+  background: var(--surface);
+}
+.ac-course header { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.ac-course h3 { margin: 0; font-size: 16px; font-weight: 800; flex: 1; }
+/* Номер уровня — цифра в кружке, а не бейдж с заливкой. */
+.ac-course-num {
+  flex: none;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(45, 33, 26, .3);
+  border-radius: 50%;
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted);
+}
+.ac-lock {
+  flex: none;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--gold-ink);
+  border: 1px solid rgba(138, 90, 43, .4);
+  border-radius: 7px; padding: 2px 6px;
+}
+.ac-course-lead { margin: 0 0 6px; font-size: 13px; color: var(--ink-muted); }
+.ac-course-meta {
+  margin: 0;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .05em;
+  color: var(--muted);
+}
+.ac-outcome { margin: 0 0 10px; font-size: 12.5px; }
+.ac-outcome b {
+  display: block; margin-bottom: 3px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-muted); font-weight: 700;
+}
+.ac-outcome ul { margin: 0; padding-left: 17px; color: var(--text); }
+.ac-outcome li { margin-bottom: 2px; }
+
+.ac-lessons { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ac-lesson {
+  width: 100%;
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 8px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-shadow: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ac-lesson:hover:not(:disabled) { background: transparent; border-color: rgba(45, 33, 26, .18); }
+.ac-lesson:active:not(:disabled) { transform: none; box-shadow: none; }
+.ac-lesson-t { flex: 1; font-size: 13.5px; }
+.ac-lesson-m {
+  flex: none;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
+}
+/* Прочитанный урок — галочка и приглушённый текст. Зачёркивать нельзя:
+   к урокам возвращаются, а зачёркнутое читается как «больше не нужно». */
+.ac-lesson.done .ac-lesson-t { color: var(--ink-muted); font-weight: 500; }
+.ac-lesson.done .ac-lesson-t::after { content: " ✓"; color: var(--ok-ink); }
+
+/* ── страница урока ── */
+.ac-lesson-page { max-width: 74ch; }
+.ac-back { padding-left: 0; margin-bottom: 4px; }
+.ac-text { font-size: 14.5px; line-height: 1.62; }
+.ac-text h1 { font-size: 22px; margin: 0 0 12px; }
+.ac-text h2 { font-size: 17px; margin: 22px 0 8px; }
+.ac-text h3 { font-size: 14.5px; margin: 18px 0 6px; }
+.ac-text p { margin: 0 0 12px; }
+.ac-text ul, .ac-text ol { margin: 0 0 12px; padding-left: 20px; }
+.ac-text li { margin-bottom: 4px; }
+.ac-text code {
+  font-family: var(--font-mono); font-size: 12.5px;
+  background: var(--surface-2); border-radius: 5px; padding: 1px 5px;
+}
+.ac-text hr { border: none; border-top: 1px solid rgba(45, 33, 26, .16); margin: 20px 0; }
+.ac-text table { border-collapse: collapse; font-size: 13px; }
+.ac-text th, .ac-text td {
+  border: 1px solid rgba(45, 33, 26, .18); padding: 6px 9px; text-align: left;
+}
+.ac-foot { margin-top: 16px; align-items: center; gap: 12px; }
+.ac-perma { font-size: 12px; color: var(--ink-muted); }
+
+/* ── артефакт урока ── */
+/* Единственное место урока с огнём — кнопка «применить». Это и есть главное
+   действие страницы: урок, после которого нечего нажать, — статья. */
+.ac-art {
+  margin: 22px 0 0;
+  padding: 15px 16px;
+  border: 1px solid rgba(45, 33, 26, .28);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.ac-art-tag {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--accent-2-ink);
+}
+.ac-art h4 { margin: 6px 0 4px; font-size: 15.5px; }
+.ac-art p { margin: 0 0 8px; font-size: 13px; }
+.ac-art-shots {
+  list-style: none; margin: 0 0 10px; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.ac-art-shots li {
+  font-size: 11.5px; color: var(--ink-muted);
+  border: 1px solid rgba(45, 33, 26, .18);
+  border-radius: 8px; padding: 2px 8px;
+}
+.ac-art-preset { font-size: 12.5px; color: var(--ink-muted); }
+.ac-art-note { font-size: 12px; }
+
+/* ── диалог применения ── */
+.ac-slot { display: block; margin-bottom: 10px; }
+.ac-slot > span {
+  display: block; margin-bottom: 3px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-muted);
+}
+.ac-slot input, .ac-slot select { width: 100%; }
+.ac-slots { display: grid; gap: 8px; }
+@media (min-width: 620px) {
+  .ac-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.ac-slot-note { font-size: 12px; margin: 4px 0 12px; }
+
+/* ═════════════════════════ КАТАЛОГ ПРИЁМОВ ═════════════════════════ */
+
+.lb-top { position: sticky; top: 0; z-index: 2; background: var(--inset); padding-bottom: 10px; }
+.lb-search {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  border: 1px solid rgba(45, 33, 26, .3);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.lb-search:focus { outline: none; border-color: rgba(45, 33, 26, .6); }
+
+.lb-cats { display: flex; flex-wrap: wrap; gap: 4px; }
+.lb-cat {
+  padding: 5px 11px;
+  font-size: 12.5px; font-weight: 600;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px solid rgba(45, 33, 26, .18);
+  border-radius: 999px;
+  box-shadow: none;
+}
+.lb-cat:hover:not(:disabled) { background: transparent; color: var(--text); }
+.lb-cat:active:not(:disabled) { transform: none; box-shadow: none; }
+.lb-cat.on { color: var(--text); font-weight: 800; border-color: rgba(45, 33, 26, .55); }
+
+.lb-list { display: grid; gap: 12px; margin-top: 14px; }
+@media (min-width: 900px) {
+  .lb-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.lb-card {
+  border: 1px solid rgba(45, 33, 26, .22);
+  border-radius: 16px;
+  padding: 14px 15px;
+  background: var(--surface);
+}
+.lb-card header { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.lb-card h4 { margin: 0; flex: 1; font-size: 15px; font-weight: 800; }
+.lb-tier {
+  flex: none;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em;
+  color: var(--gold-ink);
+  border: 1px solid rgba(138, 90, 43, .4);
+  border-radius: 7px; padding: 2px 6px;
+}
+.lb-desc { margin: 0 0 6px; font-size: 13px; }
+.lb-gain { margin: 0 0 10px; font-size: 12.5px; color: var(--ink-muted); }
+.lb-gain b { color: var(--text); }
+
+/* Текст промпта — моноширинный и в утопленной полке: это данные, которые
+   копируют, а не проза, которую читают. */
+.lb-prompts { margin: 0 0 10px; }
+.lb-prompts dt {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-muted); margin-top: 8px;
+}
+.lb-prompts dd {
+  margin: 3px 0 0;
+  padding: 8px 10px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
+  background: var(--surface-2);
+  border-radius: 9px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.lb-slots { margin: 0 0 8px; font-size: 12px; color: var(--ink-muted); }
+.lb-slots code {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--surface-2); border-radius: 5px; padding: 1px 5px;
+}
+.lb-result { margin: 0 0 10px; font-size: 12.5px; font-style: italic; }
+.lb-locked {
+  margin: 0 0 10px; padding: 10px;
+  font-size: 12.5px; color: var(--gold-ink);
+  border: 1px dashed rgba(138, 90, 43, .4);
+  border-radius: 10px;
+}
+.lb-actions { gap: 8px; align-items: center; }
+.lb-styles { margin-top: 18px; font-size: 12px; }
+
+/* ═════════════════ очередь генераций в витрине тарифа ═════════════════ */
+
+.pl-parallel {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--ink-muted);
+}
+.pl-queue {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(45, 33, 26, .2);
+  border-radius: 11px;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  background: var(--surface);
+}
+.pl-queue b { color: var(--text); }
+
+/* ─────────────── промокод в витрине тарифов (лендинг) ─────────────── */
+/* Поле, а не баннер: промокод — это ввод, и выглядеть он должен как ввод.
+   Никакой заливки и никакого огня: скидку продаёт код, а не подсветка. */
+.ld-promo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px auto 0;
+  max-width: 520px;
+}
+.ld-promo label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.ld-promo-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid rgba(45, 33, 26, .3);
+  border-radius: 11px;
+}
+.ld-promo-input:focus { outline: none; border-color: rgba(45, 33, 26, .6); }
+.ld-promo-msg { flex-basis: 100%; font-size: 12px; }
+
+/* Прямая цена одного токена в шкале докупки. */
+.ld-readout-per {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+
+/* ───────── второй ярус: тумблер режимов в том же минимализме ─────────
+   Активный сегмент режима заливался огнём (--fire-ink). В строке навигации
+   это второй огонь рядом с первым — а огонь в сервисе один и стоит на главном
+   действии экрана. Правило то же, что и у разделов: активное состояние —
+   кольцо и вес текста.
+
+   Переопределяем ТОЛЬКО под .has-sections: без sections.js шапка обязана
+   остаться прежней, вплоть до заливки. */
+.topbar.has-sections .mode-seg {
+  border-width: 1px;
+  border-color: rgba(45, 33, 26, .28);
+  box-shadow: none;
+}
+.topbar.has-sections .mode-seg-btn { color: var(--ink-muted); }
+.topbar.has-sections .mode-seg-btn:hover {
+  background: transparent;
+  color: var(--text);
+}
+.topbar.has-sections .mode-seg-btn.on {
+  color: var(--text);
+  background: transparent;
+  /* Кольцо внутренней тенью, а не border: у кнопки border:0, и добавление
+     рамки сдвинуло бы соседей на два пикселя при каждом переключении. */
+  box-shadow: inset 0 0 0 1px rgba(45, 33, 26, .55);
+}
+/* Схлопнутая капсула режима (узкий экран) — тем же языком. */
+.topbar.has-sections .mode-switch {
+  border-width: 1px;
+  box-shadow: none;
+}
+
+/* ───────── переключатель языка возвращается в шапку студии ─────────
+   Его прятали (style.css: «.topbar .lang-switch { display: none }») не из
+   принципа, а потому что семь сегментов режимов и пять кнопок не помещались в
+   одну строку. Строк теперь две, место есть — и человек, переключивший язык
+   внутри студии, снова может переключить его обратно, не уходя на лендинг.
+   На телефоне он по-прежнему не нужен: язык меняют раз в жизни. */
+.topbar.has-sections .lang-switch { display: inline-flex; }
+@media (max-width: 700px) {
+  .topbar.has-sections .lang-switch { display: none; }
+}
+
+/* Кнопки действия в карточке каталога — тонкая обводка, без «подушки»:
+   они повторяются полсотни раз, и объёмная кнопка на каждой превращает
+   список в лоток с кнопками. */
+.lb-actions .lb-apply,
+.lb-actions .lb-apply-pack,
+.lb-actions .lb-plans {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  border: 1px solid rgba(45, 33, 26, .45);
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+}
+.lb-actions .lb-apply:hover:not(:disabled),
+.lb-actions .lb-apply-pack:hover:not(:disabled),
+.lb-actions .lb-plans:hover:not(:disabled) { background: #fff; }
+.lb-actions .lb-apply:active:not(:disabled),
+.lb-actions .lb-apply-pack:active:not(:disabled),
+.lb-actions .lb-plans:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* ─────────── разделы остаются ПОДПИСЯМИ на любой ширине ───────────
+   style.css с 1150px гасит текст у #chat-btn/#music-btn/#account-btn/
+   #admin-btn и подставляет значки через ::before. Это было верное решение,
+   пока кнопки стояли в одной строке с проектом и лентой режимов: места не
+   было, и значок спасал строку. Теперь у разделов СВОЙ ряд, который умеет
+   прокручиваться, — и половина ленты значками, а половина словами читается
+   как две разные навигации. Возвращаем подписи и снимаем значки; тесно не
+   станет, лента просто прокрутится.
+
+   Кнопки вне ленты (#logout-btn) значками и остаются: они не разделы. */
+/* Кнопки перечислены ПОИМЁННО, и иначе нельзя: правило в style.css написано
+   через id (`.topbar #chat-btn`), а идентификатор сильнее любого числа
+   классов. Селектор из четырёх классов проиграл бы ему молча — текст остался
+   бы погашенным, и полбеды выглядело бы как «просто не сработало». */
+.topbar.has-sections .tb-sections #chat-btn,
+.topbar.has-sections .tb-sections #music-btn,
+.topbar.has-sections .tb-sections #account-btn,
+.topbar.has-sections .tb-sections #admin-btn,
+.topbar.has-sections .tb-sections .tb-sec {
+  font-size: 13px;
+  gap: 0;
+  padding: 0 11px;
+}
+.topbar.has-sections .tb-sections #chat-btn::before,
+.topbar.has-sections .tb-sections #music-btn::before,
+.topbar.has-sections .tb-sections #account-btn::before,
+.topbar.has-sections .tb-sections #admin-btn::before,
+.topbar.has-sections .tb-sections .tb-sec::before { content: none; }
+
+@media (max-width: 900px) {
+  /* ТЕЛЕФОН: У ЛЕНТЫ СВОЙ РЯД, И ЭТО НЕ ОТСТУПЛЕНИЕ ОТ «ОДНОЙ СТРОКИ».
+     Требование «шапка в одну строку» — про саму ленту: она обязана быть одной
+     прокручиваемой строкой, а не переноситься кубиками. Делить же ряд с
+     личным блоком на 375px нельзя физически: остаток токенов, «сохранить
+     аккаунт» и выход занимают около 290px из 375, ленте достаётся 25 — и она
+     не читается вообще, а сжатый .tb-user своей крайней кнопкой наезжает на
+     неё слева (у .tb-user стоит min-width:min-content, ниже содержимого он
+     не сжимается и переливается поверх соседа).
+
+     Поэтому ряда три, и у каждого своя роль: кто я (марка и личное),
+     куда иду (разделы), над чем работаю (проект и режим). */
+  .topbar.has-sections > #brand { order: 1; }
+  .topbar.has-sections > .tb-user { order: 2; margin-left: auto; flex-wrap: nowrap; }
+  .topbar.has-sections > .tb-sections { order: 3; flex: 1 1 100%; min-width: 0; }
+  .topbar.has-sections > .tb-project { order: 4; flex: 1 1 100%; }
+  .topbar.has-sections .tb-sections #chat-btn,
+  .topbar.has-sections .tb-sections #music-btn,
+  .topbar.has-sections .tb-sections #account-btn,
+  .topbar.has-sections .tb-sections #admin-btn,
+  .topbar.has-sections .tb-sections .tb-sec { font-size: 12.5px; padding: 0 9px; }
+}
+
+@media (max-width: 480px) {
+  /* «Админка» на телефоне возвращается: её убирали потому, что переполненная
+     строка выдавливала соседей влево поверх «+ проект». В прокручиваемой
+     ленте выдавливать нечего. Класс .hidden (у него !important) по-прежнему
+     сильнее — не-администратор её не увидит. */
+  .topbar.has-sections #admin-btn { display: inline-flex; }
+}

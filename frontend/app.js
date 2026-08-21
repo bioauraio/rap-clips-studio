@@ -2405,6 +2405,55 @@ async function renderStarsPane(pane) {
 // панель перерисовывается на каждый клик, и выбор обязан это пережить.
 let accTierPick = {};
 
+/* СКОРОСТЬ И ОЧЕРЕДЬ — в кабинете, а не только в витрине.
+   Витрина продаёт скорость будущему подписчику; действующему нужен ответ на
+   другой вопрос — «почему моя задача не началась». Позиция в очереди на него
+   отвечает, выдуманный таймер («осталось 2 минуты») врёт при первой длинной
+   сцене. Цифры приходят из gate.py вместе с тарифами, отдельного запроса тут
+   нет: ещё один круг ради двух чисел на уже открытой вкладке. */
+function accSpeedBlock(data) {
+  const q = data.queue || {};
+  const limit = Number(data.parallel) || Number(q.limit) || 0;
+  if (!limit) return "";
+  const busy = Number(q.running) || 0;
+  const wait = Number(q.queued) || 0;
+  const mins = Number(q.clip_minutes) || 0;
+  const state = busy || wait
+    ? [busy ? t("plan.queueRunning", { n: busy }) : "",
+       wait ? t("plan.queueWaiting", { n: wait }) : ""].filter(Boolean).join(" · ")
+    : t("plan.queueIdle");
+  return `<div class="pl-queue">
+    <b>${escHtml(t("plan.speedTitle"))}</b> — ${escHtml(t("plan.parallel", {
+      n: limit, word: tPlural(limit, tRaw("plan.genWord")),
+    }))}${
+      mins ? " · " + escHtml(t("plan.clipMinutes", { n: mins })) : ""}<br />
+    ${escHtml(state)}
+    <p class="muted">${escHtml(t("plan.queueNote"))}</p>
+    <p class="muted">${escHtml(t("plan.assemblyNote"))}</p>
+  </div>`;
+}
+
+/* ДВЕ ДАТЫ, А НЕ ОДНА. «Оплачено до» и «когда придут следующие токены» — у
+   годового подписчика это разные дни: год оплачен целиком, а норма капает раз
+   в месяц (_points_drip_pass на сервере). Пока кабинет знал одну дату,
+   годовой подписчик читал свой остаток как «выдали меньше обещанного». */
+function accDatesBlock(data) {
+  const rows = [];
+  if (data.plan_until && (data.current && data.current !== "free")) {
+    rows.push(t("plan.paidUntil", { date: fmtDate(data.plan_until) }));
+  }
+  if (data.points_next_at && Number(data.points_next) > 0) {
+    rows.push(t("plan.pointsNext", {
+      n: tNum(data.points_next), date: fmtDate(data.points_next_at),
+    }));
+    if (Number(data.points_drip_left) > 0) {
+      rows.push(t("plan.pointsDripLeft", { n: data.points_drip_left }));
+    }
+  }
+  if (!rows.length) return "";
+  return `<p class="muted acc-note">${rows.map(escHtml).join(" · ")}</p>`;
+}
+
 async function renderPlanPane(pane) {
   // Внутри Telegram цифровой товар продаётся ТОЛЬКО за звёзды: внешняя
   // платёжная ссылка здесь — нарушение правил платформы. На обычном сайте
@@ -2490,6 +2539,8 @@ async function renderPlanPane(pane) {
         tier: data.next_tier.toUpperCase(),
         date: data.plan_until ? fmtDate(data.plan_until) : "",
       }))}</p>` : ""}
+    ${accSpeedBlock(data)}
+    ${accDatesBlock(data)}
     <label>${escHtml(t("plan.promoLabel"))}</label>
     <input class="acc-promo" placeholder="${escHtml(t("plan.promoPh"))}" />
     <span class="acc-msg status"></span>`;
@@ -7158,6 +7209,13 @@ function ldNormalizePricing(data) {
           points,
           badge: p.badge || "",
           movies: p.movies_estimate || "",
+          // Параллельность и во что она превращается для человека. Обе цифры
+          // ПРИЕЗЖАЮТ С СЕРВЕРА — из того же gate.py, который их и применяет.
+          // Вписать «до 6 видео» в вёрстку значило бы повторить ошибку
+          // конкурента: там эта строка живёт отдельно от серверного лимита и
+          // у двух соседних тарифов показывает одинаковую цифру.
+          parallel: Number(p.parallel) || 0,
+          clipMinutes: Number(p.clip_minutes) || 0,
           // Ступени объёма (ULTRA). Пустой массив = тариф без шкалы, и
           // карточка рисуется как раньше — старый контракт не ломается.
           tiers: Array.isArray(p.tiers) ? p.tiers.map((tr) => ({
@@ -7169,6 +7227,8 @@ function ldNormalizePricing(data) {
             savePct: Number(tr.save_pct) || 0,
             yearPct: Number(tr.year_discount_pct) || 0,
             volume: tr.volume || null,
+            parallel: Number(tr.parallel) || 0,
+            clipMinutes: Number(tr.clip_minutes) || 0,
           })) : [],
           volume: p.volume || null,
         };
@@ -7335,6 +7395,26 @@ function ldVolumeBlock(volume) {
     </details>`;
 }
 
+/* СКОРОСТЬ ТАРИФА одной строкой. Продаём не «N потоков», а время: «N
+   генераций одновременно» — это механизм, а единица нашего продукта клип.
+   Обе цифры приходят с сервера (gate.py), поэтому строка не может разойтись
+   с тем, что реально применяется.
+
+   Про сборку пишем ОТДЕЛЬНО и честно: финальная склейка идёт по одной на весь
+   сервис, и без этой оговорки «клип за 3 минуты» стало бы ложью на последнем
+   шаге. Обещать скорость, которой нет на последнем шаге, — ровно то, за что
+   ругают конкурентов. */
+function parallelLine(p) {
+  if (!p || !p.parallel) return "";
+  const T = LT("pricing");
+  if (!T.parallel) return "";
+  return `<p class="pl-parallel">${escHtml(tFill(T.parallel, {
+      n: p.parallel, word: tPlural(p.parallel, T.genWord),
+    }))}`
+    + (p.clipMinutes ? ` · ${escHtml(tFill(T.clipMinutes, { n: p.clipMinutes }))}` : "")
+    + `</p>`;
+}
+
 function ldPlanCard(plan) {
   const T = LT("pricing");
   const copy = (T.plans || {})[plan.id] || {};
@@ -7421,6 +7501,7 @@ function ldPlanCard(plan) {
     <span class="ld-plan-clips">${escHtml(clips)}</span>
     <p class="ld-plan-note">${escHtml(tFill(T.pointsLine, { points: tNum(points) }))}${
       copy.note ? " · " + escHtml(copy.note) : ""}</p>
+    ${parallelLine(tier || plan)}
     ${volume}
     <ul class="ld-plan-feats">${feats}</ul>
     ${action}
@@ -7433,6 +7514,7 @@ function ldRenderPlans() {
   const T = LT("pricing");
   box.innerHTML = ldPricing.plans.map(ldPlanCard).join("");
 
+  ldBindPromo();
   const off = Boolean(ldPricing.providers
     && !ldPricing.providers.stripe && !ldPricing.providers.yookassa);
   const note = $("#ld-pay-note");
@@ -7554,6 +7636,13 @@ function ldRenderTopup() {
     <div class="ld-readout-price">${escHtml(ldMoney(pack.usd))}<span> ${escHtml(T.priceUnit)}</span></div>
     <div class="ld-readout-points">${escHtml(tFill(T.pointsUnit, { points: tNum(pack.points) }))}</div>
     ${save > 0 ? `<span class="ld-save-badge">${escHtml(tFill(T.save, { pct: save }))}</span>` : ""}
+    <!-- ПРЯМАЯ ЦЕНА ЕДИНИЦЫ, а не только «−N %». Процент отвечает на вопрос
+         «дешевле чего», цена токена — на вопрос «сколько это стоит», и
+         второй вопрос человек задаёт первым. Заодно видно, что пакет дороже
+         подписочного токена, — то есть строка работает на подписку. -->
+    <div class="ld-readout-per muted">${escHtml(tFill(T.perPoint, {
+      price: ldMoney(Math.round(pack.usd / pack.points * 100000) / 100),
+    }))}</div>
     <ul>
       <li>${escHtml(tFill(T.clipsTop, ldClipsVars(pack.points, "top")))}</li>
       <li class="muted">${escHtml(tFill(T.clipsGrok, ldClipsVars(pack.points, "grok")))}</li>
@@ -7956,6 +8045,36 @@ async function ldEnsureAccount() {
   ldRenderAuth();
 }
 
+/* ПРОМОКОД, ВВЕДЁННЫЙ ПРЯМО В ВИТРИНЕ. Раньше поле промокода жило только в
+   кабинете, а человек с кодом блогера приходит на лендинг и до кабинета не
+   доходит. Отдельной сущности здесь не заводим: код едет тем же полем promo,
+   что и реферальный (сервер их не различает), и кладётся в то же хранилище —
+   поэтому он же подставится в кабинете и переживёт перезагрузку. */
+let promoCode = "";
+
+function ldBindPromo() {
+  const box = $("#ld-promo");
+  if (!box) return;
+  const T = LT("pricing");
+  if (!T.promoLabel) { box.classList.add("hidden"); return; }
+  box.innerHTML = `
+    <label for="ld-promo-input">${escHtml(T.promoLabel)}</label>
+    <input id="ld-promo-input" class="ld-promo-input" autocomplete="off"
+           placeholder="${escHtml(T.promoPh)}" value="${escHtml(promoCode || refCode || "")}" />
+    <span class="ld-promo-msg muted"></span>`;
+  const input = $("#ld-promo-input", box);
+  const msg = $(".ld-promo-msg", box);
+  const save = () => {
+    promoCode = String(input.value || "").trim().slice(0, 32);
+    try {
+      if (promoCode) sessionStorage.setItem(REF_KEY, promoCode);
+    } catch (e) { /* приватный режим — код проживёт до перезагрузки */ }
+    msg.textContent = promoCode ? tFill(T.promoSaved, { code: promoCode }) : "";
+  };
+  input.addEventListener("change", save);
+  input.addEventListener("blur", save);
+}
+
 async function ldCheckout(kind, id, btn, tier) {
   const note = $("#ld-pay-note");
   const label = btn.textContent;
@@ -7967,8 +8086,9 @@ async function ldCheckout(kind, id, btn, tier) {
     const body = kind === "plan"
       // tier — выбранная ступень объёма. Сервер всё равно проверяет её сам:
       // неизвестную и скрытую флагом он молча понижает до базовой.
-      ? { kind: "plan", plan: id, tier: tier || "", period: ldPeriod, promo: refCode || "" }
-      : { kind: "topup", pack: id, promo: refCode || "" };
+      ? { kind: "plan", plan: id, tier: tier || "", period: ldPeriod,
+          promo: promoCode || refCode || "" }
+      : { kind: "topup", pack: id, promo: promoCode || refCode || "" };
     const r = await api("/api/billing/create", { method: "POST", body });
     if (r && r.url) { window.location.href = r.url; return; }
     throw new Error(LTX("pricing.noUrl"));
