@@ -1057,12 +1057,32 @@ async function renderPlanPane(pane) {
         // «Текущий» — это тариф И ступень: на ULTRA имя тарифа одно, а
         // объёмов четыре, и путать их значит показывать неверную цену.
         const isCur = p.id === current && (!tr || tr.id === (curTier || (p.tiers[0] || {}).id));
-        const scale = tr ? `<div class="acc-tier">${p.tiers.map((x, i) => `
-            <button type="button" class="${x.id === tr.id ? "on" : ""}"
-                    data-plan="${escHtml(p.id)}" data-idx="${i}"
-              >${escHtml(ldPointsLabel(x.points))}</button>`).join("")}</div>` : "";
-        return `<div class="acc-plan${isCur ? " on" : ""}">
-          <div class="acc-plan-top"><b>${escHtml(p.title)}</b><span>${escHtml(planMoney(p))}</span></div>
+        // Ступени объёма — ползунок, а не ряд кнопок: у ULTRA их четыре,
+        // и в узкой карточке они не читаются. Заодно считаем выгоду —
+        // насколько очко на этой ступени дешевле, чем на первой.
+        let scale = "";
+        let saveBadge = "";
+        if (tr) {
+          const idx = Math.max(0, p.tiers.findIndex((x) => x.id === tr.id));
+          const base = p.tiers[0] || {};
+          const perBase = (base.usd != null ? base.usd : base.usd_cents / 100) / (base.points || 1);
+          const perCur = (tr.usd != null ? tr.usd : tr.usd_cents / 100) / (tr.points || 1);
+          const off = perBase > 0 ? Math.round((1 - perCur / perBase) * 100) : 0;
+          if (off > 0) saveBadge = `<span class="acc-plan-off">−${off}%</span>`;
+          scale = `<div class="acc-scale">
+            <input type="range" class="acc-range" min="0" max="${p.tiers.length - 1}"
+                   step="1" value="${idx}" data-plan="${escHtml(p.id)}"
+                   aria-label="${escHtml(t("plan.tierAria") || "объём")}" />
+            <div class="acc-scale-marks">${p.tiers.map((x, i) => `
+              <button type="button" class="${i === idx ? "on" : ""}"
+                      data-plan="${escHtml(p.id)}" data-idx="${i}">
+                <b>${escHtml(ldPointsLabel(x.points))}</b>
+                <i>${escHtml(ldMoney(x.usd != null ? x.usd : x.usd_cents / 100))}</i>
+              </button>`).join("")}</div>
+          </div>`;
+        }
+        return `<div class="acc-plan${isCur ? " on" : ""}${tr ? " acc-plan-wide" : ""}">
+          <div class="acc-plan-top"><b>${escHtml(p.title)}</b><span>${escHtml(planMoney(p))}${saveBadge}</span></div>
           ${scale}
           <p class="acc-plan-note">${escHtml(planNote(p))}</p>
           <p class="acc-plan-points">${escHtml(t("plan.pointsLine", { n: tNum(pts) }))}</p>
@@ -1087,6 +1107,13 @@ async function renderPlanPane(pane) {
   // Промокод из реферальной ссылки подставляем сам: человек уже пришёл по нему.
   const promo = $(".acc-promo", pane);
   if (refCode) promo.value = refCode;
+
+  $$(".acc-range", pane).forEach((rng) => {
+    rng.addEventListener("input", () => {
+      accTierPick[rng.dataset.plan] = Number(rng.value) || 0;
+      renderPlanPane(pane, data);
+    });
+  });
 
   $$(".acc-pay", pane).forEach((btn) => {
     if (!enabled) {
@@ -1128,7 +1155,7 @@ async function renderPlanPane(pane) {
   });
   // Тики ступени: перерисовываем панель, а не только цену — от объёма зависят
   // и надпись на кнопке, и отметка «текущий».
-  $$(".acc-tier button", pane).forEach((b) => b.addEventListener("click", () => {
+  $$(".acc-scale-marks button", pane).forEach((b) => b.addEventListener("click", () => {
     accTierPick[b.dataset.plan] = Number(b.dataset.idx) || 0;
     renderPlanPane(pane);
   }));

@@ -1013,7 +1013,7 @@ const I18N = {
             { label: "How it works", href: "#ld-how" },
             { label: "Features", href: "#ld-features" },
             { label: "Studio guide", action: "guide" },
-            { label: "Styles breakdown", href: "/report/styles.html" },
+            { label: "Styles breakdown", href: "/prompts/" },
           ] },
           { title: "Payments", links: [
             { label: "Pricing", href: "#ld-pricing" },
@@ -1299,7 +1299,7 @@ const I18N = {
             { label: "lolq.ai — clips", href: "/" },
             { label: "How the studio works", href: "/#ld-how" },
             { label: "Pricing", href: "/#ld-pricing" },
-            { label: "Styles breakdown", href: "/report/styles.html" },
+            { label: "Styles breakdown", href: "/prompts/" },
           ] },
           { title: "More", links: [
             { label: "Questions and answers", href: "#mu-faq" },
@@ -2308,7 +2308,7 @@ const I18N = {
             { label: "Как это работает", href: "#ld-how" },
             { label: "Возможности", href: "#ld-features" },
             { label: "Гайд по студии", action: "guide" },
-            { label: "Разбор стилей", href: "/report/styles.html" },
+            { label: "Разбор стилей", href: "/ru/prompts/" },
           ] },
           { title: "Оплата", links: [
             { label: "Тарифы", href: "#ld-pricing" },
@@ -2594,7 +2594,7 @@ const I18N = {
             { label: "lolq.ai — клипы", href: "/" },
             { label: "Как работает студия", href: "/#ld-how" },
             { label: "Тарифы", href: "/#ld-pricing" },
-            { label: "Разбор стилей", href: "/report/styles.html" },
+            { label: "Разбор стилей", href: "/ru/prompts/" },
           ] },
           { title: "Ещё", links: [
             { label: "Вопросы и ответы", href: "#mu-faq" },

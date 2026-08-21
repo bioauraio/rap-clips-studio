@@ -182,7 +182,12 @@ class Project(Base):
     # Владелец проекта; NULL у легаси-строк до усыновления админом при старте.
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     name = Column(String, nullable=False, default="Без названия")
-    # album — альбом на несколько треков, single — сингл с одним треком.
+    # ВИД ПРОЕКТА — он же РЕЖИМ. Одно поле вместо второго реестра:
+    #   album | single — «rap clips» (клип под свой трек);
+    #   ugc            — канал ИИ-блогера, объект второго уровня = ролик;
+    #   series         — сериал, объект второго уровня = серия.
+    # Реестр режимов (что показывать и чем генерить) — backend/formats.py.
+    # Старые проекты остаются album/single и ничего не замечают.
     kind = Column(String, nullable=False, default="album")
     # Библия героя: внешность, характер, неизменные детали — вставляется в
     # КАЖДЫЙ промпт кадра, чтобы герой не "плыл" между сценами и треками.
@@ -217,6 +222,10 @@ class Character(Base):
     # даже когда есть фото: генератор должен знать детали, которых нет в кадре).
     description = Column(Text, nullable=False, default="")
     is_main = Column(Boolean, nullable=False, default=False)
+    # Голос персонажа (id голоса ElevenLabs, см. audio.py). Сквозной по всему
+    # проекту: в сериале реплики серии озвучиваются голосом того, кто говорит,
+    # а не «общим диктором», иначе герой меняет голос между сериями.
+    voice_id = Column(String, nullable=False, default="")
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -312,6 +321,31 @@ class Track(Base):
     style_extra = Column(Text, nullable=False, default="")
     # Сюжетный каркас («что снимаем») из prompts_catalog.CLIP_PRESETS.
     clip_preset_key = Column(String, nullable=False, default="")
+
+    # ─── режимы «сериалы» и «UGC»: тот же Track, другая роль ───
+    # Сезон живёт КОЛОНКОЙ, а не таблицей. Полноценный Season сменил бы FK у
+    # самой горячей таблицы (на tracks висят render, поллинг, супергенерация и
+    # сборка), а вся семантика сезона исчерпывается номером и группировкой.
+    # 0 = «вне сезонов» — так выглядят все существующие треки после миграции.
+    season_no = Column(Integer, nullable=False, default=0)
+    episode_no = Column(Integer, nullable=False, default=0)
+    # Ключ каркаса из formats.SERIES_FORMATS / formats.UGC_FORMATS. У клипа
+    # свой каркас лежит в clip_preset_key — смешивать их в одно поле нельзя:
+    # это разные реестры с разными beats.
+    format_key = Column(String, nullable=False, default="")
+    # «Библия локации»: интерьер, свет, посуда, вид из окна — то, что обязано
+    # повторяться слово в слово во ВСЕХ кадрах объекта. У проекта есть
+    # character_bible (кто), здесь — где. Без неё UGC-ролик меняет кухню
+    # между кадрами, и склейка рассыпается сильнее, чем от смены лица.
+    location_bible = Column(Text, nullable=False, default="")
+
+    # ДВИЖКИ НА УРОВНЕ ОБЪЕКТА. Раньше выбор жил только в карточке кадра, где
+    # он (а) повторялся тридцать раз, (б) никуда не сохранялся, (в) полностью
+    # игнорировался кнопками «все кадры»/«все видео». Здесь — один выбор на
+    # весь трек; Scene.image_engine/video_engine остаются ПЕРЕОПРЕДЕЛЕНИЕМ
+    # (пусто = наследует трек).
+    video_engine = Column(String, nullable=False, default="")
+    image_engine = Column(String, nullable=False, default="")
     # Режиссёрская заметка от генерации сюжета — ОТДЕЛЬНО от комментария
     # владельца: раньше дописывалась прямо в comment и пачкала его.
     director_note = Column(Text, nullable=False, default="")
@@ -374,6 +408,13 @@ class Scene(Base):
     # ритмом раскадровки (чередование крупных/дальних, см. claude.py).
     shot_size = Column(String, nullable=False, default="")
     camera_move = Column(String, nullable=False, default="")
+    # Акт серии: cold_open | act1 | act2 | act3 | tag (у клипа и UGC пусто).
+    act = Column(String, nullable=False, default="")
+    # Кто говорит в кадре. РЕПЛИКА при этом лежит в lyric_line — второго поля
+    # под текст не заводим: у клипа это строка трека, у серии — реплика, и
+    # различие ровно в подписи. Слот в 6 секунд держит одну фразу, диалог
+    # монтируется восьмёркой (по одному говорящему в кадре).
+    speaker = Column(String, nullable=False, default="")
     # Промпт картинки кадра (для генерации изображения) — на английском.
     image_prompt = Column(Text, nullable=False, default="")
     # Промпт анимации ЭТОГО кадра (self-contained, без ссылок на другие кадры).
@@ -445,6 +486,62 @@ class SceneRef(Base):
     created_at = Column(DateTime, default=now)
 
     scene = relationship("Scene", back_populates="refs")
+
+
+class Doc(Base):
+    """Сценарный артефакт: логлайн, синопсис, арка, поэпизодный план, сценарий
+    серии по актам, «в предыдущих сериях», UGC-бриф, персона блогера.
+
+    ОДНА таблица на все режимы вместо N колонок в Project. У проекта уже есть
+    story и character_bible; дописывать туда logline/synopsis/arc значит
+    пачкать клиповый проект сериальными полями, которых он никогда не увидит.
+
+    track_id = NULL — документ проекта (сезонный слой), заполнен — документ
+    объекта (сценарий конкретной серии, бриф конкретного ролика).
+
+    status/error повторяют паттерн Project.story_status: фронт поллит их той
+    же логикой, что и всё остальное, и ничему новому учиться не надо."""
+    __tablename__ = "docs"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    track_id = Column(Integer, ForeignKey("tracks.id"), nullable=True, index=True)
+    # logline | synopsis | arc | beatsheet | script | recap | brief | persona
+    kind = Column(String, nullable=False, default="")
+    position = Column(Integer, nullable=False, default=0)
+    title = Column(String, nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    # Структурный вид того же документа (поэпизодный план — список карточек,
+    # сценарий — список актов). Текст в body остаётся для человека.
+    body_json = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="")  # '' | queued | running | error
+    error = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=now)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+
+class PointEvent(Base):
+    """Журнал очков: каждое списание и каждое начисление отдельной строкой.
+
+    До него история расхода существовала ТОЛЬКО в log.info контейнера:
+    _charge менял users.gen_points и писал строчку в лог. Поэтому кабинет не
+    мог показать ни расход по дням, ни «на что ушло», ни возвраты — строить
+    было не из чего.
+
+    balance_after пишем рядом с delta намеренно: журнал должен объяснять
+    остаток без пересчёта всей истории, иначе первая же дыра (ручная правка,
+    админский грант) навсегда разъезжается с реальным балансом."""
+    __tablename__ = "point_events"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=now, index=True)
+    delta = Column(Integer, nullable=False, default=0)      # <0 расход, >0 приход
+    # frames | video | chat | audio | story | sheet | model | topup | plan | refund | drip
+    kind = Column(String, nullable=False, default="")
+    what = Column(String, nullable=False, default="")       # человеческая подпись
+    ref_type = Column(String, nullable=False, default="")   # scene | track | chat_message | payment
+    ref_id = Column(Integer, nullable=False, default=0)
+    engine = Column(String, nullable=False, default="")
+    balance_after = Column(Integer, nullable=False, default=0)
 
 
 # ─────────────────────────── чат с переключением моделей ───────────────────────────

@@ -21,20 +21,21 @@ from datetime import timedelta
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import claude
+import formats
 import learn
 import mediagen
 import prompts_catalog
 import stripe_pay
 from db import (
-    AttributePhoto, Character, CharacterAttribute, CharacterPhoto, FileOwner,
-    Payout, ProcessedPayment, Project, RefEvent, Scene, SceneRef, SessionLocal,
-    Track, User, init_db, now,
+    AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene, SceneRef,
+    SessionLocal, Track, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -699,7 +700,56 @@ async def _not_enough_points_handler(request: Request, exc: NotEnoughPoints) -> 
     )
 
 
-def _take_points(db: Session, user: User, points: int) -> bool:
+# ─────────────────────────── журнал очков ───────────────────────────
+# ЕДИНСТВЕННЫЙ источник правды о расходе. До него история существовала только
+# в log.info контейнера: _charge менял users.gen_points и писал строчку в лог,
+# поэтому кабинет не мог показать ни расход по дням, ни «на что ушло», ни
+# возвраты — строить было не из чего.
+#
+# Точек записи ровно четыре: _take_points (расход), _refund (возврат),
+# _add_points (оплата и капли года), _grant_points (админский грант). Писать
+# журнал где-то ещё нельзя: тогда сумма журнала перестанет объяснять баланс.
+
+# Метка расхода по человеческому описанию операции. Так журнал не требует
+# протаскивать лишний параметр через полсотни вызовов _charge, а разбор
+# живёт в ОДНОМ месте вместо каждой кнопки.
+_KIND_MARKS = (
+    ("кадр", "frames"), ("видео", "video"), ("раскадров", "sheet"),
+    ("лист", "sheet"), ("модельк", "model"), ("разворот", "model"),
+    ("сюжет", "story"), ("сценар", "story"), ("логлайн", "story"),
+    ("серию", "story"), ("серии", "story"), ("персон", "story"),
+    ("озвуч", "audio"), ("музык", "audio"), ("звук", "audio"),
+    ("чат", "chat"), ("сборк", "assemble"), ("клип", "assemble"),
+)
+
+
+def _guess_kind(what: str) -> str:
+    low = str(what or "").lower()
+    for mark, kind in _KIND_MARKS:
+        if mark in low:
+            return kind
+    return "other"
+
+
+def _log_points(db: Session, user: User, delta: int, what: str, *,
+                kind: str = "", ref_type: str = "", ref_id: int = 0,
+                engine: str = "") -> None:
+    """Строка журнала. Никогда не роняет операцию: деньги уже списаны, и
+    упавший INSERT в историю — не повод отменять оплаченную генерацию."""
+    try:
+        db.add(PointEvent(
+            user_id=user.id, delta=int(delta), kind=kind or _guess_kind(what),
+            what=str(what or "")[:200], ref_type=ref_type, ref_id=int(ref_id or 0),
+            engine=str(engine or "")[:60], balance_after=int(user.gen_points or 0),
+        ))
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("журнал очков: строка не записалась (%s): %s", what, str(e)[:150])
+
+
+def _take_points(db: Session, user: User, points: int, what: str = "",
+                 **meta) -> bool:
     """Тихое списание: False — не хватило. Нужно фоновым шагам (супергенерация
     доводит счёт по факту), которым некуда бросать HTTP-ошибку."""
     if user.is_admin or points <= 0:
@@ -708,20 +758,21 @@ def _take_points(db: Session, user: User, points: int) -> bool:
         return False
     user.gen_points = int(user.gen_points) - points
     db.commit()
+    _log_points(db, user, -int(points), what or "генерация", **meta)
     return True
 
 
-def _charge(db: Session, user: User, points: int, what: str) -> None:
+def _charge(db: Session, user: User, points: int, what: str, **meta) -> None:
     """Списание очков генерации В МОМЕНТ постановки задачи (не в треде):
     генерации идут через подписки владельца, лимит защищает его кошелёк."""
     if user.is_admin or points <= 0:
         return
-    if not _take_points(db, user, points):
+    if not _take_points(db, user, points, what, **meta):
         raise NotEnoughPoints(points, int(user.gen_points or 0), _plan_of(user), what)
     log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
 
 
-def _refund(db: Session, user: User, points: int, what: str = "") -> None:
+def _refund(db: Session, user: User, points: int, what: str = "", **meta) -> None:
     """Вернуть очки за НЕсостоявшуюся работу.
 
     До чата возврата не было нигде: у сцены упавшая генерация оставляла
@@ -732,21 +783,25 @@ def _refund(db: Session, user: User, points: int, what: str = "") -> None:
         return
     user.gen_points = int(user.gen_points or 0) + int(points)
     db.commit()
+    meta.setdefault("kind", "refund")
+    _log_points(db, user, int(points), what or "возврат за неудачную генерацию", **meta)
     log.info("user %s: +%s очков возврата за %s (стало %s)",
              user.id, points, what or "неудачную генерацию", user.gen_points)
 
 
 def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str) -> None:
-    """Списать за сцену ДО её цены, а не заново.
+    """Списать за КАЖДЫЙ платный вызов движка.
 
-    Кадры взяли аванс, видео добирает разницу до цены движка, перегенерация
-    уже оплаченного не стоит ничего. Так «кадры входят в цену сцены»
-    превращается в честную арифметику, а не в двойную оплату одной сцены."""
-    paid = int(scene.charged_points or 0)
-    if cost <= paid:
+    Раньше перегенерация уже оплаченной сцены была бесплатной: считалось, что
+    «кадры входят в цену сцены». На бесплатных шлюзах это верно, но на платных
+    движках каждое нажатие «перегенерировать» — живые деньги нам (Nano Banana
+    Pro стоит $0.09 за картинку), и при трёх прогонах тариф уходил в минус.
+    Теперь платим за вызов: сколько раз запустил движок — столько и списано.
+    Бесплатные шлюзовые движки по-прежнему стоят символические 2 очка."""
+    if cost <= 0:
         return
-    _charge(db, user, cost - paid, what)
-    scene.charged_points = cost
+    _charge(db, user, cost, what)
+    scene.charged_points = int(scene.charged_points or 0) + cost
     db.commit()
 
 
@@ -756,14 +811,13 @@ def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str) ->
     rows, total = [], 0
     for s in scenes:
         cost = cost_of(s)
-        paid = int(s.charged_points or 0)
-        if cost > paid:
-            total += cost - paid
+        if cost > 0:
+            total += cost
             rows.append((s, cost))
     if total:
         _charge(db, user, total, what)
     for s, cost in rows:
-        s.charged_points = cost
+        s.charged_points = int(s.charged_points or 0) + cost
     if rows:
         db.commit()
     return total
@@ -774,7 +828,9 @@ def _scenes_charge(db: Session, user: User, scenes: list, cost_of, what: str) ->
 # REF_DISCOUNT_PCT — скидка приглашённому на ПЕРВУЮ оплату, REF_REWARD_PCT —
 # доля амбассадора с КАЖДОГО платежа его реферала (включая автопродления).
 REF_DISCOUNT_PCT = max(0, min(90, int(os.environ.get("REF_DISCOUNT_PCT", "10"))))
-REF_REWARD_PCT = max(0, min(100, int(os.environ.get("REF_REWARD_PCT", "30"))))
+# Ставка 10%: при нашей наценке 2.4x к себестоимости движков 30% съедали
+# всю маржу на объёмных и годовых тарифах. Правится в infra/.env.
+REF_REWARD_PCT = max(0, min(100, int(os.environ.get("REF_REWARD_PCT", "10"))))
 REF_MIN_PAYOUT_KOPEKS = max(0, int(float(os.environ.get("REF_MIN_PAYOUT", "1000")) * 100))
 # Без похожих символов (O/0 и I/1): код диктуют голосом и переписывают от руки.
 REF_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -3162,7 +3218,9 @@ def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) ->
             left -= 1  # эту сцену закрывает предоплата
         else:
             need += per_scene - int(s.charged_points or 0)
-    if need and owner and not _take_points(db, owner, need):
+    if need and owner and not _take_points(
+            db, owner, need, f"супергенерация трека {track.id}: добор по факту",
+            kind="video", ref_type="track", ref_id=track.id):
         return (f"не хватило {need} очков: трек длиннее оценки "
                 f"({len(scenes)} сцен). Пополни баланс и запусти ещё раз")
     for s in unpaid:
@@ -3170,6 +3228,9 @@ def _settle_supergen(db: Session, track: Track, per_scene: int, prepaid: int) ->
     if left and owner:
         # Оценка была щедрее реальности — неиспользованное возвращаем.
         owner.gen_points = int(owner.gen_points or 0) + left * per_scene
+        _log_points(db, owner, left * per_scene,
+                    f"возврат предоплаты супергенерации трека {track.id}",
+                    kind="refund", ref_type="track", ref_id=track.id)
         log.info("супергенерация трека %s: вернули %s очков за %s лишних сцен",
                  track.id, left * per_scene, left)
     db.commit()
@@ -3378,6 +3439,41 @@ def _media_response(path: str, request: Request) -> Response:
             "Content-Length": str(length),
         },
     )
+
+
+# Подписанная временная ссылка на наш файл. Нужна внешним движкам (kie.ai),
+# которые принимают ТОЛЬКО url, а не байты: у них нет ручки загрузки файла
+# (/api/file-base64-upload отвечает 404 — проверено на живом ключе).
+# Токен подписан нашим секретом и живёт час: этого хватает движку скачать
+# кадр, но ссылка не становится вечной раздачей приватного файла.
+_pub_signer = URLSafeTimedSerializer(SECRET_KEY, salt="rapclips-pubfile")
+PUBFILE_TTL_S = int(os.environ.get("PUBFILE_TTL_S", "3600"))
+
+
+def pub_file_token(filename: str) -> str:
+    return _pub_signer.dumps({"f": os.path.basename(filename)})
+
+
+def pub_file_url(filename: str) -> str:
+    base = (os.environ.get("PUBLIC_BASE_URL", "") or "").rstrip("/")
+    return f"{base}/pub/{pub_file_token(filename)}" if base else ""
+
+
+@app.get("/pub/{token}")
+def get_public_file(token: str, request: Request):
+    """Отдача файла по подписанному токену — без сессии и без владельца.
+    Проверяем подпись и срок; подделать ссылку нельзя, перебрать — тоже."""
+    try:
+        data = _pub_signer.loads(token, max_age=PUBFILE_TTL_S)
+    except SignatureExpired:
+        raise HTTPException(410, "ссылка истекла")
+    except BadSignature:
+        raise HTTPException(404, "файл не найден")
+    fname = os.path.basename(str((data or {}).get("f") or ""))
+    path = os.path.join(UPLOAD_DIR, fname)
+    if not fname or not os.path.exists(path):
+        raise HTTPException(404, "файл не найден")
+    return _media_response(path, request)
 
 
 @app.get("/api/media/{filename}")
@@ -4214,6 +4310,7 @@ def _points_drip_pass(db: Session) -> int:
             .filter(User.points_drip_left > 0, User.points_drip_at.isnot(None),
                     User.points_drip_at <= now()).all())
     done = 0
+    dripped: list[tuple[User, int]] = []
     for u in rows:
         # Тариф кончился раньше срока (отмена, возврат) — капли прекращаем:
         # очки годовой подписки не должны пережить саму подписку.
@@ -4222,15 +4319,22 @@ def _points_drip_pass(db: Session) -> int:
             u.points_drip_size = 0
             u.points_drip_at = None
             continue
-        _add_points(u, int(u.points_drip_size or 0))
+        got = _add_points(u, int(u.points_drip_size or 0))
         u.points_drip_left = int(u.points_drip_left) - 1
         u.points_drip_at = (_as_utc(u.points_drip_at) or now()) + timedelta(days=PLAN_DAYS)
         if u.points_drip_left <= 0:
             u.points_drip_left = 0
             u.points_drip_at = None
+        dripped.append((u, got))
         done += 1
     if rows:
         db.commit()
+    # Журнал пишем ПОСЛЕ общего коммита: _log_points коммитит сам, и вызов
+    # изнутри цикла резал бы проход на полсотни отдельных транзакций.
+    for u, got in dripped:
+        if got:
+            _log_points(db, u, int(got), "месячный транш годовой подписки",
+                        kind="drip", ref_type="plan")
     return done
 
 
@@ -4363,6 +4467,13 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
         db.rollback()
         log.info("платёж %s уже обработан — пропускаем", key)
         return False
+    # Приход в журнал очков — той же строкой, что и расход: кабинет обязан
+    # объяснять, откуда взялся баланс, а не только куда он делся.
+    if points:
+        _log_points(db, user, int(points),
+                    f"{'пакет очков' if kind == 'topup' else 'тариф'} {plan_id or pack_id}",
+                    kind="topup" if kind == "topup" else "plan",
+                    ref_type="payment", engine=provider)
     log.info("выдано по платежу %s: юзер %s, %s %s, +%s очков", key, user.id, kind,
              plan_id or pack_id, points)
     return True

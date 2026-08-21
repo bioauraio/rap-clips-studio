@@ -1558,3 +1558,50 @@ button.primary:hover:not(:disabled) {
   background: rgba(255, 122, 41, .14); color: var(--text);
   border-color: var(--border-bright); font-weight: 700;
 }
+
+/* ────────── ULTRA: карточка во всю ширину со шкалой объёма ──────────
+   У этого тарифа четыре ступени, и в узкой колонке они не читались.
+   Карточка занимает всю строку сетки, ступени — ползунок с подписями. */
+.acc-plans .acc-plan-wide { grid-column: 1 / -1; }
+.acc-plan-off {
+  margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: #fff; background: var(--ok); vertical-align: middle;
+}
+.acc-scale { margin: 10px 0 4px; }
+.acc-range {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 8px; border-radius: 999px; margin: 6px 0 10px;
+  border: 1.5px solid #2d211a; background: linear-gradient(90deg, var(--gold), var(--accent-2), var(--accent));
+  cursor: pointer;
+}
+.acc-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--inset); border: 2px solid #2d211a;
+  box-shadow: 0 2px 0 #2d211a; cursor: grab;
+}
+.acc-range::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--inset); border: 2px solid #2d211a;
+  box-shadow: 0 2px 0 #2d211a; cursor: grab;
+}
+.acc-scale-marks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.acc-scale-marks button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 6px; border-radius: 12px; border: 1.5px solid var(--border);
+  background: var(--inset); cursor: pointer; box-shadow: none;
+}
+.acc-scale-marks button b { font-size: 14px; font-weight: 800; }
+.acc-scale-marks button i {
+  font-family: var(--font-mono); font-size: 11px; font-style: normal; color: var(--muted);
+}
+.acc-scale-marks button.on {
+  border-color: #2d211a; border-width: 2px;
+  background: linear-gradient(180deg, rgba(255,181,69,.18), rgba(255,122,41,.10));
+  box-shadow: 0 2px 0 #2d211a;
+}
+.acc-scale-marks button.on i { color: var(--text); }
+@media (max-width: 700px) {
+  .acc-scale-marks { grid-template-columns: repeat(2, 1fr); }
+}

@@ -230,27 +230,30 @@ def _kie_headers() -> dict:
 
 
 async def _kie_upload(client: httpx.AsyncClient, path: str) -> str:
-    """Свой файл → публичная ссылка kie.ai (base64-аплоад).
+    """Свой файл → ссылка, по которой его скачает kie.ai.
 
-    Почему не наш outbox: PUBLIC_BASE_URL исторически указывает на другой
-    домен, и тогда kie молча не скачает кадр. Плюс аплоад не светит наши
-    файлы наружу — ссылка живёт у них и протухает сама."""
-    payload = {
-        "base64Data": _data_url(path),
-        "uploadPath": "images/rapclips",
-        "fileName": os.path.basename(path),
-    }
-    r = await client.post(f"{KIE_API}/api/file-base64-upload", json=payload,
-                          headers=_kie_headers())
-    if r.status_code not in (200, 201):
-        raise MediaError(f"kie upload {r.status_code}: {r.text[:200]}")
-    data = (r.json() or {})
-    inner = data.get("data") or {}
-    url = (inner.get("downloadUrl") or inner.get("fileUrl") or inner.get("url")
-           or data.get("downloadUrl") or "")
+    Раньше здесь был base64-аплоад в /api/file-base64-upload, но у kie такой
+    ручки НЕТ: на живом ключе она отдаёт 404 (проверены и /api/v1/... варианты).
+    Из-за этого молча падали все платные движки — Seedance и Kling.
+
+    Поэтому отдаём ПОДПИСАННУЮ ВРЕМЕННУЮ ссылку на свой файл (роут /pub/{token}
+    в main.py): подпись нашим секретом, срок час. Движку хватает скачать кадр,
+    а приватный файл не превращается в вечную публичную раздачу."""
+    fname = os.path.basename(path)
+    base = (os.environ.get("PUBLIC_BASE_URL", "") or "").rstrip("/")
+    if not base.startswith("https://"):
+        # kie ходит к нам снаружи: без публичного https он кадр не заберёт.
+        raise MediaError(
+            "kie: не задан публичный адрес сервиса (PUBLIC_BASE_URL) — "
+            "движку неоткуда скачать кадр")
+    try:
+        from main import pub_file_url  # локальный импорт: mediagen грузится раньше main
+        url = pub_file_url(fname)
+    except Exception as e:  # noqa: BLE001 — не роняем генерацию из-за импорта
+        raise MediaError(f"kie: не смог собрать ссылку на кадр ({type(e).__name__})")
     if not url:
-        raise MediaError(f"kie upload: нет ссылки в ответе ({str(data)[:200]})")
-    return str(url)
+        raise MediaError("kie: пустая ссылка на кадр")
+    return url
 
 
 async def _kie_result_urls(model: str, payload_input: dict, *, timeout_s: float,
