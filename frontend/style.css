@@ -1227,3 +1227,51 @@ button.primary:hover:not(:disabled) {
   }
   .topbar .project-select { flex: 1 1 auto; min-width: 90px; }
 }
+
+/* ────────── шапка: всё одной высоты ──────────
+   Кнопки, бейджи, селект и переключатель языка набирались независимо и
+   отличались на 4-8px по вертикали — строка выглядела рваной. Задаём общую
+   высоту и выравниваем содержимое по центру, вместо того чтобы подгонять
+   паддинги у каждого элемента по отдельности. */
+.topbar {
+  --tb-h: 34px;
+}
+.topbar .project-select,
+.topbar .tb-new,
+.topbar .account-btn,
+.topbar #save-account-btn,
+.topbar #logout-btn,
+.topbar .kind-badge,
+.topbar .points-badge,
+.topbar .lang-switch {
+  height: var(--tb-h);
+  min-height: var(--tb-h);
+  padding-top: 0;
+  padding-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-sizing: border-box;
+}
+/* переключатель языка — контейнер с двумя кнопками внутри: тянем и их */
+.topbar .lang-switch button {
+  height: 100%;
+  padding-top: 0;
+  padding-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+/* обложка квадратная и той же высоты, чтобы не выпирала */
+.topbar .project-cover,
+.topbar .cover-slot {
+  width: var(--tb-h);
+  height: var(--tb-h);
+  min-height: var(--tb-h);
+}
+.topbar .project-name { height: var(--tb-h); line-height: 1; }
+
+@media (max-width: 700px) {
+  .topbar { --tb-h: 30px; }
+}
