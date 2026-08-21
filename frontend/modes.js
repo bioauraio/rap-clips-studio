@@ -163,18 +163,21 @@
       steps: [],
     },
     {
-      // Аудио — В ТУМБЛЕРЕ ЕГО НЕТ (seg: false). Шесть живых сегментов плюс
-      // один мёртвый — это мёртвый отъедает место у живых на узком экране и
-      // занимает слот в доке верстака. Место мёртвой плитки — подвал «Скоро»
-      // в шторке режимов, где видно, но ничему не мешает.
-      id: "audio",
-      kind: "mode",
-      icon: "🎧",
-      seg: false,
-      soon: true,
-      get title() { return T("modes.audio.title", "аудио"); },
-      get full() { return T("modes.audio.full", "Озвучка, музыка и мастеринг"); },
-      get note() { return T("modes.audio.note", ""); },
+      // МУЗЫКА — ПЕРЕХОД, как чат: свой экран (#music), свой объект (релиз,
+      // а не клип) и свой конвейер. Здесь же кончилась мёртвая плитка
+      // «аудио»: раздел ожил, и держать рядом с ним запись «скоро» про то же
+      // самое значило бы врать дважды — и о том, что готово, и о том, что нет.
+      id: "music",
+      kind: "external",
+      icon: "🎚",
+      get title() { return T("modes.music.title", "музыка"); },
+      get full() { return T("modes.music.full", "Трек: загрузка, мастеринг, релиз"); },
+      get note() { return T("modes.music.note", ""); },
+      external() {
+        const b = document.querySelector("#music-btn");
+        if (b) { b.click(); return; }
+        if (window.QlolMusic) window.QlolMusic.show();
+      },
       steps: [],
     },
   ];

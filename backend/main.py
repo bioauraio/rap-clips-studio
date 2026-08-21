@@ -32,10 +32,12 @@ import learn
 import mediagen
 import prompts_catalog
 import stripe_pay
+import textgen
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene, SceneRef,
-    SessionLocal, Track, TrackPhoto, User, init_db, now,
+    SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track, TrackPhoto,
+    User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -229,6 +231,7 @@ def _reset_orphan_jobs() -> None:
             (Track, (("scenes_status", "scenes_error"),
                      ("storyboard_status", "storyboard_error"),
                      ("clip_status", "clip_error"),
+                     ("restyle_status", "restyle_note"),
                      ("supergen_status", "supergen_note"))),
             (Scene, (("image_status", "image_error"),
                      ("video_status", "video_error"))),
@@ -584,6 +587,19 @@ FRAMES_COST = FRAME_COST["chatgpt"]  # аванс за кадры на шлюз�
 # собранный клип и продаёт сервис.
 COST_STORY = 0
 COST_SCENES = 0
+# Цена текстового шага по выбранной модели. Считается из той же
+# себестоимости в долларах и той же функцией, что кадры и видео, — второй
+# кассы в сервисе нет. ИСКЛЮЧЕНИЕ ровно одно: шлюз стоит НОЛЬ, а не
+# GATEWAY_POINTS. _points_of_usd(0) вернул бы 2, и это сломало бы прямо
+# записанное выше обещание «бесплатный тариф доживает до первого клипа».
+TEXT_COST = {
+    eid: (0 if textgen.is_gateway(eid) else _points_of_usd(textgen.text_engine_usd(eid)))
+    for eid in textgen.TEXT_ENGINES
+}
+# Сколько снимков кадров держим у сцены. Пара 4К-кадров ≈ 30 МБ, трек на 30
+# сцен = около гигабайта на ОДИН рестайл: это окно «вернуть как было», а не
+# архив навсегда.
+SCENE_VERSIONS_KEEP = max(1, int(os.environ.get("SCENE_VERSIONS_KEEP", "2")))
 COST_STORYBOARD = 2        # лист раскадровки — картинка
 COST_CHARACTER_MODEL = 2   # разворот персонажа — картинка
 CLIP_SCENES = int(os.environ.get("CLIP_SCENES", "30"))  # клип 3 минуты ≈ 30 сцен по 6 сек
@@ -818,6 +834,58 @@ def _resolve_video_engine(user: "User | None", track: "Track | None",
     return _plan_video_engine(user, provider, want or (track.video_engine if track else ""))
 
 
+def _resolve_text_engine(user: "User | None", project: "Project | None" = None,
+                         track: "Track | None" = None, want: str = "") -> str:
+    """Текстовая модель сценарного шага. Та же цепочка, что у картинок:
+    явный выбор запроса → объект → проект → шлюз.
+
+    Выбор живёт на ПРОЕКТЕ: сюжет, библия, сценарий серии и раскадровка —
+    один конвейер, и разные модели на соседних шагах дают разъезд тона."""
+    return textgen.resolve_text_engine(
+        wanted=want,
+        track=(track.text_engine if track else ""),
+        project=(project.text_engine if project else ""),
+        plan=_plan_of(user) if user else "free",
+    )
+
+
+def _text_engine_for(db: Session, project: "Project | None",
+                     track: "Track | None" = None, want: str = "") -> str:
+    """Движок текстового шага изнутри воркера: владелец берётся у проекта.
+
+    Воркеры принимают id, а не объекты, — протаскивать движок через
+    сигнатуры восьми функций незачем: разрешение детерминировано и даёт
+    там же тот же ответ, что и в роуте, который списал токены."""
+    owner = db.get(User, project.owner_id) if (project and project.owner_id) else None
+    return _resolve_text_engine(owner, project, track, want)
+
+
+def _text_refund(db: Session, project: "Project | None", engine: str,
+                 what: str, **meta) -> None:
+    """Вернуть токены за НЕсостоявшийся платный текстовый шаг.
+
+    Фолбэка на шлюз здесь нет намеренно: человек выбрал Claude, Claude не
+    ответил — он должен увидеть ошибку и свои токены обратно, а не молча
+    получить текст от другой модели."""
+    points = TEXT_COST.get(engine, 0)
+    if points <= 0 or not project or not project.owner_id:
+        return
+    owner = db.get(User, project.owner_id)
+    if owner:
+        _refund(db, owner, points, what, project_id=project.id, **meta)
+
+
+def _text_charge(db: Session, user: "User", engine: str, what: str, **meta) -> int:
+    """Списание за текстовый шаг. Шлюз стоит ноль и не пишет строку вовсе —
+    журнал не должен зарастать нулями."""
+    points = TEXT_COST.get(engine, 0)
+    if points <= 0:
+        return 0
+    meta.setdefault("kind", "story")
+    return _charge(db, user, points, what, engine=engine,
+                   cost_cents=_cost_cents("text", engine), **meta)
+
+
 class ApiError(Exception):
     """Ошибка с машиночитаемым кодом: фронту нужно различать «платежи не
     подключены» и «нет такого тарифа», а не разбирать текст сообщения."""
@@ -919,6 +987,10 @@ def _cost_cents(kind: str, engine: str, *, count: int = 1,
             usd = 2 * mediagen.image_engine_usd(engine, resolution)
         elif kind in ("sheet", "model", "midframe", "image"):
             usd = mediagen.image_engine_usd(engine, resolution)
+        elif kind in ("text", "story"):
+            # Без этой ветки платный Claude уезжал бы в журнал с нулевой
+            # себестоимостью, а /api/admin/ledger/audit сверяет именно её.
+            usd = textgen.text_engine_usd(engine)
         else:
             usd = 0.0
     except Exception:  # noqa: BLE001
@@ -1830,9 +1902,35 @@ def scene_dict(s: Scene) -> dict:
         # подсветка всегда врала. Теперь поля есть, и «переопределить движок»
         # в карточке показывает то, чем сцену реально сняли.
         "image_engine": s.image_engine or "", "video_engine": s.video_engine or "",
+        # Каким стилем СНЯТ этот кадр и сколько снимков прежних стилей лежит
+        # рядом. Смешанный трек (перерисовали только припев) — законное
+        # состояние, но человек обязан его видеть, а не гадать.
+        "style_keys": [k for k in (s.style_keys or "").split(",") if k],
+        "versions": len(s.versions or []),
         # Режимы «сериалы» и «UGC»: акт серии и кто говорит в кадре.
         "act": s.act or "", "speaker": s.speaker or "",
     }
+
+
+#: Метка «в промптах сцен стиля нет». Пустая строка означает НЕИЗВЕСТНО, а
+#: неизвестное у нас — легаси-раскадровки, у которых стиль вписан в каждый
+#: image_prompt (так требовал прежний claude.SCENES_SYSTEM). Различать эти
+#: два состояния обязательно: от этого зависит, нужен ли платный шаг
+#: переписывания промптов перед рестайлом.
+PROMPTS_NO_STYLE = "-"
+
+
+def _prompts_style_base(t: Track) -> str | None:
+    """Под какой стиль писаны ТЕКСТЫ сцен трека.
+
+    None — стиля в них нет вовсе (новая раскадровка), переписывать нечего.
+    Строка ключей — под этот стиль они и писаны; если он разошёлся с
+    нынешним, промпты придётся переписать, иначе в кадр уедут два стиля
+    сразу и человек увидит прежние картинки."""
+    raw = (t.prompts_style_keys or "").strip()
+    if raw == PROMPTS_NO_STYLE:
+        return None
+    return raw or ",".join(_track_style_keys(t))
 
 
 def _track_style_keys(t: Track) -> list[str]:
@@ -1874,6 +1972,20 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "clip_status": t.clip_status, "clip_error": t.clip_error,
         "cover_url": f"/api/media/{t.cover_filename}" if t.cover_filename else "",
         "supergen_status": t.supergen_status, "supergen_note": t.supergen_note,
+        # РЕСТАЙЛ. prompts_dirty — тексты сцен писаны под прежний стиль, и
+        # перед перерисовкой их придётся переписать (это единственный шаг
+        # рестайла, который стоит текстовых токенов).
+        "restyle_status": t.restyle_status or "", "restyle_note": t.restyle_note or "",
+        "prompts_dirty": bool(t.scenes and _prompts_style_base(t) is not None
+                              and _prompts_style_base(t) != (t.style_keys or "")),
+        # Собранный клип снят в прежнем стиле — кнопка сборки обязана сказать.
+        "clip_stale": bool(t.clip_stale and t.clip_filename),
+        "text_engine": t.text_engine or "",
+        # Сколько сцен сняты НЕ нынешним стилем трека: столько кадров
+        # покажут метку «в прежнем стиле».
+        "scenes_stale": sum(
+            1 for s in t.scenes
+            if s.image_filename and (s.style_keys or "") != (t.style_keys or "")),
         "film_grain": t.film_grain, "no_story": t.no_story,
         # Один выбор движков на весь объект. Пусто = «как решит тариф»;
         # карточка кадра показывает это наследование, а не пустой чип.
@@ -1918,6 +2030,9 @@ def project_dict(p: Project, with_scenes: bool = False, docs: list | None = None
     mode = _mode_of(p)
     return {
         "id": p.id, "name": p.name, "kind": p.kind, "character_bible": p.character_bible,
+        # Текстовая модель конвейера. Пусто = «как решит тариф»; блок
+        # сценария показывает это наследование, а не пустой чип.
+        "text_engine": p.text_engine or "",
         # Режим проекта — производная от kind, но отдаём явно: фронт не должен
         # держать вторую копию таблицы «какой kind в каком режиме».
         "mode": mode["id"],
@@ -2193,6 +2308,8 @@ def project_status(project_id: int | None = None, user: User = Depends(current_u
             "clip_url": f"/api/media/{t.clip_filename}" if t.clip_filename else "",
             "supergen_status": t.supergen_status,
             "supergen_note": t.supergen_note or "",
+            "restyle_status": t.restyle_status or "",
+            "restyle_note": t.restyle_note or "",
             "scenes_count": len(t.scenes),
             "approved_count": sum(1 for s in t.scenes if s.approved),
             "scenes": [{
@@ -2216,12 +2333,20 @@ async def update_project(request: Request, project_id: int | None = None, user: 
         project.name = str(body["name"])
     if "character_bible" in body:
         project.character_bible = str(body["character_bible"])
+    # ТЕКСТОВАЯ МОДЕЛЬ сценарного конвейера. Пустая строка валидна и значит
+    # «как решит тариф» — снять свой выбор можно так же, как сделать.
+    # Проверяем по реестру, а не по тарифу: тариф опустит закрытое сам в
+    # момент генерации, а стирать сделанный выбор из-за смены тарифа нельзя.
+    if "text_engine" in body:
+        want = str(body["text_engine"] or "").strip()
+        project.text_engine = want if want in textgen.TEXT_ENGINES else ""
     db.commit()
     return project_dict(project, docs=_project_docs(db, project))
 
 
 def _run_story_generation(project_id: int) -> None:
     db = SessionLocal()
+    engine = "gateway"
     try:
         project = db.get(Project, project_id)
         if not project:
@@ -2232,11 +2357,17 @@ def _run_story_generation(project_id: int) -> None:
         tracks = [
             {"position": t.position, "title": t.title, "lyrics": t.lyrics,
              "comment": t.comment, "style": t.style,
+             # Как стиль трека влияет на сюжет — из админки стилей. До неё
+             # стиль умел влиять только на картинку.
+             "style_base": prompts_catalog.story_base(_track_style_keys(t)),
              "audio_profile": t.audio_profile}
             for t in project.tracks
         ]
+        engine = _text_engine_for(db, project)
         import asyncio
-        result = asyncio.run(claude.generate_story(project.character_bible, tracks, characters_payload(project)))
+        result = asyncio.run(claude.generate_story(
+            project.character_bible, tracks, characters_payload(project),
+            engine=engine))
         project.character_bible = result.get("character_bible", project.character_bible)
         project.story = result.get("story", "")
         notes = {n.get("position"): n.get("note", "") for n in result.get("track_notes", [])}
@@ -2255,6 +2386,8 @@ def _run_story_generation(project_id: int) -> None:
             project.story_status = "error"
             project.story_error = str(e)[:500]
             db.commit()
+            _text_refund(db, project, engine, "возврат: сюжет не написался",
+                         ref_type="project", ref_id=project.id)
         log.warning("генерация сюжета упала: %s", e)
     finally:
         db.close()
@@ -2266,9 +2399,12 @@ def generate_story(project_id: int | None = None, user: User = Depends(current_u
     project = get_or_create_project(db, user, project_id)
     if not project.tracks:
         raise HTTPException(400, "сначала загрузи хотя бы один трек")
+    engine = _resolve_text_engine(user, project)
     _charge(db, user, COST_STORY, "сюжет проекта",
             kind="story", ref_type="project", ref_id=project.id,
             project_id=project.id)
+    _text_charge(db, user, engine, f"сюжет проекта ({engine})",
+                 ref_type="project", ref_id=project.id, project_id=project.id)
     project.story_status = "queued"
     db.commit()
     Thread(target=_run_story_generation, args=(project.id,), daemon=True).start()
@@ -2444,6 +2580,7 @@ _BIBLE_DOCS = ("logline", "synopsis", "arc")
 
 def _run_series_bible(project_id: int, idea: str, episodes: int) -> None:
     db = SessionLocal()
+    engine = "gateway"
     try:
         project = db.get(Project, project_id)
         if not project:
@@ -2455,9 +2592,10 @@ def _run_series_bible(project_id: int, idea: str, episodes: int) -> None:
             if formats.format_spec("series", t.format_key or ""):
                 key = t.format_key
                 break
+        engine = _text_engine_for(db, project)
         import asyncio
         res = asyncio.run(claude.generate_series_bible(
-            idea=idea,
+            idea=idea, engine=engine,
             format_label=((formats.format_spec("series", key) or {})
                           .get("label", {}).get("ru", key)),
             season_beats=formats.beats_block("series", key, "season_beats"),
@@ -2485,6 +2623,8 @@ def _run_series_bible(project_id: int, idea: str, episodes: int) -> None:
     except Exception as e:  # noqa: BLE001
         db.rollback()
         _doc_status(project_id, _BIBLE_DOCS, "error", str(e)[:500])
+        _text_refund(db, db.get(Project, project_id), engine,
+                     "возврат: библия сезона не написалась")
         log.warning("библия сезона проекта %s упала: %s", project_id, e)
     finally:
         db.close()
@@ -2492,13 +2632,15 @@ def _run_series_bible(project_id: int, idea: str, episodes: int) -> None:
 
 def _run_ugc_persona(project_id: int, idea: str) -> None:
     db = SessionLocal()
+    engine = "gateway"
     try:
         project = db.get(Project, project_id)
         if not project:
             return
+        engine = _text_engine_for(db, project)
         import asyncio
         res = asyncio.run(claude.generate_ugc_persona(
-            idea=idea, character_bible=project.character_bible,
+            idea=idea, character_bible=project.character_bible, engine=engine,
             characters=characters_payload(project),
         ))
         _put_doc(db, project_id, "persona", title=str(res.get("name") or ""),
@@ -2515,6 +2657,8 @@ def _run_ugc_persona(project_id: int, idea: str) -> None:
     except Exception as e:  # noqa: BLE001
         db.rollback()
         _doc_status(project_id, ("persona", "location"), "error", str(e)[:500])
+        _text_refund(db, db.get(Project, project_id), engine,
+                     "возврат: блогер не собрался")
         log.warning("персона блогера проекта %s упала: %s", project_id, e)
     finally:
         db.close()
@@ -2522,14 +2666,16 @@ def _run_ugc_persona(project_id: int, idea: str) -> None:
 
 def _run_mockup_brandbook(project_id: int, idea: str) -> None:
     db = SessionLocal()
+    engine = "gateway"
     try:
         project = db.get(Project, project_id)
         if not project:
             return
         prev = _find_doc(db, project_id, "brandbook")
+        engine = _text_engine_for(db, project)
         import asyncio
         res = asyncio.run(claude.generate_brandbook(
-            idea=idea, brand_note=prev.body if prev else "",
+            idea=idea, brand_note=prev.body if prev else "", engine=engine,
         ))
         _put_doc(db, project_id, "brandbook", title=str(res.get("name") or ""),
                  body=str(res.get("brandbook") or ""), status="", error="", position=1)
@@ -2537,6 +2683,8 @@ def _run_mockup_brandbook(project_id: int, idea: str) -> None:
     except Exception as e:  # noqa: BLE001
         db.rollback()
         _doc_status(project_id, ("brandbook",), "error", str(e)[:500])
+        _text_refund(db, db.get(Project, project_id), engine,
+                     "возврат: фирменный мир не написался")
         log.warning("фирменный мир проекта %s упал: %s", project_id, e)
     finally:
         db.close()
@@ -2553,11 +2701,15 @@ async def generate_bible(project_id: int, request: Request,
     catalog = _catalog_of(project)
     body = await request.json() if await request.body() else {}
     idea = str(body.get("idea") or "")[:4000]
+    text_engine = _resolve_text_engine(user, project)
     if catalog == "series":
         episodes = max(2, min(24, int(body.get("episodes") or 8)))
         _charge(db, user, COST_STORY, f"библия сезона проекта {project.id}",
                 kind="story", ref_type="project", ref_id=project.id,
                 project_id=project.id)
+        _text_charge(db, user, text_engine,
+                     f"библия сезона проекта {project.id} ({text_engine})",
+                     ref_type="project", ref_id=project.id, project_id=project.id)
         _doc_status(project.id, _BIBLE_DOCS, "queued")
         Thread(target=_run_series_bible, args=(project.id, idea, episodes),
                daemon=True).start()
@@ -2566,6 +2718,8 @@ async def generate_bible(project_id: int, request: Request,
         _charge(db, user, COST_STORY, f"персона блогера проекта {project.id}",
                 kind="story", ref_type="project", ref_id=project.id,
                 project_id=project.id)
+        _text_charge(db, user, text_engine, f"блогер проекта {project.id} ({text_engine})",
+                     ref_type="project", ref_id=project.id, project_id=project.id)
         _doc_status(project.id, ("persona", "location"), "queued")
         Thread(target=_run_ugc_persona, args=(project.id, idea), daemon=True).start()
         return {"ok": True}
@@ -2573,6 +2727,9 @@ async def generate_bible(project_id: int, request: Request,
         _charge(db, user, COST_STORY, f"фирменный мир проекта {project.id}",
                 kind="story", ref_type="project", ref_id=project.id,
                 project_id=project.id)
+        _text_charge(db, user, text_engine,
+                     f"фирменный мир проекта {project.id} ({text_engine})",
+                     ref_type="project", ref_id=project.id, project_id=project.id)
         _doc_status(project.id, ("brandbook",), "queued")
         Thread(target=_run_mockup_brandbook, args=(project.id, idea), daemon=True).start()
         return {"ok": True}
@@ -2583,6 +2740,7 @@ async def generate_bible(project_id: int, request: Request,
 
 def _run_beatsheet(project_id: int, episodes: int) -> None:
     db = SessionLocal()
+    engine = "gateway"
     try:
         project = db.get(Project, project_id)
         if not project:
@@ -2595,8 +2753,10 @@ def _run_beatsheet(project_id: int, episodes: int) -> None:
         logline = _find_doc(db, project_id, "logline")
         synopsis = _find_doc(db, project_id, "synopsis")
         arc = _find_doc(db, project_id, "arc")
+        engine = _text_engine_for(db, project)
         import asyncio
         res = asyncio.run(claude.generate_beatsheet(
+            engine=engine,
             logline=logline.body if logline else "",
             synopsis=synopsis.body if synopsis else project.story,
             arcs=arc.body if arc else "",
@@ -2617,6 +2777,8 @@ def _run_beatsheet(project_id: int, episodes: int) -> None:
     except Exception as e:  # noqa: BLE001
         db.rollback()
         _doc_status(project_id, ("beatsheet",), "error", str(e)[:500])
+        _text_refund(db, db.get(Project, project_id), engine,
+                     "возврат: поэпизодный план не написался")
         log.warning("поэпизодный план проекта %s упал: %s", project_id, e)
     finally:
         db.close()
@@ -2637,6 +2799,10 @@ async def generate_beatsheet_route(project_id: int, request: Request,
     _charge(db, user, COST_STORY, f"поэпизодный план проекта {project.id}",
             kind="story", ref_type="project", ref_id=project.id,
             project_id=project.id)
+    text_engine = _resolve_text_engine(user, project)
+    _text_charge(db, user, text_engine,
+                 f"поэпизодный план проекта {project.id} ({text_engine})",
+                 ref_type="project", ref_id=project.id, project_id=project.id)
     _doc_status(project.id, ("beatsheet",), "queued")
     Thread(target=_run_beatsheet, args=(project.id, episodes), daemon=True).start()
     return {"ok": True, "episodes": episodes}
@@ -2698,6 +2864,8 @@ async def create_episodes(project_id: int, request: Request,
 
 def _run_episode_script(track_id: int) -> None:
     db = SessionLocal()
+    engine = "gateway"
+    project = None
     try:
         track = db.get(Track, track_id)
         if not track:
@@ -2718,8 +2886,10 @@ def _run_episode_script(track_id: int) -> None:
                         break
             except Exception:  # noqa: BLE001
                 pass
+        engine = _text_engine_for(db, project, track)
         import asyncio
         res = asyncio.run(claude.generate_episode_script(
+            engine=engine,
             logline=logline.body if logline else "",
             synopsis=synopsis.body if synopsis else project.story,
             arcs=arc.body if arc else "",
@@ -2746,6 +2916,8 @@ def _run_episode_script(track_id: int) -> None:
         tr = db.get(Track, track_id)
         if tr:
             _doc_status(tr.project_id, ("script",), "error", str(e)[:500], track_id)
+            _text_refund(db, tr.project, engine, "возврат: сценарий серии не написался",
+                         ref_type="track", ref_id=tr.id)
         log.warning("сценарий серии %s упал: %s", track_id, e)
     finally:
         db.close()
@@ -2763,6 +2935,10 @@ def generate_script(track_id: int, user: User = Depends(current_user),
     _charge(db, user, COST_STORY, f"сценарий серии {track.id}",
             kind="story", ref_type="track", ref_id=track.id,
             track_id=track.id, project_id=track.project_id)
+    _text_engine = _resolve_text_engine(user, track.project, track)
+    _text_charge(db, user, _text_engine, f"сценарий серии {track.id} ({_text_engine})",
+                 ref_type="track", ref_id=track.id, track_id=track.id,
+                 project_id=track.project_id)
     _put_doc(db, track.project_id, "script", track_id=track.id,
              status="queued", error="")
     Thread(target=_run_episode_script, args=(track_id,), daemon=True).start()
@@ -2909,6 +3085,9 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     if "image_engine" in body:
         want = str(body["image_engine"] or "").strip()
         track.image_engine = want if want in mediagen.IMAGE_ENGINES else ""
+    if "text_engine" in body:
+        want = str(body["text_engine"] or "").strip()
+        track.text_engine = want if want in textgen.TEXT_ENGINES else ""
     # ГЕОМЕТРИЯ КАДРА. Пустая строка валидна и означает «как у режима» —
     # снять свой выбор так же можно, как и сделать.
     if "aspect" in body:
@@ -2926,6 +3105,95 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
 # через public_* — по белому списку полей. Текстов промптов в этих ответах
 # нет и быть не может: фирменные пресеты сняты покадровым разбором виральных
 # аккаунтов, и отдать их — значит отдать единственный ров сервиса.
+
+# ═══════════════ НАЛОЖЕНИЕ АДМИНКИ ПОВЕРХ КАТАЛОГА СТИЛЕЙ ═══════════════
+# Каталог живёт в backend/prompts_catalog.py (код, версионируется, летит
+# деплоем), правки владельца — в базе (том /data, переживают пересборку).
+# Здесь единственное место, где одно накладывается на другое.
+
+def _json(value: str, default):
+    try:
+        out = json.loads(value or "")
+    except (ValueError, TypeError):
+        return default
+    return out if isinstance(out, type(default)) else default
+
+
+def _style_asset_url(fname: str) -> str:
+    return f"/style-assets/{fname}" if fname else ""
+
+
+def style_overlay_data(db: Session) -> dict:
+    """Собрать наложение из базы. Отдельно от применения — чтобы админка
+    могла ПРОВЕРИТЬ кандидата (flush без commit) до того, как он станет
+    правдой для витрины."""
+    data: dict[str, dict] = {}
+    for row in db.query(StyleOverride).all():
+        item: dict = {"enabled": bool(row.enabled)}
+        for field, col in (("label", row.label_json), ("desc", row.desc_json),
+                           ("gain", row.gain_json), ("music", row.music_json),
+                           ("tempo", row.tempo_json)):
+            val = _json(col, {})
+            if val:
+                item[field] = val
+        for field, col in (("tags", row.tags_json), ("mix_with", row.mix_with_json),
+                           ("avoid_mix", row.avoid_mix_json),
+                           ("engines", row.engines_json)):
+            val = _json(col, [])
+            if val:
+                item[field] = val
+        for field, col in (("group", row.group), ("tier", row.tier),
+                           ("prompt_class", row.prompt_class),
+                           ("mix_role", row.mix_role),
+                           ("prompt", row.prompt), ("story_base", row.story_base)):
+            if (col or "").strip():
+                item[field] = col
+        structure = _json(row.structure_json, {})
+        if structure:
+            item["structure"] = structure
+        data[row.key] = item
+    # Файлы: витрина отдельно, генерация отдельно. Смешивать нельзя —
+    # постер карточки в промпт кадра не попадает и попадать не должен.
+    for row in (db.query(StyleAsset)
+                .order_by(StyleAsset.style_key, StyleAsset.position, StyleAsset.id)
+                .all()):
+        item = data.setdefault(row.style_key, {"enabled": True})
+        if row.kind == "poster":
+            item.setdefault("media", {})["poster"] = _style_asset_url(row.filename)
+        elif row.kind == "loop":
+            item.setdefault("media", {})["loop"] = _style_asset_url(row.filename)
+        elif row.kind == "shot":
+            media = item.setdefault("media", {})
+            media.setdefault("shots", []).append(_style_asset_url(row.filename))
+        elif row.kind == "ref" and row.in_generation:
+            item.setdefault("gen_refs", []).append(row.filename)
+    return data
+
+
+def reload_style_overlay(db: Session | None = None) -> int:
+    """Перечитать правки стилей из базы в каталог.
+
+    Зовётся на старте и ПОСЛЕ КАЖДОГО сохранения в админке. Не на каждый
+    кадр: кадров тысячи, а API-контейнер один, и инвалидация тривиальна."""
+    own = db is None
+    db = db or SessionLocal()
+    try:
+        data = style_overlay_data(db)
+        prompts_catalog.set_overlay(data)
+        problems = prompts_catalog.validate()
+        if problems:
+            # Не падаем: сервис обязан подняться. Но молчать нельзя —
+            # битый каталог это битая витрина и битые промпты.
+            log.warning("каталог стилей с наложением: %s проблем — %s",
+                        len(problems), "; ".join(problems[:5]))
+        return len(data)
+    except Exception as e:  # noqa: BLE001
+        log.warning("наложение стилей не загрузилось: %s", str(e)[:200])
+        return 0
+    finally:
+        if own:
+            db.close()
+
 
 def _is_pro(user: "User | None") -> bool:
     """Открыт ли человеку разбор приёма. PRO+ — то есть любой платный тариф."""
@@ -3075,6 +3343,12 @@ async def set_track_style(track_id: int, request: Request,
             break
 
     extra = str(body.get("extra") or "").strip()[:2000]
+    # ЛЕГАСИ-РАСКАДРОВКА: до смены стиля запоминаем, под какой стиль писаны
+    # её тексты. Без этой строки правда теряется в момент смены чипов, и
+    # рестайл потом решит, что переписывать нечего, — а в промптах остался
+    # старый стиль, и человек снова увидит прежние картинки.
+    if track.scenes and not (track.prompts_style_keys or "").strip():
+        track.prompts_style_keys = ",".join(_track_style_keys(track))
     track.style_keys = ",".join(keys)
     track.style_extra = extra
     track.style = prompts_catalog.fusion(keys, extra)
@@ -3229,7 +3503,7 @@ def _episode_previously(db: Session, track: Track) -> str:
     return "\n".join(lines)
 
 
-def _scenes_for_series(db: Session, track: Track) -> dict:
+def _scenes_for_series(db: Session, track: Track, engine: str = "") -> dict:
     """Сцены серии: сценарий по актам → кадры. Сценарий обязателен — без него
     разбивка выдумывает сюжет заново и расходится с поэпизодным планом."""
     import asyncio
@@ -3241,6 +3515,7 @@ def _scenes_for_series(db: Session, track: Track) -> dict:
     if not script_doc or not (script_doc.body or "").strip():
         raise RuntimeError("у серии нет сценария — сгенерируй его на шаге «Серия»")
     return asyncio.run(claude.generate_series_scenes(
+        engine=engine,
         script=script_doc.body,
         character_bible=project.character_bible,
         episode_beats=formats.beats_block(catalog, key, "episode_beats"),
@@ -3252,7 +3527,7 @@ def _scenes_for_series(db: Session, track: Track) -> dict:
     ))
 
 
-def _scenes_for_ugc(db: Session, track: Track) -> dict:
+def _scenes_for_ugc(db: Session, track: Track, engine: str = "") -> dict:
     """Слоты UGC-ролика. Бриф необязателен: формат сам по себе — каркас."""
     import asyncio
     project = track.project
@@ -3269,6 +3544,7 @@ def _scenes_for_ugc(db: Session, track: Track) -> dict:
                        Doc.kind == "location").first())
     slots = int((spec.get("slots") or {}).get("typ") or 8)
     return asyncio.run(claude.generate_ugc_scenes(
+        engine=engine,
         persona=persona_doc.body if persona_doc else "",
         character_bible=project.character_bible,
         # Локация ролика: своя, иначе общая локация канала. Второй уровень
@@ -3286,7 +3562,7 @@ def _scenes_for_ugc(db: Session, track: Track) -> dict:
     ))
 
 
-def _scenes_for_mockup(db: Session, track: Track) -> dict:
+def _scenes_for_mockup(db: Session, track: Track, engine: str = "") -> dict:
     """Кадры съёмки товара. Бриф необязателен: набор сцен сам по себе план,
     а фирменный мир проекта задаёт всё остальное."""
     import asyncio
@@ -3301,6 +3577,7 @@ def _scenes_for_mockup(db: Session, track: Track) -> dict:
                          Doc.kind == "brandbook").first())
     shots = len(spec.get("shot_list") or []) or int((spec.get("shots") or {}).get("typ") or 6)
     return asyncio.run(claude.generate_mockup_shots(
+        engine=engine,
         brandbook=brand_doc.body if brand_doc else "",
         brief=(brief_doc.body if brief_doc else "") or track.comment,
         shots_block=formats.shots_block(key),
@@ -3314,6 +3591,7 @@ def _scenes_for_mockup(db: Session, track: Track) -> dict:
 
 def _run_scene_generation(track_id: int) -> None:
     db = SessionLocal()
+    engine = "gateway"
     try:
         track = db.get(Track, track_id)
         if not track:
@@ -3329,13 +3607,14 @@ def _run_scene_generation(track_id: int) -> None:
             note_match = re.search(r"\[режиссёрская заметка\]\s*(.+)$", track.comment, re.DOTALL)
             track_note = note_match.group(1).strip() if note_match else ""
         clean_comment = re.sub(r"\n*\[режиссёрская заметка\].*$", "", track.comment, flags=re.DOTALL).strip()
+        engine = _text_engine_for(db, project, track)
         import asyncio
         if catalog == "series":
-            result = _scenes_for_series(db, track)
+            result = _scenes_for_series(db, track, engine)
         elif catalog == "ugc":
-            result = _scenes_for_ugc(db, track)
+            result = _scenes_for_ugc(db, track, engine)
         elif catalog == "mockup":
-            result = _scenes_for_mockup(db, track)
+            result = _scenes_for_mockup(db, track, engine)
         else:
             result = asyncio.run(claude.generate_scenes(
                 story="" if track.no_story else project.story,
@@ -3345,6 +3624,9 @@ def _run_scene_generation(track_id: int) -> None:
                 duration_sec=track.audio_duration_sec or 180,
                 characters=characters_payload(project),
                 audio_profile=track.audio_profile,
+                # Как стиль влияет на драматургию (админка стилей).
+                story_base=prompts_catalog.story_base(_track_style_keys(track)),
+                engine=engine,
             ))
         for s in list(track.scenes):
             _remove_media(s.image_filename)
@@ -3381,6 +3663,12 @@ def _run_scene_generation(track_id: int) -> None:
             ))
             cursor += dur
         track.scenes_status = "done"
+        # «-» — не пустота, а УТВЕРЖДЕНИЕ: в этих текстах стиля нет вовсе
+        # (claude.SCENES_SYSTEM это прямо запрещает), и рестайл для них —
+        # просто перерисовка кадров, без единого обращения к модели.
+        # Пустая строка означала бы «неизвестно», а неизвестное у нас — это
+        # легаси-раскадровки, писанные со стилем внутри промпта.
+        track.prompts_style_keys = PROMPTS_NO_STYLE
         db.commit()
         log.info("раскадровка готова для трека %s (%s кадров)", track_id, i if result.get("scenes") else 0)
     except Exception as e:  # noqa: BLE001
@@ -3390,6 +3678,9 @@ def _run_scene_generation(track_id: int) -> None:
             track.scenes_status = "error"
             track.scenes_error = str(e)[:500]
             db.commit()
+            _text_refund(db, track.project, engine,
+                         "возврат: раскадровка не написалась",
+                         ref_type="track", ref_id=track.id)
         log.warning("генерация раскадровки трека %s упала: %s", track_id, e)
     finally:
         db.close()
@@ -3420,6 +3711,11 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
     _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}",
             kind="story", ref_type="track", ref_id=track.id,
             track_id=track.id, project_id=track.project_id)
+    text_engine = _resolve_text_engine(user, track.project, track)
+    _text_charge(db, user, text_engine,
+                 f"раскадровка трека {track.id} ({text_engine})",
+                 ref_type="track", ref_id=track.id, track_id=track.id,
+                 project_id=track.project_id)
     track.scenes_status = "queued"
     db.commit()
     Thread(target=_run_scene_generation, args=(track_id,), daemon=True).start()
@@ -3553,6 +3849,7 @@ def _run_storyboard(track_id: int) -> None:
         built = asyncio.run(claude.generate_storyboard_sheet_prompt(
             style=track.style, character_bible=track.project.character_bible, scenes=scenes,
             characters=characters_payload(track.project),
+            engine=_text_engine_for(db, track.project, track),
         ))
         prompt = built.get("prompt") or ""
         if prompt:
@@ -3999,10 +4296,41 @@ def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[
         if not chars:
             chars = [c for c in project.characters if c.is_main]
         out += _character_model_paths(chars, 4)
+    # РЕФЕРЕНСЫ СТИЛЯ — последними и не больше двух. Порядок здесь не
+    # вкусовщина: персонаж важнее стиля. Стилевые картинки приезжают из
+    # админки стилей (StyleAsset, in_generation=1) и подмешиваются ТОЛЬКО
+    # если после персонажей осталось место в потолке. Иначе рестайл вылечит
+    # одну болезнь и вернёт вторую — «персонажи не похожи», которую только
+    # что чинили.
+    style_refs = _style_ref_paths(scene.track)
     # Дедуп с сохранением порядка + потолок по самому скупому Nano Banana (8).
     seen: set[str] = set()
     uniq = [p for p in out if not (p in seen or seen.add(p))]
+    room = max(0, 8 - len(uniq))
+    for p in style_refs[:2]:
+        if room <= 0:
+            break
+        if p not in seen:
+            uniq.append(p)
+            seen.add(p)
+            room -= 1
     return uniq[:8]
+
+
+def _style_ref_paths(track: "Track | None") -> list[str]:
+    """Картинки-референсы стиля трека, помеченные «в генерацию».
+
+    Файлы лежат в STYLE_ASSETS_DIR (том /data), а не в образе: их кладёт
+    владелец через админку стилей, и переживать деплой они обязаны."""
+    if not track:
+        return []
+    out: list[str] = []
+    for key in _track_style_keys(track):
+        for fname in (prompts_catalog.style_gen_refs(key) or []):
+            path = os.path.join(STYLE_ASSETS_DIR, os.path.basename(fname))
+            if os.path.exists(path):
+                out.append(path)
+    return out
 
 
 # ───────────────────── первый и последний кадр сцены ─────────────────────
@@ -4049,7 +4377,9 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
                     f"Character '{c.name}': take the face, hair, body type and "
                     f"clothing STRICTLY from the reference photo of this person. "
                     f"Same face in every shot — do not invent another person, "
-                    f"do not beautify, do not change age, ethnicity or hairstyle."
+                    f"do not beautify, do not change age, ethnicity or hairstyle. "
+                    f"Reproduce their exact outfit from the reference: same garments, "
+                    f"same colours, same silhouette, same accessories."
                 )
     else:
         bible = (project.character_bible or "").strip()
@@ -4091,7 +4421,16 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "IDENTITY IS THE HIGHEST PRIORITY after the style: the person in this frame must be "
         "recognisably the SAME human as in the reference photo — same facial structure, same "
         "hair, same skin tone, same age. Keep their real face; never replace them with a "
-        "generic model or a better-looking lookalike."
+        "generic model or a better-looking lookalike. Reproduce their outfit as well: the "
+        "same clothes, colours and accessories as in the reference, not a generic substitute."
+    )
+    # 4d. Закрытое лицо — часть образа, а не помеха. Генератор охотно «помогает»:
+    # снимает шлем, маску или очки, чтобы показать лицо, и герой перестаёт быть собой.
+    parts.append(
+        "If the reference shows the character with a covered or hidden face — helmet, mask, "
+        "balaclava, hood, animal head, dark glasses — KEEP IT ON exactly as in the reference. "
+        "Never remove it, never lift the visor, never reveal the face underneath, never "
+        "substitute a bare human head. The covering IS the character."
     )
     # 5. Динамика: кадр клипа — момент действия, а не позирование в камеру.
     parts.append(
@@ -4106,10 +4445,70 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
     return "\n".join(p for p in parts if p.strip())
 
 
-def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> None:
+def _keep_scene_version(db: Session, scene: Scene, track: Track, note: str = "") -> None:
+    """Снять текущие кадры (и видео) сцены в версию вместо мусорки.
+
+    Зовётся ПЕРЕД тем, как в сцену лягут новые файлы. Здесь нет ни одного
+    _remove_media: смысл функции ровно в том, чтобы файлы остались на
+    диске и на них появилась вторая ссылка."""
+    if not (scene.image_filename or scene.image_last_filename or scene.video_filename):
+        return
+    keys = [k for k in (scene.style_keys or "").split(",") if k.strip()] \
+        or _track_style_keys(track)
+    db.add(SceneVersion(
+        scene_id=scene.id,
+        style_keys=",".join(keys),
+        style_label=prompts_catalog.labels(keys, "ru"),
+        image_filename=scene.image_filename,
+        image_last_filename=scene.image_last_filename,
+        image_prompt=scene.image_prompt,
+        image_prompt_last=scene.image_prompt_last,
+        video_filename=scene.video_filename,
+        audio_filename=scene.audio_filename,
+        image_engine=scene.image_engine or "",
+        video_engine=scene.video_engine or "",
+        note=str(note or "")[:200],
+    ))
+    db.flush()
+    _trim_scene_versions(db, scene.id)
+
+
+def _trim_scene_versions(db: Session, scene_id: int) -> None:
+    """Оставить SCENE_VERSIONS_KEEP последних снимков, лишние стереть
+    вместе с файлами. Это окно «вернуть как было», а не архив: гигабайт на
+    один рестайл трека — не та цена, которую диск платит вечно."""
+    rows = (db.query(SceneVersion)
+            .filter(SceneVersion.scene_id == int(scene_id))
+            .order_by(SceneVersion.id.desc()).all())
+    if len(rows) <= SCENE_VERSIONS_KEEP:
+        return
+    # ЖИВЫЕ ССЫЛКИ. Один и тот же файл может лежать и в сцене, и в снимке:
+    # при перерисовке только первого кадра последний остаётся прежним, и
+    # версия ссылается ровно на тот файл, который сцена продолжает
+    # показывать. Стереть его «как старый» значило бы выбить картинку из-под
+    # живой сцены.
+    scene = db.get(Scene, int(scene_id))
+    alive = {scene.image_filename, scene.image_last_filename,
+             scene.video_filename, scene.audio_filename} if scene else set()
+    for keep in rows[:SCENE_VERSIONS_KEEP]:
+        alive |= {keep.image_filename, keep.image_last_filename,
+                  keep.video_filename, keep.audio_filename}
+    for old in rows[SCENE_VERSIONS_KEEP:]:
+        for f in (old.image_filename, old.image_last_filename,
+                  old.video_filename, old.audio_filename):
+            if f and f not in alive:
+                _remove_media(f)
+        db.delete(old)
+
+
+def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
+                      keep_version: bool = False) -> None:
     """which: both | first | last — что именно пересобираем.
     engine — явный движок кадров (chatgpt / nano-banana…); пустая строка
-    означает «взять дефолт тарифа»."""
+    означает «взять дефолт тарифа».
+    keep_version=True — старые кадры и видео уезжают в SceneVersion, а не
+    в мусор. Так работает рестайл: сцена на Seedance 2.5 стоит 152 токена,
+    и молча стирать её ради смены стиля нельзя."""
     db = SessionLocal()
     collage = ""  # временный склеенный референс — убираем в finally, чтобы не копился
     try:
@@ -4164,6 +4563,8 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
             scene.image_engine = res["engine"]
 
         _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "frames")
+        if keep_version:
+            _keep_scene_version(db, scene, track)
         old_first, old_last = scene.image_filename, scene.image_last_filename
         old_video, old_audio = scene.video_filename, scene.audio_filename
         old_mids = [m.get("filename", "") for m in _midframes(scene)]
@@ -4191,9 +4592,19 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
         scene.video_error = ""
         scene.audio_filename = ""
         scene.midframes_json = ""
+        # Чем снята эта пара кадров. По этому полю карточка отличает сцену,
+        # оставшуюся в прежнем стиле, от перерисованной.
+        scene.style_keys = ",".join(_track_style_keys(track))
+        if keep_version:
+            # Файлы остаются на диске — на них теперь смотрит версия.
+            # Промежуточные кадры удаляем всегда: это интерполяция СТАРОЙ
+            # пары, в снимке она бессмысленна.
+            for f in old_mids:
+                _remove_media(f)
         db.commit()
-        for f in (old_first, old_last, old_video, old_audio, *old_mids):
-            _remove_media(f)
+        if not keep_version:
+            for f in (old_first, old_last, old_video, old_audio, *old_mids):
+                _remove_media(f)
         log.info("кадры сцены %s готовы", scene_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -4435,6 +4846,9 @@ def _run_assemble(track_id: int) -> None:
         _reg_file(db, track.clip_filename, track.project.owner_id, kind="clip",
                   project_id=track.project_id, track_id=track.id)
         track.clip_status = "done"
+        # Свежая склейка — по нынешним кадрам: метка «снят в прежнем стиле»
+        # снимается ровно здесь и больше нигде.
+        track.clip_stale = False
         db.commit()
         _remove_media(old)
         log.info("клип трека %s собран из %s сцен", track_id, len(videos))
@@ -4799,6 +5213,41 @@ def get_media(filename: str, request: Request, user: User = Depends(current_user
     return _media_response(path, request)
 
 
+# ───────────────────── файлы стилей (админка стилей) ─────────────────────
+# Отдельный каталог в томе /data, а не в образе: постеры, примеры кадров и
+# референсы кладёт владелец через админку, и переживать пересборку они
+# обязаны. Раздаются ПУБЛИЧНО — витрина стилей открыта без аккаунта, и
+# постер стиля такой же публичный объект, как его описание.
+STYLE_ASSETS_DIR = os.environ.get("STYLE_ASSETS_DIR", "/data/styles")
+os.makedirs(STYLE_ASSETS_DIR, exist_ok=True)
+
+
+def _remove_style_asset(filename: str) -> None:
+    """Стереть файл стиля с диска. Отдельно от _remove_media: медиа людей
+    живут в UPLOAD_DIR и учитываются в архиве, файлы стилей — витрина
+    сервиса и своего архива не имеют."""
+    fname = os.path.basename(filename or "")
+    if not fname:
+        return
+    path = os.path.join(STYLE_ASSETS_DIR, fname)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as e:
+        log.warning("файл стиля %s не удалился: %s", fname, e)
+
+
+@app.get("/style-assets/{filename}")
+def style_asset(filename: str, request: Request):
+    """Публичная раздача файла стиля. Ровно так же публична, как /img/styles/*
+    в образе: это витрина, а не приватное медиа человека."""
+    fname = os.path.basename(filename)
+    path = os.path.join(STYLE_ASSETS_DIR, fname)
+    if not os.path.exists(path):
+        raise HTTPException(404, "файл не найден")
+    return _media_response(path, request)
+
+
 THUMB_DIR = os.environ.get("THUMB_DIR", "/data/thumbs")
 os.makedirs(THUMB_DIR, exist_ok=True)
 
@@ -4839,6 +5288,44 @@ def get_outbox(filename: str):
     if not os.path.exists(path):
         raise HTTPException(404, "файл не найден")
     return FileResponse(path)
+
+
+@app.get("/api/text-models")
+def text_models(project_id: int | None = None,
+                user: User = Depends(current_user),
+                db: Session = Depends(db_session)):
+    """Текстовые модели сценарного блока — по образцу /api/providers.
+
+    Честность здесь дороже ассортимента: позиции без ключа обычному
+    человеку не показываются вовсе (продавать то, чего нет, нельзя), а
+    закрытая тарифом показывается с замком и подписью «в PRO» — как
+    locked-стили в пикере. Цена в токенах приезжает отсюда же, из одной
+    кассы с кадрами и видео."""
+    plan_id = _plan_of(user)
+    project = None
+    if project_id:
+        project = db.get(Project, int(project_id))
+        if project and not _owned(user, project):
+            project = None
+    current = _resolve_text_engine(user, project)
+    engines = []
+    for row in textgen.public_engines(plan_id, admin=bool(user.is_admin),
+                                      current=current):
+        row["points"] = TEXT_COST.get(row["id"], 0)
+        # Долларовую себестоимость наружу отдаём только админу: из неё
+        # восстанавливается наша наценка.
+        if not user.is_admin:
+            row.pop("usd", None)
+        engines.append(row)
+    return {
+        "engines": engines,
+        "current": current,
+        "chosen": (project.text_engine or "") if project else "",
+        "plan": plan_id,
+        # Порядок тарифов нужен интерфейсу, чтобы подписать замок («в PRO»),
+        # а не выдумывать свою лестницу.
+        "plan_order": list(textgen.PLAN_ORDER),
+    }
 
 
 @app.get("/api/providers")
@@ -5477,42 +5964,56 @@ async def add_scene(track_id: int, request: Request, user: User = Depends(curren
 
 
 
-def _run_all_frames(track_id: int, engine: str = "") -> None:
+def _frames_todo(track: Track, force: bool = False) -> list:
+    """Сцены, которым нужны кадры. force=1 — ВСЕ сцены с промптом, включая
+    уже отрисованные.
+
+    Без force кнопка «все кадры» на треке с готовыми кадрами отвечала 400
+    «у всех сцен кадры уже готовы» — то есть после смены стиля становилась
+    тупиком: перерисовать уже нарисованное сервису было нечем."""
+    out = []
+    for s in track.scenes:
+        if not (s.image_prompt or "").strip():
+            continue
+        if s.image_prompt.startswith("(готовый кадр"):
+            continue
+        if force or not (s.image_filename and s.image_last_filename):
+            out.append(s)
+    return out
+
+
+def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
+                    keep_version: bool = False) -> None:
     """Пакетная генерация: кадры ВСЕХ сцен трека подряд, одна за другой.
 
     Последовательно, а не парал­лельно: шлюзы картинок обслуживают один
     браузер, и залп из 25 сцен просто выстроится в ту же очередь, но с
-    таймаутами. Сцены с уже готовыми кадрами пропускаются."""
+    таймаутами. Без force сцены с уже готовыми кадрами пропускаются."""
     db = SessionLocal()
     try:
         track = db.get(Track, track_id)
         if not track:
             return
-        scene_ids = [s.id for s in track.scenes
-                     if not (s.image_filename and s.image_last_filename)
-                     and (s.image_prompt or "").strip()
-                     and not s.image_prompt.startswith("(готовый кадр")]
+        scene_ids = [s.id for s in _frames_todo(track, force)]
         db.close()
-        log.info("пакет кадров трека %s: %s сцен движком %s",
-                 track_id, len(scene_ids), engine or "(по тарифу)")
+        log.info("пакет кадров трека %s: %s сцен движком %s%s",
+                 track_id, len(scene_ids), engine or "(по тарифу)",
+                 " (перерисовка)" if force else "")
         for sid in scene_ids:
-            _run_scene_frames(sid, engine=engine)
+            _run_scene_frames(sid, engine=engine, keep_version=keep_version)
     except Exception as e:  # noqa: BLE001
         log.warning("пакет кадров трека %s упал: %s", track_id, e)
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
-def generate_all_frames(track_id: int, engine: str = "",
+def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
                         user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
     from threading import Thread
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку")
-    todo = [s for s in track.scenes
-            if not (s.image_filename and s.image_last_filename)
-            and (s.image_prompt or "").strip()
-            and not s.image_prompt.startswith("(готовый кадр")]
+    todo = _frames_todo(track, bool(force))
     if not todo:
         raise HTTPException(400, "у всех сцен кадры уже готовы")
     # Списываем за весь пакет вперёд — до того, как сцены встанут в очередь.
@@ -5527,8 +6028,436 @@ def generate_all_frames(track_id: int, engine: str = "",
     for s in todo:
         s.image_status = "queued"
     db.commit()
-    Thread(target=_run_all_frames, args=(track_id, eng), daemon=True).start()
-    return {"ok": True, "queued": len(todo), "engine": eng}
+    Thread(target=_run_all_frames, args=(track_id, eng, bool(force), bool(force)),
+           daemon=True).start()
+    return {"ok": True, "queued": len(todo), "engine": eng, "force": bool(force)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# РЕСТАЙЛ: тот же клип в другом стиле, БЕЗ потери раскадровки
+#
+# Владелец просил дословно: «сделай чтобы я допустим мог раскадровку оставить
+# поменять стиль и картинки уже в новом стиле были». До этого такой кнопки не
+# было вообще: единственный способ «переделать» — generate-scenes, а он
+# начинается со `for s in track.scenes: db.delete(s)`, то есть уничтожает
+# сцены, тайминги, описания и утверждения.
+#
+# Здесь меняется РОВНО ОДНО — визуал. Сцены, порядок, тайминги, крупности,
+# персонажи и текст остаются на месте.
+#
+# Три честности, без которых это была бы ловушка:
+#   1. Цена считается ДО запуска и теми же функциями, что списание
+#      (_frames_cost / VIDEO_COST): второй кассы в сервисе нет.
+#   2. Готовое видео не исчезает молча — оно уезжает в SceneVersion, и
+#      человеку говорят об этом ДО нажатия, вместе с ценой пересъёмки.
+#   3. Пересборка видео по умолчанию ВЫКЛЮЧЕНА. Это самая дорогая часть
+#      работы, и включать её за человека нельзя.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _restyle_scope(track: Track, scene_ids: list[int] | None) -> list:
+    """Какие сцены перерисовываем. Пустой список id = все сцены трека."""
+    ids = {int(x) for x in (scene_ids or []) if str(x).strip().lstrip("-").isdigit()}
+    out = []
+    for sc in sorted(track.scenes, key=lambda x: (x.position, x.id)):
+        if ids and sc.id not in ids:
+            continue
+        if not (sc.image_prompt or "").strip():
+            continue
+        if sc.image_prompt.startswith("(готовый кадр"):
+            continue
+        out.append(sc)
+    return out
+
+
+def _restyle_plan(db: Session, user: User, track: Track, *, keys: list[str],
+                  extra: str = "", scene_ids: list[int] | None = None,
+                  with_video: bool = False, text_engine: str = "") -> dict:
+    """Смета рестайла. НИЧЕГО не списывает и ничего не меняет.
+
+    Считается теми же функциями, что и списание, — иначе витрина и касса
+    однажды посчитают цену по-разному, а разбираться с этим будет человек,
+    у которого не сошлось."""
+    scenes = _restyle_scope(track, scene_ids)
+    img_engine = _resolve_image_engine(user, track)
+    prov = _allowed_provider(user, "seedance" if mediagen.seedance_available() else "grok")
+    vid_engine = _resolve_video_engine(user, track, prov)
+    frames_per = _frames_cost(user, None, img_engine)
+    video_per = VIDEO_COST.get(vid_engine, 0)
+    with_video_scenes = [sc for sc in scenes if sc.video_filename]
+
+    # Нужно ли переписывать ТЕКСТЫ промптов. Нужно только старым
+    # раскадровкам: у них стиль вписан в каждый image_prompt, и после смены
+    # чипов в промпт уезжают два стиля сразу.
+    prompts_base = _prompts_style_base(track)
+    need_prompts = prompts_base is not None and prompts_base != ",".join(keys)
+    t_engine = _resolve_text_engine(user, track.project, track, text_engine)
+
+    frames_total = frames_per * len(scenes)
+    video_total = video_per * len(scenes)
+    total = frames_total + (video_total if with_video else 0) \
+        + (TEXT_COST.get(t_engine, 0) if need_prompts else 0)
+
+    warn = []
+    if with_video_scenes and not with_video:
+        warn.append("video_stale")
+    if track.clip_filename:
+        warn.append("clip_stale")
+    if need_prompts:
+        warn.append("prompts_rewrite")
+
+    balance = int(user.gen_points or 0)
+    return {
+        "style_keys": keys,
+        "style_label": prompts_catalog.labels(keys, "ru"),
+        "scenes_total": len(track.scenes),
+        "scenes_selected": len(scenes),
+        "scene_ids": [sc.id for sc in scenes],
+        "prompts": {"needed": need_prompts, "engine": t_engine,
+                    "points": TEXT_COST.get(t_engine, 0) if need_prompts else 0},
+        "frames": {"engine": img_engine, "per_scene": frames_per,
+                   "total": frames_total},
+        "video": {"engine": vid_engine, "provider": prov, "per_scene": video_per,
+                  "scenes_with_video": len(with_video_scenes),
+                  "included": bool(with_video),
+                  "total_if_included": video_total},
+        "total": total,
+        "balance": balance,
+        "enough": bool(user.is_admin or balance >= total),
+        "warn": warn,
+    }
+
+
+def _parse_style_keys(user: User, raw) -> tuple[list[str], str]:
+    """Ключи стилей из тела запроса — ровно теми правилами, что и в
+    set_track_style: тариф решает, чем снимать, и закрытый стиль молча
+    выпадает, а не роняет запрос."""
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    keys: list[str] = []
+    seen: set[str] = set()
+    paid = bool(user.is_admin or _plan_of(user) != "free")
+    for item in (raw or []):
+        k = str(item or "").strip()
+        if not k or k in seen or k not in prompts_catalog.STYLE_KEYS:
+            continue
+        if not paid and (prompts_catalog.public_style(k) or {}).get("tier") == "pro":
+            continue
+        seen.add(k)
+        keys.append(k)
+        if len(keys) >= 3:
+            break
+    return keys, ""
+
+
+@app.post("/api/tracks/{track_id}/restyle/quote")
+async def restyle_quote(track_id: int, request: Request,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    """Сколько будет стоить и что при этом потеряется. Ничего не списывает."""
+    track = _own_track(db, user, track_id)
+    body = await request.json() if await request.body() else {}
+    keys, _ = _parse_style_keys(user, body.get("style_keys"))
+    if not keys:
+        keys = _track_style_keys(track)
+    return _restyle_plan(
+        db, user, track, keys=keys,
+        extra=str(body.get("extra") or ""),
+        scene_ids=body.get("scene_ids") or [],
+        with_video=bool(body.get("with_video")),
+        text_engine=str(body.get("text_engine") or ""),
+    )
+
+
+def _run_restyle(track_id: int, scene_ids: list[int], img_engine: str,
+                 with_video: bool, vid_engine: str, provider: str,
+                 need_prompts: bool, text_engine: str) -> None:
+    """Очередь рестайла: переписать промпты (если надо) → кадры → видео.
+
+    Последовательно, как _run_all_frames, и по той же причине: шлюзы
+    картинок обслуживают одну браузерную сессию на весь Организм."""
+    db = SessionLocal()
+    total = len(scene_ids)
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        track.restyle_status = "running"
+        track.restyle_note = f"0 из {total}"
+        db.commit()
+        if need_prompts:
+            _rewrite_scene_prompts(db, track, scene_ids, text_engine)
+            db.commit()
+        db.close()
+        for i, sid in enumerate(scene_ids, start=1):
+            _run_scene_frames(sid, engine=img_engine, keep_version=True)
+            db = SessionLocal()
+            try:
+                tr = db.get(Track, track_id)
+                if tr:
+                    tr.restyle_note = f"{i} из {total}"
+                    db.commit()
+            finally:
+                db.close()
+        if with_video:
+            for sid in scene_ids:
+                db = SessionLocal()
+                try:
+                    sc = db.get(Scene, sid)
+                    if sc and sc.image_filename:
+                        sc.video_provider = provider
+                        sc.video_engine = vid_engine
+                        sc.video_status = "queued"
+                        sc.video_error = ""
+                        db.commit()
+                finally:
+                    db.close()
+            for sid in scene_ids:
+                _run_scene_video(sid)
+        db = SessionLocal()
+        tr = db.get(Track, track_id)
+        if tr:
+            tr.restyle_status = "done"
+            tr.restyle_note = f"готово: {total}"
+            # Тексты сцен теперь без стиля — следующий рестайл этого трека
+            # обойдётся уже без обращения к модели.
+            tr.prompts_style_keys = PROMPTS_NO_STYLE
+            # Собранный клип снят по прежним кадрам. Файл не трогаем:
+            # человек имеет право оставить старую склейку.
+            if tr.clip_filename:
+                tr.clip_stale = True
+            db.commit()
+        log.info("рестайл трека %s завершён (%s сцен)", track_id, total)
+    except Exception as e:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        db2 = SessionLocal()
+        try:
+            tr = db2.get(Track, track_id)
+            if tr:
+                tr.restyle_status = "error"
+                tr.restyle_note = str(e)[:400]
+                db2.commit()
+        finally:
+            db2.close()
+        log.warning("рестайл трека %s упал: %s", track_id, e)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _rewrite_scene_prompts(db: Session, track: Track, scene_ids: list[int],
+                           engine: str) -> None:
+    """Вычистить прежний стиль из текстов промптов старой раскадровки.
+
+    Сцены, тайминги, крупности и персонажи не трогаются — модели это
+    запрещено системным промптом (claude.RESTYLE_SYSTEM), а здесь мы ещё и
+    принимаем ТОЛЬКО два поля из ответа. Остальное игнорируется, даже если
+    модель их вернула."""
+    scenes = [sc for sc in track.scenes if sc.id in set(scene_ids)]
+    if not scenes:
+        return
+    payload = [{
+        "position": sc.position, "shot_size": sc.shot_size,
+        "camera_move": sc.camera_move, "shot_note": sc.shot_note,
+        "characters": [c.strip() for c in (sc.characters or "").split(",") if c.strip()],
+        "image_prompt": sc.image_prompt,
+        "image_prompt_last": sc.image_prompt_last,
+    } for sc in scenes]
+    import asyncio
+    res = asyncio.run(claude.restyle_prompts(
+        scenes=payload,
+        story_base=prompts_catalog.story_base(_track_style_keys(track)),
+        character_bible=track.project.character_bible,
+        characters=characters_payload(track.project),
+        engine=engine,
+    ))
+    by_pos = {int(r.get("position") or 0): r for r in (res.get("scenes") or [])}
+    changed = 0
+    for sc in scenes:
+        row = by_pos.get(sc.position)
+        if not row:
+            continue
+        first = str(row.get("image_prompt") or "").strip()
+        last = str(row.get("image_prompt_last") or "").strip()
+        if first:
+            sc.image_prompt = first
+            changed += 1
+        if last:
+            sc.image_prompt_last = last
+    log.info("рестайл трека %s: переписано промптов %s из %s",
+             track.id, changed, len(scenes))
+
+
+@app.post("/api/tracks/{track_id}/restyle")
+async def restyle_track(track_id: int, request: Request,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    """Перерисовать кадры в новом стиле, сохранив раскадровку.
+
+    body: {style_keys: [...], extra?: "", scene_ids?: [...],
+           with_video?: false, text_engine?: ""}
+    """
+    from threading import Thread
+    track = _own_track(db, user, track_id)
+    if not track.scenes:
+        raise HTTPException(400, "сначала сгенерируй раскадровку")
+    if track.scenes_status in ("queued", "running") \
+            or track.supergen_status in ("queued", "running") \
+            or track.restyle_status in ("queued", "running"):
+        raise HTTPException(409, "по этому объекту уже идёт работа — дождись её")
+    body = await request.json() if await request.body() else {}
+    keys, _ = _parse_style_keys(user, body.get("style_keys"))
+    if not keys:
+        keys = _track_style_keys(track)
+    if not keys:
+        raise HTTPException(400, "не выбран ни один стиль")
+    extra = str(body.get("extra") or "").strip()[:2000]
+    with_video = bool(body.get("with_video"))
+    plan = _restyle_plan(db, user, track, keys=keys, extra=extra,
+                         scene_ids=body.get("scene_ids") or [],
+                         with_video=with_video,
+                         text_engine=str(body.get("text_engine") or ""))
+    if not plan["scene_ids"]:
+        raise HTTPException(400, "нечего перерисовывать: у сцен нет промптов")
+
+    # СТИЛЬ МЕНЯЕТСЯ У ТРЕКА ЦЕЛИКОМ, даже при выборочной перерисовке:
+    # стиль — свойство трека, а не кадра. У неперерисованных сцен остаётся
+    # прежний scene.style_keys, и карточка честно помечает их «снято в
+    # прежнем стиле» — смешанный трек это законное состояние, но видимое.
+    if plan["prompts"]["needed"] and not (track.prompts_style_keys or "").strip():
+        # Легаси-раскадровка: фиксируем, под какой стиль писаны её тексты,
+        # прежде чем сменить стиль трека.
+        track.prompts_style_keys = ",".join(_track_style_keys(track))
+    track.style_keys = ",".join(keys)
+    track.style_extra = extra
+    track.style = prompts_catalog.fusion(keys, extra)
+
+    scene_ids = list(plan["scene_ids"])
+    scenes = [sc for sc in track.scenes if sc.id in set(scene_ids)]
+    img_engine = plan["frames"]["engine"]
+    _scenes_charge(db, user, scenes, lambda sc: _frames_cost(user, sc, img_engine),
+                   f"перерисовка кадров трека {track.id} ({img_engine})",
+                   kind="frames", engine=img_engine, track_id=track.id,
+                   project_id=track.project_id)
+    if plan["prompts"]["needed"]:
+        _text_charge(db, user, plan["prompts"]["engine"],
+                     f"перепись промптов трека {track.id} "
+                     f"({plan['prompts']['engine']})",
+                     ref_type="track", ref_id=track.id, track_id=track.id,
+                     project_id=track.project_id)
+    if with_video:
+        # Только ВИДЕО, без кадров: за кадры уже списано строкой выше.
+        # _scene_cost() здесь дал бы «кадры + видео» и содрал бы за кадры
+        # второй раз — а смета показала человеку другое число.
+        video_per = plan["video"]["per_scene"]
+        _scenes_charge(db, user, scenes, lambda sc: video_per,
+                       f"пересъёмка видео трека {track.id} ({plan['video']['engine']})",
+                       kind="video", engine=plan["video"]["engine"],
+                       track_id=track.id, project_id=track.project_id)
+    for sc in scenes:
+        sc.image_status = "queued"
+    track.restyle_status = "queued"
+    track.restyle_note = f"0 из {len(scene_ids)}"
+    db.commit()
+    Thread(target=_run_restyle,
+           args=(track.id, scene_ids, img_engine, with_video,
+                 plan["video"]["engine"], plan["video"]["provider"],
+                 bool(plan["prompts"]["needed"]), plan["prompts"]["engine"]),
+           daemon=True).start()
+    return {"ok": True, "queued": len(scene_ids), "plan": plan}
+
+
+# ───────────────────── версии кадров сцены ─────────────────────
+
+def _version_dict(v: SceneVersion) -> dict:
+    return {
+        "id": v.id, "scene_id": v.scene_id,
+        "at": (_as_utc(v.created_at) or now()).isoformat(),
+        "style_keys": [k for k in (v.style_keys or "").split(",") if k],
+        "style_label": v.style_label or "",
+        "image_url": f"/api/media/{v.image_filename}" if v.image_filename else "",
+        "image_last_url": f"/api/media/{v.image_last_filename}" if v.image_last_filename else "",
+        "image_thumb_url": f"/api/thumb/{v.image_filename}" if v.image_filename else "",
+        "image_last_thumb_url": (f"/api/thumb/{v.image_last_filename}"
+                                 if v.image_last_filename else ""),
+        "video_url": f"/api/media/{v.video_filename}" if v.video_filename else "",
+        "image_engine": v.image_engine or "", "video_engine": v.video_engine or "",
+        "note": v.note or "",
+    }
+
+
+@app.get("/api/scenes/{scene_id}/versions")
+def scene_versions(scene_id: int, user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    scene = _own_scene(db, user, scene_id)
+    rows = (db.query(SceneVersion)
+            .filter(SceneVersion.scene_id == scene.id)
+            .order_by(SceneVersion.id.desc()).all())
+    return {"versions": [_version_dict(v) for v in rows],
+            "keep": SCENE_VERSIONS_KEEP}
+
+
+@app.post("/api/scenes/{scene_id}/versions/{version_id}/restore")
+def restore_scene_version(scene_id: int, version_id: int,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """Вернуть кадры из снимка. Это ОБМЕН, а не перезапись: нынешние кадры
+    сами становятся версией, поэтому откат откатывается."""
+    scene = _own_scene(db, user, scene_id)
+    ver = db.get(SceneVersion, version_id)
+    if not ver or ver.scene_id != scene.id:
+        raise HTTPException(404, "версия не найдена")
+    cur = {
+        "image_filename": scene.image_filename,
+        "image_last_filename": scene.image_last_filename,
+        "image_prompt": scene.image_prompt,
+        "image_prompt_last": scene.image_prompt_last,
+        "video_filename": scene.video_filename,
+        "audio_filename": scene.audio_filename,
+        "image_engine": scene.image_engine or "",
+        "video_engine": scene.video_engine or "",
+        "style_keys": scene.style_keys or ",".join(_track_style_keys(scene.track)),
+    }
+    scene.image_filename = ver.image_filename
+    scene.image_last_filename = ver.image_last_filename
+    if (ver.image_prompt or "").strip():
+        scene.image_prompt = ver.image_prompt
+    if (ver.image_prompt_last or "").strip():
+        scene.image_prompt_last = ver.image_prompt_last
+    scene.video_filename = ver.video_filename
+    scene.audio_filename = ver.audio_filename
+    scene.image_engine = ver.image_engine
+    scene.video_engine = ver.video_engine
+    scene.style_keys = ver.style_keys
+    scene.image_status = "done" if ver.image_filename else ""
+    scene.image_error = ""
+    scene.video_status = "done" if ver.video_filename else ""
+    scene.video_error = ""
+    # Утверждение не переносится: сцена изменилась, и утверждать её надо
+    # заново — иначе автосборка склеит клип из того, чего человек не видел.
+    scene.approved = False
+    # Промежуточные кадры относились к ТОЙ паре, которой больше нет.
+    for m in _midframes(scene):
+        _remove_media(m.get("filename", ""))
+    scene.midframes_json = ""
+    ver.image_filename = cur["image_filename"]
+    ver.image_last_filename = cur["image_last_filename"]
+    ver.image_prompt = cur["image_prompt"]
+    ver.image_prompt_last = cur["image_prompt_last"]
+    ver.video_filename = cur["video_filename"]
+    ver.audio_filename = cur["audio_filename"]
+    ver.image_engine = cur["image_engine"]
+    ver.video_engine = cur["video_engine"]
+    ver.style_keys = cur["style_keys"]
+    ver.style_label = prompts_catalog.labels(
+        [k for k in cur["style_keys"].split(",") if k], "ru")
+    db.commit()
+    db.refresh(scene)
+    return scene_dict(scene)
 
 
 def _run_all_videos(track_id: int) -> None:
@@ -7183,6 +8112,16 @@ def _file_in_use(db: Session, fname: str) -> str:
         return "attribute"
     if db.query(SceneRef).filter(SceneRef.filename == fname).first():
         return "ref"
+    ver = (db.query(SceneVersion)
+           .filter((SceneVersion.image_filename == fname)
+                   | (SceneVersion.image_last_filename == fname)
+                   | (SceneVersion.video_filename == fname)
+                   | (SceneVersion.audio_filename == fname))
+           .first())
+    if ver:
+        # Снимок предыдущего стиля — это кнопка «вернуть как было». Молча
+        # стереть его файл значит сделать откат кнопкой в пустоту.
+        return f"version:{ver.scene_id}"
     return ""
 
 
@@ -7622,6 +8561,68 @@ crm.mount(app)
 stars.mount(app)
 tg_app.mount(app)
 
+
+# ─────────────────────────────── раздел «Музыка» ───────────────────────────────
+# Загрузка трека, генерация, мастеринг и подготовка релиза. Своей авторизации и
+# своей кассы модуль не заводит: сессия, очки и регистрация файлов — отсюда.
+# Тем же правилом, что и телеграм-контур, подключается ДО mount("/").
+import music_api  # noqa: E402
+
+music_api.mount(app)
+
+
+# ─────────────────────────── ВХОД В АДМИНКУ ───────────────────────────
+# Отдельная страница /admin, а не вкладки внутри модалки кабинета. Владелец
+# просил дословно: «дай ссылку на админку где у меня срм система и другие
+# настройки приложения». CRM поверх студии в модальном окне — это ровно то,
+# что он просит развести.
+#
+# ФАЙЛЫ АДМИНКИ ЛЕЖАТ ВНЕ FRONTEND_DIR. Это не вкусовщина: статика
+# смонтирована на «/», и любой файл внутри неё читается кем угодно без
+# всякой проверки. Положи мы admin.js рядом с app.js — проверка is_admin
+# ниже стала бы декорацией, потому что файл всё равно отдался бы напрямую.
+#
+# Не админу отвечаем 404, а не 403: существование админки посторонним не
+# подтверждаем. Не залогинен — тоже 404, а не редирект на вход: владелец
+# входит обычным входом на сайте и потом открывает /admin.
+#
+# РЕГИСТРАЦИЯ СТРОГО ДО app.mount("/") — иначе статика перехватит и /admin,
+# и его js, и вернёт 404 сама, молча и совершенно непонятно.
+ADMIN_DIR = os.environ.get("ADMIN_DIR", "/app/admin")
+_ADMIN_TYPES = {".html": "text/html; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".svg": "image/svg+xml", ".json": "application/json"}
+
+
+def _admin_asset(rest: str) -> str:
+    """Путь к файлу админки. Всё, что не найдено, отдаёт index.html —
+    маршрутизация внутри страницы своя (?tab=…), сервер о ней не знает."""
+    name = os.path.basename((rest or "").strip("/")) or "index.html"
+    path = os.path.join(ADMIN_DIR, name)
+    if os.path.isfile(path):
+        return path
+    return os.path.join(ADMIN_DIR, "index.html")
+
+
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/{rest:path}", include_in_schema=False)
+def admin_page(request: Request, rest: str = "",
+               db: Session = Depends(db_session)):
+    user = _resolve_user(request, db)
+    if not user or not user.is_admin:
+        raise HTTPException(404, "not found")
+    path = _admin_asset(rest)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "админка не собрана")
+    ext = os.path.splitext(path)[1].lower()
+    return FileResponse(path, media_type=_ADMIN_TYPES.get(ext),
+                        headers={"Cache-Control": "no-store"})
+
+
+# Правки стилей из базы — до первого запроса, иначе первая же витрина
+# отдаст заводской каталог и человек решит, что админка не сохраняет.
+reload_style_overlay()
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")
 if os.path.isdir(FRONTEND_DIR):

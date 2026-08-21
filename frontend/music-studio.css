@@ -1,0 +1,330 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   lolq.ai — раздел «Музыка» (экран #music)
+
+   Подключается ПОСЛЕ style.css и landing.css и НЕ объявляет ни одного токена
+   в :root. Это принципиально: nav.css уже переопределил там --fire-ink в
+   тёмно-красный, забракованный владельцем дважды, и весь верстак поехал
+   (см. docs/DESIGN_SYSTEM.md §11, П-1). Второй раз наступать не будем — здесь
+   только классы .mus-*, а цвета берутся из общих токенов.
+
+   Единственное локальное переопределение — --muted внутри самого экрана:
+   глобальный #9b8a7d даёт на бумаге 3.11:1, то есть подписи под числами
+   нечитаемы. Витрина эту дыру уже закрыла (--ink-muted, 5.72:1), студия нет.
+   Приём тот же, что в landing.css:66.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mus {
+  --muted: var(--ink-muted);
+  --mus-max: 1180px;                 /* «пошире на комп версии» — замечание №6 */
+  --mus-ctl: 34px;                   /* одна высота контролов в строке, №5 */
+  min-height: 100vh;
+  padding-bottom: 64px;
+}
+
+/* ────────── шапка: единственное стекло на экране ────────── */
+.mus-top { position: sticky; top: 10px; z-index: 40; padding: 0 16px; margin-bottom: 18px; }
+.mus-bar {
+  max-width: var(--mus-max); margin: 0 auto;
+  display: flex; align-items: center; gap: 10px;
+  height: 54px; padding: 0 10px 0 12px;
+  border: 2px solid #2d211a; border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 252, 247, .86), rgba(255, 244, 232, .76));
+  box-shadow: 0 2px 0 #2d211a, var(--shadow-soft, 0 8px 20px -14px rgba(90, 52, 24, .28));
+  backdrop-filter: blur(18px) saturate(1.7);
+  -webkit-backdrop-filter: blur(18px) saturate(1.7);
+}
+/* Стекло без поддержки блюра — не мутное пятно, а честная плотная бумага. */
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .mus-bar { background: var(--surface, #fffdf9); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .mus-bar { background: var(--surface, #fffdf9); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+.mus-word {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 800;
+  letter-spacing: .18em; text-transform: uppercase; margin-right: auto;
+}
+.mus-word b { font-weight: 800; }
+.mus-count {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  letter-spacing: .04em; white-space: nowrap;
+}
+.mus-bar button, .mus-bar .lang-switch { height: var(--mus-ctl); }
+.mus-bar button { display: inline-flex; align-items: center; padding: 0 12px; }
+
+/* ────────── каркас страницы ────────── */
+.mus-wrap { max-width: var(--mus-max); margin: 0 auto; padding: 0 16px; display: grid; gap: 16px; }
+.mus-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .mus-row { grid-template-columns: 1fr; } }
+
+/* Картон лежит: обводка 2, офсет 4, без блюра. */
+.mus-card {
+  background: var(--card); border: 2px solid #2d211a; border-radius: 18px;
+  box-shadow: 0 4px 0 #2d211a; padding: 16px;
+}
+/* Заголовок блока — один вид на всю карточку, включая вложенные секции:
+   селектор по прямому потомку давал два разных заголовка в одной карточке. */
+.mus-card h3 {
+  margin: 0 0 4px; font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+}
+.mus-engine h3 { margin-top: 4px; }
+.mus-sub { margin: 0 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+
+/* В style.css `label` — это подпись поля: mono, 10px, uppercase, приглушённый.
+   Внутри раздела label'ами работают ещё три вещи — окно загрузки, обложка и
+   чекбоксы, — и наследование превращало их текст в капслок из служебных
+   подписей. Здесь типографика возвращается к человеческой; подписям полей
+   студийный вид возвращается ниже, явным правилом. */
+.mus label {
+  font-family: inherit; font-size: inherit; letter-spacing: normal;
+  text-transform: none; color: var(--text); margin: 0;
+}
+
+/* ────────── окно загрузки трека (дизайн-система §4.12) ────────── */
+.mus-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; min-height: 168px; padding: 20px 16px; text-align: center;
+  border: 2px dashed rgba(45, 33, 26, .28); border-radius: 18px;
+  background: var(--inset); cursor: pointer;
+  transition: border-color .14s, background .14s;
+}
+.mus-drop:hover, .mus-drop.over {
+  border-color: var(--accent-2); background: rgba(255, 122, 41, .06);
+}
+.mus-drop.busy { cursor: progress; }
+.mus-drop-ico { font-size: 26px; line-height: 1; }
+.mus-drop-title { font-size: 14px; font-weight: 700; }
+.mus-drop-title u { text-decoration-color: var(--accent-2); text-underline-offset: 3px; }
+.mus-drop-hint { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+.mus-drop-err { font-size: 12px; color: var(--danger-ink, #cf2222); font-weight: 600; }
+
+/* Полоса приёма: доля известна — значит полоса законна. */
+.mus-prog { width: 100%; max-width: 260px; height: 6px; border-radius: 999px; background: var(--surface-2, #f6f1e9); overflow: hidden; }
+.mus-prog i { display: block; height: 100%; width: 0; background: var(--fire-ink); transition: width .2s; }
+
+/* ────────── генерация ────────── */
+.mus-gen-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.mus-gen textarea { min-height: 72px; resize: vertical; }
+.mus-price {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap;
+}
+
+/* Плашка «выключено»: контрол виден, но честно погашен (дизайн-система §7). */
+.mus-off {
+  display: flex; gap: 8px; align-items: flex-start;
+  margin-top: 10px; padding: 9px 11px; border-radius: 12px;
+  background: var(--gold-wash, rgba(255, 181, 69, .18));
+  border: 1px solid rgba(138, 90, 43, .28);
+  font-size: 12.5px; line-height: 1.45; color: var(--text);
+}
+.mus-off b { font-weight: 700; }
+.mus-card.is-off .mus-gen-row { opacity: .45; }
+
+/* ────────── лента треков ────────── */
+.mus-list { display: grid; gap: 10px; }
+.mus-item {
+  display: grid; grid-template-columns: 52px 1fr auto; gap: 12px; align-items: center;
+  padding: 10px 12px; text-align: left; width: 100%;
+  background: var(--card); border: 1.5px solid #2d211a; border-radius: 14px;
+  box-shadow: 0 2px 0 #2d211a; cursor: pointer;
+}
+.mus-item:hover { background: #fff; }
+.mus-item:active { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.mus-item-cover {
+  width: 52px; height: 52px; border-radius: 10px; overflow: hidden; flex: none;
+  border: 1.5px solid rgba(45, 33, 26, .35); background: var(--inset);
+  display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--muted);
+}
+.mus-item-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mus-item-name { font-size: 14px; font-weight: 700; line-height: 1.3; }
+.mus-item-meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); letter-spacing: .03em; margin-top: 3px; }
+.mus-item-tags { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Бейдж — капсула без клика. Не заливается ни огнём, ни золотом с белым. */
+.mus-tag {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .05em; text-transform: uppercase; white-space: nowrap;
+  padding: 4px 9px; border-radius: 999px;
+  border: 1.5px solid rgba(45, 33, 26, .35); background: var(--inset); color: var(--text);
+}
+.mus-tag.ok { background: rgba(20, 160, 107, .12); color: var(--ok-ink, #0f7a52); border-color: rgba(15, 122, 82, .3); }
+.mus-tag.warn { background: var(--gold-wash, rgba(255, 181, 69, .18)); color: var(--gold-ink, #8a5a2b); border-color: rgba(138, 90, 43, .3); }
+.mus-tag.bad { background: var(--accent-wash, rgba(207, 34, 34, .08)); color: var(--accent-ink, #cf2222); border-color: var(--accent-line, rgba(207, 34, 34, .22)); }
+
+/* Пустое состояние: объясняет, что тут будет, и даёт первый шаг. */
+.mus-empty { text-align: center; padding: 26px 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+
+/* Плейсхолдер загрузки — геометрия будущей карточки, не спиннер. */
+.mus-skel { height: 74px; border-radius: 14px; background: var(--surface-2, #f6f1e9); position: relative; overflow: hidden; }
+.mus-skel::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .65), transparent);
+  animation: musSkel 1.4s ease-in-out infinite;
+}
+@keyframes musSkel { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .mus-skel::after { animation: none; } }
+
+/* ────────── карточка трека ────────── */
+.mus-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mus-head .mus-title-in { flex: 1 1 240px; min-width: 160px; }
+.mus-head .mus-artist-in { flex: 1 1 180px; min-width: 140px; }
+.mus-head input { margin: 0; height: var(--mus-ctl); }
+.mus-head button { height: var(--mus-ctl); }
+
+/* Лента капсул — четыре раздела карточки. Прокручивается пальцем. */
+.mus-tabs {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  padding: 2px; margin: 14px 0 12px;
+}
+.mus-tabs::-webkit-scrollbar { display: none; }
+.mus-tab {
+  flex: none; padding: 6px 12px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 800;
+  letter-spacing: .06em; text-transform: uppercase;
+  border: 1.5px solid #2d211a; background: var(--inset); box-shadow: 0 2px 0 #2d211a;
+}
+.mus-tab.on { color: var(--on-accent); background: var(--fire-ink); }
+.mus-pane { display: none; }
+.mus-pane.on { display: block; }
+
+/* ────────── звук: волна и числа ────────── */
+.mus-wave { width: 100%; height: 92px; display: block; border-radius: 12px; background: var(--inset); border: 1.5px solid rgba(45, 33, 26, .2); }
+.mus-wave-wrap { position: relative; }
+.mus-wave-note {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: var(--muted); pointer-events: none;
+}
+.mus-nums {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px; margin-top: 12px;
+}
+.mus-num { padding: 8px 10px; border-radius: 12px; background: var(--inset); border: 1px solid rgba(45, 33, 26, .16); }
+.mus-num i {
+  display: block; font-family: var(--font-mono); font-size: 9.5px; font-style: normal;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px;
+}
+.mus-num b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.mus-num s { text-decoration: none; font-size: 11px; color: var(--muted); margin-left: 3px; }
+.mus-player { width: 100%; margin-top: 12px; }
+.mus-sections { display: flex; gap: 4px; margin-top: 10px; height: 10px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(45, 33, 26, .16); }
+.mus-sec { height: 100%; }
+.mus-sec-quiet { background: rgba(45, 33, 26, .12); }
+.mus-sec-steady { background: rgba(255, 181, 69, .45); }
+.mus-sec-full { background: rgba(234, 106, 52, .6); }
+.mus-sec-peak { background: rgba(224, 80, 58, .8); }
+.mus-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+
+/* ────────── мастеринг ────────── */
+.mus-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.mus-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  border: 1.5px solid #2d211a; background: var(--inset); box-shadow: 0 2px 0 #2d211a;
+  white-space: nowrap;
+}
+.mus-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.mus-chip.on { color: var(--on-accent); background: var(--fire-ink); }
+.mus-chip:disabled { opacity: .45; box-shadow: none; cursor: default; }
+.mus-chip em { font-style: normal; font-family: var(--font-mono); font-size: 10px; opacity: .72; }
+/* Цена активного чипа белым по огню не читается (2.4:1) — она уезжает
+   в строку-прогноз под лентой. Дизайн-система §4.2. */
+.mus-chip.on em { display: none; }
+.mus-forecast { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+.mus-engine { margin-top: 12px; }
+.mus-engine-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 6px; }
+.mus-ref { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.mus-ref select { flex: 1 1 200px; width: auto; height: var(--mus-ctl); margin: 0; }
+.mus-ref .mus-refname { font-size: 12px; color: var(--muted); }
+
+.mus-run { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.mus-run button { height: 38px; }
+
+/* Отчёт мастеринга: до/после и что реально произошло. */
+.mus-ab { margin-top: 14px; padding: 12px; border-radius: 14px; background: var(--inset); border: 1.5px solid rgba(45, 33, 26, .2); }
+.mus-ab-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mus-ab-note { font-size: 12.5px; line-height: 1.55; color: var(--text); margin: 10px 0 0; white-space: pre-line; }
+.mus-delta { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
+.mus-delta div { font-family: var(--font-mono); font-size: 11.5px; padding: 7px 9px; border-radius: 10px; background: var(--surface, #fffdf9); border: 1px solid rgba(45, 33, 26, .14); }
+.mus-delta b { font-size: 12.5px; }
+.mus-match { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+.mus-match input { width: auto; margin: 0; }
+
+/* ────────── релиз ────────── */
+.mus-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 12px; }
+.mus-form .wide { grid-column: 1 / -1; }
+.mus-form label { display: block; }
+/* Подпись поля — студийная плотность: mono, 10px, капслок, приглушённый цвет.
+   Плейсхолдер её не заменяет: он исчезает при первом же вводе. */
+.mus-form label > span:first-child {
+  display: block; font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+  margin: 0 0 4px;
+}
+.mus-form .mus-match > span { font-family: inherit; font-size: 13px; text-transform: none; letter-spacing: normal; color: var(--text); margin: 0; }
+.mus-form input, .mus-form select, .mus-form textarea { margin: 0; }
+.mus-fh { font-size: 11.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.4; }
+.mus-cover {
+  display: flex; gap: 12px; align-items: center; margin-top: 14px;
+  padding: 12px; border-radius: 14px; border: 2px dashed rgba(45, 33, 26, .28); cursor: pointer;
+}
+.mus-cover:hover, .mus-cover.over { border-color: var(--accent-2); background: rgba(255, 122, 41, .06); }
+.mus-cover-img { width: 84px; height: 84px; border-radius: 10px; object-fit: cover; border: 1.5px solid rgba(45, 33, 26, .35); background: var(--inset); flex: none; }
+.mus-cover-txt { font-size: 12.5px; line-height: 1.5; }
+.mus-cover-txt b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+
+.mus-checks { display: grid; gap: 6px; margin-top: 14px; }
+.mus-check { display: grid; grid-template-columns: 10px 1fr auto; gap: 9px; align-items: baseline; font-size: 12.5px; line-height: 1.45; }
+.mus-dot { width: 8px; height: 8px; border-radius: 999px; margin-top: 5px; }
+.mus-check.ok .mus-dot { background: var(--ok); }
+.mus-check.warn .mus-dot { background: var(--gold); }
+.mus-check.fail .mus-dot { background: var(--danger); }
+.mus-check.ok { color: var(--muted); }
+.mus-check.fail b { color: var(--danger-ink, #cf2222); }
+.mus-check-val { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+.mus-dist {
+  margin-top: 14px; padding: 12px; border-radius: 14px;
+  background: var(--gold-wash, rgba(255, 181, 69, .18));
+  border: 1px solid rgba(138, 90, 43, .28); font-size: 12.5px; line-height: 1.55;
+}
+.mus-dist b { display: block; margin-bottom: 4px; }
+.mus-stores { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.mus-store { font-family: var(--font-mono); font-size: 10px; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, .7); border: 1px solid rgba(138, 90, 43, .25); color: var(--gold-ink, #8a5a2b); }
+
+/* ────────── соцсети ────────── */
+.mus-social-state { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 10px; }
+.mus-live { width: 8px; height: 8px; border-radius: 999px; background: var(--muted); flex: none; }
+.mus-live.on { background: var(--ok); }
+.mus-live.off { background: var(--danger); }
+.mus-video { max-width: 220px; width: 100%; border-radius: 12px; border: 1.5px solid #2d211a; margin-top: 12px; display: block; }
+
+/* ────────── состояния работы ────────── */
+.mus-status { font-size: 12.5px; line-height: 1.5; margin-top: 10px; display: flex; gap: 8px; align-items: flex-start; }
+.mus-status .mus-dot { margin-top: 6px; }
+.mus-status.run .mus-dot { background: var(--accent-2); animation: musPulse 1.1s ease-in-out infinite; }
+.mus-status.err { color: var(--danger-ink, #cf2222); }
+.mus-status.err .mus-dot { background: var(--danger); }
+.mus-status.ok .mus-dot { background: var(--ok); }
+@keyframes musPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .mus-status.run .mus-dot { animation: none; } }
+
+/* ────────── телефон ────────── */
+@media (max-width: 700px) {
+  .mus { --mus-ctl: 30px; }
+  .mus-top { top: 6px; padding: 0 10px; }
+  .mus-bar { height: 48px; gap: 6px; padding: 0 8px 0 10px; }
+  .mus-word { font-size: 11px; letter-spacing: .12em; }
+  /* Счётчик уезжает первым: шапка обязана остаться в одну строку (замечание №7). */
+  .mus-count { display: none; }
+  .mus-wrap { padding: 0 10px; gap: 12px; }
+  .mus-card { padding: 13px; border-radius: 16px; }
+  /* Палец не попадает в 26 px. Минимум 40 — дизайн-система §4.1. */
+  .mus button:not(.mus-chip):not(.mus-tab) { min-height: 40px; }
+  .mus-chip, .mus-tab { min-height: 34px; }
+  .mus-nums { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
+  .mus-item { grid-template-columns: 44px 1fr; }
+  .mus-item-cover { width: 44px; height: 44px; }
+  .mus-item-tags { grid-column: 1 / -1; justify-content: flex-start; }
+}

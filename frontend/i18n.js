@@ -65,6 +65,8 @@ const I18N = {
     },
 
     auth: {
+      noAccount: "No account yet?",
+      signupFree: "Create one free",
       loginPh: "login (empty — owner sign-in)",
       passwordPh: "password",
       submit: "sign in",
@@ -91,7 +93,7 @@ const I18N = {
       linkTimeout: "No answer from the browser. Tap the button again.",
       linkExpired: "The link expired. Tap the button again.",
       conflictShort: "That account already exists on its own — nothing was merged.",
-      conflict: "You have two accounts. This one stays as is; the other ({name}, {plan}, {tokens} tokens) is still on the site with everything in it. We do not merge them — that would erase tokens and work.",
+      conflict: "You have two accounts. This one stays as is; the other ({name}, {plan}, {points} tokens) is still on the site with everything in it. We do not merge them — that would erase tokens and work.",
       openOnDesktop: "Open on a computer",
     },
 
@@ -136,6 +138,8 @@ const I18N = {
       planFreeTitle: "free plan: video via Grok, Seedance opens on a paid plan",
       chat: "Chat",
       chatTitle: "one window: text, images and video, model switched in the input line",
+      music: "Music",
+      musicTitle: "upload a track, master it, prepare the release",
     },
 
     // ─────────────────────── чат ───────────────────────
@@ -242,8 +246,9 @@ const I18N = {
       // набор инструментов, а не половину.
       chat: { title: "chat", full: "Chat with a model",
               note: "Text, images and video from an image — in one window." },
-      audio: { title: "audio", full: "Voice-over, music and mastering",
-               note: "In the works. For now sound comes from the file you upload." },
+      music: { title: "music", full: "A track: upload, mastering, release",
+               note: "Your own screen: measurements and a waveform on arrival, "
+                     + "mastering against a reference, release prep." },
       // «3D Pixar» — ЯРЛЫК, а не режим: это стиль (STYLES.pixar), у которого
       // нет ни своего объекта, ни шагов, ни каркаса. Подпись обязана говорить
       // это вслух, иначе человек ждёт от него отдельного конвейера.
@@ -538,7 +543,7 @@ const I18N = {
       subjectPh: "short and honest",
       body: "Message",
       bodyPh: "Plain text. Blank line starts a new paragraph.",
-      vars: "{name}, {tokens} and {plan} get replaced per person.",
+      vars: "{name}, {points} and {plan} get replaced per person.",
       transactional: "service message (unsubscribes do not mute it)",
       send: "Send",
       test: "Send to myself",
@@ -1231,7 +1236,7 @@ const I18N = {
         perMonth: "/ mo",
         yearHint: "or {mo} a month billed yearly",
         yearNote: "{total} a year · billed once",
-        pointsLine: "{tokens} tokens a month",
+        pointsLine: "{points} tokens a month",
         clipsLine: "≈ {clips} {word} of 3 minutes",
         clipsLineOne: "≈ 1 clip of 3 minutes",
         clipWord: ["clip", "clips", "clips"],
@@ -1308,11 +1313,11 @@ const I18N = {
         note: "Topped-up tokens do not expire when the plan renews and do not count against the roll-over cap — you paid for them separately.",
         priceUnit: "per pack",
         decimalSep: ".",
-        pointsUnit: "{tokens} tokens",
+        pointsUnit: "{points} tokens",
         save: "−{pct}% per token",
         clipsTop: "≈ {clips} {word} of 3 min on Seedance 2.5",
         clipsGrok: "or ≈ {clips} {word} on Grok",
-        cta: "Buy {tokens} tokens",
+        cta: "Buy {points} tokens",
         creating: "creating the payment…",
       },
 
@@ -1420,6 +1425,217 @@ const I18N = {
         soon: "soon",
         periodAria: "billing period",
         rangeAria: "tokens pack size",
+      },
+    },
+
+    // ──────────── Раздел «Музыка» в приложении (экран #music) ────────────
+    // Отдельно от music.* — там витрина лейбла (music.html), здесь рабочее
+    // место: загрузка, замеры, мастеринг, релиз. Общее у них только слово.
+    mus: {
+      // Форма слова считается по числу: «1 трек», «2 трека», «5 треков».
+      nav: { back: "← Studio", count: ["track", "tracks", "tracks"] },
+
+      drop: {
+        titleHtml: "Drop a track here or <u>choose a file</u>",
+        hint: "{formats} · up to {mb} MB · up to {min} min. "
+              + "We measure loudness and tempo right after upload — that part is free.",
+        sending: "uploading… {p}%",
+        errFormat: ".{ext} is not an audio format we can read. Accepted: {formats}.",
+        errBig: "The file is {got}, the limit is {mb} MB. Bounce a shorter version "
+                + "or use a compressed format.",
+      },
+
+      gen: {
+        title: "Generate a track",
+        sub: "Describe the music in words: genre, tempo, instruments, mood.",
+        ph: "boom bap, 90 BPM, dusty piano loop, vinyl noise, no vocals",
+        instr: "instrumental only",
+        run: "Generate",
+        running: "generating…",
+        cost: "{n} tokens",
+        off: "Music generation is not connected: the service has no ElevenLabs key yet. "
+             + "Everything else here works — upload your own track and master it.",
+      },
+
+      list: {
+        title: "Your tracks",
+        empty: "No tracks yet.",
+        emptyNote: "Upload a mix or generate one — the measurements and the waveform "
+                   + "appear straight away, before anything is charged.",
+        loadMore: "Load more",
+      },
+
+      item: {
+        untitled: "untitled",
+        mastered: "mastered",
+        noMaster: "no master",
+        masterFailed: "mastering failed",
+        submitted: "sent to the label",
+        generated: "generated",
+      },
+
+      open: {
+        back: "All tracks",
+        titlePh: "track title",
+        artistPh: "artist",
+        del: "delete the track",
+        delConfirm: "Delete this track together with the master, the cover and the "
+                    + "release package? This cannot be undone.",
+      },
+
+      tabs: { sound: "Sound", master: "Mastering", release: "Release", social: "Socials" },
+
+      sound: {
+        dur: "length", format: "format", lufs: "loudness", peak: "true peak",
+        dyn: "dynamics", bpm: "tempo",
+        measuring: "measuring loudness and tempo…",
+        failed: "Could not measure this file.",
+        noWave: "no waveform for this file",
+        playingMaster: "The player is on the master. The original is under «before» in Mastering.",
+        sec_quiet: "quiet", sec_steady: "steady", sec_full: "full", sec_peak: "peak",
+        bpmAlt: "could also be read as {n} BPM",
+        tempoOff: "Tempo analysis is off in this build.",
+        note: "Streaming platforms play everything at about −14 LUFS and turn louder "
+              + "masters down. True peak below −1 dBTP leaves room for the lossy "
+              + "encoders. Dynamics is the range between quiet and loud — the smaller "
+              + "it is, the flatter the track sounds.",
+      },
+
+      master: {
+        profile: "What is it for",
+        profileNote: "Pick the job, not the number. The numbers are right here anyway.",
+        p_streaming: "Streaming", p_club: "Club / loud", p_youtube: "YouTube", p_cd: "CD",
+        targetLine: "{what}: aiming at {lufs} LUFS, true peak {tp} dBTP.",
+        engine: "How to master",
+        e_auto: "Automatic", e_matchering: "Match a reference",
+        e_ffmpeg: "Loudness only", e_roex: "Cloud",
+        paid: "paid",
+        offline: "this engine is offline right now",
+        n_auto: "With a reference — reference matching; without one — loudness only. "
+                + "The cloud engine is never picked automatically: it costs real money.",
+        n_matchering: "Pulls the EQ curve, the level, the peak amplitude and the stereo "
+                      + "width towards the track you choose. Classic DSP, not a neural "
+                      + "network, and your mix is not re-recorded.",
+        n_ffmpeg: "Loudness normalisation and true-peak limiting only. Nothing in the "
+                  + "tone or the balance of your mix is touched.",
+        n_roex: "RoEx Tonn: genre-tuned mastering on their servers. Costs us real money "
+                + "per track, so it is never the default.",
+        matcheringOff: "Reference matching is offline right now (the service is not "
+                       + "running), so a run would fall back to loudness only — and the "
+                       + "report would say so.",
+        refNone: "No reference",
+        refOwn: "your track: {name}",
+        refUpload: "upload a reference…",
+        refPick: "choose a file",
+        refWas: "last used: {name}",
+        shelfEmpty: "Our reference shelf is empty — no reference files have been "
+                    + "uploaded to the server. Any track you want to sound like works.",
+        run: "Master · {n} tokens",
+        costNote: "{n} tokens, charged when the master is ready",
+        cloudNote: "The cloud engine spends real money per track. That is why it is a "
+                   + "separate button and why it costs more than a whole clip.",
+        running: "mastering…",
+        error: "Mastering failed.",
+        listenBefore: "Before", listenAfter: "After",
+        match: "match loudness",
+        matchOn: "Both versions are played at the same loudness — that is the only "
+                 + "honest way to hear what changed besides the volume.",
+        matchOff: "Loudness matching is off. The master is louder, and louder always "
+                  + "sounds better — even when it is not.",
+        download: "Download the master",
+        madeWith: "made with: {engine}",
+      },
+
+      release: {
+        meta: "Release metadata",
+        metaNote: "Exactly these fields go into the package and into the application. "
+                  + "Nothing is invented for you.",
+        f_title: "Title", f_artist: "Artist", f_feat: "Featuring", f_genre: "Genre",
+        f_version: "Version", f_language: "Language", f_release_date: "Release date",
+        f_isrc: "ISRC", f_upc: "UPC", f_ai_disclosure: "AI disclosure",
+        f_credits: "Credits", f_notes: "Notes for us", f_explicit: "Explicit lyrics",
+        h_release_date: "Pick a date at least two weeks out — editors look at pitches "
+                        + "about four weeks ahead.",
+        h_isrc: "Leave it empty if you do not have one: the distributor issues it.",
+        h_upc: "Album barcode. For a single the distributor issues it too.",
+        h_version: "Radio edit, remix, live — anything that is not the plain version.",
+        h_ai_disclosure: "Spotify and Deezer already require this. Saying it is safe; "
+                         + "hiding it is not.",
+        ai_unset: "not set", ai_none: "no AI", ai_music: "music generated",
+        ai_vocals: "vocals generated", ai_all: "fully generated",
+        coverHave: "Cover uploaded", coverNone: "No cover yet",
+        coverSize: "{w}×{h} px — click to replace",
+        coverHint: "Square, {px}×{px} px, JPG or PNG. We do not crop it for you: what "
+                   + "gets cut off is your decision, not ours.",
+        checks: "What the stores will look at",
+        c_title: "Title", c_artist: "Artist", c_master: "Master",
+        c_truepeak: "True peak", c_loudness: "Loudness", c_cover: "Cover",
+        c_date: "Release date", c_isrc: "ISRC", c_genre: "Genre",
+        c_disclosure: "AI disclosure", c_duration: "Length",
+        fail_title: "fill it in", fail_artist: "fill it in",
+        fail_cover: "must be square and at least 1400×1400 px",
+        fail_disclosure: "this track was generated here — the disclosure is required",
+        warn_master: "you are about to send the original, not a master",
+        warn_truepeak: "above −1 dBTP: lossy encoders will clip it",
+        warn_loudness: "unusual for a release — check it on other speakers",
+        warn_cover: "smaller than 3000×3000: some stores will ask for a bigger one",
+        warn_date: "less than two weeks away — no time for an editorial pitch",
+        warn_isrc: "empty — the distributor will issue one",
+        warn_genre: "empty — the distributor will ask",
+        warn_disclosure: "not set",
+        warn_duration: "under 30 seconds — some stores reject that",
+        checkFails: "{n} things must be fixed before this can go anywhere.",
+        checkOk: "Nothing is blocking the release. Warnings left: {n}.",
+        deliver: "Getting it out",
+        deliverNote: "Two honest options, and neither of them pretends to be a "
+                     + "one-click upload to Spotify.",
+        pack: "Build the package",
+        packing: "building…",
+        packDownload: "Download again",
+        packNote: "A zip with the master, the cover and metadata.csv — exactly what a "
+                  + "distributor asks for. Take it anywhere, including to someone else.",
+        distTitle: "Who actually delivers to the stores",
+        distNotYet: "Nobody can push a track to Spotify, Apple Music, VK or Yandex Music "
+                    + "without a distributor contract — that is how the stores work. Ours "
+                    + "with {name} is not signed yet, so the button below leaves an "
+                    + "application with our label, not a release.",
+        distReady: "Delivery goes through {name}. We hand the package over, they deliver "
+                   + "to the stores.",
+        distTiming: "Store review normally takes {days} days, and editorial pitching "
+                    + "wants about {pitch} days of lead time. Anyone promising «in Spotify "
+                    + "within an hour» is selling you something.",
+        submit: "Send to the label",
+        contactPh: "email or @telegram",
+        submitted: "The application is with us. We will answer at the contact you left.",
+        fixFirst: "Fix this first: {list}.",
+      },
+
+      social: {
+        title: "Video for socials",
+        note: "Instagram, YouTube and TikTok do not accept bare audio, so the cover and "
+              + "the track are rendered into a vertical video first.",
+        build: "Build the video · {n} tokens",
+        buildNote: "1080×1920, first 60 seconds",
+        noCover: "No cover yet — the video will be built on a plain background.",
+        building: "rendering the video…",
+        videoError: "Could not build the video.",
+        publishTitle: "Publish",
+        checking: "checking the publisher…",
+        on: "The publisher is up — posting works for real.",
+        off: "The publisher is down, so the button is off. Nothing will be posted.",
+        needVideo: "Build the video first",
+        p_instagram: "Instagram", p_youtube: "YouTube", p_tiktok: "TikTok",
+        captionPh: "post caption",
+        publish: "Publish",
+        publishing: "publishing… the browser is clicking through it live",
+        publishError: "Publishing failed.",
+        published: "Published.",
+        open: "open the post",
+      },
+
+      err: {
+        upload: "The upload was rejected.",
+        net: "The server did not answer. Nothing was uploaded.",
       },
     },
 
@@ -1747,6 +1963,8 @@ const I18N = {
     },
 
     auth: {
+      noAccount: "Ещё нет аккаунта?",
+      signupFree: "Создать бесплатно",
       loginPh: "логин (пусто — вход владельца)",
       passwordPh: "пароль",
       submit: "войти",
@@ -1773,7 +1991,7 @@ const I18N = {
       linkTimeout: "Браузер не ответил. Нажми кнопку ещё раз.",
       linkExpired: "Ссылка просрочена. Нажми кнопку ещё раз.",
       conflictShort: "У того аккаунта своя жизнь — ничего не объединяли.",
-      conflict: "У тебя два аккаунта. Этот остаётся как есть, а второй ({name}, {plan}, {tokens} генераций) продолжает жить на сайте со всем содержимым. Мы их не склеиваем: это стёрло бы токены и работу.",
+      conflict: "У тебя два аккаунта. Этот остаётся как есть, а второй ({name}, {plan}, {points} генераций) продолжает жить на сайте со всем содержимым. Мы их не склеиваем: это стёрло бы токены и работу.",
       openOnDesktop: "Открыть на компьютере",
     },
 
@@ -1818,6 +2036,8 @@ const I18N = {
       planFreeTitle: "бесплатный тариф: видео через Grok, Seedance откроется на платном",
       chat: "Чат",
       chatTitle: "одно окно: текст, картинки и видео, модель переключается в строке ввода",
+      music: "Музыка",
+      musicTitle: "загрузить трек, отмастерить, собрать релиз",
     },
 
     // ─────────────────────── чат ───────────────────────
@@ -1921,8 +2141,9 @@ const I18N = {
       },
       chat: { title: "чат", full: "Чат с моделью",
               note: "Текст, картинки и видео из картинки — в одном окне." },
-      audio: { title: "аудио", full: "Озвучка, музыка и мастеринг",
-               note: "В работе. Пока звук берётся из твоего файла." },
+      music: { title: "музыка", full: "Трек: загрузка, мастеринг, релиз",
+               note: "Отдельный экран: замеры и волна сразу после загрузки, "
+                     + "мастеринг по эталону, подготовка релиза." },
       pixar: {
         title: "3D Pixar",
         full: "3D Pixar — стиль поверх rap clips",
@@ -2210,7 +2431,7 @@ const I18N = {
       subjectPh: "коротко и честно",
       body: "Сообщение",
       bodyPh: "Обычный текст. Пустая строка начинает новый абзац.",
-      vars: "{name}, {tokens} и {plan} подставятся каждому свои.",
+      vars: "{name}, {points} и {plan} подставятся каждому свои.",
       transactional: "служебное сообщение (отписки его не глушат)",
       send: "Отправить",
       test: "Отправить себе",
@@ -2898,7 +3119,7 @@ const I18N = {
         perMonth: "/ мес",
         yearHint: "или {mo} в месяц при оплате за год",
         yearNote: "{total} в год · счёт раз в год",
-        pointsLine: "{tokens} токенов в месяц",
+        pointsLine: "{points} токенов в месяц",
         clipsLine: "≈ {clips} {word} по 3 минуты",
         clipsLineOne: "≈ 1 клип на 3 минуты",
         clipWord: ["клип", "клипа", "клипов"],
@@ -2975,11 +3196,11 @@ const I18N = {
         note: "Докупленные токены не сгорают при продлении тарифа и не упираются в потолок накопления — ты заплатил за них отдельно.",
         priceUnit: "за пакет",
         decimalSep: ",",
-        pointsUnit: "{tokens} токенов",
+        pointsUnit: "{points} токенов",
         save: "−{pct}% к цене токена",
         clipsTop: "≈ {clips} {word} по 3 мин на Seedance 2.5",
         clipsGrok: "или ≈ {clips} {word} на Grok",
-        cta: "Докупить {tokens} токенов",
+        cta: "Докупить {points} токенов",
         creating: "создаю платёж…",
       },
 
@@ -3087,6 +3308,213 @@ const I18N = {
         soon: "скоро",
         periodAria: "период оплаты",
         rangeAria: "размер пакета токенов",
+      },
+    },
+
+    // ──────────── Раздел «Музыка» в приложении (экран #music) ────────────
+    mus: {
+      nav: { back: "← Студия", count: ["трек", "трека", "треков"] },
+
+      drop: {
+        titleHtml: "Перетащи трек сюда или <u>выбери файл</u>",
+        hint: "{formats} · до {mb} МБ · до {min} мин. "
+              + "Громкость и темп меряем сразу после загрузки — это бесплатно.",
+        sending: "загружаю… {p}%",
+        errFormat: ".{ext} — не тот формат, мы его не прочитаем. Берём: {formats}.",
+        errBig: "Файл на {got}, потолок — {mb} МБ. Сведи покороче или отдай сжатым.",
+      },
+
+      gen: {
+        title: "Сгенерировать трек",
+        sub: "Опиши музыку словами: жанр, темп, инструменты, настроение.",
+        ph: "boom bap, 90 BPM, пыльный рояльный луп, шум винила, без вокала",
+        instr: "только инструментал",
+        run: "Сгенерировать",
+        running: "генерирую…",
+        cost: "{n} токенов",
+        off: "Генерация музыки не подключена: у сервиса пока нет ключа ElevenLabs. "
+             + "Всё остальное здесь работает — загрузи свой трек и отмастерь его.",
+      },
+
+      list: {
+        title: "Твои треки",
+        empty: "Треков пока нет.",
+        emptyNote: "Загрузи сведёнку или сгенерируй — замеры и волна появятся сразу, "
+                   + "до всякого списания.",
+        loadMore: "Показать ещё",
+      },
+
+      item: {
+        untitled: "без названия",
+        mastered: "мастер готов",
+        noMaster: "без мастера",
+        masterFailed: "мастеринг упал",
+        submitted: "заявка в лейбле",
+        generated: "сгенерирован",
+      },
+
+      open: {
+        back: "Все треки",
+        titlePh: "название трека",
+        artistPh: "исполнитель",
+        del: "удалить трек",
+        delConfirm: "Удалить трек вместе с мастером, обложкой и пакетом релиза? "
+                    + "Отменить это будет нельзя.",
+      },
+
+      tabs: { sound: "Звук", master: "Мастеринг", release: "Релиз", social: "Соцсети" },
+
+      sound: {
+        dur: "длина", format: "формат", lufs: "громкость", peak: "истинный пик",
+        dyn: "динамика", bpm: "темп",
+        measuring: "меряю громкость и темп…",
+        failed: "Не смог измерить этот файл.",
+        noWave: "для этого файла волны нет",
+        playingMaster: "Плеер играет мастер. Исходник — под кнопкой «до» в мастеринге.",
+        sec_quiet: "тихо", sec_steady: "спокойно", sec_full: "плотно", sec_peak: "врыв",
+        bpmAlt: "с тем же успехом это {n} BPM",
+        tempoOff: "Разбор темпа в этой сборке выключен.",
+        note: "Площадки играют всё примерно на −14 LUFS и громкие мастера прикручивают. "
+              + "Истинный пик ниже −1 dBTP оставляет запас кодекам. Динамика — это "
+              + "расстояние между тихим и громким: чем она меньше, тем площе звучит трек.",
+      },
+
+      master: {
+        profile: "Подо что мастерим",
+        profileNote: "Выбирай задачу, а не число. Числа всё равно рядом.",
+        p_streaming: "Стриминг", p_club: "Клуб / громко", p_youtube: "YouTube", p_cd: "CD",
+        targetLine: "{what}: целимся в {lufs} LUFS, истинный пик {tp} dBTP.",
+        engine: "Чем мастерим",
+        e_auto: "Автоматически", e_matchering: "По эталону",
+        e_ffmpeg: "Только громкость", e_roex: "Облачный",
+        paid: "платно",
+        offline: "этот движок сейчас недоступен",
+        n_auto: "Есть эталон — мастерим по нему, нет — выравниваем громкость. "
+                + "Облачный сам никогда не выбирается: он тратит живые деньги.",
+        n_matchering: "Подтягивает АЧХ, уровень, пиковую амплитуду и ширину стерео к "
+                      + "треку, который ты выбрал эталоном. Это классический DSP, а не "
+                      + "нейросеть, и твоё сведение никто не переигрывает.",
+        n_ffmpeg: "Только выравнивание громкости и ограничение истинных пиков. Тембр и "
+                  + "баланс сведения не трогаются вообще.",
+        n_roex: "RoEx Tonn: мастеринг на их серверах под выбранный жанр. Нам он стоит "
+                + "живых денег за трек, поэтому по умолчанию его нет.",
+        matcheringOff: "Мастеринг по эталону сейчас недоступен (сервис не поднят), и "
+                       + "запуск свёлся бы к выравниванию громкости — в отчёте это "
+                       + "было бы написано.",
+        refNone: "Без эталона",
+        refOwn: "твой трек: {name}",
+        refUpload: "загрузить эталон…",
+        refPick: "выбери файл",
+        refWas: "в прошлый раз: {name}",
+        shelfEmpty: "Наша полка эталонов пуста — файлов на сервер никто не заливал. "
+                    + "Подойдёт любой трек, на который ты хочешь быть похож.",
+        run: "Отмастерить · {n} токенов",
+        costNote: "{n} токенов, спишем по готовому мастеру",
+        cloudNote: "Облачный движок тратит живые деньги за каждый трек. Поэтому он "
+                   + "отдельной кнопкой и стоит дороже целого клипа.",
+        running: "мастерю…",
+        error: "Мастеринг не прошёл.",
+        listenBefore: "До", listenAfter: "После",
+        match: "выровнять громкость",
+        matchOn: "Обе версии играют на одной громкости — только так слышно, что "
+                 + "изменилось, кроме уровня.",
+        matchOff: "Выравнивание выключено. Мастер громче, а громче всегда звучит "
+                  + "лучше — даже когда это не так.",
+        download: "Скачать мастер",
+        madeWith: "сделано движком: {engine}",
+      },
+
+      release: {
+        meta: "Метаданные релиза",
+        metaNote: "Ровно эти поля уедут в пакет и в заявку. Ничего за тебя не выдумываем.",
+        f_title: "Название", f_artist: "Исполнитель", f_feat: "Совместно с",
+        f_genre: "Жанр", f_version: "Версия", f_language: "Язык",
+        f_release_date: "Дата релиза", f_isrc: "ISRC", f_upc: "UPC",
+        f_ai_disclosure: "Раскрытие ИИ", f_credits: "Авторы и роли",
+        f_notes: "Заметка для нас", f_explicit: "Ненормативная лексика",
+        h_release_date: "Ставь дату минимум через две недели: редакции смотрят питчи "
+                        + "примерно за месяц.",
+        h_isrc: "Нет своего — оставь пустым, код выдаст дистрибьютор.",
+        h_upc: "Штрихкод альбома. Для сингла его тоже выдаёт дистрибьютор.",
+        h_version: "Radio edit, ремикс, live — всё, что не обычная версия.",
+        h_ai_disclosure: "Spotify и Deezer это уже требуют. Признаться безопасно, "
+                         + "спрятать — нет.",
+        ai_unset: "не указано", ai_none: "без ИИ", ai_music: "музыка сгенерирована",
+        ai_vocals: "вокал сгенерирован", ai_all: "сгенерировано целиком",
+        coverHave: "Обложка загружена", coverNone: "Обложки нет",
+        coverSize: "{w}×{h} px — клик, чтобы заменить",
+        coverHint: "Квадрат, {px}×{px} px, JPG или PNG. Сами не режем: что обрежется "
+                   + "на твоей обложке — решать тебе, а не нам.",
+        checks: "На что посмотрят площадки",
+        c_title: "Название", c_artist: "Исполнитель", c_master: "Мастер",
+        c_truepeak: "Истинный пик", c_loudness: "Громкость", c_cover: "Обложка",
+        c_date: "Дата релиза", c_isrc: "ISRC", c_genre: "Жанр",
+        c_disclosure: "Раскрытие ИИ", c_duration: "Длина",
+        fail_title: "заполни", fail_artist: "заполни",
+        fail_cover: "нужен квадрат не меньше 1400×1400 px",
+        fail_disclosure: "трек сгенерирован здесь — раскрытие обязательно",
+        warn_master: "ты отправляешь исходник, а не мастер",
+        warn_truepeak: "выше −1 dBTP: сжатие в mp3 даст клиппинг",
+        warn_loudness: "нетипично для релиза — переслушай на других колонках",
+        warn_cover: "меньше 3000×3000: часть площадок попросит крупнее",
+        warn_date: "меньше двух недель — на питч редакциям времени не остаётся",
+        warn_isrc: "пусто — код выдаст дистрибьютор",
+        warn_genre: "пусто — дистрибьютор всё равно спросит",
+        warn_disclosure: "не указано",
+        warn_duration: "короче 30 секунд — часть площадок такое отклоняет",
+        checkFails: "Сначала надо починить {n} пункта(ов) — без них никуда не отдать.",
+        checkOk: "Ничего не мешает выпуску. Предупреждений осталось: {n}.",
+        deliver: "Как это выйдет наружу",
+        deliverNote: "Два честных пути, и ни один из них не притворяется публикацией "
+                     + "в Spotify одной кнопкой.",
+        pack: "Собрать пакет",
+        packing: "собираю…",
+        packDownload: "Скачать ещё раз",
+        packNote: "Zip с мастером, обложкой и metadata.csv — ровно то, что просит "
+                  + "дистрибьютор. Можно унести куда угодно, хоть к другому сервису.",
+        distTitle: "Кто на самом деле отгружает на площадки",
+        distNotYet: "Отправить трек в Spotify, Apple Music, VK или Яндекс Музыку без "
+                    + "договора с дистрибьютором не может никто — так устроены сами "
+                    + "площадки. Наш договор с {name} ещё не подписан, поэтому кнопка "
+                    + "ниже оставляет заявку в лейбле, а не выпускает релиз.",
+        distReady: "Отгрузка идёт через {name}: мы передаём пакет, они отдают его "
+                   + "площадкам.",
+        distTiming: "Проверка на площадке обычно занимает {days} дней, а на питч "
+                    + "редакциям нужно ещё около {pitch} дней запаса. Кто обещает "
+                    + "«в Spotify через час» — что-то тебе продаёт.",
+        submit: "Отправить в лейбл",
+        contactPh: "почта или @телеграм",
+        submitted: "Заявка у нас. Ответим на тот контакт, который ты оставил.",
+        fixFirst: "Сначала почини: {list}.",
+      },
+
+      social: {
+        title: "Видео для соцсетей",
+        note: "Ни Instagram, ни YouTube, ни TikTok не принимают голое аудио — поэтому "
+              + "из обложки и дорожки сначала собирается вертикальное видео.",
+        build: "Собрать видео · {n} токенов",
+        buildNote: "1080×1920, первые 60 секунд",
+        noCover: "Обложки нет — видео соберётся на ровном фоне.",
+        building: "собираю видео…",
+        videoError: "Видео не собралось.",
+        publishTitle: "Публикация",
+        checking: "проверяю службу публикации…",
+        on: "Служба публикации на связи — пост уйдёт по-настоящему.",
+        off: "Служба публикации не запущена, поэтому кнопка выключена. Ничего "
+             + "опубликовано не будет.",
+        needVideo: "Сначала собери видео",
+        p_instagram: "Instagram", p_youtube: "YouTube", p_tiktok: "TikTok",
+        captionPh: "подпись к посту",
+        publish: "Опубликовать",
+        publishing: "публикую… браузер прокликивает это вживую",
+        publishError: "Публикация не удалась.",
+        published: "Опубликовано.",
+        open: "открыть пост",
+      },
+
+      err: {
+        upload: "Загрузку отклонили.",
+        net: "Сервер не ответил. Ничего не загрузилось.",
       },
     },
 

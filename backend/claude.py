@@ -1,16 +1,19 @@
-"""Генерация сюжета и раскадровки через host-шлюз Claude (та же подписка,
-что у контент-конвейера BIOAURA — agent_gateway.py на хосте, 172.18.0.1:8765).
+"""Сценарный конвейер: сюжет, библия, раскадровка, рестайл промптов.
+
+КУДА ЭТО ХОДИТ. Раньше — жёстко в host-шлюз (agent_gateway.py на хосте,
+172.18.0.1:8765) по подписке владельца. Теперь канал выбирает человек в
+первом блоке сценария, а реестр моделей и правила тарифа живут в
+backend/textgen.py. Здесь остались ПРОМПТЫ и только они: у каждой
+функции появился необязательный `engine`, который просто едет в
+textgen.ask(). Пустой engine = шлюз, то есть прежнее поведение.
+
 Личный проект: никаких брендовых правил/продуктов, только рэп-клип."""
 from __future__ import annotations
 
 import json
-import os
 import re
 
-import httpx
-
-GATEWAY_URL = os.environ.get("AGENT_GATEWAY_URL", "http://172.18.0.1:8765") + "/complete"
-TIMEOUT = httpx.Timeout(280.0, connect=15.0)
+import textgen
 
 
 class ClaudeError(RuntimeError):
@@ -28,21 +31,16 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
-async def _ask(prompt: str, system: str) -> dict:
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.post(GATEWAY_URL, json={
-            "prompt": prompt,
-            "system": system,
-            "subscription_provider": "claude",
-            "cwd": "rapclips",
-            "timeout": 260,
-        })
-    if r.status_code != 200:
-        raise ClaudeError(f"шлюз ответил {r.status_code}: {r.text[:300]}")
-    data = r.json()
-    text = data.get("text", "")
-    if not text:
-        raise ClaudeError(f"пустой ответ шлюза: {data}")
+async def _ask(prompt: str, system: str, engine: str = "") -> dict:
+    """Единственная дверь наружу. Канал выбирает textgen, разбор JSON — мы.
+
+    Ошибку канала переупаковываем в ClaudeError: вызывающий код в main.py
+    пишет её человеку в scenes_error/story_error, и туда должен попасть
+    текст вроде «Claude не ответил», а не имя чужого класса."""
+    try:
+        text = await textgen.ask(prompt, system, engine)
+    except textgen.TextGenError as e:
+        raise ClaudeError(str(e)) from e
     return _extract_json(text)
 
 
@@ -110,7 +108,9 @@ def _characters_block(characters: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def generate_story(character_bible: str, tracks: list[dict], characters: list[dict] | None = None) -> dict:
+async def generate_story(character_bible: str, tracks: list[dict],
+                         characters: list[dict] | None = None,
+                         engine: str = "") -> dict:
     lines = []
     for t in tracks:
         # Инструментал без слов — валидная глава: сюжет для него складывается
@@ -122,7 +122,9 @@ async def generate_story(character_bible: str, tracks: list[dict], characters: l
         lines.append(
             f"### Трек {t['position']}: {t['title']}\n"
             f"Стиль ролика: {t['style'] or '(не задан)'}\n"
-            f"Комментарий автора: {t['comment'] or '(нет)'}\n"
+            + (f"Как стиль влияет на сюжет этой главы: {t['style_base']}\n"
+               if (t.get("style_base") or "").strip() else "")
+            + f"Комментарий автора: {t['comment'] or '(нет)'}\n"
             f"Профиль звука (замер реальной дорожки): {t.get('audio_profile') or '(нет)'}\n"
             f"Текст песни:\n{lyrics_line}\n"
         )
@@ -132,7 +134,7 @@ async def generate_story(character_bible: str, tracks: list[dict], characters: l
         + f"character_bible (может быть пустым): {character_bible or '(пусто — придумай героя)'}\n\n"
         + "\n".join(lines)
     )
-    return await _ask(prompt, STORY_SYSTEM)
+    return await _ask(prompt, STORY_SYSTEM, engine)
 
 
 SCENES_SYSTEM = """
@@ -187,11 +189,13 @@ down (герой выглядит уязвимее). Выбор угла и дв
 - Не иллюстрируй текст построчно — веди историю героя, синхронизируясь с настроением
   и ключевыми образами лирики; вставляй "немые" кадры-связки (без lyric_line) там,
   где нужен визуальный вдох или переход между локациями/главами.
-- Стиль ролика ЭТОГО трека — {STYLE}. Все image_prompt обязаны начинаться с явного
-  указания этого стиля (например "3D Pixar-style animation, vertical 9:16, ultra HD,"
-  или "Anime style, vertical 9:16, cinematic," или "Photorealistic cinematic still,
-  vertical 9:16," — подбери формулировку под заданный стиль) и явно называть
-  выбранную крупность плана и ракурс.
+- Стиль ролика ЭТОГО трека — {STYLE}. Он дан тебе КОНТЕКСТОМ: под него подбирай
+  среду, время суток, реквизит и настроение сцен. Но САМ СТИЛЬ В image_prompt НЕ
+  ПИШИ — ни названием, ни описанием, ни словами про свет, палитру, зерно и
+  фактуру «как в …». Стиль подставляет рендер, отдельным и главным блоком перед
+  твоим текстом. Если ты продублируешь его своими словами, в промпте окажутся
+  ДВА стиля, и человек, сменивший стиль трека, получит прежние картинки.
+  Твоё дело — крупность плана, ракурс, герой, действие, среда и композиция.
 
 ПОЛЯ КАЖДОГО КАДРА:
 - "duration_sec": целое число 2-10, по логике темпа/структуры (см. выше).
@@ -206,12 +210,13 @@ down (герой выглядит уязвимее). Выбор угла и дв
   В image_prompt и image_prompt_last каждого кадра с персонажем ОБЯЗАТЕЛЬНО
   входит полное описание внешности каждого присутствующего персонажа (из его
   карточки), пересказанное в стилистике трека; имя персонажа тоже упоминается.
-- "image_prompt": промпт ПЕРВОГО кадра сцены (её начало), на английском. Начинай со
-  стиля, затем крупность плана и ракурс, затем герой (если в кадре — его полное
-  описание из character_bible), окружение, композиция, свет, настроение.
+- "image_prompt": промпт ПЕРВОГО кадра сцены (её начало), на английском. Начинай с
+  крупности плана и ракурса, затем герой (если в кадре — его полное описание из
+  character_bible), окружение, композиция, действие. БЕЗ упоминания стиля,
+  палитры, плёнки, зерна и художников-референсов — это подставит рендер.
 - "image_prompt_last": промпт ПОСЛЕДНЕГО кадра этой же сцены (её конец), на
   английском. Это ТА ЖЕ сцена в конце своего движения: та же локация, тот же
-  герой, тот же стиль и свет — меняется только то, что успело произойти за
+  герой, тот же свет по смыслу сцены — меняется только то, что успело произойти за
   duration_sec (поза, положение в кадре, крупность из-за наезда камеры, фаза
   света). Не меняй персонажа, одежду, время суток и место — иначе видео между
   кадрами «прыгнет». Описывай так же полно, как первый кадр (модель видит их
@@ -252,7 +257,7 @@ STORYBOARD_SHEET_SYSTEM = """Ты пишешь промпт для генера�
 
 async def generate_storyboard_sheet_prompt(
     *, style: str, character_bible: str, scenes: list[dict],
-    characters: list[dict] | None = None,
+    characters: list[dict] | None = None, engine: str = "",
 ) -> dict:
     lines = [
         f"{s['position']}. [{s.get('shot_size') or 'plan'}] {s.get('shot_note') or ''}"
@@ -268,13 +273,14 @@ async def generate_storyboard_sheet_prompt(
         "атрибуты) — в выбранной стилистике, но узнаваемо. Не выдумывай других героев.\n\n"
         f"Кадры ({len(scenes)} шт.):\n" + "\n".join(lines)
     )
-    return await _ask(prompt, STORYBOARD_SHEET_SYSTEM)
+    return await _ask(prompt, STORYBOARD_SHEET_SYSTEM, engine)
 
 
 async def generate_scenes(
     *, story: str, character_bible: str, track_note: str, title: str,
     lyrics: str, comment: str, style: str, duration_sec: int,
     characters: list[dict] | None = None, audio_profile: str = "",
+    story_base: str = "", engine: str = "",
 ) -> dict:
     system = SCENES_SYSTEM.replace("{STYLE}", style or "стиль на твой выбор, подходящий треку")
     chars = _characters_block(characters or [])
@@ -300,7 +306,10 @@ async def generate_scenes(
         + story_block + "\n\n"
         f"Библия героя:\n{character_bible}\n\n"
         f"Роль этого трека в сюжете:\n{track_note or '(нет заметки — определи сам по тексту песни и комментарию)'}\n\n"
-        f"Трек: {title}\nСтиль ролика: {style or '(на твой выбор)'}\n"
+        + (f"Как этот стиль влияет на ДРАМАТУРГИЮ (не на картинку — на то, что "
+           f"происходит в кадре, какие места, какие поступки):\n{story_base}\n\n"
+           if (story_base or "").strip() else "")
+        + f"Трек: {title}\nСтиль ролика: {style or '(на твой выбор)'}\n"
         f"Длительность аудио: {duration_sec} секунд\n"
         f"Профиль звука (замер реальной дорожки — сажай ритм сцен на эту динамику: "
         f"тихие сегменты = спокойные планы, врывы = экшен и резкие склейки): "
@@ -308,7 +317,7 @@ async def generate_scenes(
         f"Комментарий автора: {comment or '(нет)'}\n\n"
         + lyrics_block
     )
-    return await _ask(prompt, system)
+    return await _ask(prompt, system, engine)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -564,7 +573,8 @@ MOCKUP_SHOTS_SYSTEM = """Ты — фотограф предметной съём
 async def generate_series_bible(*, idea: str, format_label: str, season_beats: str,
                                 format_note: str, episodes: int,
                                 character_bible: str = "",
-                                characters: list[dict] | None = None) -> dict:
+                                characters: list[dict] | None = None,
+                                engine: str = "") -> dict:
     chars = _characters_block(characters or [])
     prompt = (
         (chars + "\n\n" if chars else "")
@@ -576,12 +586,12 @@ async def generate_series_bible(*, idea: str, format_label: str, season_beats: s
         f"Уже заданная библия героев (может быть пустой):\n"
         f"{character_bible or '(пусто — напиши с нуля)'}"
     )
-    return await _ask(prompt, SERIES_BIBLE_SYSTEM)
+    return await _ask(prompt, SERIES_BIBLE_SYSTEM, engine)
 
 
 async def generate_beatsheet(*, logline: str, synopsis: str, arcs: str,
                              season_beats: str, format_note: str,
-                             episodes: int) -> dict:
+                             episodes: int, engine: str = "") -> dict:
     prompt = (
         f"Логлайн: {logline}\n\n"
         f"Синопсис сезона:\n{synopsis}\n\n"
@@ -590,13 +600,14 @@ async def generate_beatsheet(*, logline: str, synopsis: str, arcs: str,
         f"Арка сезона (доли):\n{season_beats}\n\n"
         f"Серий: {episodes}"
     )
-    return await _ask(prompt, SERIES_BEATSHEET_SYSTEM)
+    return await _ask(prompt, SERIES_BEATSHEET_SYSTEM, engine)
 
 
 async def generate_episode_script(*, logline: str, synopsis: str, arcs: str,
                                   character_bible: str, episode_card: str,
                                   episode_beats: str, previously: str,
-                                  rules: str, comment: str = "") -> dict:
+                                  rules: str, comment: str = "",
+                                  engine: str = "") -> dict:
     system = EPISODE_SCRIPT_SYSTEM.replace("{RULES}", rules)
     prompt = (
         f"Логлайн: {logline}\n\n"
@@ -608,14 +619,14 @@ async def generate_episode_script(*, logline: str, synopsis: str, arcs: str,
         f"Структура серии (акты и доли хронометража):\n{episode_beats}\n\n"
         f"Пожелание владельца: {comment or '(нет)'}"
     )
-    return await _ask(prompt, system)
+    return await _ask(prompt, system, engine)
 
 
 async def generate_series_scenes(*, script: str, character_bible: str,
                                  episode_beats: str, style: str,
                                  duration_sec: int, rules: str,
                                  characters: list[dict] | None = None,
-                                 comment: str = "") -> dict:
+                                 comment: str = "", engine: str = "") -> dict:
     system = SERIES_SCENES_SYSTEM.replace("{RULES}", rules)
     chars = _characters_block(characters or [])
     prompt = (
@@ -628,11 +639,12 @@ async def generate_series_scenes(*, script: str, character_bible: str,
         f"Пожелание владельца: {comment or '(нет)'}\n\n"
         f"Сценарий серии:\n{script}"
     )
-    return await _ask(prompt, system)
+    return await _ask(prompt, system, engine)
 
 
 async def generate_ugc_persona(*, idea: str, character_bible: str = "",
-                               characters: list[dict] | None = None) -> dict:
+                               characters: list[dict] | None = None,
+                               engine: str = "") -> dict:
     chars = _characters_block(characters or [])
     prompt = (
         (chars + "\n\n" if chars else "")
@@ -640,21 +652,23 @@ async def generate_ugc_persona(*, idea: str, character_bible: str = "",
         f"Уже заданная внешность (может быть пустой):\n"
         f"{character_bible or '(пусто — напиши с нуля)'}"
     )
-    return await _ask(prompt, UGC_PERSONA_SYSTEM)
+    return await _ask(prompt, UGC_PERSONA_SYSTEM, engine)
 
 
-async def generate_brandbook(*, idea: str, brand_note: str = "") -> dict:
+async def generate_brandbook(*, idea: str, brand_note: str = "",
+                             engine: str = "") -> dict:
     prompt = (
         f"Бренд или линейка: {idea or '(пусто — придумай нейтральный аккуратный мир)'}\n\n"
         f"Уже заданные правила (могут быть пустыми):\n"
         f"{brand_note or '(пусто — напиши с нуля)'}"
     )
-    return await _ask(prompt, MOCKUP_BRANDBOOK_SYSTEM)
+    return await _ask(prompt, MOCKUP_BRANDBOOK_SYSTEM, engine)
 
 
 async def generate_mockup_shots(*, brandbook: str, brief: str, shots_block: str,
                                 set_note: str, style: str, shots: int,
-                                rules: str, comment: str = "") -> dict:
+                                rules: str, comment: str = "",
+                                engine: str = "") -> dict:
     system = (MOCKUP_SHOTS_SYSTEM
               .replace("{RULES}", rules)
               .replace("{SHOTS}", str(shots)))
@@ -667,14 +681,14 @@ async def generate_mockup_shots(*, brandbook: str, brief: str, shots_block: str,
         f"Бриф товара:\n{brief or '(пусто — снимай по набору сцен и фирменному миру)'}\n\n"
         f"Пожелание владельца: {comment or '(нет)'}"
     )
-    return await _ask(prompt, system)
+    return await _ask(prompt, system, engine)
 
 
 async def generate_ugc_scenes(*, persona: str, character_bible: str,
                               location_bible: str, format_beats: str,
                               format_note: str, brief: str, style: str,
                               slots: int, duration_sec: int, rules: str,
-                              lang: str = "ru") -> dict:
+                              lang: str = "ru", engine: str = "") -> dict:
     system = (UGC_SCENES_SYSTEM
               .replace("{RULES}", rules)
               .replace("{SLOTS}", str(slots)))
@@ -691,4 +705,88 @@ async def generate_ugc_scenes(*, persona: str, character_bible: str,
         f"Каркас формата (доли хронометража):\n{format_beats}\n\n"
         f"Бриф ролика:\n{brief or '(пусто — сделай ролик по каркасу и персоне)'}"
     )
-    return await _ask(prompt, system)
+    return await _ask(prompt, system, engine)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# РЕСТАЙЛ: перерисовка кадров в новом стиле С СОХРАНЕНИЕМ раскадровки
+#
+# Для НОВЫХ треков этот шаг не нужен вовсе: SCENES_SYSTEM выше прямо запрещает
+# писать стиль в image_prompt, а _frame_prompt() в main.py подставляет стиль
+# трека живьём в момент отрисовки. Сменил чипы — перерисовал кадры, и всё.
+#
+# Он нужен СТАРЫМ раскадровкам, написанным до этой правки: там каждый
+# image_prompt начинается словами вроде «3D Pixar-style animation, vertical
+# 9:16, ultra HD…». После смены стиля в промпт уезжали ДВА стиля подряд —
+# новый общим заголовком и старый подробным описанием следом. Модель слушает
+# конкретное, поэтому картинки и оставались прежними.
+#
+# Что здесь категорически нельзя менять: сцены, их порядок, тайминги,
+# крупности, персонажей и действие. Меняется ТОЛЬКО стилевая подача.
+# motion_prompt не трогаем вообще — он описывает движение, а не стиль.
+# ═════════════════════════════════════════════════════════════════════════════
+
+RESTYLE_SYSTEM = """Ты — режиссёр, переписывающий промпты кадров уже готовой
+раскадровки под другую визуальную подачу. Раскадровка УЖЕ УТВЕРЖДЕНА и меняться
+не должна.
+
+ЗАПРЕЩЕНО: менять количество кадров, их порядок, номера (position), тайминги,
+крупность плана, движение камеры, состав персонажей, место действия и то, что
+в кадре происходит. Ты не переснимаешь клип — ты переписываешь ОДИН аспект.
+
+ЧТО ДЕЛАЕШЬ: из каждого image_prompt и image_prompt_last убираешь всё, что
+описывает СТИЛЬ — название стиля («3D Pixar-style animation», «anime style»,
+«photorealistic cinematic still»), палитру, тип плёнки и зерно, характер света
+как приёма, имена художников и студий-референсов, любые «in the style of».
+Оставляешь и, если нужно, доописываешь СОДЕРЖАНИЕ: крупность и ракурс, кто в
+кадре и как выглядит по своему описанию, что он делает, где это происходит,
+композицию и то, что физически есть в кадре.
+
+ПОЧЕМУ ИМЕННО ТАК: стиль подставляет рендер отдельным блоком перед твоим
+текстом. Если стиль останется и в твоём тексте, в промпте будет два стиля
+сразу, и кадр выйдет в старом.
+
+Описания персонажей из карточек сохраняй ДОСЛОВНО — по ним держится
+узнаваемость героя во всём альбоме.
+
+Отвечай СТРОГО одним JSON без markdown-обёртки, по кадру на каждый входной,
+в том же порядке и с теми же position:
+{"scenes":[{"position":1,"image_prompt":"...","image_prompt_last":"..."}]}"""
+
+
+async def restyle_prompts(*, scenes: list[dict],
+                          story_base: str = "", character_bible: str = "",
+                          characters: list[dict] | None = None,
+                          engine: str = "") -> dict:
+    """Переписать промпты кадров под новую подачу, не трогая раскадровку.
+
+    Текст нового стиля сюда НЕ передаётся намеренно: задача — вычистить
+    стиль из промптов, а не заменить один на другой. Дай модели новый
+    стиль словами — она перепишет его обратно в image_prompt, и мы
+    вернёмся ровно к той болезни, из-за которой всё это и делается.
+
+    scenes: [{position, shot_size, camera_move, shot_note, characters,
+              image_prompt, image_prompt_last}]
+    """
+    chars = _characters_block(characters or [])
+    blocks = []
+    for s in scenes:
+        who = ", ".join(s.get("characters") or []) or "(без персонажей)"
+        blocks.append(
+            f"### Кадр {s['position']}\n"
+            f"Крупность: {s.get('shot_size') or '(не задана)'} · "
+            f"камера: {s.get('camera_move') or 'static'}\n"
+            f"В кадре: {who}\n"
+            f"Что происходит (по-русски): {s.get('shot_note') or '(нет заметки)'}\n"
+            f"image_prompt сейчас:\n{s.get('image_prompt') or '(пусто)'}\n"
+            f"image_prompt_last сейчас:\n{s.get('image_prompt_last') or '(пусто)'}\n"
+        )
+    prompt = (
+        (chars + "\n\n" if chars else "")
+        + (f"Библия героя:\n{character_bible}\n\n" if (character_bible or "").strip() else "")
+        + (f"Новая подача влияет на драматургию так:\n{story_base}\n\n"
+           if (story_base or "").strip() else "")
+        + f"Кадров: {len(scenes)}. Верни ровно столько же.\n\n"
+        + "\n".join(blocks)
+    )
+    return await _ask(prompt, RESTYLE_SYSTEM, engine)

@@ -47,9 +47,13 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=58" />
-<link rel="stylesheet" href="/landing.css?v=58" />
-<link rel="stylesheet" href="/tg.css?v=58" />
+<link rel="stylesheet" href="/style.css?v=59" />
+<link rel="stylesheet" href="/landing.css?v=59" />
+<link rel="stylesheet" href="/tg.css?v=59" />
+<!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
+     объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
+     переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
+<link rel="stylesheet" href="/music-studio.css?v=59" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -67,7 +71,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=58"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=59"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -295,6 +299,13 @@
     <!-- Внешние входы: рисуются из /api/auth/config. Нет ключей — нет кнопок. -->
     <p id="login-auth-label" class="auth-note hidden" data-i18n="auth.orWith"></p>
     <div id="login-auth" class="auth-buttons auth-column"></div>
+    <!-- Регистрации как отдельной формы нет и не нужно: аккаунт заводится
+         одним нажатием и без пароля. Но ссылка на это обязана быть здесь —
+         иначе человек, попавший сразу на вход, упирается в тупик. -->
+    <p class="login-signup">
+      <span data-i18n="auth.noAccount"></span>
+      <button type="button" id="login-signup" class="link-btn" data-i18n="auth.signupFree"></button>
+    </p>
     <div class="lang-switch lang-switch-center" role="group" data-i18n-aria="lang.aria">
       <button type="button" data-lang="en">EN</button>
       <button type="button" data-lang="ru">RU</button>
@@ -354,6 +365,9 @@
       </div>
       <span id="points-badge" class="kind-badge points-badge hidden" data-i18n-title="top.pointsTitle"></span>
       <button id="chat-btn" class="account-btn" data-i18n-title="top.chatTitle" data-i18n="top.chat"></button>
+      <!-- Музыка — соседний вход, а не пункт внутри студии: там другой объект
+           (релиз), другой конвейер и свои состояния. Тот же ярус, что и чат. -->
+      <button id="music-btn" class="account-btn" data-i18n-title="top.musicTitle" data-i18n="top.music"></button>
       <button id="account-btn" class="account-btn hidden" data-i18n-title="top.accountTitle" data-i18n="top.account"></button>
       <button id="save-account-btn" class="hidden" data-i18n="top.saveAccount"></button>
       <button id="logout-btn" class="ghost" data-i18n="top.logout"></button>
@@ -504,6 +518,72 @@
       <p class="cc-note muted" id="cc-note"></p>
     </div>
   </main>
+</div>
+
+<!-- ═══════════════════════════ РАЗДЕЛ «МУЗЫКА» ═══════════════════════════
+     Свой экран, как у чата: hideScreens() гасит все разом, показывает один.
+     Внутри — только каркас, всё содержимое рисует music-studio.js, потому
+     что оно зависит от того, что реально включено на сервере (ключ генерации,
+     движки мастеринга, служба публикации). Рисовать разметкой то, чего может
+     не быть, значит показывать кнопки, которые молча ничего не делают. -->
+<div id="music" class="mus hidden">
+  <header class="mus-top">
+    <div class="mus-bar">
+      <button id="mus-back" type="button" class="ghost" data-i18n="mus.nav.back"></button>
+      <span class="mus-word">qlol<b>music</b></span>
+      <span id="mus-count" class="mus-count"></span>
+      <span id="mus-points" class="kind-badge points-badge hidden" data-i18n-title="top.pointsTitle"></span>
+      <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="ru">RU</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="mus-wrap">
+    <!-- Приём материала: своё окно загрузки и генерация — две равные двери. -->
+    <div id="mus-intake" class="mus-row">
+      <label id="mus-drop" class="mus-drop">
+        <input id="mus-file" type="file" class="hidden"
+               accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aif,.aiff" />
+        <span class="mus-drop-ico">♪</span>
+        <span id="mus-drop-title" class="mus-drop-title" data-i18n-html="mus.drop.titleHtml"></span>
+        <span id="mus-drop-hint" class="mus-drop-hint"></span>
+        <span id="mus-drop-prog" class="mus-prog hidden"><i></i></span>
+        <span id="mus-drop-err" class="mus-drop-err hidden"></span>
+      </label>
+
+      <div id="mus-gen" class="mus-card">
+        <h3 data-i18n="mus.gen.title"></h3>
+        <p class="mus-sub" data-i18n="mus.gen.sub"></p>
+        <textarea id="mus-gen-prompt" rows="3" data-i18n-ph="mus.gen.ph"></textarea>
+        <div class="mus-gen-row">
+          <select id="mus-gen-secs"></select>
+          <label class="mus-match">
+            <input id="mus-gen-instr" type="checkbox" />
+            <span data-i18n="mus.gen.instr"></span>
+          </label>
+          <span id="mus-gen-price" class="mus-price"></span>
+          <button id="mus-gen-run" type="button" class="primary"></button>
+        </div>
+        <div id="mus-gen-off" class="mus-off hidden"></div>
+      </div>
+    </div>
+
+    <div id="mus-list-card" class="mus-card">
+      <h3 data-i18n="mus.list.title"></h3>
+      <div id="mus-list" class="mus-list"></div>
+    </div>
+
+    <!-- Карточка трека. Пустая до открытия: рисуется целиком из данных. -->
+    <div id="mus-detail" class="hidden"></div>
+  </div>
+
+  <!-- Эталон «хочу звучать как это» лежит вне карточки: карточка
+       перерисовывается на каждый тик опроса, и input внутри неё терял бы
+       выбранный файл. -->
+  <input id="mus-ref-file" type="file" class="hidden"
+         accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aif,.aiff" />
 </div>
 
 <template id="track-tpl">
@@ -1053,12 +1133,15 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=58"></script>
-<script src="/i18n.js?v=58"></script>
-<script src="/app.js?v=58"></script>
+<script src="/modes.js?v=59"></script>
+<script src="/i18n.js?v=59"></script>
+<script src="/app.js?v=59"></script>
+<!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
+     showApp, fail) и на словарь i18n.js. -->
+<script src="/music-studio.js?v=59"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=58"></script>
+<script src="/mode-menu.js?v=59"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1082,10 +1165,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=58";
+  css.href = "/nav.css?v=59";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=58";
+  js.src = "/nav.js?v=59";
   document.body.appendChild(js);
 })();
 </script>

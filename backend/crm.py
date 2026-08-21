@@ -42,7 +42,7 @@ import mailer
 from db import (
     AdminAction, Campaign, CampaignRecipient, Chat, ChatMessage, FileOwner,
     PointEvent, ProcessedPayment, Project, RefEvent, Scene, SessionLocal,
-    Track, User, now,
+    StyleAsset, StyleOverride, Track, User, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -480,6 +480,382 @@ def ledger_audit(limit: int = 50, user: User = Depends(admin_user),
     # отчёту не верят целиком, включая честный «расхождений 0».
     return {"free_start": free_start, "checked": checked,
             "mismatch": len(bad), "items": bad[:max(1, min(500, limit))]}
+
+
+# ═══════════════════════════ СТИЛИ ═══════════════════════════
+# Редактор каталога стилей. Каталог живёт в коде (backend/prompts_catalog.py),
+# правки владельца — в базе (style_overrides / style_assets), а накладывает
+# одно на другое main.reload_style_overlay().
+#
+# ТРИ ЗАМКА НА ЗАКРЫТОСТЬ ПРОМПТОВ, и ни один не требует внимательности:
+#   1. prompt / story_base / structure отдаются ТОЛЬКО отсюда, из-под
+#      admin_user. Публичные /api/styles* собирают ответ по белому списку
+#      PUBLIC_STYLE_FIELDS — новое закрытое поле физически не может уехать
+#      наружу, даже если про него забудут.
+#   2. validate() гоняется ПЕРЕД записью, а не после: админ, вставивший
+#      промпт в поле «описание», получает отказ, а не тихую утечку.
+#   3. В журнал действий пишется ХЭШ И ДЛИНА промпта, а не текст: журнал не
+#      должен становиться вторым хранилищем закрытых промптов.
+
+STYLE_ASSET_KINDS = ("poster", "loop", "shot", "ref", "promptfile")
+STYLE_ASSET_MAX = int(os.environ.get("STYLE_ASSET_MAX_MB", "40")) * 1024 * 1024
+_STYLE_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+              "video/mp4": ".mp4", "text/plain": ".txt", "text/markdown": ".md"}
+
+
+def _prompt_mark(text: str) -> dict:
+    """Отпечаток промпта для журнала: длина и хэш. Текста здесь нет."""
+    import hashlib  # noqa: PLC0415
+    body = (text or "").encode("utf-8")
+    return {"len": len(text or ""), "sha1": hashlib.sha1(body).hexdigest()[:12]}
+
+
+def _style_row(db: Session, key: str) -> "StyleOverride | None":
+    return db.get(StyleOverride, key)
+
+
+def _asset_dict(core, a: StyleAsset) -> dict:
+    return {"id": a.id, "kind": a.kind, "position": a.position,
+            "url": f"/style-assets/{a.filename}", "filename": a.filename,
+            "in_generation": bool(a.in_generation),
+            "title": a.title or "", "note": a.note or ""}
+
+
+@router.get("/api/admin/styles")
+def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_session)):
+    """Список стилей с пометкой «изменён». Промптов здесь нет — они едут
+    только в карточке одного стиля, по явному запросу."""
+    core = _core()
+    pc = core.prompts_catalog
+    uses = core._style_uses(db)
+    overridden = set(pc.overlay_keys())
+    assets: dict[str, int] = {}
+    for (skey, cnt) in (db.query(StyleAsset.style_key, func.count(StyleAsset.id))
+                        .group_by(StyleAsset.style_key).all()):
+        assets[skey] = int(cnt)
+    rows = []
+    for key in pc.STYLE_KEYS:
+        card = pc.public_style(key) or {}
+        rows.append({
+            "key": key,
+            "label": card.get("label", {}),
+            "group": card.get("group", ""),
+            "tier": card.get("tier", ""),
+            "prompt_class": card.get("prompt_class", ""),
+            "builtin": pc.is_builtin(key),
+            "overridden": key in overridden,
+            "assets": assets.get(key, 0),
+            "has_story_base": bool(pc.style_story_base(key)),
+            "uses": uses.get(key, 0),
+        })
+    return {
+        "styles": rows,
+        "groups": [{"key": g["key"], "label": g["label"]} for g in pc.GROUPS],
+        # Словарь тегов контролируемый: свободные теги через полгода дают
+        # три разных фильтра на одно и то же понятие.
+        "tags": {axis: [{"key": k, "label": v} for k, v in vals.items()]
+                 for axis, vals in pc.TAGS.items()},
+        "problems": pc.validate(),
+    }
+
+
+@router.get("/api/admin/styles/{key}")
+def admin_style_card(key: str, user: User = Depends(admin_user),
+                     db: Session = Depends(db_session)):
+    """Полная карточка ОДНОГО стиля, включая закрытый промпт. Только админу
+    и только по явному запросу."""
+    core = _core()
+    pc = core.prompts_catalog
+    card = pc.public_style(key)
+    if not card:
+        raise HTTPException(404, "нет такого стиля")
+    row = _style_row(db, key)
+    assets = (db.query(StyleAsset).filter(StyleAsset.style_key == key)
+              .order_by(StyleAsset.kind, StyleAsset.position, StyleAsset.id).all())
+    return {
+        "key": key,
+        "builtin": pc.is_builtin(key),
+        "overridden": bool(row),
+        "enabled": bool(row.enabled) if row else True,
+        "card": card,
+        # Закрытое. Наружу этих трёх полей нет ни в одном публичном роуте.
+        "prompt": pc.style_prompt(key),
+        "story_base": pc.style_story_base(key),
+        "structure": pc.style_structure_raw(key) or {},
+        # Заводские значения — для diff'а и кнопки «вернуть как было».
+        "builtin_prompt": pc.builtin_prompt(key),
+        "builtin_card": pc.builtin_style(key) or {},
+        "assets": [_asset_dict(core, a) for a in assets],
+        "asset_kinds": list(STYLE_ASSET_KINDS),
+    }
+
+
+_STYLE_TEXT_FIELDS = ("group", "tier", "prompt_class", "mix_role",
+                      "prompt", "story_base")
+_STYLE_DICT_FIELDS = (("label", "label_json"), ("desc", "desc_json"),
+                      ("gain", "gain_json"), ("music", "music_json"),
+                      ("tempo", "tempo_json"), ("structure", "structure_json"))
+_STYLE_LIST_FIELDS = (("tags", "tags_json"), ("mix_with", "mix_with_json"),
+                      ("avoid_mix", "avoid_mix_json"), ("engines", "engines_json"))
+
+
+@router.put("/api/admin/styles/{key}")
+async def admin_style_save(key: str, request: Request,
+                           user: User = Depends(admin_user),
+                           db: Session = Depends(db_session)):
+    """Сохранить наложение. ПРОВЕРКА ИДЁТ ДО ЗАПИСИ.
+
+    Порядок именно такой: пишем в сессию flush'ем (без commit), собираем
+    кандидата, накладываем, гоняем validate(). Ошибка — откат и 400.
+    Обратный порядок означал бы, что битый или протекающий каталог успевает
+    побывать правдой для витрины."""
+    core = _core()
+    pc = core.prompts_catalog
+    body = await request.json() if await request.body() else {}
+    row = _style_row(db, key)
+    if not row:
+        row = StyleOverride(key=key, builtin=pc.is_builtin(key))
+        db.add(row)
+    if "enabled" in body:
+        row.enabled = bool(body["enabled"])
+    for field in _STYLE_TEXT_FIELDS:
+        if field in body:
+            setattr(row, field, str(body[field] or "")[:20000])
+    for field, col in _STYLE_DICT_FIELDS:
+        if field in body:
+            val = body[field]
+            setattr(row, col, json.dumps(val, ensure_ascii=False)
+                    if isinstance(val, dict) and val else "")
+    for field, col in _STYLE_LIST_FIELDS:
+        if field in body:
+            val = body[field]
+            setattr(row, col, json.dumps(val, ensure_ascii=False)
+                    if isinstance(val, list) and val else "")
+    row.updated_by = user.id
+    db.flush()
+
+    candidate = core.style_overlay_data(db)
+    pc.set_overlay(candidate)
+    problems = pc.validate()
+    if problems:
+        db.rollback()
+        core.reload_style_overlay()
+        raise HTTPException(400, "каталог не сходится: " + "; ".join(problems[:4]))
+    db.commit()
+    core.reload_style_overlay()
+    _log_action(db, user, 0, "style", {
+        "key": key,
+        # ХЭШ И ДЛИНА, НЕ ТЕКСТ: журнал не должен становиться вторым
+        # хранилищем закрытых промптов.
+        "prompt": _prompt_mark(row.prompt),
+        "story_base": _prompt_mark(row.story_base),
+        "enabled": bool(row.enabled),
+    })
+    return admin_style_card(key, user=user, db=db)
+
+
+@router.delete("/api/admin/styles/{key}")
+def admin_style_reset(key: str, user: User = Depends(admin_user),
+                      db: Session = Depends(db_session)):
+    """Снять наложение — стиль возвращается к заводскому. Именно снять, а не
+    записать поверх копию заводского: копия через полгода разойдётся с
+    кодом, и «вернуть как было» перестанет работать."""
+    core = _core()
+    row = _style_row(db, key)
+    if not row:
+        raise HTTPException(404, "у этого стиля нет правок")
+    if not row.builtin:
+        raise HTTPException(400, "это свой стиль, а не правка встроенного — "
+                                 "его можно только выключить")
+    db.delete(row)
+    db.commit()
+    core.reload_style_overlay()
+    _log_action(db, user, 0, "style_reset", {"key": key})
+    return {"ok": True, "key": key}
+
+
+@router.post("/api/admin/styles/{key}/assets")
+async def admin_style_asset_add(key: str, request: Request,
+                                user: User = Depends(admin_user),
+                                db: Session = Depends(db_session)):
+    """Залить файл стиля: постер, пример кадра, референс в генерацию или
+    текстовый файл с промптом.
+
+    Файл ложится в том /data (STYLE_ASSETS_DIR), а не в образ: его кладёт
+    владелец, и переживать пересборку он обязан."""
+    core = _core()
+    if key not in core.prompts_catalog.STYLE_KEYS:
+        raise HTTPException(404, "нет такого стиля")
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "нет файла")
+    kind = str(form.get("kind") or "shot")
+    if kind not in STYLE_ASSET_KINDS:
+        raise HTTPException(400, f"неизвестный вид файла: {kind}")
+    data = await upload.read()
+    if not data:
+        raise HTTPException(400, "пустой файл")
+    if len(data) > STYLE_ASSET_MAX:
+        raise HTTPException(413, f"файл больше {STYLE_ASSET_MAX // 1024 // 1024} МБ")
+    ext = (_STYLE_EXT.get(getattr(upload, "content_type", "") or "")
+           or os.path.splitext(getattr(upload, "filename", "") or "")[1].lower()
+           or ".bin")
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".mp4", ".txt", ".md"):
+        raise HTTPException(400, f"такой формат не берём: {ext}")
+    fname = f"style_{key}_{int(time.time())}_{os.urandom(4).hex()}{ext}"
+    path = os.path.join(core.STYLE_ASSETS_DIR, fname)
+    with open(path, "wb") as f:
+        f.write(data)
+    pos = (db.query(func.coalesce(func.max(StyleAsset.position), 0))
+           .filter(StyleAsset.style_key == key, StyleAsset.kind == kind).scalar() or 0)
+    # Постер и петля у стиля ровно одни: заливка новых заменяет старые,
+    # иначе витрина молча показывает первый попавшийся.
+    if kind in ("poster", "loop"):
+        for old in db.query(StyleAsset).filter(StyleAsset.style_key == key,
+                                               StyleAsset.kind == kind).all():
+            core._remove_style_asset(old.filename)
+            db.delete(old)
+    asset = StyleAsset(style_key=key, kind=kind, filename=fname, position=pos + 1,
+                       in_generation=bool(str(form.get("in_generation") or "") in ("1", "true", "on")),
+                       title=str(form.get("title") or "")[:200])
+    db.add(asset)
+    db.commit()
+    core.reload_style_overlay()
+    _log_action(db, user, 0, "style_asset", {"key": key, "kind": kind,
+                                             "bytes": len(data)})
+    return _asset_dict(core, asset)
+
+
+@router.patch("/api/admin/styles/assets/{asset_id}")
+async def admin_style_asset_patch(asset_id: int, request: Request,
+                                  user: User = Depends(admin_user),
+                                  db: Session = Depends(db_session)):
+    """Тумблер «в генерацию» и подпись. Всё остальное у файла неизменно."""
+    core = _core()
+    asset = db.get(StyleAsset, asset_id)
+    if not asset:
+        raise HTTPException(404, "файл не найден")
+    body = await request.json() if await request.body() else {}
+    if "in_generation" in body:
+        asset.in_generation = bool(body["in_generation"])
+    if "title" in body:
+        asset.title = str(body["title"] or "")[:200]
+    if "position" in body:
+        asset.position = max(0, int(body["position"] or 0))
+    db.commit()
+    core.reload_style_overlay()
+    return _asset_dict(core, asset)
+
+
+@router.post("/api/admin/styles/{key}/assets/order")
+async def admin_style_asset_order(key: str, request: Request,
+                                  user: User = Depends(admin_user),
+                                  db: Session = Depends(db_session)):
+    core = _core()
+    body = await request.json() if await request.body() else {}
+    ids = [int(x) for x in (body.get("ids") or []) if str(x).isdigit()]
+    rows = {a.id: a for a in db.query(StyleAsset).filter(StyleAsset.style_key == key).all()}
+    for i, aid in enumerate(ids, start=1):
+        if aid in rows:
+            rows[aid].position = i
+    db.commit()
+    core.reload_style_overlay()
+    return {"ok": True, "order": ids}
+
+
+@router.delete("/api/admin/styles/assets/{asset_id}")
+def admin_style_asset_del(asset_id: int, user: User = Depends(admin_user),
+                          db: Session = Depends(db_session)):
+    core = _core()
+    asset = db.get(StyleAsset, asset_id)
+    if not asset:
+        raise HTTPException(404, "файл не найден")
+    core._remove_style_asset(asset.filename)
+    key = asset.style_key
+    db.delete(asset)
+    db.commit()
+    core.reload_style_overlay()
+    _log_action(db, user, 0, "style_asset_del", {"key": key, "id": asset_id})
+    return {"ok": True}
+
+
+@router.get("/api/admin/styles/assets/{asset_id}/text")
+def admin_style_asset_text(asset_id: int, user: User = Depends(admin_user),
+                           db: Session = Depends(db_session)):
+    """Прочитать текстовый файл с промптом, чтобы перенести его в поле.
+
+    В генерацию уходит ПОЛЕ, а не файл. Второе место правды означало бы
+    вечный вопрос «а что реально ушло в модель» — поэтому файл здесь только
+    источник, из которого человек копирует осознанным нажатием."""
+    core = _core()
+    asset = db.get(StyleAsset, asset_id)
+    if not asset or asset.kind != "promptfile":
+        raise HTTPException(404, "это не файл с промптом")
+    path = os.path.join(core.STYLE_ASSETS_DIR, asset.filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "файл потерян")
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return {"text": f.read(200000), "filename": asset.filename}
+
+
+# ═══════════════════════ МОДЕЛИ И НАСТРОЙКИ СЕРВИСА ═══════════════════════
+
+@router.get("/api/admin/models")
+def admin_models(user: User = Depends(admin_user)):
+    """Витрина правды: что живо, сколько стоит нам и сколько человеку.
+    Только чтение — движки правятся кодом и ключами, а не веб-формой."""
+    core = _core()
+    text = []
+    for row in core.textgen.public_engines("studio", admin=True):
+        row["points"] = core.TEXT_COST.get(row["id"], 0)
+        text.append(row)
+    images = [{
+        "id": eid, "title": spec["title"], "channel": spec["channel"],
+        "live": eid in core.mediagen.image_engines_live(),
+        "points": core.FRAME_COST.get(eid, 0),
+        "usd": round(core.mediagen.image_engine_usd(eid), 4),
+    } for eid, spec in core.mediagen.IMAGE_ENGINES.items()]
+    videos = [{
+        "id": eid, "title": spec["title"], "family": spec["family"],
+        "live": core.mediagen.video_engine_live(eid),
+        "points": core.VIDEO_COST.get(eid, 0),
+        "usd": round(core.mediagen.video_engine_usd(eid, core.SCENE_SEC), 4),
+    } for eid, spec in core.mediagen.VIDEO_ENGINES.items()]
+    return {"text": text, "images": images, "videos": videos,
+            "point_usd": core.POINT_USD}
+
+
+@router.get("/api/admin/settings")
+def admin_settings(user: User = Depends(admin_user)):
+    """ТОЛЬКО ИНДИКАЦИЯ. Значений ключей здесь нет и не будет: редактор
+    ключей в вебе — это способ увести их одним XSS. Ключи живут в
+    infra/.env, здесь видно лишь «задан / не задан» и жив ли канал."""
+    core = _core()
+    st = core.textgen.state()
+    return {
+        "keys": [
+            {"key": "ANTHROPIC_API_KEY", "set": st["anthropic_key"],
+             "note": "Claude Sonnet и Opus в блоке сценария"},
+            {"key": "anthropic SDK", "set": st["anthropic_sdk"],
+             "note": "пакет anthropic в образе (requirements.txt)"},
+            {"key": "OPENROUTER_API_KEY", "set": st["openrouter_key"],
+             "note": "запасной канал Claude"},
+            {"key": "KIE_API_KEY", "set": core.mediagen.kie_available(),
+             "note": "Nano Banana, Seedance, Kling"},
+            {"key": "SEEVIO_API_KEY", "set": bool(core.mediagen.SEEVIO_API_KEY),
+             "note": "аварийный канал Seedance"},
+            {"key": "YOOKASSA_SECRET_KEY", "set": core._yookassa_enabled(),
+             "note": "оплата в рублях"},
+            {"key": "STRIPE", "set": core._stripe_enabled(),
+             "note": "оплата в долларах"},
+        ],
+        "egress_proxy": st["egress_proxy"],
+        "gateway_url": st["gateway_url"],
+        "text_default": st["default"],
+        "style_assets_dir": core.STYLE_ASSETS_DIR,
+        "scene_versions_keep": core.SCENE_VERSIONS_KEEP,
+    }
 
 
 # ═══════════════════════════ СЕГМЕНТЫ ═══════════════════════════

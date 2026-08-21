@@ -2306,7 +2306,10 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   position: fixed; z-index: 61; width: 380px; max-width: calc(100vw - 16px);
   max-height: 76vh; overflow-y: auto;
   padding: 14px; border-radius: 18px;
-  border: 2px solid #2d211a; background: var(--card);
+  border: 2px solid #2d211a;
+  /* Непрозрачный фон обязателен: --card полупрозрачен, и сквозь карточку
+     режима просвечивал текст страницы — две подписи в одном месте. */
+  background: #fffcf7;
   box-shadow: 0 6px 0 #2d211a, 0 18px 40px rgba(180, 90, 30, .18);
 }
 .mode-sheet.is-sheet {
@@ -2467,6 +2470,19 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   .ms-sec { padding: 10px; }
   .ms-preset { flex: 1 1 100%; max-width: none; }
   .ms-row > label { min-width: 100%; }
+
+  /* ТЕЛЕФОН: капсула режима — только иконка. Строка шапки здесь и без нас
+     набита под завязку, а название режима человек всё равно читает первой
+     строкой шторки, которую эта же капсула и открывает. */
+  .mode-switch .mode-cap { display: none; }
+  .mode-switch { padding: 0 9px; gap: 4px; }
+
+  /* Переключатель языка в студии на телефоне не нужен — так и было задумано
+     выше по файлу, но правило «все контролы шапки одной высоты» стоит ПОЗЖЕ
+     и с той же специфичностью перебивало его своим display:inline-flex.
+     Строка из-за этого несла лишние 62 пикселя, которые сжимали список
+     проектов. Язык остался на лендинге и в кабинете. */
+  .topbar .lang-switch { display: none; }
 }
 
 /* ────────── правая колонка карточки кадра: единый ритм ──────────
@@ -2488,3 +2504,17 @@ details.s-engine-override > summary,
 /* Разделитель между строкой движка и ссылкой «поменять»: тонкая пунктирная
    черта вместо пустоты — видно, что это одна группа. */
 details.s-engine-override { border-top: 1px dashed rgba(45,33,26,.14); padding-top: 3px; }
+
+/* Ссылка регистрации под формой входа: человек, попавший сразу на вход,
+   не должен упираться в тупик из логина и пароля, которых у него нет. */
+.login-signup {
+  margin: 10px 0 0; text-align: center;
+  font-size: 12.5px; color: var(--muted);
+}
+.link-btn {
+  background: none; border: none; box-shadow: none; padding: 0 0 0 4px;
+  font: inherit; font-weight: 700; color: var(--accent-2-ink);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+.link-btn:hover { color: var(--text); }
+.link-btn:active { transform: none; }

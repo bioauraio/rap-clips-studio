@@ -240,6 +240,11 @@ class Project(Base):
     story = Column(Text, nullable=False, default="")
     story_status = Column(String, nullable=False, default="")  # '' | queued | running | error
     story_error = Column(Text, nullable=False, default="")
+    # Текстовая модель сценарного конвейера (id из textgen.TEXT_ENGINES).
+    # Живёт на ПРОЕКТЕ, а не на треке: сюжет, библия, сценарий серии и
+    # раскадровка — один конвейер, и разные модели на соседних шагах дают
+    # разъезд тона. Пусто = «как решит тариф» (шлюз).
+    text_engine = Column(String, nullable=False, default="")
     # Обложка проекта (файл в UPLOAD_DIR): визуальный якорь альбома —
     # заливается владельцем, при замене старый файл удаляется.
     cover_filename = Column(String, nullable=False, default="")
@@ -439,6 +444,26 @@ class Track(Base):
     # note — живой прогресс для строки статуса на карточке трека.
     supergen_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error
     supergen_note = Column(Text, nullable=False, default="")
+
+    # ─────────────────────────── РЕСТАЙЛ ───────────────────────────
+    # Под какой набор стилей ПИСАНЫ ТЕКСТЫ сцен. Пусто у новых треков:
+    # им стиль в image_prompt больше не пишут вовсе (claude.SCENES_SYSTEM),
+    # и перерисовка для них — это просто рендер новыми чипами, без единого
+    # обращения к модели. Непусто и не совпадает со style_keys — значит
+    # раскадровка старая, промпты несут в себе прежний стиль, и перед
+    # отрисовкой их надо переписать (claude.restyle_prompts).
+    prompts_style_keys = Column(String, nullable=False, default="")
+    restyle_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error
+    restyle_note = Column(Text, nullable=False, default="")
+    # Собранный клип снят в ПРЕЖНЕМ стиле. Не ошибка и не повод стирать
+    # файл: человек имеет право оставить старую склейку и пересобрать
+    # позже. Но кнопка сборки обязана сказать об этом вслух.
+    clip_stale = Column(Boolean, nullable=False, default=False)
+    # Переопределение текстовой модели на объекте. В интерфейсе пока не
+    # показываем — выбор живёт на проекте; поле есть, чтобы порядок
+    # разрешения совпадал с движками картинок (запрос → объект → проект).
+    text_engine = Column(String, nullable=False, default="")
+
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -542,12 +567,134 @@ class Scene(Base):
     # либо отдавать кадры даром (бесконечная перерисовка на нашей подписке).
     charged_points = Column(Integer, nullable=False, default=0)
 
+    # Каким набором стилей СНЯТЫ нынешние кадры. Заполняется в момент
+    # отрисовки. Смешанный трек (перерисовали только припев) — законное
+    # состояние, но оно обязано быть видимым: карточка сравнивает это поле
+    # со стилем трека и честно помечает кадр «снят в прежнем стиле».
+    style_keys = Column(String, nullable=False, default="")
+
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
     track = relationship("Track", back_populates="scenes")
     refs = relationship("SceneRef", back_populates="scene", cascade="all, delete-orphan",
                         order_by="SceneRef.position")
+    versions = relationship("SceneVersion", back_populates="scene",
+                            cascade="all, delete-orphan",
+                            order_by="SceneVersion.id.desc()")
+
+
+class SceneVersion(Base):
+    """Снимок кадров сцены ПЕРЕД перерисовкой в новом стиле.
+
+    Отдельная таблица, а не JSON-колонка в сцене, по двум причинам. Первая:
+    у версии есть ФАЙЛЫ на диске, и уборщик (_files_worker) обязан уметь их
+    находить — иначе запрос «что ещё занято» перестаёт быть правдой и версия
+    однажды указывает в пустоту. Вторая: «снеси версии старше N» по
+    JSON-колонке — это полный скан таблицы сцен.
+
+    Видео уезжает СЮДА, а не в мусор. Сцена на Seedance 2.5 стоит 152
+    токена, и рестайл, который молча стирает самую дорогую работу человека,
+    — это не функция, а потеря данных. В сборку старое видео не попадёт
+    (оно снято по другим кадрам), но вернуть его откатом можно.
+    """
+    __tablename__ = "scene_versions"
+    id = Column(Integer, primary_key=True)
+    scene_id = Column(Integer, ForeignKey("scenes.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=now, index=True)
+    # Чем снято: ключи стилей и человеческая подпись микса на момент съёмки.
+    style_keys = Column(String, nullable=False, default="")
+    style_label = Column(String, nullable=False, default="")
+    image_filename = Column(String, nullable=False, default="")
+    image_last_filename = Column(String, nullable=False, default="")
+    image_prompt = Column(Text, nullable=False, default="")
+    image_prompt_last = Column(Text, nullable=False, default="")
+    video_filename = Column(String, nullable=False, default="")
+    audio_filename = Column(String, nullable=False, default="")
+    image_engine = Column(String, nullable=False, default="")
+    video_engine = Column(String, nullable=False, default="")
+    note = Column(String, nullable=False, default="")
+
+    scene = relationship("Scene", back_populates="versions")
+
+
+class StyleOverride(Base):
+    """Наложение админки поверх встроенного каталога стилей.
+
+    ПОЧЕМУ БАЗА, А НЕ ФАЙЛ. Dockerfile копирует код в образ: правка файла
+    внутри контейнера умирает при первой же пересборке, а писать в код
+    прямо с прода — то, за что репозиторий уже получал расхождение с
+    сервером. База лежит томом в /opt/rapclips/data и переживает деплой.
+
+    ДВА СЛОЯ РАЗДЕЛЕНЫ И ЗДЕСЬ — ровно как в backend/prompts_catalog.py.
+    Публичные поля (подпись, описание, теги, музыка) уходят на витрину;
+    prompt / story_base / structure_json не уходят наружу НИКОГДА и
+    читаются только функциями каталога. Публичный ответ собирается по
+    белому списку PUBLIC_STYLE_FIELDS, поэтому забыть про новое закрытое
+    поле физически нельзя.
+    """
+    __tablename__ = "style_overrides"
+    key = Column(String, primary_key=True)
+    # builtin=1 — правка стиля из кода (снятие наложения возвращает
+    # заводской), 0 — стиль, заведённый владельцем целиком.
+    builtin = Column(Boolean, nullable=False, default=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+
+    # ── публичное ──
+    label_json = Column(Text, nullable=False, default="")   # {"en": .., "ru": ..}
+    desc_json = Column(Text, nullable=False, default="")
+    gain_json = Column(Text, nullable=False, default="")
+    group = Column(String, nullable=False, default="")
+    tier = Column(String, nullable=False, default="")        # free | pro
+    prompt_class = Column(String, nullable=False, default="")  # closed | school
+    tags_json = Column(Text, nullable=False, default="")
+    music_json = Column(Text, nullable=False, default="")
+    tempo_json = Column(Text, nullable=False, default="")
+    mix_role = Column(String, nullable=False, default="")
+    mix_with_json = Column(Text, nullable=False, default="")
+    avoid_mix_json = Column(Text, nullable=False, default="")
+    engines_json = Column(Text, nullable=False, default="")
+
+    # ── ЗАКРЫТОЕ: наружу не уходит ни при каких условиях ──
+    prompt = Column(Text, nullable=False, default="")
+    # Как стиль влияет на СЮЖЕТ, а не на картинку. Уходит отдельным блоком
+    # в промпты сюжета и раскадровки: до этого стиль умел влиять только на
+    # кадр, и «сценарии под стиль» были невозможны в принципе.
+    story_base = Column(Text, nullable=False, default="")
+    structure_json = Column(Text, nullable=False, default="")
+
+    updated_by = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+
+class StyleAsset(Base):
+    """Файл стиля: превью витрины, пример кадра, референс в генерацию или
+    текстовый файл с промптом.
+
+    kind:
+      poster | loop | shot  — витрина карточки и страницы стиля;
+      ref                   — картинка, которая подмешивается в генерацию
+                              кадра (только при in_generation=1);
+      promptfile            — .txt/.md, из которого человек переносит текст
+                              в поле prompt/story_base кнопкой. В модель
+                              уходит ПОЛЕ, а не файл: два места правды —
+                              это гарантированный вопрос «а что реально
+                              ушло в генерацию».
+    """
+    __tablename__ = "style_assets"
+    id = Column(Integer, primary_key=True)
+    style_key = Column(String, nullable=False, index=True)
+    kind = Column(String, nullable=False, default="shot")
+    filename = Column(String, nullable=False, default="")
+    position = Column(Integer, nullable=False, default=0)
+    # Уходит ли этот референс в промпт кадра. Персонаж всегда важнее стиля:
+    # main.py подмешивает такие картинки ПОСЛЕ персонажных и не более двух,
+    # иначе рестайл вылечит один симптом и вернёт другой — «персонажи не
+    # похожи», который только что чинили.
+    in_generation = Column(Boolean, nullable=False, default=False)
+    title = Column(String, nullable=False, default="")
+    note = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=now)
 
 
 class SceneRef(Base):
@@ -947,6 +1094,10 @@ def init_db() -> None:
             ("ix_fo_user_time", "file_owners(user_id, created_at DESC)"),
             ("ix_fo_user_kind", "file_owners(user_id, kind)"),
             ("ix_cr_camp_user", "campaign_recipients(campaign_id, user_id)"),
+            # Версии кадров: лента версий у сцены и вытеснение самой старой
+            # (SCENE_VERSIONS_KEEP) — оба запроса идут по scene_id + времени.
+            ("ix_sv_scene_time", "scene_versions(scene_id, created_at DESC)"),
+            ("ix_sa_style_kind", "style_assets(style_key, kind, position)"),
         ):
             try:
                 uniq = "UNIQUE " if name == "ix_cr_camp_user" else ""

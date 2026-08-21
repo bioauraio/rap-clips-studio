@@ -267,10 +267,10 @@ function renderRefBanner() {
   }
 }
 
-// Экранов теперь четыре: лендинг, вход, студия и чат. Гасим все разом, чтобы
-// добавление пятого не требовало править каждый переход по отдельности.
+// Экранов теперь пять: лендинг, вход, студия, чат и музыка. Гасим все разом,
+// чтобы добавление шестого не требовало править каждый переход по отдельности.
 function hideScreens() {
-  ["#welcome", "#login", "#app", "#chat", "#blocked"].forEach((sel) => {
+  ["#welcome", "#login", "#app", "#chat", "#music", "#blocked"].forEach((sel) => {
     const el = $(sel);
     if (el) el.classList.add("hidden");
   });
@@ -326,6 +326,8 @@ function showApp() {
   // Прямая ссылка /#/chat открывает чат сразу. Проект при этом всё равно
   // грузится фоном: «Сохранить в проект» нужен список персонажей.
   if (location.hash === "#/chat") showChat();
+  // То же для музыки: /#/music — рабочая ссылка, её кладут в закладку.
+  if (location.hash === "#/music" && window.QlolMusic) window.QlolMusic.show();
 }
 
 // Бейдж «⚡ N» (не-админу), «Кабинет» и «Сохранить аккаунт» (гостю без логина) в топбаре.
@@ -418,6 +420,11 @@ async function ldApplyPending() {
 $("#welcome-start").addEventListener("click", ldStart);
 
 $("#welcome-login").addEventListener("click", showLogin);
+// Регистрация с экрана входа: тот же гостевой старт, что и с лендинга.
+// Отдельной формы с паролем нет намеренно — аккаунт заводится одним нажатием.
+const signupBtn = $("#login-signup");
+if (signupBtn) signupBtn.addEventListener("click", ldStart);
+
 
 $("#logout-btn").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });

@@ -70,6 +70,7 @@
   /* Какой сегмент подсвечен. Это НЕ обязательно режим открытого проекта:
      человек может смотреть карточку мокапов, работая над клипом. */
   let viewed = "";
+  let openedAt = 0;          // когда меню открылось — см. сторож клика мимо
   const state = { open: false, anchorSeg: false };
 
   function activeId() { return viewed || currentModeId(); }
@@ -261,6 +262,12 @@
     });
     document.addEventListener("click", (e) => {
       if (!state.open || !state.anchorSeg) return;
+      // Клик, КОТОРЫМ меню и открыли, до сторожа доходит уже после того, как
+      // open() перерисовал ленту: нажатая кнопка к этому моменту оторвана от
+      // DOM, contains() её не узнаёт, и меню закрывалось само собой. То же
+      // самое приезжает из верстака, где кнопка вообще в другом контейнере.
+      // Проверка по времени закрывает оба случая разом.
+      if (Date.now() - openedAt < 320) return;
       const cap = $("#project-mode");
       const box = $("#mode-seg");
       if (layer.contains(e.target)) return;
@@ -292,6 +299,7 @@
     if (id) viewed = id;
     state.open = true;
     state.anchorSeg = true;
+    openedAt = Date.now();
     layer.innerHTML = "";
 
     const head = el("div", "mode-sheet-head");

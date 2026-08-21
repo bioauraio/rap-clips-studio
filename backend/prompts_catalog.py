@@ -1362,9 +1362,102 @@ PUBLIC_PRESET_FIELDS = (
     "styles_fit", "engines", "needs_lyrics", "research", "beats",
 )
 
-_STYLE_BY_KEY = {s["key"]: s for s in STYLES}
+_BUILTIN_BY_KEY = {s["key"]: s for s in STYLES}
 _PRESET_BY_KEY = {p["key"]: p for p in CLIP_PRESETS}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# НАЛОЖЕНИЕ АДМИНКИ (backend/crm.py → таблица style_overrides).
+#
+# Тонкий слой ВНУТРИ этого модуля, а не рядом с ним: весь остальной код
+# (set_track_style, _frame_prompt, витрина, SEO-страницы /prompts/*) зовёт те
+# же самые функции и не меняется вообще. Наложение читается на каждый вызов,
+# но живёт в памяти — main.py зовёт set_overlay() на старте и после каждой
+# правки. Перечитывать базу на каждый кадр нельзя: кадров тысячи.
+#
+# Правило двух слоёв здесь такое же, как во всём файле: закрытые поля
+# (prompt / story_base / structure) в public_style() не попадают, потому что
+# он собирает ответ по белому списку PUBLIC_STYLE_FIELDS.
+# ─────────────────────────────────────────────────────────────────────────────
+_OVERLAY: dict[str, dict] = {}
+
+#: Поля наложения, которые можно показывать наружу.
+_OVERLAY_PUBLIC = ("label", "desc", "gain", "group", "tier", "prompt_class",
+                   "tags", "music", "tempo", "mix_role", "mix_with",
+                   "avoid_mix", "engines", "media")
+
+
+def _rebuild_index() -> None:
+    """Пересобрать производные реестры после смены наложения.
+
+    STYLE_KEYS/CLOSED_KEYS — модульные переменные, и вызывающий код читает
+    их через атрибут модуля (prompts_catalog.STYLE_KEYS), поэтому простое
+    переприсваивание здесь видно всем сразу."""
+    global _STYLE_BY_KEY, STYLE_KEYS, CLOSED_KEYS
+    merged: dict[str, dict] = {}
+    for k, base in _BUILTIN_BY_KEY.items():
+        ov = _OVERLAY.get(k) or {}
+        if ov and ov.get("enabled") is False:
+            continue
+        if not ov:
+            merged[k] = base
+            continue
+        row = dict(base)
+        for f in _OVERLAY_PUBLIC:
+            if ov.get(f) not in (None, "", [], {}):
+                row[f] = ov[f]
+        merged[k] = row
+    # Стили, заведённые владельцем целиком (builtin=False).
+    for k, ov in _OVERLAY.items():
+        if k in _BUILTIN_BY_KEY or ov.get("enabled") is False:
+            continue
+        row = {"key": k, "group": "cinema", "tier": "pro", "prompt_class": "closed",
+               "label": {"en": k, "ru": k}, "desc": {"en": "", "ru": ""},
+               "gain": {"en": "", "ru": ""}, "tags": [],
+               "music": {"en": "", "ru": "", "genres": []},
+               "tempo": {"bpm": [70, 140]}, "mix_role": "base",
+               "mix_with": [], "avoid_mix": [], "engines": []}
+        for f in _OVERLAY_PUBLIC:
+            if ov.get(f) not in (None, "", [], {}):
+                row[f] = ov[f]
+        merged[k] = row
+    _STYLE_BY_KEY = merged
+    STYLE_KEYS = tuple(merged)
+    CLOSED_KEYS = tuple(k for k, v in merged.items()
+                        if v.get("prompt_class") == "closed")
+
+
+def set_overlay(data: dict | None) -> None:
+    """Заменить наложение целиком. Зовётся из main.py на старте и после
+    каждой правки в админке — другого способа его поменять нет."""
+    global _OVERLAY
+    _OVERLAY = {str(k): v for k, v in (data or {}).items() if isinstance(v, dict)}
+    _rebuild_index()
+
+
+def overlay_keys() -> tuple:
+    """Какие стили сейчас изменены владельцем. Нужно админке — показать
+    метку «изменён» и кнопку «вернуть заводской»."""
+    return tuple(_OVERLAY)
+
+
+def is_builtin(key: str) -> bool:
+    return key in _BUILTIN_BY_KEY
+
+
+def builtin_style(key: str) -> dict | None:
+    """Заводская карточка без наложения — для diff'а в редакторе."""
+    return _BUILTIN_BY_KEY.get(key)
+
+
+def builtin_prompt(key: str) -> str:
+    return _PROMPTS.get(key, "")
+
+
+def builtin_structure(key: str) -> dict | None:
+    return _STRUCTURE.get(key)
+
+
+_STYLE_BY_KEY: dict[str, dict] = dict(_BUILTIN_BY_KEY)
 STYLE_KEYS = tuple(s["key"] for s in STYLES)
 PRESET_KEYS = tuple(p["key"] for p in CLIP_PRESETS)
 #: Ключи, текст которых не показываем никогда и никому.
@@ -1372,9 +1465,17 @@ CLOSED_KEYS = tuple(s["key"] for s in STYLES if s["prompt_class"] == "closed")
 
 
 def media(key: str) -> dict:
-    """Пути к превью карточки. Файлы кладутся руками один раз: постер —
-    кадр 9:16, loop — двухсекундный ролик без звука (autoplay muted loop),
-    shots — 3–6 примеров кадров для страницы стиля и SEO."""
+    """Пути к превью карточки. Заводские файлы лежат в образе рядом с
+    фронтом; всё, что владелец залил через админку стилей, приезжает
+    наложением (StyleAsset → set_overlay) и перекрывает их."""
+    ov = (_OVERLAY.get(key) or {}).get("media")
+    if isinstance(ov, dict) and (ov.get("poster") or ov.get("shots") or ov.get("loop")):
+        return {
+            "poster": ov.get("poster") or f"/img/styles/{key}/poster.jpg",
+            "loop": ov.get("loop") or f"/img/styles/{key}/loop.mp4",
+            "shots": list(ov.get("shots") or
+                          [f"/img/styles/{key}/shot{i}.jpg" for i in range(1, 7)]),
+        }
     return {
         "poster": f"/img/styles/{key}/poster.jpg",
         "loop": f"/img/styles/{key}/loop.mp4",
@@ -1392,7 +1493,7 @@ def public_style(key: str, *, lang: str = "", uses: int = 0) -> dict | None:
     out["uses"] = uses
     #: has_structure — показывать ли на карточке кнопку «разбор приёма».
     #: Сам разбор отдаётся отдельным запросом и только PRO+.
-    out["has_structure"] = key in _STRUCTURE
+    out["has_structure"] = bool(style_structure_raw(key))
     if lang in ("en", "ru"):
         for f in ("label", "desc", "gain"):
             if isinstance(out.get(f), dict):
@@ -1407,12 +1508,14 @@ def public_styles(*, lang: str = "", group: str = "", tier: str = "",
                   uses: dict[str, int] | None = None) -> list[dict]:
     uses = uses or {}
     out = []
-    for s in STYLES:
-        if group and s["group"] != group:
+    for key, s in _STYLE_BY_KEY.items():
+        if group and s.get("group") != group:
             continue
-        if tier and s["tier"] != tier:
+        if tier and s.get("tier") != tier:
             continue
-        out.append(public_style(s["key"], lang=lang, uses=uses.get(s["key"], 0)))
+        card = public_style(key, lang=lang, uses=uses.get(key, 0))
+        if card:
+            out.append(card)
     return out
 
 
@@ -1443,8 +1546,50 @@ def public_presets(*, lang: str = "", kind: str = "") -> list[dict]:
 # ── закрытое: вызывается только из бэкенда ───────────────────────────────────
 
 def style_prompt(key: str) -> str:
-    """ПОЛНЫЙ текст стиля. Уходит в модель, НИКОГДА в HTTP-ответ."""
+    """ПОЛНЫЙ текст стиля. Уходит в модель, НИКОГДА в HTTP-ответ.
+    Наложение админки перекрывает заводской текст."""
+    ov = (_OVERLAY.get(key) or {}).get("prompt")
+    if isinstance(ov, str) and ov.strip():
+        return ov
     return _PROMPTS.get(key, "")
+
+
+def style_story_base(key: str) -> str:
+    """Как стиль влияет на СЮЖЕТ, а не на картинку. Уходит отдельным блоком
+    в промпты сюжета и раскадровки (claude.py).
+
+    Заводского значения у этого поля нет: до админки стилей влияния стиля
+    на сценарий не существовало вовсе. Пусто — блок просто не приезжает."""
+    ov = (_OVERLAY.get(key) or {}).get("story_base")
+    return ov if isinstance(ov, str) else ""
+
+
+def style_gen_refs(key: str) -> list[str]:
+    """Имена файлов-референсов стиля, помеченных «в генерацию».
+
+    Это НЕ витрина: витринные постеры и примеры кадров живут в media().
+    Сюда попадает только то, что владелец сознательно пустил в промпт
+    кадра — и main.py подмешивает максимум две штуки, после персонажей."""
+    refs = (_OVERLAY.get(key) or {}).get("gen_refs")
+    return [str(x) for x in refs if x] if isinstance(refs, list) else []
+
+
+def story_base(keys) -> str:
+    """Сводная сценарная база микса: основа первой, подмешанные следом."""
+    out = []
+    for k in (keys or []):
+        base = style_story_base(k).strip()
+        if base:
+            out.append(base)
+    return "\n\n".join(out)
+
+
+def style_structure_raw(key: str) -> dict | None:
+    """Разбор приёма БЕЗ проверки тарифа — для валидации и админки."""
+    ov = (_OVERLAY.get(key) or {}).get("structure")
+    if isinstance(ov, dict) and ov:
+        return ov
+    return _STRUCTURE.get(key)
 
 
 def style_structure(key: str, *, is_pro: bool) -> dict | None:
@@ -1452,7 +1597,10 @@ def style_structure(key: str, *, is_pro: bool) -> dict | None:
     Для closed возвращает None при любом тарифе — там разбор равносилен тексту."""
     if not is_pro:
         return None
-    return _STRUCTURE.get(key)
+    s = _STYLE_BY_KEY.get(key) or {}
+    if s.get("prompt_class") == "closed":
+        return None
+    return style_structure_raw(key)
 
 
 def preset_seed(key: str) -> dict:
@@ -1489,9 +1637,10 @@ def keys_from_prompt(value: str) -> list[str]:
     поиск подстрок хрупок, любая правка промпта его молча ломает."""
     if not value:
         return []
-    order = {s["key"]: i for i, s in enumerate(STYLES)}
-    base = [k for k, p in _PROMPTS.items() if p and p in value]
-    extras = [k for k, p in _PROMPTS.items()
+    order = {k: i for i, k in enumerate(_STYLE_BY_KEY)}
+    prompts = {k: style_prompt(k) for k in _STYLE_BY_KEY}
+    base = [k for k, p in prompts.items() if p and p in value]
+    extras = [k for k, p in prompts.items()
               if p and p not in value and _excerpt(p) in value]
     return (sorted(base, key=lambda k: order.get(k, 99))
             + sorted(extras, key=lambda k: order.get(k, 99)))
@@ -1518,13 +1667,13 @@ def fusion(keys: list[str], extra: str = "") -> str:
     первый ключ — основа целиком, остальные подмешиваются выжимками.
     `extra` — приписка, которую человек написал сам; она его, поэтому
     возвращать её ему наружу можно."""
-    chosen = [k for k in keys if k in _PROMPTS]
+    chosen = [k for k in keys if style_prompt(k)]
     if not chosen:
         return (extra or "").strip()
-    base = _PROMPTS[chosen[0]]
+    base = style_prompt(chosen[0])
     if len(chosen) > 1:
         base += "\n\nBlend in elements of: " + " ".join(
-            _excerpt(_PROMPTS[k]) for k in chosen[1:])
+            _excerpt(style_prompt(k)) for k in chosen[1:])
     if extra.strip():
         base += "\n\n" + extra.strip()
     return base
@@ -1539,37 +1688,49 @@ SHOT_SIZES = {"extreme close-up", "close-up", "medium", "wide", "establishing"}
 
 
 def validate() -> list[str]:
+    """Самопроверка каталога С УЧЁТОМ НАЛОЖЕНИЯ АДМИНКИ.
+
+    Гоняется тестом, на старте и — главное — ПЕРЕД каждым сохранением стиля
+    в админке. Админ, случайно вставивший промпт в поле «описание», получает
+    отказ, а не тихую утечку на витрину: проверка утечки внизу гоняется по
+    ЭФФЕКТИВНЫМ картам и эффективным промптам, а не по тому, что лежит в
+    коде."""
     err: list[str] = []
     groups = {g["key"] for g in GROUPS}
     all_tags = {t for axis in TAGS.values() for t in axis}
 
-    for s in STYLES:
-        k = s["key"]
-        if s["group"] not in groups:
-            err.append(f"{k}: неизвестная группа {s['group']}")
-        if s["tier"] not in ("free", "pro"):
-            err.append(f"{k}: неизвестный тариф {s['tier']}")
-        if s["prompt_class"] not in ("closed", "school"):
-            err.append(f"{k}: неизвестный prompt_class {s['prompt_class']}")
-        if k not in _PROMPTS:
-            err.append(f"{k}: нет промпта")
-        for t in s["tags"]:
+    for k, s in _STYLE_BY_KEY.items():
+        mark = k if is_builtin(k) else f"{k} (свой)"
+        if s.get("group") not in groups:
+            err.append(f"{mark}: неизвестная группа {s.get('group')}")
+        if s.get("tier") not in ("free", "pro"):
+            err.append(f"{mark}: неизвестный тариф {s.get('tier')}")
+        if s.get("prompt_class") not in ("closed", "school"):
+            err.append(f"{mark}: неизвестный prompt_class {s.get('prompt_class')}")
+        if not style_prompt(k).strip():
+            err.append(f"{mark}: нет промпта")
+        for t in s.get("tags") or []:
             if t not in all_tags:
-                err.append(f"{k}: тег {t} вне словаря TAGS")
-        for ref in s["mix_with"] + s["avoid_mix"]:
+                err.append(f"{mark}: тег {t} вне словаря TAGS")
+        for ref in list(s.get("mix_with") or []) + list(s.get("avoid_mix") or []):
             if ref not in _STYLE_BY_KEY:
-                err.append(f"{k}: ссылка на несуществующий стиль {ref}")
+                err.append(f"{mark}: ссылка на несуществующий стиль {ref}")
             if ref == k:
-                err.append(f"{k}: ссылается сам на себя")
-        if s["prompt_class"] == "closed" and k in _STRUCTURE:
-            err.append(f"{k}: closed-стиль не может иметь публикуемого разбора")
-        if s["prompt_class"] == "school" and k not in _STRUCTURE:
-            err.append(f"{k}: school-стиль без разбора — не о чем учить")
-        if s["prompt_class"] == "closed" and s["mix_role"] != "base":
-            err.append(f"{k}: фирменный пресет обязан быть base")
-        lo, hi = s["tempo"]["bpm"]
+                err.append(f"{mark}: ссылается сам на себя")
+        has_structure = bool(style_structure_raw(k))
+        if s.get("prompt_class") == "closed" and has_structure:
+            err.append(f"{mark}: closed-стиль не может иметь публикуемого разбора")
+        if s.get("prompt_class") == "school" and not has_structure:
+            err.append(f"{mark}: school-стиль без разбора — не о чем учить")
+        if s.get("prompt_class") == "closed" and s.get("mix_role") != "base":
+            err.append(f"{mark}: фирменный пресет обязан быть base")
+        try:
+            lo, hi = s["tempo"]["bpm"]
+        except (KeyError, TypeError, ValueError):
+            err.append(f"{mark}: нет диапазона bpm")
+            continue
         if not (55 <= lo < hi <= 200):
-            err.append(f"{k}: bpm {lo}-{hi} вне диапазона audio_analysis (55–200)")
+            err.append(f"{mark}: bpm {lo}-{hi} вне диапазона audio_analysis (55–200)")
 
     for p in CLIP_PRESETS:
         k = p["key"]
@@ -1595,11 +1756,18 @@ def validate() -> list[str]:
                 err.append(f"подборка {c['key']}: несуществующий стиль {ref}")
 
     # Главная проверка: ни один публичный дикт не содержит текста промпта.
-    for s in STYLES:
-        blob = repr(public_style(s["key"]))
-        for pk, prompt in _PROMPTS.items():
-            if prompt[:60] in blob:
-                err.append(f"УТЕЧКА: промпт {pk} виден в публичной карточке {s['key']}")
+    # Промпты берём ЭФФЕКТИВНЫЕ — иначе редактор стилей однажды выложит
+    # свеженаписанный закрытый текст прямо в поле «описание» на витрине.
+    eff_prompts = {k: style_prompt(k) for k in _STYLE_BY_KEY}
+    eff_prompts.update({k: v for k, v in _PROMPTS.items() if v})
+    for key in _STYLE_BY_KEY:
+        blob = repr(public_style(key))
+        for pk, prompt in eff_prompts.items():
+            if prompt and prompt[:60] in blob:
+                err.append(f"УТЕЧКА: промпт {pk} виден в публичной карточке {key}")
+        base = style_story_base(key)
+        if base and base[:60] in blob:
+            err.append(f"УТЕЧКА: сценарная база {key} видна в публичной карточке")
     for p in CLIP_PRESETS:
         blob = repr(public_preset(p["key"]))
         seed = _SEEDS.get(p["key"], {}).get("story", "")
