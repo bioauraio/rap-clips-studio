@@ -4312,6 +4312,45 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     return _ref_collage(db, paths, project.owner_id) or paths[0]
 
 
+def _reference_legend(scene: Scene, project: Project) -> str:
+    """Кто есть кто на референсах — словами, по именам.
+
+    Раньше картинки уходили безымянным списком, и при двух-трёх героях в
+    кадре модель не знала, какое лицо чьё: путала персонажей местами или
+    лепила усреднённого. Теперь промпт прямо перечисляет, в каком порядке
+    приложены снимки и к какому имени они относятся, а имена совпадают с
+    теми, что стоят в описании сцены."""
+    chars = _scene_characters(scene, project)
+    if not chars:
+        chars = [c for c in project.characters if c.is_main]
+    if not chars:
+        return ""
+    n_scene = len(_scene_ref_paths(scene)[:3])
+    limit = 3 if n_scene else 4
+    per = max(1, limit // max(1, len(chars)))
+    lines, idx = [], n_scene
+    for c in chars:
+        shots = min(per, len([x for x in c.photos
+                              if os.path.exists(os.path.join(UPLOAD_DIR, x.filename))]))
+        if shots <= 0:
+            continue
+        first, last = idx + 1, idx + shots
+        span = f"image {first}" if shots == 1 else f"images {first}-{last}"
+        lines.append(f"{span} = '{c.name}'")
+        idx += shots
+    if not lines:
+        return ""
+    head = ("REFERENCE MAP (who is who): " + "; ".join(lines) + ". ")
+    if n_scene:
+        head = (f"The first {n_scene} reference image(s) are scene mood/composition, "
+                f"not people. ") + head
+    return head + (
+        "Match each named person in the shot to THEIR OWN reference images above. "
+        "Do not swap faces between characters, do not merge them into one look, "
+        "and do not give a character the face or clothes of another."
+    )
+
+
 def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[str]:
     """Те же референсы, что и в _scene_reference_photo, но СПИСКОМ — без
     hstack-склейки.
@@ -4410,6 +4449,11 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
     ]
     # Персонажи кадра: их канонические описания обязаны попасть в промпт
     # (внешность НЕ переизобретается, меняется только стилистика подачи).
+    # Легенда «какая картинка чей герой» — ДО описаний персонажей, чтобы
+    # модель сначала узнала расклад, а потом читала, кто как выглядит.
+    legend = _reference_legend(scene, project)
+    if legend:
+        parts.append(legend)
     scene_chars = _scene_characters(scene, project)
     if scene_chars:
         for c in scene_chars:
