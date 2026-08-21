@@ -8,8 +8,8 @@
 <title>lolq.ai</title>
 <link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
 <link rel="apple-touch-icon" href="/img/logo-mark.svg" />
-<link rel="stylesheet" href="/style.css?v=50" />
-<link rel="stylesheet" href="/landing.css?v=50" />
+<link rel="stylesheet" href="/style.css?v=51" />
+<link rel="stylesheet" href="/landing.css?v=51" />
 </head>
 <body>
 <!-- ─────────────────────────────────────────────────────────────────────────
@@ -261,9 +261,9 @@
       <div id="characters" class="scenes chars-strip"></div>
       <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
     </div>
-    <div class="row">
-      <button id="add-character-btn" data-i18n="chars.add"></button>
-    </div>
+    <!-- Кнопка осталась как обработчик, но скрыта: видимый вход — карточка
+         с плюсом в конце ленты персонажей (рисует app.js). -->
+    <button id="add-character-btn" class="hidden" data-i18n="chars.add"></button>
   </section>
 
   <section class="panel">
@@ -493,7 +493,9 @@
       <div class="s-top-row">
         <div class="s-refs" data-i18n-title="scene.refsTitle"></div>
         <div class="s-top-right">
-          <!-- Чипы движка рисует JS; сам select остаётся источником правды. -->
+          <!-- Движок КАДРОВ: ChatGPT-шлюз или Nano Banana. Рисует JS. -->
+          <div class="s-image-seg" data-i18n-title="scene.imageEngineTitle"></div>
+          <!-- Чипы движка ВИДЕО рисует JS; сам select остаётся источником правды. -->
           <div class="s-provider-seg" data-i18n-title="scene.providerTitle"></div>
           <select class="s-provider hidden" data-i18n-title="scene.providerTitle"></select>
           <details class="s-prompt-details">
@@ -621,7 +623,7 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=50"></script>
-<script src="/app.js?v=50"></script>
+<script src="/i18n.js?v=51"></script>
+<script src="/app.js?v=51"></script>
 </body>
 </html>

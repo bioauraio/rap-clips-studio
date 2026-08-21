@@ -1,0 +1,43 @@
+# Телеграм-бот lolq.ai — отдельный сервис на ТОМ ЖЕ образе, что и API.
+#
+# Запуск (из корня репозитория):
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.bot.yml \
+#                  --env-file infra/.env up -d --build qlolbot
+#
+# Отдельный контейнер, а не поток внутри API — почему именно так, см.
+# docs/telegram-bot.md, раздел «Почему отдельный процесс».
+#
+# ВАЖНО: реплика ровно ОДНА. Два процесса getUpdates с одним токеном получают
+# от Telegram 409 Conflict и теряют апдейты оба. `deploy.replicas` не трогать.
+services:
+  qlolbot:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: qlolvideo-bot
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-u", "bot.py"]
+    environment:
+      # Внутри docker-сети API виден по имени сервиса. Именно внутренний адрес,
+      # а не публичный домен: роуты /internal/* наружу не проксируются.
+      QLOL_API_BASE: http://rapclips:8000
+      BOT_DB_PATH: /data/bot.db
+      BOT_TMP_DIR: /tmp/qlolbot
+    volumes:
+      # Своя SQLite бота лежит рядом с данными сервиса, но это ОТДЕЛЬНЫЙ файл:
+      # у rapclips.db один писатель — API, второй дал бы «database is locked»
+      # ровно в момент, когда супергенерация коммитит прогресс.
+      - /opt/rapclips/data:/data
+    depends_on:
+      - rapclips
+    networks:
+      - default
+      # Та же внешняя сеть, что у API: через неё виден мост egress (SOCKS на
+      # 172.18.0.1), которым бот ходит в api.telegram.org.
+      - organism_net
+
+networks:
+  organism_net:
+    external: true
+    name: bioaura-organism_default

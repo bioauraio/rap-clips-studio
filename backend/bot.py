@@ -188,6 +188,24 @@ class Telegram:
         self._clients: dict[int, httpx.AsyncClient] = {}
         self.pacer = Pacer()
         self._last_net_complaint = 0.0
+        self._check_socks()
+
+    @staticmethod
+    def _check_socks() -> None:
+        """SOCKS-прокси httpx умеет только с пакетом socksio.
+
+        Голый httpx падает на socks5:// с невнятным сообщением из недр
+        библиотеки, а мост наружу у нас именно SOCKS — поэтому проверяем сразу
+        и говорим точную команду, а не «нет связи с Telegram»."""
+        if "socks" not in BOT_PROXY_URL.lower():
+            return
+        try:
+            import socksio  # noqa: F401, PLC0415
+        except ImportError:
+            log.error("BOT_PROXY_URL указывает на SOCKS-прокси, но пакет socksio не "
+                      "установлен — httpx не умеет SOCKS без него. Добавь в "
+                      "backend/requirements.txt строку httpx[socks]==0.27.2 и "
+                      "пересобери образ (см. backend/bot_patch.md).")
 
     def _client(self, idx: int) -> httpx.AsyncClient:
         if idx not in self._clients:
@@ -321,8 +339,13 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS users(
+            -- lang БЕЗ значения по умолчанию: пусто = «человек ещё не выбирал»,
+            -- и тогда язык берётся из language_code клиента. С DEFAULT 'en'
+            -- строка успевала создаться раньше /start (её заводит любое
+            -- входящее сообщение), и русскоязычный получал английское
+            -- приветствие — «не выбирал» было не отличить от «выбрал English».
             tg_id TEXT PRIMARY KEY, uid INTEGER, cookie TEXT, cookie_at REAL,
-            lang TEXT DEFAULT 'en', chat_id INTEGER, name TEXT,
+            lang TEXT, chat_id INTEGER, name TEXT,
             notify TEXT DEFAULT 'all', created REAL);
         CREATE TABLE IF NOT EXISTS state(tg_id TEXT PRIMARY KEY, data TEXT);
         CREATE TABLE IF NOT EXISTS watch(
@@ -555,6 +578,15 @@ STR = {
             "frame, animate them and assemble the clip with your track on top.\n\n"
             "You have <b>{points} points</b> — that's one full 3-minute clip, on us.\n\n"
             "🎵 <i>Just send an audio file to begin.</i>"),
+        # Запасное приветствие без обещания клипа: если норма бесплатного
+        # тарифа или цена сцены изменятся, первое приветствие станет неправдой,
+        # а проверить его будет некому. Считаем по movies_left из аккаунта.
+        "hello_plain": (
+            "<b>{brand} — music videos made by AI.</b>\n\n"
+            "Send me an MP3. I'll write the story, cut it into scenes, draw every "
+            "frame, animate them and assemble the clip with your track on top.\n\n"
+            "You have <b>{points} points</b>.\n\n"
+            "🎵 <i>Just send an audio file to begin.</i>"),
         "hello_back": ("Welcome back, {name}.\n<b>{points} points</b> · {plan}\n\n"
                        "Send a track — or pick up where you left off."),
         "menu_clips": "🎬 My clips", "menu_chars": "👤 Characters",
@@ -754,6 +786,12 @@ STR = {
             "оживлю их и соберу клип с твоей дорожкой.\n\n"
             "У тебя <b>{points} очков</b> — это один полный клип на три минуты, "
             "бесплатно.\n\n🎵 <i>Просто отправь аудиофайл — и поехали.</i>"),
+        "hello_plain": (
+            "<b>{brand} — клипы, которые снимает ИИ.</b>\n\n"
+            "Пришли mp3. Я напишу сюжет, нарежу его на сцены, нарисую каждый кадр, "
+            "оживлю их и соберу клип с твоей дорожкой.\n\n"
+            "У тебя <b>{points} очков</b>.\n\n"
+            "🎵 <i>Просто отправь аудиофайл — и поехали.</i>"),
         "hello_back": ("С возвращением, {name}.\n<b>{points} очков</b> · {plan}\n\n"
                        "Пришли трек — или продолжи начатое."),
         "menu_clips": "🎬 Мои клипы", "menu_chars": "👤 Персонажи",
@@ -1073,6 +1111,8 @@ class Bot:
         return (row["lang"] if row and row["lang"] else fallback) or "en"
 
     async def send(self, chat_id: int, text: str, lang: str = "en", **kw):
+        # lang здесь не используется — он в сигнатуре, чтобы все вызовы читались
+        # одинаково («кому, что, на каком языке») и язык не терялся при правках.
         return await self.tg.call("sendMessage", chat_id=chat_id,
                                   text=clip_text(text, TEXT_LIMIT),
                                   parse_mode="HTML",
@@ -1249,7 +1289,10 @@ class Bot:
 
         first_time = not row or not row["uid"]
         if first_time:
-            text = t(lang, "hello", brand=BRAND, points=acc.get("points", 0))
+            # «Хватит на один клип» обещаем, только если это правда: сервер сам
+            # считает movies_left по текущей цене сцены на текущем тарифе.
+            key = "hello" if int(acc.get("movies_left") or 0) >= 1 else "hello_plain"
+            text = t(lang, key, brand=BRAND, points=acc.get("points", 0))
             rows = [[btn(t(lang, "how_it_works"), "help"), btn(t(lang, "lang_btn"), "set:lang:toggle")]]
         else:
             text = t(lang, "hello_back", name=esc(acc.get("name") or ""),
@@ -1614,15 +1657,18 @@ class Bot:
             return "video", min(pct, 92), videos, total
         return "assemble", 92, total, total
 
+    # Этап → строка интерфейса. Одна карта на прогресс и на разбор ошибки:
+    # разъехавшись, они показывали бы разные названия одного и того же шага.
+    STAGE_NAMES = {"story": "st_story", "scenes": "st_scenes", "frames": "st_frames",
+                   "video": "st_video", "assemble": "st_assemble", "done": "st_assemble"}
+
     def render_progress(self, track: dict, lang: str, started: float) -> str:
         stage, pct, done, total = self.progress_of(track)
-        names = {"story": "st_story", "scenes": "st_scenes", "frames": "st_frames",
-                 "video": "st_video", "assemble": "st_assemble", "done": "st_assemble"}
         if track.get("supergen_status") == "queued":
             stage_text = t(lang, "st_queued")
         else:
-            stage_text = t(lang, names.get(stage, "st_queued"), i=done + 1 if done < total else total,
-                           n=total)
+            stage_text = t(lang, self.STAGE_NAMES.get(stage, "st_queued"),
+                           i=done + 1 if done < total else total, n=total)
         elapsed = max(0, time.time() - (started or time.time()))
         eta = ""
         if 5 <= pct < 100 and elapsed > 60:
@@ -1731,15 +1777,13 @@ class Bot:
         with contextlib.suppress(TgError):
             await self.tg.call("unpinChatMessage", chat_id=chat_id, message_id=w["msg_id"])
         stage, pct, done, total = self.progress_of(track)
-        names = {"story": "st_story", "scenes": "st_scenes", "frames": "st_frames",
-                 "video": "st_video", "assemble": "st_assemble"}
         why = track.get("supergen_note") or track.get("clip_error") or ""
         rows = [[btn(t(lang, "retry"), f"go:{track['id']}"),
                  btn(t(lang, "manual"), f"man:{track['id']}")]]
         if SUPPORT_CONTACT:
             rows.append([url_btn(t(lang, "support"), SUPPORT_CONTACT)])
         await self.send(chat_id, t(lang, "failed",
-                                   stage=t(lang, names.get(stage, "st_queued"),
+                                   stage=t(lang, self.STAGE_NAMES.get(stage, "st_queued"),
                                            i=done, n=total),
                                    why=esc(clip_text(why, 220))), lang,
                         reply_markup=kb(rows))
@@ -1752,7 +1796,9 @@ class Bot:
 
         Проверяем размер ДО скачивания — тянуть 300 МБ в контейнер бота, чтобы
         потом упереться в лимит Telegram, бессмысленно."""
-        if track is None:
+        if track is None or not track.get("clip_url"):
+            # Снимок мог устареть на секунды между «готово» и записью файла —
+            # перечитываем, вместо того чтобы объявлять клип потерянным.
             project = await self.api.req(tg_user, "GET", "/api/project")
             track = next((x for x in project.get("tracks", []) if x["id"] == track_id), None)
         if not track or not track.get("clip_url"):

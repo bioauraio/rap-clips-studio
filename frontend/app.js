@@ -1201,6 +1201,15 @@ function render() {
   const charsBox = $("#characters");
   charsBox.innerHTML = "";
   (project.characters || []).forEach((c) => charsBox.appendChild(renderCharacter(c)));
+  // «Добавить» — не кнопка под лентой, а последняя карточка В ленте: пустое
+  // место в ряду само подсказывает, куда нажать, и не ломает ритм карточек.
+  const addCard = document.createElement("button");
+  addCard.type = "button";
+  addCard.className = "char-card char-add";
+  addCard.innerHTML = '<span class="char-add-plus">+</span><span class="char-add-cap"></span>';
+  $(".char-add-cap", addCard).textContent = t("chars.add") || "добавить персонажа";
+  addCard.addEventListener("click", () => $("#add-character-btn").click());
+  charsBox.appendChild(addCard);
   // Стрелки ленты персонажей статичны (лежат в разметке, а не в шаблоне) —
   // вешаем обработчики один раз, иначе каждый опрос добавлял бы ещё пару.
   const charsWrap = charsBox.closest(".strip-wrap");
@@ -1796,16 +1805,59 @@ function renderScene(s, audioEl, mode = "board") {
   }
   // Движок видео: системный select оставлен источником правды (на его .value
   // висит генерация), а виден — сегментный переключатель в стиле студии.
+  // Движок КАДРОВ: у платных тарифов это Nano Banana (до 14 отдельных
+  // референсов и нативная вертикаль), у бесплатного — ChatGPT-шлюз по подписке.
+  // Показываем реальную доступность: тариф может обещать платный движок,
+  // а ключа не быть — тогда честно активен шлюз.
+  const imgSeg = $(".s-image-seg", card);
+  if (imgSeg) {
+    imgSeg.innerHTML = "";
+    const imgList = (providers.image_engines || []).filter((e) => e.live !== false);
+    if (imgList.length > 1) {
+      let curImg = s.image_engine || providers.image_engine || (imgList[0] && imgList[0].id);
+      if (!imgList.some((e) => e.id === curImg)) curImg = imgList[0].id;
+      const syncImg = () => $$(".img-chip", imgSeg)
+        .forEach((el) => el.classList.toggle("on", el.dataset.engine === curImg));
+      imgList.forEach((e) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "img-chip";
+        chip.dataset.engine = e.id;
+        chip.textContent = e.title;
+        chip.title = `${e.title} — ${e.frames_cost} ${t("scene.pointsSuffix") || "очков за кадры"}`;
+        chip.addEventListener("click", () => { curImg = e.id; imgSeg.dataset.engine = e.id; syncImg(); });
+        imgSeg.appendChild(chip);
+      });
+      imgSeg.dataset.engine = curImg;
+      syncImg();
+    }
+  }
+
   const provSel = $(".s-provider", card);
   const provSeg = $(".s-provider-seg", card);
   if (provSel) {
   provSel.innerHTML = "";
-  (providers.video || ["grok"]).forEach((p) => {
-    const opt = document.createElement("option");
-    opt.value = p;
-    opt.textContent = t(p === "seedance" ? "scene.providerSeedance" : "scene.providerGrok");
-    provSel.appendChild(opt);
-  });
+  // Источник правды — video_engines из /api/providers: там КОНКРЕТНЫЕ модели
+  // с настоящими именами и ценой. Раньше рисовался список семейств, и всё,
+  // что не seedance, подписывалось «Grok» — поэтому Kling выглядел вторым Grok.
+  const engineList = (providers.video_engines || []).filter((e) => e.live !== false);
+  if (engineList.length) {
+    engineList.forEach((e) => {
+      const opt = document.createElement("option");
+      opt.value = e.family || "grok";
+      opt.dataset.engine = e.id;
+      opt.textContent = `${e.title} · ${e.scene_cost}`;
+      provSel.appendChild(opt);
+    });
+  } else {
+    (providers.video || ["grok"]).forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.dataset.engine = "";
+      opt.textContent = t(p === "seedance" ? "scene.providerSeedance" : "scene.providerGrok");
+      provSel.appendChild(opt);
+    });
+  }
   provSel.value = s.video_provider;
   // Сцену сняли на движке, который сейчас недоступен (free-тариф оставляет
   // только Grok): у select'а не осталось выбранного пункта, и .value пуст.
@@ -1813,26 +1865,49 @@ function renderScene(s, audioEl, mode = "board") {
   // всё равно понижает недоступный), а чип показывает это честно, а не пустым.
   if (!provSel.value && provSel.options.length) provSel.value = provSel.options[0].value;
   if (provSeg) {
-    const list = providers.video || ["grok"];
+    const list = engineList.length
+      ? engineList
+      : (providers.video || ["grok"]).map((p) => ({
+          id: p, family: p, scene_cost: null,
+          title: t(p === "seedance" ? "scene.providerSeedanceShort" : "scene.providerGrokShort"),
+        }));
+    // Активна та модель, что выбрана сценой; если сцена помнит только семейство —
+    // подсвечиваем первую модель этого семейства.
+    let curEngine = s.video_engine || "";
+    if (!curEngine || !list.some((e) => e.id === curEngine)) {
+      const byFam = list.find((e) => e.family === provSel.value);
+      curEngine = byFam ? byFam.id : (list[0] && list[0].id) || "";
+    }
+    const applyEngine = (e) => {
+      curEngine = e.id;
+      provSel.value = e.family || "grok";
+      const opt = $$("option", provSel).find((o) => o.dataset.engine === e.id);
+      if (opt) provSel.value = opt.value;
+      provSel.dataset.engine = e.id;
+      syncSeg();
+    };
     const syncSeg = () => $$(".prov-chip", provSeg)
-      .forEach((el) => el.classList.toggle("on", el.dataset.prov === provSel.value));
-    list.forEach((p) => {
+      .forEach((el) => el.classList.toggle("on", el.dataset.engine === curEngine));
+    list.forEach((e) => {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "prov-chip";
-      chip.dataset.prov = p;
-      // В чипе — имя движка: карточка кадра узкая, полная подпись
-      // «Seedance (2 кадра)» вытесняла бы референсы на отдельную строку.
-      chip.textContent = t(p === "seedance" ? "scene.providerSeedanceShort" : "scene.providerGrokShort");
-      chip.title = t(p === "seedance" ? "scene.providerSeedance" : "scene.providerGrok");
-      // Один движок — переключать нечего, чип остаётся подписью.
+      chip.dataset.prov = e.family || e.id;
+      chip.dataset.engine = e.id;
+      // В чипе — короткое имя модели; цена сцены в очках уходит в подсказку,
+      // иначе чипы не помещаются в узкой карточке кадра.
+      chip.textContent = e.title;
+      chip.title = e.scene_cost != null
+        ? `${e.title} — ${e.scene_cost} ${t("scene.pointsSuffix") || "очков за сцену"}`
+        : e.title;
       if (list.length > 1) {
-        chip.addEventListener("click", () => { provSel.value = p; syncSeg(); });
+        chip.addEventListener("click", () => applyEngine(e));
       } else {
         chip.classList.add("single");
       }
       provSeg.appendChild(chip);
     });
+    provSel.dataset.engine = curEngine;
     syncSeg();
   }
   }
@@ -1852,7 +1927,7 @@ function renderScene(s, audioEl, mode = "board") {
     : !s.image_url ? t("scene.videoNoFrame")
     : s.video_url ? t("scene.regenVideo") : t("scene.genVideo");
   vidBtn.title = !s.image_url ? t("scene.videoTitleNoFrame") : t("scene.videoTitle");
-  vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value));
+  vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value, provSel.dataset.engine || ""));
   }
 
   if (s.audio_url) {
@@ -2033,9 +2108,11 @@ async function genSceneFrames(id, which = "both") {
   await loadProject();
 }
 
-async function genSceneVideo(id, provider) {
+async function genSceneVideo(id, provider, engine) {
   try {
-    await api(`/api/scenes/${id}/generate-video`, { method: "POST", body: { provider } });
+    // engine — конкретная модель (seedance-2-5, kling-3.0-pro…). Без неё сервер
+    // берёт дефолт семейства, и выбор чипа ни на что не влиял бы.
+    await api(`/api/scenes/${id}/generate-video`, { method: "POST", body: { provider, engine: engine || "" } });
   } catch (e) {
     fail(e);
   }

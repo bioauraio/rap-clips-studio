@@ -407,12 +407,25 @@ def _sweep_previews(upload_dir: str) -> None:
         log.warning("бот: чистка превью не прошла: %s", e)
 
 
-def _build_preview(track_id: int, clip: str, duration: int) -> None:
-    """Транскод клипа под целевой размер.
+def preview_plan(duration_sec: int) -> tuple[int, int, bool]:
+    """(битрейт кбит/с, сколько секунд берём, тизер?) — арифметика превью.
 
     Битрейт считается ОТ ДЛИТЕЛЬНОСТИ, а не берётся константой: 45 МБ на три
     минуты и на шесть — это разные битрейты. Если даже нижняя граница качества
-    не влезает, режем тизер и говорим об этом прямо, а не отдаём мыло."""
+    не влезает в лимит, честнее отдать первую минуту и сказать об этом, чем
+    растянуть мыло на весь клип.
+
+    Отдельной функцией, потому что это единственное здесь, что можно проверить
+    без ffmpeg, — и единственное, что молча испортит отправку, если ошибётся."""
+    dur = max(1, int(duration_sec or 0))
+    kbps = int(PREVIEW_TARGET_MB * 8192 / dur) - PREVIEW_AUDIO_KBPS
+    if kbps < PREVIEW_MIN_KBPS:
+        return PREVIEW_MIN_KBPS, min(dur, PREVIEW_TEASER_SEC), True
+    return max(PREVIEW_MIN_KBPS, min(PREVIEW_MAX_KBPS, kbps)), dur, False
+
+
+def _build_preview(track_id: int, clip: str, duration: int) -> None:
+    """Транскод клипа под целевой размер (см. preview_plan)."""
     core = _core()
     dst_name = _preview_name(clip)
     src = os.path.join(core.UPLOAD_DIR, os.path.basename(clip))
@@ -420,10 +433,7 @@ def _build_preview(track_id: int, clip: str, duration: int) -> None:
     teaser = False
     try:
         dur = max(1, int(duration or core._ffprobe_duration(src)))
-        kbps = int(PREVIEW_TARGET_MB * 8192 / dur) - PREVIEW_AUDIO_KBPS
-        if kbps < PREVIEW_MIN_KBPS:
-            teaser, kbps, dur = True, PREVIEW_MIN_KBPS, min(dur, PREVIEW_TEASER_SEC)
-        kbps = max(PREVIEW_MIN_KBPS, min(PREVIEW_MAX_KBPS, kbps))
+        kbps, dur, teaser = preview_plan(dur)
         cmd = ["ffmpeg", "-y"]
         if teaser:
             cmd += ["-t", str(PREVIEW_TEASER_SEC)]
@@ -604,9 +614,28 @@ def capabilities(request: Request):
 
 
 def mount(app) -> None:
-    """Подключение из main.py. Вызывать ДО монтирования StaticFiles на «/»:
-    mount на корне перехватывает всё, что зарегистрировано после него."""
+    """Подключение из main.py — две строки в патче, остальное здесь.
+
+    Порядок вызова не важен: если StaticFiles уже смонтирован на «/», он
+    перехватывал бы все наши роуты (и POST /internal/tg-session отвечал бы
+    405 Method Not Allowed — молчаливо и совершенно непонятно), поэтому
+    корневой mount переставляется в конец списка. Так патч работает и в
+    начале, и в конце main.py."""
     app.include_router(router)
+    try:
+        from starlette.routing import Mount  # noqa: PLC0415
+        routes = app.router.routes
+        # path у Mount("/") нормализован в "" — проверяем оба варианта.
+        catchall = [r for r in routes if isinstance(r, Mount) and r.path in ("", "/")]
+        for r in catchall:
+            routes.remove(r)
+            routes.append(r)
+        if catchall:
+            log.info("бот: статика на «/» переставлена в конец, чтобы не "
+                     "перехватывать роуты бота")
+    except Exception as e:  # noqa: BLE001
+        log.warning("бот: не удалось проверить порядок роутов (%s). Подключай "
+                    "bot_api.mount(app) ДО app.mount(\"/\", StaticFiles…)", e)
     if BOT_INTERNAL_KEY and len(BOT_INTERNAL_KEY) < 24:
         log.warning("бот: BOT_INTERNAL_KEY короче 24 символов — это ключ к "
                     "выписке сессий, сделай его длинным и случайным")

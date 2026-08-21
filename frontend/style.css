@@ -1275,3 +1275,27 @@ button.primary:hover:not(:disabled) {
 @media (max-width: 700px) {
   .topbar { --tb-h: 30px; }
 }
+
+/* ────────── «добавить персонажа» — карточка, а не кнопка ──────────
+   Пунктирная рамка в ритме соседних карточек: пустое место в ряду само
+   показывает, куда нажать, и не ломает строй ленты лишним контролом. */
+.char-card.char-add {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; cursor: pointer;
+  background: transparent;
+  border: 2px dashed rgba(45, 33, 26, .28);
+  box-shadow: none;
+  color: var(--muted);
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.char-card.char-add:hover {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  background: rgba(255, 122, 41, .06);
+}
+.char-card.char-add:active { transform: translateY(1px); }
+.char-add-plus { font-size: 30px; font-weight: 800; line-height: 1; }
+.char-add-cap {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; text-align: center; padding: 0 8px;
+}

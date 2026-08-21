@@ -394,12 +394,23 @@ def _plan_of(user: "User") -> str:
     return user.plan if user.plan in PLANS else "free"
 
 
-def _plan_image_engine(user: "User | None") -> str:
+def _plan_image_engine(user: "User | None", want: str = "") -> str:
     """Движок КАДРОВ этого человека: дефолт тарифа, опущенный до реально
     живого. Нет KIE_API_KEY — тихо работаем на шлюзе (сцена не должна падать
-    из-за ненастроенного агрегатора), но врать об этом наверх нельзя."""
+    из-за ненастроенного агрегатора), но врать об этом наверх нельзя.
+
+    want — явный выбор пользователя в карточке кадра. Берём его, только если
+    движок вообще существует и открыт тарифом; иначе тихо возвращаем дефолт,
+    чтобы бесплатный тариф не рисовал на платной модели."""
     plan = PLANS[_plan_of(user)] if user else PLANS["free"]
-    return mediagen.resolve_image_engine(plan.get("image_engine") or "chatgpt")
+    default = plan.get("image_engine") or "chatgpt"
+    want = (want or "").strip()
+    if want and want in mediagen.IMAGE_ENGINES:
+        allowed = set(plan.get("image_engines") or [default])
+        # Шлюзовые движки бесплатны для нас — они открыты всем тарифам.
+        if want in mediagen.GATEWAY_IMAGE_ENGINES or want in allowed:
+            return mediagen.resolve_image_engine(want)
+    return mediagen.resolve_image_engine(default)
 
 
 def _plan_engine_ids(plan_id: str) -> list[str]:
@@ -446,12 +457,31 @@ def _plan_engines(plan_id: str) -> dict:
     return {eid: frames + VIDEO_COST[eid] for eid in _plan_engine_ids(plan_id)}
 
 
-def _image_cost(user: "User", engine: str = "") -> int:
+def _image_cost(user: "User", engine: str = "", resolution: str = "") -> int:
     """Цена ОДНОЙ служебной картинки (лист раскадровки, моделька персонажа).
     Раньше была плоской двойкой — на Nano Banana Pro такая картинка стоит нам
-    $0.09, и плоская цена превращала витрину персонажей в дыру в кошельке."""
+    $0.09, и плоская цена превращала витрину персонажей в дыру в кошельке.
+
+    resolution обязателен там, где мы просим НЕ дефолтное разрешение: 4К у
+    Nano Banana дороже 2К (у 2-й версии $0.09 против $0.06). Без параметра
+    цена считалась по дефолту, и разворот в 4К мы отдавали себе в убыток."""
     eng = engine or _plan_image_engine(user)
-    return max(2, _points_of_usd(mediagen.image_engine_usd(eng)))
+    return max(2, _points_of_usd(mediagen.image_engine_usd(eng, resolution)))
+
+
+def _model_sheet_engine(user: "User") -> str:
+    """Движок РАЗВОРОТА персонажа — отдельно от движка кадров.
+
+    Nano Banana 2, а не Pro: для листа из четырёх фигур важнее не «Pro», а
+    четырнадцать отдельных референсов против восьми — лист собирается по
+    нескольким фото человека сразу. Плюс 4К у неё дешевле ($0.09 против
+    $0.12). Ключа kie нет или тариф бесплатный — тихо уходим на шлюз, как
+    везде: кнопка должна работать всегда."""
+    plan = PLANS[_plan_of(user)]
+    paid = bool(mediagen.IMAGE_ENGINES.get(plan.get("image_engine") or "", {}).get("paid"))
+    if (paid or user.is_admin) and mediagen.kie_available():
+        return mediagen.resolve_image_engine("nano-banana-2")
+    return _plan_image_engine(user)
 
 
 def _frames_cost(user: "User", scene: "Scene | None" = None) -> int:
@@ -546,6 +576,21 @@ def _charge(db: Session, user: User, points: int, what: str) -> None:
     if not _take_points(db, user, points):
         raise NotEnoughPoints(points, int(user.gen_points or 0), _plan_of(user), what)
     log.info("user %s: −%s очков за %s (осталось %s)", user.id, points, what, user.gen_points)
+
+
+def _refund(db: Session, user: User, points: int, what: str = "") -> None:
+    """Вернуть очки за НЕсостоявшуюся работу.
+
+    До чата возврата не было нигде: у сцены упавшая генерация оставляла
+    charged_points на месте. В студии это тонет в потоке кнопок, а в чате
+    запросы одиночные — молча съеденные за упавший Seedance 154 очка человек
+    видит сразу и справедливо считает это воровством."""
+    if user.is_admin or points <= 0:
+        return
+    user.gen_points = int(user.gen_points or 0) + int(points)
+    db.commit()
+    log.info("user %s: +%s очков возврата за %s (стало %s)",
+             user.id, points, what or "неудачную генерацию", user.gen_points)
 
 
 def _scene_charge(db: Session, user: User, scene: "Scene", cost: int, what: str) -> None:
@@ -1156,13 +1201,31 @@ def attribute_dict(a: CharacterAttribute) -> dict:
     }
 
 
+def _char_photo_dict(ph: CharacterPhoto) -> dict:
+    return {
+        "id": ph.id, "url": f"/api/media/{ph.filename}",
+        "thumb_url": f"/api/thumb/{ph.filename}",
+        # kind разводит загруженные фото и сгенерированные развороты: в
+        # карточке они лежат разными рядами, а в референсы разворота уходят
+        # только фото (иначе моделька рисуется с модельки, см. db.py).
+        "kind": ph.kind or "photo", "pose_kind": ph.pose_kind or "",
+        "from_photos": int(ph.from_photos or 0),
+    }
+
+
 def character_dict(c: Character) -> dict:
+    photos = sorted(c.photos, key=lambda x: (x.position, x.id))
+    model = _character_model_file(c)
     return {
         "id": c.id, "position": c.position, "name": c.name,
         "description": c.description, "is_main": c.is_main,
-        "photos": [
-            {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in c.photos
-        ],
+        # photos — весь список целиком (легаси-контракт фронта и библиотеки),
+        # но с kind у каждой позиции.
+        "photos": [_char_photo_dict(ph) for ph in photos],
+        # Какая картинка реально уедет референсом в кадры сцен. Без этого
+        # «моделька» оставалась догадкой: человек видит ряд картинок и не
+        # знает, какая из них работает.
+        "model_photo_id": model.id if model else 0,
         "attributes": [attribute_dict(a) for a in c.attributes],
     }
 
@@ -1786,11 +1849,12 @@ def _run_storyboard(track_id: int) -> None:
         board_collage = ""
         paths = []
         for c in sorted(track.project.characters, key=lambda x: (not x.is_main, x.position)):
-            if not c.photos:
-                continue
-            cand = os.path.join(UPLOAD_DIR, c.photos[0].filename)
-            if os.path.exists(cand):
-                paths.append(cand)
+            # Каноническая моделька героя — разворот, если он есть (см.
+            # _character_model_file): лист раскадровки должен опираться на то
+            # же, на что и кадры сцен, иначе герой «плывёт» между ними.
+            photo = _character_model_file(c)
+            if photo:
+                paths.append(os.path.join(UPLOAD_DIR, photo.filename))
             if len(paths) >= 3:
                 break
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
@@ -2044,18 +2108,33 @@ def _scene_ref_paths(scene: Scene) -> list[str]:
     return out
 
 
+def _character_model_file(c: Character) -> "CharacterPhoto | None":
+    """Каноническая моделька героя: ПОСЛЕДНИЙ сгенерированный разворот, а если
+    развороты не делали — первое загруженное фото.
+
+    Раньше здесь безусловно брался photos[0], то есть самое старое СЕЛФИ:
+    кадры сцен всё это время опирались не на то, что владелец считает
+    моделькой, и кнопка «сгенерировать модельку» на кадры не влияла вообще."""
+    models = [p for p in c.photos if (p.kind or "photo") == "model"]
+    for p in sorted(models, key=lambda x: (x.position, x.id), reverse=True):
+        if os.path.exists(os.path.join(UPLOAD_DIR, p.filename)):
+            return p
+    for p in sorted(c.photos, key=lambda x: (x.position, x.id)):
+        if os.path.exists(os.path.join(UPLOAD_DIR, p.filename)):
+            return p
+    return None
+
+
 def _character_model_paths(chars: list[Character], limit: int) -> list[str]:
-    """Первые фото-модельки персонажей (по одной на героя) — они отвечают
-    только за узнаваемость лица, не за стилистику кадра."""
+    """Модельки персонажей (по одной на героя) — они отвечают только за
+    узнаваемость лица, не за стилистику кадра."""
     paths: list[str] = []
     for c in chars:
         if len(paths) >= limit:
             break
-        if not c.photos:
-            continue
-        path = os.path.join(UPLOAD_DIR, c.photos[0].filename)
-        if os.path.exists(path):
-            paths.append(path)
+        photo = _character_model_file(c)
+        if photo:
+            paths.append(os.path.join(UPLOAD_DIR, photo.filename))
     return paths
 
 
@@ -2177,8 +2256,10 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
     return "\n".join(p for p in parts if p.strip())
 
 
-def _run_scene_frames(scene_id: int, which: str = "both") -> None:
-    """which: both | first | last — что именно пересобираем."""
+def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> None:
+    """which: both | first | last — что именно пересобираем.
+    engine — явный движок кадров (chatgpt / nano-banana…); пустая строка
+    означает «взять дефолт тарифа»."""
     db = SessionLocal()
     collage = ""  # временный склеенный референс — убираем в finally, чтобы не копился
     try:
@@ -2262,7 +2343,8 @@ def _run_scene_frames(scene_id: int, which: str = "both") -> None:
 
 
 @app.post("/api/scenes/{scene_id}/generate-frames")
-def generate_scene_frames(scene_id: int, which: str = "both", user: User = Depends(current_user),
+def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
+                          user: User = Depends(current_user),
                           db: Session = Depends(db_session)):
     from threading import Thread
     scene = _own_scene(db, user, scene_id)
@@ -2277,7 +2359,9 @@ def generate_scene_frames(scene_id: int, which: str = "both", user: User = Depen
                   f"кадры сцены {scene.id} ({which})")
     scene.image_status = "queued"
     db.commit()
-    Thread(target=_run_scene_frames, args=(scene_id, which), daemon=True).start()
+    # Чужой тарифу движок молча опускается до разрешённого — как и у видео.
+    engine = _plan_image_engine(user, engine)
+    Thread(target=_run_scene_frames, args=(scene_id, which, engine), daemon=True).start()
     return {"ok": True}
 
 
@@ -2867,7 +2951,7 @@ def characters_library(user: User = Depends(current_user), db: Session = Depends
                 "is_main": c.is_main,
                 "project_id": p.id, "project_name": p.name,
                 "photos": [
-                    {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in c.photos
+                    _char_photo_dict(ph) for ph in c.photos
                 ],
             })
     return out
@@ -2903,7 +2987,11 @@ async def clone_character(request: Request, project_id: int | None = None, user:
         fname = f"char_{uuid.uuid4().hex}{ext}"
         shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
         _reg_file(db, fname, project.owner_id)
-        db.add(CharacterPhoto(character_id=clone.id, position=i, filename=fname))
+        # kind переносим вместе с файлом: иначе клон терял свой разворот и
+        # его кадры снова опирались бы на селфи.
+        db.add(CharacterPhoto(character_id=clone.id, position=i, filename=fname,
+                              kind=ph.kind or "photo", pose_kind=ph.pose_kind or "",
+                              from_photos=int(ph.from_photos or 0)))
     # Атрибуты — часть образа персонажа: клон получает их вместе с фото
     # (тоже байтами под новыми именами — по той же причине, что и лица).
     for attr in source.attributes:
@@ -2986,13 +3074,51 @@ async def add_character_photo(char_id: int, photo: UploadFile, user: User = Depe
     fname = f"char_{uuid.uuid4().hex}{ext}"
     with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
         f.write(await photo.read())
+    # Без записи владельца /api/media прячет файл от всех, кроме админа —
+    # человек загружал фото и видел на его месте дырку.
+    _reg_file(db, fname, ch.project.owner_id)
     max_pos = max((p.position for p in ch.photos), default=0)
-    ph = CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname)
+    ph = CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname,
+                        kind="photo")
     db.add(ph)
     db.commit()
     # ch.photos загружен ДО вставки — без refresh ответ отстаёт на одно фото.
     db.refresh(ch)
     return character_dict(ch)
+
+
+# Как человек подписал ракурс своего фото. Классификатора ракурса у нас нет и
+# городить его незачем: подпись над зоной загрузки даёт генератору ровно то,
+# чего никакой автоотбор из свалки селфи не даст.
+PHOTO_POSES = {
+    "face": "close-up of the face, front view",
+    "three_quarter": "three-quarter view of the head and shoulders",
+    "full": "full body, head to toe",
+    "back": "view from behind",
+    "": "",
+}
+
+
+@app.patch("/api/characters/photos/{photo_id}")
+async def update_character_photo(photo_id: int, request: Request,
+                                 user: User = Depends(current_user),
+                                 db: Session = Depends(db_session)):
+    """Подпись ракурса у фото и «сделать основным» у разворота.
+
+    primary двигает картинку в конец своей группы, потому что каноническим
+    считается ПОСЛЕДНИЙ разворот (см. _character_model_file) — так «основным»
+    становится именно тот, на который человек показал."""
+    ph = _own_char_photo(db, user, photo_id)
+    body = await request.json() if await request.body() else {}
+    if "pose" in body:
+        pose = str(body.get("pose") or "")
+        ph.pose_kind = pose if pose in PHOTO_POSES else ""
+    if body.get("primary"):
+        ch = ph.character
+        ph.position = max((p.position for p in ch.photos), default=0) + 1
+    db.commit()
+    db.refresh(ph.character)
+    return character_dict(ph.character)
 
 
 MODEL_SHEET_STYLES = {
@@ -3008,56 +3134,161 @@ MODEL_SHEET_STYLES = {
 }
 
 
+# Рамки самого ЛИСТА — отдельно от стиля рендера. Два пункта здесь появились
+# по практике, и без них развороты ломаются: ПУСТЫЕ РУКИ (предмет в руке гонит
+# дрейф от ракурса к ракурсу) и прямой запрет «улучшать» (модель по умолчанию
+# омолаживает и стройнит — герой перестаёт быть собой).
+MODEL_SHEET_VIEWS = {
+    "full": (
+        "Four views left to right: front, three-quarter, side profile, back. "
+        "Relaxed A-pose, arms slightly away from the body, hands EMPTY and visible, "
+        "full body head to toe, identical outfit, hair and accessories in all four views, "
+        "same height and same proportions in all four views. "
+        "Even neutral grey studio background, no props, no furniture, "
+        "no text, no labels, no captions, no grid lines, no watermark."
+    ),
+    "closeup": (
+        "Character head sheet: face close-up front view, face three-quarter view, "
+        "face side profile, plus a study of both hands, arranged left to right. "
+        "Same hairstyle, same facial hair, same accessories in every view. "
+        "Even neutral grey studio background, sharp focus on the face, "
+        "no text, no labels, no captions, no grid lines, no watermark."
+    ),
+}
+
+# Фото главнее текста по ВНЕШНОСТИ, текст главнее фото по ОДЕЖДЕ и стилю.
+# Без этой строки описание конкурирует с фотографией за лицо и обычно
+# побеждает: «худой парень с острыми скулами» в тексте перерисовывает
+# круглое лицо с фото, и моделька перестаёт быть этим человеком.
+MODEL_SHEET_IDENTITY = (
+    "The reference photos are ALL the SAME real person — this is the character. "
+    "Reproduce the face, the hairline, the body proportions and the skin tone exactly "
+    "as they are in the photos. Do NOT beautify, do NOT slim the body, do NOT change "
+    "the age, the ethnicity or the face shape. "
+    "Where the photos and the written description disagree: the PHOTOS win on looks "
+    "(face, body, hair), the DESCRIPTION wins on clothing, accessories and mood."
+)
+
+# Сколько загруженных фото уезжает в генерацию. Больше не значит лучше: десяток
+# однотипных селфи размывает идентичность вместо того, чтобы её уточнить —
+# движку нужны РАЗНЫЕ ракурсы, а не количество.
+MODEL_SHEET_MAX_PHOTOS = 6
+
+
+def _model_sheet_photos(ch: Character, limit: int) -> list:
+    """Какие фото уедут референсами разворота.
+
+    Только kind="photo": сгенерированные листы в референсы НЕ идут. Иначе
+    следующий запуск рисует модельку с модельки, живое фото вытесняется, и
+    через две-три итерации от человека не остаётся ничего.
+
+    Больше лимита — берём первое (обычно лицо крупно) и последние: свежие
+    загрузки чаще и есть те самые «другие ракурсы»."""
+    live = [p for p in sorted(ch.photos, key=lambda x: (x.position, x.id))
+            if (p.kind or "photo") == "photo"
+            and os.path.exists(os.path.join(UPLOAD_DIR, p.filename))]
+    if len(live) <= limit or limit < 2:
+        return live[:limit] if limit else live
+    return [live[0]] + live[-(limit - 1):]
+
+
+def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list) -> str:
+    """Четыре блока в жёстком порядке: стиль листа → идентичность → описание
+    → рамки листа. Порядок не косметика: начало промпта весит больше."""
+    base = MODEL_SHEET_STYLES.get(kind) or MODEL_SHEET_STYLES["3d"]
+    rules = MODEL_SHEET_VIEWS.get(views) or MODEL_SHEET_VIEWS["full"]
+    parts = [base]
+    if photos:
+        parts.append(MODEL_SHEET_IDENTITY)
+        # Подписанные ракурсы: человек сам сказал, где анфас, а где рост.
+        angles = [PHOTO_POSES.get(p.pose_kind or "", "") for p in photos]
+        angles = [a for a in angles if a]
+        if angles:
+            parts.append("The reference photos show: " + "; ".join(angles) + ".")
+    else:
+        parts.append(
+            "No reference photos are available: build the character from the "
+            "written description alone and keep him consistent across all views.")
+    if desc:
+        parts.append(f"CHARACTER (clothing, accessories, character and mood): {desc}")
+    parts.append(rules)
+    return "\n\n".join(parts)
+
+
 @app.post("/api/characters/{char_id}/generate-model")
 async def generate_character_model(char_id: int, request: Request,
                                    user: User = Depends(current_user),
                                    db: Session = Depends(db_session)):
-    """Генерация модельки персонажа: разворот в четырёх ракурсах одним листом.
+    """3D-РАЗВОРОТ персонажа: лист ракурсов, собранный ПО ЕГО ФОТОГРАФИЯМ.
 
-    Описание берём из тела запроса (или из карточки персонажа), референсом идут
-    уже загруженные фото — коллажем, чтобы генератор держал лицо и одежду.
-    Результат становится очередной фото-моделькой персонажа."""
+    Это не файл для Blender и не меш — движка, отдающего геометрию, у нас нет
+    (kie.ai 3D не отдаёт вообще), да и в кадры клипа меш всё равно не попадёт:
+    Seedance и Kling принимают картинку. Это лист ракурсов в 3D-рендер-стиле,
+    и из него дальше строятся кадры сцен.
+
+    Что здесь починено против прежней версии:
+      * лист рисовался ВЕРТИКАЛЬНЫМ (aspect по умолчанию 9:16), хотя промпт
+        просил горизонтальный: модель слушается параметра, а не слова в
+        тексте — отсюда «не похоже на разворот». Теперь 16:9 явно;
+      * 2K на четыре фигуры давал ~290 px ширины на ракурс, в них лицо не
+        выживает. Теперь 4K там, где движок его умеет;
+      * фото уходят ОТДЕЛЬНЫМИ референсами (до шести), а не hstack-коллажем:
+        коллаж модель периодически воспроизводила сеткой прямо в кадре;
+      * результат помечается kind="model" и больше не подмешивается в
+        референсы следующего запуска."""
     ch = _own_character(db, user, char_id)
     body = await request.json() if await request.body() else {}
     desc = (str(body.get("description") or "").strip() or ch.description).strip()
-    if not desc:
-        raise HTTPException(400, "нужно описание персонажа")
     kind = str(body.get("kind") or "3d")
-    base = MODEL_SHEET_STYLES.get(kind, MODEL_SHEET_STYLES["3d"])
-    _charge(db, user, _image_cost(user), f"моделька персонажа {ch.id}")
+    if kind not in MODEL_SHEET_STYLES:
+        kind = "3d"
+    views = str(body.get("views") or "full")
+    if views not in MODEL_SHEET_VIEWS:
+        views = "full"
 
-    engine = _plan_image_engine(user)
-    max_refs = int(mediagen.IMAGE_ENGINES.get(engine, {}).get("max_refs", 1))
-    paths = []
-    for ph in ch.photos[: max(3, max_refs)]:
-        cand = os.path.join(UPLOAD_DIR, ph.filename)
-        if os.path.exists(cand):
-            paths.append(cand)
+    engine = _model_sheet_engine(user)
+    spec = mediagen.IMAGE_ENGINES.get(engine, {})
+    max_refs = int(spec.get("max_refs") or 1)
+    photos = _model_sheet_photos(ch, min(MODEL_SHEET_MAX_PHOTOS, max(1, max_refs)))
+    # Ни фото, ни описания — генерировать нечего. Одного из двух достаточно:
+    # фото без описания работает, описание без фото работает тоже.
+    if not desc and not photos:
+        raise HTTPException(400, "нужно описание персонажа")
+
+    # 4K просим только у движков с нативным 4K: шлюзы его не умеют, и платить
+    # за разрешение, которого движок не даёт, незачем.
+    resolution = "4K" if "4K" in (spec.get("resolutions") or ()) else ""
+    cost = _image_cost(user, engine, resolution)
+    _charge(db, user, cost, f"разворот персонажа {ch.id}")
+
+    paths = [os.path.join(UPLOAD_DIR, p.filename) for p in photos]
     owner_id = ch.project.owner_id
     reference = None
     collage = ""
-    # Идентичность героя держится на референсах: движок с несколькими входами
-    # получает их по одному, шлюзу по-прежнему клеим коллаж.
+    # Движок с несколькими входами получает фото по одному — ради этого Nano
+    # Banana и подключалась. Шлюз принимает ровно одну картинку, ему
+    # по-прежнему клеим коллаж.
     if max_refs > 1:
         pass
     elif len(paths) == 1:
         reference = paths[0]
     elif paths:
-        reference = _ref_collage(db, paths, owner_id)
+        reference = _ref_collage(db, paths[:4], owner_id)
         if reference:
             collage = os.path.basename(reference)
 
-    prompt = (
-        f"{base}\n\nCHARACTER (follow this description exactly): {desc}\n\n"
-        "The four views must be the SAME character — same face, hair, outfit and "
-        "accessories in every view. Keep the identity from the reference photos. "
-        "Horizontal sheet, plain background, no text, no labels, no watermark."
-    )
+    prompt = _model_sheet_prompt(kind, views, desc, photos)
     try:
         data, mime = await mediagen.generate_image(
             prompt, reference,
-            reference_paths=paths if max_refs > 1 else None, engine=engine)
+            reference_paths=paths if max_refs > 1 else None,
+            engine=engine, resolution=resolution,
+            # Разворот — ГОРИЗОНТАЛЬНЫЙ лист. Именно этот параметр, а не слово
+            # "horizontal" в промпте, решает, что получится на выходе.
+            aspect="16:9")
     except Exception as e:  # noqa: BLE001
+        # Не сделали — не берём денег: возврат ровно того, что списали.
+        _refund(db, user, cost, f"разворот персонажа {ch.id}")
         raise HTTPException(502, f"генератор не отдал модельку: {str(e)[:200]}")
     finally:
         if collage:
@@ -3066,10 +3297,21 @@ async def generate_character_model(char_id: int, request: Request,
     fname = _save_image(data, mime, upscale=False)
     _reg_file(db, fname, owner_id)
     max_pos = max((p.position for p in ch.photos), default=0)
-    db.add(CharacterPhoto(character_id=ch.id, position=max_pos + 1, filename=fname))
+    db.add(CharacterPhoto(
+        character_id=ch.id, position=max_pos + 1, filename=fname,
+        # kind="model" — вот эта пометка и разрывает петлю обратной связи:
+        # следующий запуск возьмёт в референсы фото, а не этот лист.
+        kind="model", pose_kind=(kind if views == "full" else "closeup"),
+        from_photos=len(photos)))
     db.commit()
     db.refresh(ch)
-    return character_dict(ch)
+    out = character_dict(ch)
+    # Сколько фото реально сработало. Без этого «почему не похоже» остаётся
+    # загадкой, а ответ обычно простой — фотографий не было ни одной.
+    out["from_photos"] = len(photos)
+    out["engine"] = engine
+    out["engine_title"] = spec.get("title") or engine
+    return out
 
 
 @app.delete("/api/characters/photos/{photo_id}")
@@ -4361,11 +4603,42 @@ def _backfill_scene_ledger() -> None:
 _backfill_scene_ledger()
 
 
+# ─────────────────────────────── чат ───────────────────────────────
+# Чат живёт отдельным модулем (backend/chat.py) и НЕ импортирует main: всё,
+# что ему нужно от студии — разрешение сессии, деньги, файлы, тарифные
+# фильтры, — приезжает сюда через configure(). Так у денег и у движков
+# остаётся одно место правды, а круговой ссылки между модулями нет.
+import chat as chat_module  # noqa: E402
+
+chat_module.configure(
+    resolve_user=_resolve_user,
+    owned=_owned,
+    plans=PLANS,
+    plan_of=_plan_of,
+    plan_engine_ids=_plan_engine_ids,
+    plan_image_engine=_plan_image_engine,
+    image_cost=_image_cost,
+    points_of_usd=_points_of_usd,
+    gateway_points=GATEWAY_POINTS,
+    charge=_charge,
+    refund=_refund,
+    reg_file=_reg_file,
+    save_image=_save_image,
+    remove_media=_remove_media,
+    upload_dir=UPLOAD_DIR,
+)
+# ВАЖНО: роутер включается ДО mount("/") — иначе StaticFiles перехватит
+# /api/chat* и вернёт 404 вместо ответа.
+app.include_router(chat_module.router)
+
+
 # ─────────────────────────────── статика (SPA) ───────────────────────────────
 
 # Фоновая проверка подписок: раз в час смотрим, кому пора продлить.
 from threading import Thread as _Thread  # noqa: E402
 _Thread(target=_subscription_worker, daemon=True).start()
+# Ретенция медиа чатов: суточный проход, тот же паттерн демон-треда.
+chat_module.start_worker()
 
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")

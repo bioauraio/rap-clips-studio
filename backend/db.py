@@ -202,11 +202,31 @@ class Character(Base):
 
 
 class CharacterPhoto(Base):
+    """Картинка персонажа: ЛИБО загруженное фото, ЛИБО сгенерированный разворот.
+
+    Раньше всё лежало одной кучей, и это ломало две вещи разом:
+      1. сгенерированный лист попадал в референсы СЛЕДУЮЩЕЙ генерации —
+         моделька рисовалась с модельки, живое фото вытеснялось, дрейф
+         компаундировался за две-три итерации;
+      2. кадры сцен брали photos[0], то есть самое старое СЕЛФИ, а не
+         разворот, ради которого кнопку «сгенерировать модельку» и жмут.
+    kind разводит эти две сущности: в референсы разворота идут только
+    kind="photo", в кадры сцен — последний kind="model"."""
     __tablename__ = "character_photos"
     id = Column(Integer, primary_key=True)
     character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
     position = Column(Integer, nullable=False, default=0)
     filename = Column(String, nullable=False)
+    # photo — загружено человеком; model — сгенерированный лист ракурсов.
+    # Старым строкам мягкая миграция проставит "photo": это безопасная сторона
+    # ошибки (лишнее фото в референсах хуже не делает, а вот потерянный
+    # разворот сломал бы кадры уже готовых проектов).
+    kind = Column(String, nullable=False, default="photo")
+    # Какой это разворот: 3d | real | anime | closeup ("" у обычных фото).
+    pose_kind = Column(String, nullable=False, default="")
+    # По скольким загруженным фото собран разворот — интерфейс говорит это
+    # вслух, чтобы «моделька не похожа» не было загадкой.
+    from_photos = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=now)
 
     character = relationship("Character", back_populates="photos")
@@ -387,6 +407,75 @@ class SceneRef(Base):
     created_at = Column(DateTime, default=now)
 
     scene = relationship("Scene", back_populates="refs")
+
+
+# ─────────────────────────── чат с переключением моделей ───────────────────────────
+# Одно окно вместо вкладок «текст / картинки / видео»: намерение задаёт
+# ВЫБРАННАЯ МОДЕЛЬ, а не режим экрана. Поэтому сообщение хранит и текст, и
+# файл, и движок, и цену — одна лента, три вида содержимого.
+
+class Chat(Base):
+    __tablename__ = "chats"
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    # Последний выбранный движок: вернувшись в чат, человек продолжает тем же.
+    model = Column(String, nullable=False, default="")
+    archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=now)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+    messages = relationship("ChatMessage", back_populates="chat",
+                            cascade="all, delete-orphan",
+                            order_by="ChatMessage.position")
+
+
+class ChatMessage(Base):
+    """Одно сообщение ленты: реплика человека или ответ модели.
+
+    expires_at — СРОК ХРАНЕНИЯ ФАЙЛА, а не сообщения. Студия хранит медиа
+    осмысленно (кадр нужен клипу), чат же плодит картинки пачками, и без
+    ретенции диск съедается за недели. По сроку удаляется только файл: текст
+    и промпт остаются навсегда, поэтому любую картинку можно повторить."""
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, ForeignKey("chats.id"), nullable=False, index=True)
+    position = Column(Integer, nullable=False, default=0)
+    role = Column(String, nullable=False, default="user")      # user | assistant
+    kind = Column(String, nullable=False, default="text")      # text | image | video
+    text = Column(Text, nullable=False, default="")
+    media_filename = Column(String, nullable=False, default="")
+    engine = Column(String, nullable=False, default="")
+    # Сколько очков списано ЗА ЭТО сообщение. Нужно для возврата при ошибке:
+    # в студии упавшая сцена теряется в потоке, а в чате запросы одиночные —
+    # молча съеденные 154 очка человек увидит сразу.
+    points = Column(Integer, nullable=False, default=0)
+    params_json = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="")        # '' | queued | running | error
+    error = Column(Text, nullable=False, default="")
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=now)
+
+    chat = relationship("Chat", back_populates="messages")
+    files = relationship("ChatFile", back_populates="message",
+                         cascade="all, delete-orphan", order_by="ChatFile.position")
+
+
+class ChatFile(Base):
+    """Вложение человека к сообщению чата.
+
+    Файл заливается ДО отправки сообщения (кнопка «+»), поэтому message_id
+    какое-то время пуст: висячие вложения старше суток подчищает тот же
+    сборщик, что и просроченные медиа."""
+    __tablename__ = "chat_files"
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, nullable=False, default=0, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True, index=True)
+    position = Column(Integer, nullable=False, default=0)
+    filename = Column(String, nullable=False)
+    created_at = Column(DateTime, default=now)
+
+    message = relationship("ChatMessage", back_populates="files")
 
 
 def init_db() -> None:

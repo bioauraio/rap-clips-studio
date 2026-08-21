@@ -41,8 +41,19 @@ import httpx
 IMAGE_GATEWAY_URL = os.environ.get("IMAGE_GATEWAY_URL", "http://172.18.0.1:8766") + "/generate"
 GROK_GATEWAY_URL = os.environ.get("GROK_GATEWAY_URL", "http://172.18.0.1:8767")
 
-# Хостовый путь до нашего /data (bind-mount) — Grok читает файл с диска хоста.
+# Хостовый путь до нашего /data (bind-mount) — им пользуется ТОЛЬКО инстанс,
+# стоящий на одной машине со шлюзами (msk). Публичный инстанс на 5.42.120.67
+# ходит к шлюзам по SSH-туннелю и общей файловой системы с ними не имеет:
+# путь там не существует, отсюда «reference image not found» в журнале шлюза.
+# Поэтому картинки шлём БАЙТАМИ, а путь оставляем вторым полем для
+# совместимости со шлюзом, который ещё не обновлён.
 HOST_DATA_DIR = os.environ.get("HOST_DATA_DIR", "/opt/rapclips/data")
+# Транспортная копия кадра для шлюзов. Кадры у нас 4К после upscale_to_4k
+# (PNG 2160x3840, 8-20 МБ), а Grok рендерит 480p/720p — больше 1536 px по
+# длинной стороне ему бесполезно. Без ужатия 60 сцен клипа дали бы больше
+# гигабайта base64 через туннель; с ужатием — 20-40 МБ на клип.
+GATEWAY_IMAGE_MAX_SIDE = int(os.environ.get("GATEWAY_IMAGE_MAX_SIDE", "1536"))
+GATEWAY_IMAGE_MAX_KB = int(os.environ.get("GATEWAY_IMAGE_MAX_KB", "900"))
 ORGANISM_UPLOADS_CONTAINER = os.environ.get("ORGANISM_UPLOADS_DIR", "/organism-uploads")
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/data/uploads")
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
@@ -368,13 +379,15 @@ async def generate_image_ex(
 
     async def _chatgpt() -> dict | None:
         payload: dict = {"prompt": prompt}
-        # ChatGPT-шлюз умеет референс напрямую (reference_image_b64) — модель
-        # держит лицо/предмет с фото, не только Grok.
-        if single_ref:
-            with open(single_ref, "rb") as f:
-                payload["reference_image_b64"] = base64.b64encode(f.read()).decode()
-            payload["reference_mime"] = "image/png" if single_ref.lower().endswith(".png") else "image/jpeg"
         try:
+            # ChatGPT-шлюз умеет референс напрямую (reference_image_b64) —
+            # модель держит лицо/предмет с фото, не только Grok. Через общий
+            # helper: он ужимает 4К-кадр, который шлюз всё равно отверг бы
+            # своим лимитом 12 МБ. Готовим ВНУТРИ try — сбой подготовки должен
+            # уйти в цепочку фолбэков, а не мимо неё.
+            if single_ref:
+                payload["reference_image_b64"], payload["reference_mime"] = \
+                    await asyncio.to_thread(_gateway_image_field, single_ref)
             async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
                 r = await client.post(IMAGE_GATEWAY_URL, json=payload)
             if r.status_code == 200:
@@ -389,9 +402,15 @@ async def generate_image_ex(
 
     async def _grok() -> dict | None:
         payload: dict = {"prompt": prompt}
-        if single_ref:
-            payload["image_path"] = _host_path(single_ref)
         try:
+            if single_ref:
+                # Байты — основной вход (работают с любого сервера), путь
+                # остаётся рядом для шлюза, который ещё не обновлён: старый
+                # прочитает путь и проигнорирует image_b64, новый предпочтёт
+                # байты. Поэтому порядок выкладки шлюза и сервиса не важен.
+                payload["image_b64"], payload["image_mime"] = \
+                    await asyncio.to_thread(_gateway_image_field, single_ref)
+                payload["image_path"] = _host_path(single_ref)
             async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
                 r = await client.post(f"{GROK_GATEWAY_URL}/generate_image", json=payload)
             if r.status_code == 200:
@@ -590,33 +609,130 @@ async def _animate_seedance(
 
 
 def _host_path(container_path: str) -> str:
-    """Путь внутри контейнера -> путь на хосте: шлюзы живут вне докера."""
+    """Путь внутри контейнера -> путь на хосте: шлюзы живут вне докера.
+
+    Осмыслен ТОЛЬКО когда шлюз стоит на этой же машине. Публичному инстансу
+    он не помогает — там картинку везут байтами (_gateway_image_field)."""
     return os.path.join(HOST_DATA_DIR, os.path.relpath(container_path, "/data"))
 
 
+def _gateway_image_field(path: str) -> tuple[str, str]:
+    """Картинка для шлюза в виде (base64, mime).
+
+    Байты работают с ЛЮБОГО сервера, в отличие от пути. Крупные кадры ужимаем
+    до GATEWAY_IMAGE_MAX_SIDE: шлюзам больше не нужно (Grok рендерит 480p/720p,
+    а ChatGPT-шлюз вообще режет референс на 12 МБ и на сыром 4К падал), зато
+    тащить 15 МБ на каждую сцену по туннелю дорого.
+
+    Ужимаем через ffmpeg, а не Pillow: ffmpeg тут и так основной обработчик
+    картинок (upscale_to_4k, _ref_collage), а Pillow в requirements.txt нет."""
+    try:
+        size_kb = os.path.getsize(path) // 1024
+    except OSError:
+        size_kb = 0
+    src = path
+    tmp = ""
+    if size_kb > GATEWAY_IMAGE_MAX_KB:
+        tmp = os.path.join(UPLOAD_DIR, f"gw_{uuid.uuid4().hex}.jpg")
+        # Ужать не удалось — это НЕ повод ронять сцену: шлём оригинал, пусть
+        # дорого. Ловим и падение ffmpeg, и его отсутствие, и таймаут: иначе
+        # исключение прошло бы мимо цепочки фолбэков движков.
+        try:
+            # Кадры у нас ВЕРТИКАЛЬНЫЕ (9:16), поэтому ограничивать надо не
+            # ширину, а длинную сторону: min() по обеим сторонам задаёт рамку
+            # (и не даёт увеличить мелкую картинку), а decrease вписывает в неё
+            # с сохранением пропорций. Тот же приём, что в upscale_to_4k.
+            r = subprocess.run(
+                [FFMPEG, "-y", "-i", path, "-vf",
+                 f"scale='min({GATEWAY_IMAGE_MAX_SIDE},iw)':"
+                 f"'min({GATEWAY_IMAGE_MAX_SIDE},ih)':"
+                 "force_original_aspect_ratio=decrease:flags=lanczos",
+                 "-q:v", "3", tmp],
+                capture_output=True, timeout=120,
+            )
+            err = r.stderr.decode("utf-8", "replace")[-200:]
+            ok = r.returncode == 0 and os.path.exists(tmp)
+        except (OSError, subprocess.SubprocessError) as e:
+            err, ok = str(e)[:200], False
+        if ok:
+            src = tmp
+        else:
+            log.warning("транспортная копия не собралась, шлём оригинал: %s", err)
+    try:
+        with open(src, "rb") as f:
+            data = f.read()
+    finally:
+        # Убираем и недоделанный кусок: упавший ffmpeg мог оставить обрезок.
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    mime = "image/png" if data[:4] == b"\x89PNG" else "image/jpeg"
+    return base64.b64encode(data).decode(), mime
+
+
 async def _animate_grok(prompt: str, first_path: str) -> str:
-    host_image_path = _host_path(first_path)
+    # Подготовка кадра — тоже часть канала: её сбой обязан выглядеть как
+    # MediaError, иначе он пролетит мимо разбора ошибок в animate_scene.
+    try:
+        image_b64, image_mime = await asyncio.to_thread(_gateway_image_field, first_path)
+    except OSError as e:
+        raise MediaError(f"Grok animate: не смог прочитать кадр {first_path}: {e}") from e
     async with httpx.AsyncClient(timeout=VIDEO_TIMEOUT) as client:
         r = await client.post(f"{GROK_GATEWAY_URL}/animate", json={
-            "prompt": prompt, "image_path": host_image_path,
+            "prompt": prompt,
+            # Кадр туда — байтами (работает с любого сервера).
+            "image_b64": image_b64, "image_mime": image_mime,
+            # Путь рядом: старый шлюз возьмёт его и не заметит байтов.
+            "image_path": _host_path(first_path),
+            # Ролик обратно — тоже байтами: общего тома с шлюзом у публичного
+            # инстанса нет. Старый шлюз поле игнорирует, и мы читаем том, как
+            # читали раньше.
+            "return_video": True,
             "request_id": f"rapclips-{uuid.uuid4().hex}",
         })
     if r.status_code != 200:
         raise MediaError(f"Grok animate {r.status_code}: {r.text[:250]}")
-    video_url = (r.json() or {}).get("video_url") or ""
+    data = r.json() or {}
+    video_url = data.get("video_url") or ""
     if not video_url:
         raise MediaError("Grok animate: пустой video_url")
 
+    dst_name = f"scene_{uuid.uuid4().hex}.mp4"
+    dst_path = os.path.join(UPLOAD_DIR, dst_name)
     src_path = os.path.join(ORGANISM_UPLOADS_CONTAINER, os.path.basename(video_url))
+
+    video_b64 = data.get("video_b64") or ""
+    if video_b64:
+        try:
+            payload = base64.b64decode(video_b64, validate=True)
+        except (ValueError, TypeError) as e:
+            raise MediaError(f"Grok animate: битый video_b64 ({e})") from e
+        if len(payload) < 1000:
+            raise MediaError(f"Grok animate: обрезанный ролик, {len(payload)} байт")
+        with open(dst_path, "wb") as f:
+            f.write(payload)
+        # На msk шлюз пишет тот же ролик в общий том; байты мы уже забрали,
+        # поэтому файл там надо подчистить — иначе он копится вечно.
+        try:
+            os.remove(src_path)
+        except OSError:
+            pass
+        return dst_name
+
+    # Старый шлюз (или return_video отключён): забираем файл с общего тома.
     for _ in range(20):
         if os.path.exists(src_path):
             break
-        time.sleep(0.5)
+        await asyncio.sleep(0.5)
     if not os.path.exists(src_path):
-        raise MediaError(f"Grok отчитался об успехе, но файла нет: {src_path}")
+        raise MediaError(
+            f"Grok отчитался об успехе, но файла нет: {src_path}. "
+            "Похоже, шлюз ещё не умеет return_video, а общего тома с ним у "
+            "этого инстанса нет — обнови grok_gateway.py на хосте шлюзов")
 
-    dst_name = f"scene_{uuid.uuid4().hex}.mp4"
-    shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, dst_name))
+    shutil.copyfile(src_path, dst_path)
     try:
         os.remove(src_path)
     except OSError:
