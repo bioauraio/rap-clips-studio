@@ -3809,10 +3809,40 @@ def delete_scene(scene_id: int, user: User = Depends(current_user), db: Session 
     return {"ok": True}
 
 
-# ───────────────────── референсы кадра (композиция/вайб) ─────────────────────
+# ───────────────────── референсы кадра ─────────────────────
+# Что именно берём с приложенной картинки. Без вида референса промпт трактовал
+# любую как «композиция, но не палитра» — сказать «вот так выглядит место» или
+# «повтори этот кадр целиком» было нечем.
+REF_KINDS = ("vibe", "style", "place", "copy")
+
+# Инструкция генератору по каждому виду. Тексты разные не для красоты: vibe и
+# style противоположны по отношению к грейду, и смешивать их нельзя.
+REF_RULES = {
+    "vibe": (
+        "COMPOSITION REFERENCE: take framing, camera angle, distance and the energy "
+        "of the shot. Do NOT copy its colours, lighting or background."
+    ),
+    "style": (
+        "STYLE REFERENCE: copy exactly this look — colour grade, lighting, contrast, "
+        "texture and grain. Ignore its subject and composition."
+    ),
+    "place": (
+        "LOCATION REFERENCE: this is where the shot happens. Reproduce the environment, "
+        "architecture, objects and time of day. People in it are irrelevant — our own "
+        "characters act in this place."
+    ),
+    "copy": (
+        "SHOT TO REPRODUCE: recreate this frame as closely as possible — same composition, "
+        "same environment, same light — replacing only the person with OUR character from "
+        "the character references."
+    ),
+}
+
+
 
 @app.post("/api/scenes/{scene_id}/refs")
-async def add_scene_ref(scene_id: int, photo: UploadFile, user: User = Depends(current_user), db: Session = Depends(db_session)):
+async def add_scene_ref(scene_id: int, photo: UploadFile, kind: str = Form("vibe"),
+                        user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Картинка-референс кадра: чем показывать словами «как снято», проще
     приложить кадр-образец. В генерацию он уходит ПЕРВЫМ (см.
     _scene_reference_photo), но стилистику задаёт стиль трека, а не реф."""
@@ -3824,7 +3854,8 @@ async def add_scene_ref(scene_id: int, photo: UploadFile, user: User = Depends(c
     with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
         f.write(await photo.read())
     max_pos = max((r.position for r in scene.refs), default=0)
-    db.add(SceneRef(scene_id=scene.id, position=max_pos + 1, filename=fname))
+    kind = kind if kind in REF_KINDS else "vibe"
+    db.add(SceneRef(scene_id=scene.id, position=max_pos + 1, filename=fname, kind=kind))
     _reg_file(db, fname, scene.track.project.owner_id, kind="ref",
               project_id=scene.track.project_id, track_id=scene.track_id,
               scene_id=scene.id)

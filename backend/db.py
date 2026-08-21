@@ -218,6 +218,35 @@ class FileOwner(Base):
     # проходом. Живой файл, на который ссылается сцена, удалить нельзя —
     # сцена без image_filename ломает половину кнопок карточки.
     deleted_at = Column(DateTime, nullable=True)
+    # ФИЗИЧЕСКИЙ КЛЮЧ ФАЙЛА («устройство:инод»). Копия проекта не копирует
+    # байты — она делает ЖЁСТКУЮ ССЫЛКУ (см. _clone_media в main.py), и у
+    # одного куска диска появляется несколько имён и несколько строк здесь.
+    # Без этого ключа сумма size_bytes считала бы такой файл столько раз,
+    # сколько у него имён, и архив с квотой врали бы человеку ровно на объём
+    # копий — то есть тем сильнее, чем активнее он копирует.
+    phys_key = Column(String, nullable=False, default="", index=True)
+    # Откуда взялось имя (для копий). Связь по phys_key живёт, пока жив
+    # инод; это поле переживает удаление оригинала и объясняет происхождение.
+    src_filename = Column(String, nullable=False, default="")
+
+
+class FrameCache(Base):
+    """Кадр, который УЖЕ рисовали ровно этим промптом и этим движком.
+
+    Смысл один — не платить дважды за одну и ту же картинку. «То же самое
+    ещё раз» в журнале прода не редкость (у одной сцены шесть прогонов
+    кадров подряд), и каждый такой прогон — живые деньги на kie.ai и ещё
+    один файл на диске.
+
+    СТРОГО В ПРЕДЕЛАХ ОДНОГО ПОЛЬЗОВАТЕЛЯ: общий кэш был бы утечкой чужих
+    приватных кадров — совпал промпт, увидел чужую картинку."""
+    __tablename__ = "frame_cache"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    key_hash = Column(String, nullable=False, default="", index=True)
+    engine = Column(String, nullable=False, default="")
+    filename = Column(String, nullable=False, default="")
+    created_at = Column(DateTime, default=now, index=True)
 
 
 class Project(Base):
@@ -248,6 +277,12 @@ class Project(Base):
     # Обложка проекта (файл в UPLOAD_DIR): визуальный якорь альбома —
     # заливается владельцем, при замене старый файл удаляется.
     cover_filename = Column(String, nullable=False, default="")
+    # ПРОИСХОЖДЕНИЕ КОПИИ. Копия проекта — не «новый проект с похожим
+    # именем»: карточка обязана уметь сказать, из чего она сделана, иначе
+    # через неделю два одинаковых названия в списке ничем не различаются.
+    # 0 = оригинал. Не ForeignKey: оригинал могут удалить, а копия обязана
+    # пережить это без каскада.
+    copied_from_id = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -710,7 +745,14 @@ class SceneRef(Base):
     scene_id = Column(Integer, ForeignKey("scenes.id"), nullable=False)
     position = Column(Integer, nullable=False, default=0)
     filename = Column(String, nullable=False)
-    # vibe — композиция/свет/настроение (пока единственный вид референса).
+    # ВИД РЕФЕРЕНСА определяет, ЧТО с него берут. Раньше вид был один и промпт
+    # трактовал любую приложенную картинку одинаково — «композиция, но не
+    # палитра». Из-за этого нельзя было сказать «вот так выглядит место» или
+    # «повтори этот кадр целиком»:
+    #   vibe  — композиция, ракурс, энергия плана (прежнее поведение);
+    #   style — свет, палитра, фактура, зерно (с него КОПИРУЕМ грейд);
+    #   place — локация и окружение (обстановка, предметы, время суток);
+    #   copy  — повторить кадр целиком, меняя только героя на нашего.
     kind = Column(String, nullable=False, default="vibe")
     created_at = Column(DateTime, default=now)
 
