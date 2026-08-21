@@ -47,9 +47,9 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=53" />
-<link rel="stylesheet" href="/landing.css?v=53" />
-<link rel="stylesheet" href="/tg.css?v=53" />
+<link rel="stylesheet" href="/style.css?v=56" />
+<link rel="stylesheet" href="/landing.css?v=56" />
+<link rel="stylesheet" href="/tg.css?v=56" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -67,7 +67,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=53"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=56"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -317,6 +317,9 @@
       </label>
       <input id="project-name" class="project-name" data-i18n-ph="top.projectNamePh" />
       <span id="project-kind" class="kind-badge"></span>
+      <!-- Режим проекта: он же его вид (album|single → rap clips, ugc, series).
+           Второго реестра нет — подпись берётся из словаря по project.mode. -->
+      <span id="project-mode" class="mode-badge hidden"></span>
       <button id="new-project-btn" class="tb-new" data-i18n="top.newProject"></button>
     </div>
     <div class="tb-user">
@@ -353,6 +356,32 @@
     </div>
   </section>
 
+  <!-- ─────────────────────────────────────────────────────────────────────
+       СЦЕНАРНЫЕ ДОКУМЕНТЫ — сезонный слой сериала и персона блогера.
+       Панель существует только в режимах series и ugc; у клипа её место
+       занимает панель сюжета выше. Содержимое рисует app.js из project.docs,
+       которые едут вместе с проектом и поллятся тем же циклом.
+       ───────────────────────────────────────────────────────────────────── -->
+  <section id="docs-panel" class="panel hidden">
+    <h2 id="docs-title"></h2>
+    <p id="docs-lead" class="docs-lead muted"></p>
+    <div class="docs-form">
+      <div class="docs-idea">
+        <label data-i18n="docs.ideaLabel"></label>
+        <input id="docs-idea" data-i18n-ph="docs.ideaPh" />
+      </div>
+      <div class="docs-eps hidden" id="docs-eps-wrap">
+        <label data-i18n="docs.episodesLabel"></label>
+        <input id="docs-eps" type="number" min="2" max="24" value="8" />
+      </div>
+      <button id="docs-gen-bible" class="primary"></button>
+      <button id="docs-gen-sheet" class="hidden"></button>
+      <button id="docs-make-eps" class="hidden"></button>
+      <span id="docs-status" class="status"></span>
+    </div>
+    <div id="docs-grid" class="docs-grid"></div>
+  </section>
+
   <section class="panel">
     <h2 data-i18n-title="chars.titleHint" data-i18n="chars.title"></h2>
     <!-- Персонажи листаются вправо той же лентой, что и сцены (bindStrip):
@@ -368,8 +397,15 @@
   </section>
 
   <section class="panel">
-    <h2 data-i18n="tracks.title"></h2>
+    <h2 id="tracks-title" data-i18n="tracks.title"></h2>
     <div id="tracks"></div>
+  </section>
+
+  <!-- «Добавить» — СВОЙ блок под лентой, а не форма внутри панели объектов.
+       Раньше она жила там же, где карточки, и была видна всегда — включая
+       сингл, где второй трек создать нельзя в принципе. Теперь блок целиком
+       прячется, когда добавлять нечего. -->
+  <section id="add-track-panel" class="panel add-track-panel">
     <details class="add-track">
       <summary data-i18n="tracks.add"></summary>
       <form id="add-track-form" class="track-form">
@@ -377,6 +413,12 @@
         <label data-i18n="tracks.styleLabel"></label>
         <div class="style-picker"></div>
         <input type="hidden" name="style_keys" />
+        <!-- Каркас объекта (формат UGC / жанр сериала). У клипа скрыт: там
+             каркас выбирается на витрине промтов вместе со стилем. -->
+        <div id="add-format-wrap" class="hidden">
+          <label data-i18n="docs.formatLabel"></label>
+          <select name="format_key" id="add-format"></select>
+        </div>
         <textarea name="lyrics" data-i18n-ph="tracks.lyricsPh" rows="4"></textarea>
         <textarea name="comment" data-i18n-ph="tracks.commentPh" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
@@ -466,13 +508,65 @@
         <label data-i18n-title="track.styleLabelTitle" data-i18n="track.styleLabel"></label>
         <div class="t-style-picker style-picker style-picker-wide"></div>
         <input type="hidden" class="t-style" />
+
+        <!-- ДВИЖКИ ОБЪЕКТА: один выбор на весь трек, табами.
+             Раньше чипы движка рисовались В КАЖДОЙ карточке кадра (тридцать
+             наборов по восемь), нигде не сохранялись и полностью
+             игнорировались кнопками «все кадры» и «все видео». -->
+        <div class="t-engines">
+          <div class="t-engines-head">
+            <b data-i18n="engines.title"></b>
+            <span class="eng-hint"></span>
+          </div>
+          <div class="eng-row">
+            <label data-i18n="engines.image"></label>
+            <div class="t-img-engines eng-tabs"></div>
+          </div>
+          <div class="eng-row">
+            <label data-i18n="engines.video"></label>
+            <div class="t-vid-engines eng-tabs"></div>
+          </div>
+          <div class="eng-forecast"></div>
+        </div>
+
+        <!-- Поля режимов «сериалы» и «UGC». В клипе скрыты целиком. -->
+        <div class="t-mode-fields hidden">
+          <div class="row t-mode-row">
+            <div class="t-format-wrap">
+              <label data-i18n="docs.formatLabel"></label>
+              <select class="t-format"></select>
+            </div>
+            <div class="t-season-wrap hidden">
+              <label data-i18n="docs.seasonLabel"></label>
+              <input class="t-season" type="number" min="0" max="99" />
+            </div>
+            <div class="t-episode-wrap hidden">
+              <label data-i18n="docs.episodeLabel"></label>
+              <input class="t-episode" type="number" min="0" max="999" />
+            </div>
+          </div>
+          <div class="t-location-wrap hidden">
+            <label data-i18n="docs.locationLabel"></label>
+            <textarea class="t-location" rows="2" data-i18n-ph="docs.locationPh"></textarea>
+          </div>
+          <div class="t-script-wrap hidden">
+            <div class="row">
+              <button class="t-gen-script primary"></button>
+              <span class="t-script-status status"></span>
+            </div>
+            <div class="t-script-body doc-body muted"></div>
+          </div>
+        </div>
         <div class="track-body">
           <div class="track-left">
-            <label data-i18n="track.audio"></label>
+            <!-- Аудио и «без сюжета» — свойства КЛИПА: серия и ролик режутся
+                 не по дорожке, а по сценарию, и эти поля там ведут в никуда.
+                 Скрывает их renderTrack по mode.needs_audio. -->
+            <label class="t-audio-label" data-i18n="track.audio"></label>
             <audio class="t-audio" controls></audio>
             <span class="t-duration"></span>
             <label class="approve-check grain-check" data-i18n-title="track.grainTitle"><input type="checkbox" class="t-grain" /> <span data-i18n="track.grain"></span></label>
-            <label class="approve-check grain-check" data-i18n-title="track.nostoryTitle"><input type="checkbox" class="t-nostory" /> <span data-i18n="track.nostory"></span></label>
+            <label class="approve-check grain-check t-nostory-wrap" data-i18n-title="track.nostoryTitle"><input type="checkbox" class="t-nostory" /> <span data-i18n="track.nostory"></span></label>
           </div>
           <div class="track-right">
             <label data-i18n="track.comment"></label>
@@ -486,7 +580,9 @@
             </div>
           </div>
         </div>
-        <label data-i18n="track.lyrics"></label>
+        <!-- Текст песни — тоже свойство клипа: у серии реплики пишет сценарий,
+             у ролика — генератор. Скрывает renderTrack по mode.needs_lyrics. -->
+        <label class="t-lyrics-label" data-i18n="track.lyrics"></label>
         <textarea class="t-lyrics" rows="5" data-i18n-ph="track.lyricsPh"></textarea>
         <div class="row">
           <button class="save-track" data-i18n="track.saveTrack"></button>
@@ -638,6 +734,8 @@
       <button class="s-play ghost" data-i18n-title="scene.playTitle">▶</button>
       <span class="s-pos"></span>
       <span class="s-time"></span>
+      <span class="s-act"></span>
+      <span class="s-speaker"></span>
       <button class="s-edit-toggle ghost board-only" data-i18n-title="scene.editTitle">✎</button>
       <button class="s-del ghost danger board-only" data-i18n-title="scene.delTitle">✕</button>
     </div>
@@ -660,10 +758,21 @@
       <div class="s-top-row">
         <div class="s-refs" data-i18n-title="scene.refsTitle"></div>
         <div class="s-top-right">
-          <!-- Движок КАДРОВ: ChatGPT-шлюз или Nano Banana. Рисует JS. -->
-          <div class="s-image-seg" data-i18n-title="scene.imageEngineTitle"></div>
-          <!-- Чипы движка ВИДЕО рисует JS; сам select остаётся источником правды. -->
-          <div class="s-provider-seg" data-i18n-title="scene.providerTitle"></div>
+          <!-- НАСЛЕДОВАНИЕ, а не выбор: движок задан на объекте, здесь только
+               строка «как у объекта» и свёрнутое переопределение. Развёрнутые
+               чипы в каждой из тридцати карточек кадра съедали весь экран. -->
+          <div class="s-engine-line"></div>
+          <details class="s-engine-override">
+            <summary data-i18n="engines.override"></summary>
+            <div class="eng-row">
+              <label data-i18n="engines.image"></label>
+              <div class="s-image-seg eng-tabs" data-i18n-title="scene.imageEngineTitle"></div>
+            </div>
+            <div class="eng-row">
+              <label data-i18n="engines.video"></label>
+              <div class="s-provider-seg eng-tabs" data-i18n-title="scene.providerTitle"></div>
+            </div>
+          </details>
           <select class="s-provider hidden" data-i18n-title="scene.providerTitle"></select>
           <details class="s-prompt-details">
             <summary data-i18n="scene.prompt"></summary>
@@ -790,7 +899,37 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=53"></script>
-<script src="/app.js?v=53"></script>
+<script src="/i18n.js?v=56"></script>
+<script src="/app.js?v=56"></script>
+<script>
+/* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
+   Навигация подменяет топбар и переключает панели поверх живого app.js;
+   на боевом сервисе такое включают, посмотрев на него своими глазами.
+   Флаг: ?nav=1 включает и запоминает, ?nav=0 выключает и забывает.
+   Откат — снять флаг, БЕЗ деплоя и без отката кода: для режима, в котором
+   владелец смотрит правки прямо на проде, это главное свойство.
+   Автозапуск самого nav.js уважает data-nav-manual, поэтому чужие страницы
+   (демо nav-preview.html) он не задевает. */
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var flag = qs.get("nav");
+  try {
+    if (flag === "1") localStorage.setItem("lolq_nav", "1");
+    if (flag === "0") localStorage.removeItem("lolq_nav");
+  } catch (e) { /* приватный режим */ }
+  var on = flag === "1";
+  if (!on && flag !== "0") {
+    try { on = localStorage.getItem("lolq_nav") === "1"; } catch (e) { on = false; }
+  }
+  if (!on) return;
+  var css = document.createElement("link");
+  css.rel = "stylesheet";
+  css.href = "/nav.css?v=56";
+  document.head.appendChild(css);
+  var js = document.createElement("script");
+  js.src = "/nav.js?v=56";
+  document.body.appendChild(js);
+})();
+</script>
 </body>
 </html>

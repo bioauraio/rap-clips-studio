@@ -492,6 +492,9 @@ async def stars_refund(request: Request):
                 log.warning("звёзды: refundStarPayment %s: %s", charge_id, str(e)[:200])
 
         points = int(row.points or 0)
+        # Вид платежа запоминаем ДО удаления строки: после db.delete + commit
+        # объект отсоединён, и обращение к row.kind уже упадёт.
+        row_kind = row.kind
         if points:
             user.gen_points = max(0, int(user.gen_points or 0) - points)
         if row.kind == "plan":
@@ -520,6 +523,14 @@ async def stars_refund(request: Request):
             db.delete(ev)
         db.delete(row)
         db.commit()
+        # Журнал очков: возврат звёзд — это ПЯТАЯ точка, где меняется баланс.
+        # Без этой строки кабинет показывал бы остаток, которого не объясняет
+        # ни одна запись истории, и «куда делись очки» осталось бы без ответа.
+        if points:
+            core._log_points(db, user, -int(points),
+                             f"возврат звёздного платежа {charge_id[:24]}",
+                             kind="topup" if row_kind == "topup" else "plan",
+                             ref_type="payment", engine="stars")
         log.info("звёзды: возврат %s — юзер %s, −%s очков, тариф %s",
                  charge_id, user.id, points, core._plan_of(user))
         return {"ok": True, "user_id": user.id, "points": int(user.gen_points or 0),

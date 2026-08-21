@@ -50,58 +50,184 @@
      МАССИВА. Новый режим = один объект, а не правки в трёх файлах.
 
      ВАЖНО: `steps` — это КОНТЕКСТ РЕЖИМА, а не «этапы клипа».
-     У клипа тут 6 шагов, у кабинета — 4 вкладки, у чата — селектор модели.
-     Класть в этот ярус сам режим нельзя: иерархия развалится. */
+     У клипа тут 5 шагов, у сериала 6, у кабинета — 4 вкладки, у чата —
+     селектор модели. Класть в этот ярус сам режим нельзя: иерархия
+     развалится.
+
+     ЧТО ИЗМЕНИЛОСЬ ПРОТИВ ПРОТОТИПА (и почему без этого реестр — декорация):
+       • `panel` и `pane` разведены. Раньше шаг «Сюжет» указывал pane:"plot",
+         а «Монтаж» — pane:"final"; панелей с такими именами в разметке нет
+         уже давно (index.html знает setup|board|anim, см. STAGES в app.js).
+         Шаг «Сюжет» гасил ВСЕ панели трека, «Монтаж» показывал пустоту.
+       • stepState/nextAction больше не начинаются с `if (mode !== "clip")`.
+         Правила переехали В ОБЪЕКТ РЕЖИМА — пока они были захардкожены,
+         любой новый режим оставался немым: без точек состояния и без
+         кнопки «что дальше».
+       • Подписи берутся из общего словаря (i18n.js). В демо-странице
+         словаря нет — поэтому у каждой подписи есть запасной текст. */
+
+  /* Подпись из общего словаря; в демо (nav-preview.html) словаря нет. */
+  function T(key, fallback) {
+    const v = typeof window.t === "function" ? window.t(key) : "";
+    return v || fallback;
+  }
+
+  /* Заполнена ли панель проекта: по ней считается состояние проектных шагов,
+     у которых нет собственных .stage-tab в карточках треков. */
+  function filled(sel) {
+    const node = $(sel);
+    if (!node) return false;
+    if ("value" in node) return Boolean(String(node.value || "").trim());
+    return Boolean(node.children.length || String(node.textContent || "").trim());
+  }
+
+  function docsFilled() {
+    const box = $("#docs-grid");
+    if (!box || !box.children.length) return false;
+    const cards = $$(".doc-card", box);
+    if (!cards.length) return false;
+    const busy = cards.some((c) => c.classList.contains("is-busy"));
+    if (busy) return "busy";
+    const done = cards.filter((c) => {
+      const body = $(".doc-body", c);
+      return body && !body.classList.contains("muted");
+    }).length;
+    if (!done) return false;
+    return done === cards.length ? "done" : "part";
+  }
+
+  /* Общее правило состояния шага. Режим переопределяет его только там, где
+     оно действительно другое, а не копирует целиком. */
+  function baseStepState(st, stepId, mode) {
+    const def = (mode.steps || []).find((s) => s.id === stepId);
+    if (!def) return "empty";
+    if (def.id === "chars") return charsFilled() ? "done" : "empty";
+    if (def.panel === "story") return filled("#story") ? "done" : "empty";
+    if (def.panel === "docs") {
+      const d = docsFilled();
+      return d === false ? "empty" : d;
+    }
+    const key = def.pane;                       // setup | board | anim
+    if (!key) return "empty";
+    if (def.scope === "track") {
+      const tr = activeTrack();
+      return tr ? tr.states[key] || "empty" : "empty";
+    }
+    if (!st.tracks.length) return "empty";
+    const all = st.tracks.map((x) => x.states[key] || "empty");
+    if (all.includes("error")) return "error";
+    if (all.includes("busy")) return "busy";
+    if (all.every((s) => s === "done")) return "done";
+    if (all.some((s) => s !== "empty")) return "part";
+    return "empty";
+  }
+
+  /* Кнопка «что дальше»: одна акцентная на весь экран. Правила — В РЕЖИМЕ:
+     у клипа сначала трек и сюжет, у сериала сначала библия и сценарий, у
+     UGC — блогер. Общий список тут был бы враньём для двух режимов из трёх. */
+  function clipNext(st, S) {
+    return [
+      { when: () => !st.tracks.length, label: T("modes.object.track.add", "Добавить трек"), step: "tracks", cost: 0 },
+      { when: () => S("tracks") !== "done", label: "Дозаполнить трек", step: "tracks", cost: 0 },
+      { when: () => S("story") === "empty", label: T("story.gen", "Сгенерировать сюжет"), step: "story", cost: 2 },
+      { when: () => S("board") === "empty", label: T("track.genScenes", "Разбить на сцены"), step: "board", cost: 3 },
+      { when: () => S("board") !== "done", label: "Сгенерировать кадры", step: "board", cost: 8 },
+      { when: () => S("anim") !== "done", label: "Оживить кадры", step: "anim", cost: 12 },
+    ];
+  }
+
+  function ugcNext(st, S) {
+    return [
+      { when: () => S("persona") === "empty", label: T("docs.genBibleUgc", "Собрать блогера"), step: "persona", cost: 0 },
+      { when: () => !charsFilled(), label: T("chars.add", "Добавить персонажа"), step: "chars", cost: 0 },
+      { when: () => !st.tracks.length, label: T("modes.object.reel.add", "Добавить ролик"), step: "reels", cost: 0 },
+      { when: () => S("board") === "empty", label: T("track.genScenes", "Разбить на слоты"), step: "board", cost: 3 },
+      { when: () => S("board") !== "done", label: "Сгенерировать кадры", step: "board", cost: 8 },
+      { when: () => S("anim") !== "done", label: "Оживить кадры", step: "anim", cost: 12 },
+    ];
+  }
+
+  function seriesNext(st, S) {
+    return [
+      { when: () => S("bible") === "empty", label: T("docs.genBibleSeries", "Собрать библию сезона"), step: "bible", cost: 0 },
+      { when: () => !charsFilled(), label: T("chars.add", "Добавить персонажа"), step: "chars", cost: 0 },
+      { when: () => !st.tracks.length, label: T("docs.createEpisodes", "Создать серии"), step: "season", cost: 0 },
+      { when: () => S("episode") !== "done", label: T("docs.genScript", "Написать сценарий серии"), step: "episode", cost: 0 },
+      { when: () => S("board") === "empty", label: T("track.genScenes", "Разбить на кадры"), step: "board", cost: 3 },
+      { when: () => S("board") !== "done", label: "Сгенерировать кадры", step: "board", cost: 8 },
+      { when: () => S("anim") !== "done", label: "Оживить кадры", step: "anim", cost: 12 },
+    ];
+  }
 
   const MODES = [
     {
       id: "clip",
       icon: "🎬",
-      title: "Клип",
-      full: "Клип под музыку",
+      // Режим переименован в «rap clips»: id НЕ трогаем — он в адресе
+      // (#/clip/...) и в state.lastStep, и его смена сломала бы сохранённые
+      // ссылки владельца.
+      get title() { return T("modes.clip.title", "rap clips"); },
+      get full() { return T("modes.clip.full", "rap clips — клип под свой трек"); },
+      projectKinds: ["album", "single"],
+      object: "track",
+      next: clipNext,
       steps: [
-        { id: "story",  num: 1, icon: "✍", title: "Сюжет",       scope: "project", pane: "plot" },
-        { id: "chars",  num: 2, icon: "🎭", title: "Персонажи",   scope: "project" },
-        { id: "tracks", num: 3, icon: "🎵", title: "Треки",       scope: "project", pane: "setup" },
-        { id: "board",  num: 4, icon: "🎞", title: "Раскадровка", scope: "track",   pane: "board" },
-        { id: "anim",   num: 5, icon: "▶",  title: "Анимация",    scope: "track",   pane: "anim" },
-        { id: "final",  num: 6, icon: "✂",  title: "Монтаж",      scope: "track",   pane: "final" },
+        { id: "story",  num: 1, icon: "✍",  scope: "project", panel: "story",  get title() { return T("modes.steps.story", "Сюжет"); } },
+        { id: "chars",  num: 2, icon: "🎭", scope: "project", panel: "chars",  get title() { return T("modes.steps.chars", "Персонажи"); } },
+        { id: "tracks", num: 3, icon: "🎵", scope: "project", panel: "tracks", pane: "setup", get title() { return T("modes.steps.tracks", "Треки"); } },
+        { id: "board",  num: 4, icon: "🎞", scope: "track",   panel: "tracks", pane: "board", get title() { return T("modes.steps.board", "Раскадровка"); } },
+        { id: "anim",   num: 5, icon: "▶",  scope: "track",   panel: "tracks", pane: "anim",  get title() { return T("modes.steps.anim", "Анимация"); } },
       ],
     },
     {
-      id: "pixar", icon: "🧸", title: "Pixar 3D", full: "3D Pixar", soon: true,
+      id: "ugc",
+      icon: "📱",
+      get title() { return T("modes.ugc.title", "UGC / блогеры"); },
+      get full() { return T("modes.ugc.full", "UGC и ИИ-блогеры"); },
+      projectKinds: ["ugc"],
+      object: "reel",
+      next: ugcNext,
       steps: [
-        { id: "idea",   num: 1, icon: "💡", title: "Идея",   scope: "project" },
-        { id: "heroes", num: 2, icon: "🧸", title: "Герои",  scope: "project" },
-        { id: "scenes", num: 3, icon: "🎬", title: "Сцены",  scope: "project" },
-        { id: "render", num: 4, icon: "✨", title: "Рендер", scope: "project" },
+        { id: "persona", num: 1, icon: "🙋", scope: "project", panel: "docs",   get title() { return T("modes.steps.persona", "Блогер"); } },
+        { id: "chars",   num: 2, icon: "🎭", scope: "project", panel: "chars",  get title() { return T("modes.steps.chars", "Персонажи"); } },
+        { id: "reels",   num: 3, icon: "📋", scope: "project", panel: "tracks", pane: "setup", get title() { return T("modes.steps.reels", "Ролики"); } },
+        { id: "board",   num: 4, icon: "🎞", scope: "track",   panel: "tracks", pane: "board", get title() { return T("modes.steps.board", "Раскадровка"); } },
+        { id: "anim",    num: 5, icon: "▶",  scope: "track",   panel: "tracks", pane: "anim",  get title() { return T("modes.steps.anim", "Анимация"); } },
       ],
     },
     {
-      id: "ugc", icon: "📱", title: "UGC", full: "UGC-ролики", soon: true,
+      id: "series",
+      icon: "📺",
+      get title() { return T("modes.series.title", "сериалы"); },
+      get full() { return T("modes.series.full", "Сериал с сезонами и сериями"); },
+      projectKinds: ["series"],
+      object: "episode",
+      groupBy: "season",
+      next: seriesNext,
       steps: [
-        { id: "brief", num: 1, icon: "📋", title: "Бриф",    scope: "project" },
-        { id: "actor", num: 2, icon: "🙋", title: "Актёр",   scope: "project" },
-        { id: "shoot", num: 3, icon: "🎥", title: "Съёмка",  scope: "project" },
-        { id: "done",  num: 4, icon: "✅", title: "Готовое", scope: "project" },
+        { id: "bible",   num: 1, icon: "📖", scope: "project", panel: "docs",   get title() { return T("modes.steps.bible", "Библия сезона"); } },
+        { id: "chars",   num: 2, icon: "🎭", scope: "project", panel: "chars",  get title() { return T("modes.steps.chars", "Персонажи"); } },
+        { id: "season",  num: 3, icon: "🗓",  scope: "project", panel: "docs",   get title() { return T("modes.steps.season", "Поэпизодник"); } },
+        { id: "episode", num: 4, icon: "📝", scope: "project", panel: "tracks", pane: "setup", get title() { return T("modes.steps.episode", "Серии"); } },
+        { id: "board",   num: 5, icon: "🎞", scope: "track",   panel: "tracks", pane: "board", get title() { return T("modes.steps.board", "Раскадровка"); } },
+        { id: "anim",    num: 6, icon: "▶",  scope: "track",   panel: "tracks", pane: "anim",  get title() { return T("modes.steps.anim", "Анимация"); } },
       ],
     },
     {
-      id: "doctor", icon: "🩺", title: "Доктор", full: "ИИ-доктор", soon: true,
-      steps: [
-        { id: "complaint", num: 1, icon: "🗣", title: "Жалоба", scope: "project" },
-        { id: "data",      num: 2, icon: "📊", title: "Данные", scope: "project" },
-        { id: "verdict",   num: 3, icon: "🧾", title: "Разбор", scope: "project" },
-      ],
+      // Чат — полноценный режим, а не кнопка в шапке. Раньше вход в него был
+      // единственным (#chat-btn в топбаре), а верстак топбар прячет: без
+      // этой строки чат исчезал бы вместе с ним.
+      id: "chat", icon: "💬",
+      get title() { return T("modes.chat.title", "Чат"); },
+      get full() { return T("modes.chat.full", "Чат с моделью"); },
+      external: () => { const b = $("#chat-btn"); if (b) b.click(); },
+      steps: [],
     },
     {
-      id: "chat", icon: "💬", title: "Чат", full: "Чат с моделью", soon: true,
-      contextType: "models",
-      steps: [
-        { id: "sonnet", num: 1, icon: "◆", title: "Sonnet",  scope: "project" },
-        { id: "gpt",    num: 2, icon: "◇", title: "GPT",     scope: "project" },
-        { id: "grok",   num: 3, icon: "◈", title: "Grok",    scope: "project" },
-      ],
+      id: "audio", icon: "🎧", soon: true,
+      get title() { return T("modes.audio.title", "Аудио"); },
+      get full() { return T("modes.audio.full", "Озвучка, музыка и мастеринг"); },
+      steps: [],
     },
   ];
 
@@ -177,18 +303,19 @@
       const img = $(".t-cover-img", card);
       const titleEl = $(".t-title", card);
       const posEl = $(".pos", card);
+      // states — СЫРЫЕ ключи панелей карточки (setup|board|anim). Раньше они
+      // тут же переименовывались в имена шагов клипа (tracks/board/anim/final),
+      // и любой другой режим читал бы чужие имена. Перевод «шаг → панель»
+      // теперь живёт в реестре (step.pane) и делается в момент чтения.
       return {
         id: card.dataset.id || String(i + 1),
         title: (titleEl && (titleEl.value || titleEl.textContent)) || "Без имени",
         pos: (posEl && posEl.textContent.replace(/[^\d]/g, "")) || String(i + 1),
         cover: img && !img.classList.contains("hidden") ? img.getAttribute("src") : "",
         states: {
-          story: states.plot || "empty",
-          chars: charsFilled() ? "done" : "empty",
-          tracks: states.setup || "empty",
+          setup: states.setup || "empty",
           board: states.board || "empty",
           anim: states.anim || "empty",
-          final: states.final || "empty",
         },
       };
     });
@@ -199,7 +326,32 @@
     return Boolean(box && box.children.length);
   }
 
+  /* Режим = вид ОТКРЫТОГО проекта. Второго переключателя нет: сериал не
+     превращается в клип, у них разные объекты второго уровня. Рейка режимов
+     показывает, где ты, и ведёт в проект нужного вида. */
+  function syncProjectMode() {
+    if (cfg.demo) return false;
+    const sel = $("#project-select");
+    const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+    const kind = (opt && opt.dataset.kind) || "";
+    if (!kind) return false;
+    const m = MODES.find((x) => (x.projectKinds || []).includes(kind));
+    if (m && m.id !== state.mode) {
+      state.mode = m.id;
+      const steps = activeSteps();
+      const back = state.lastStep[m.id];
+      state.step = steps.some((s) => s.id === back) ? back : (steps[0] && steps[0].id) || "story";
+      // Сообщаем наверх, что режим сменился: проект приезжает АСИНХРОННО, уже
+      // после первой отрисовки рейки, и без пересборки на ней остаётся
+      // подсвеченным «rap clips», пока шаги ниже показывают сериал. Два
+      // разных ответа на вопрос «где я» на одной панели.
+      return true;
+    }
+    return false;
+  }
+
   function syncData() {
+    const modeChanged = syncProjectMode();
     if (cfg.getTracks) state.tracks = cfg.getTracks() || [];
     else state.tracks = readTracksFromDom();
 
@@ -217,12 +369,13 @@
     // активный трек всегда валиден
     if (state.tracks.length) {
       if (!state.tracks.some((t) => String(t.id) === String(state.trackId))) {
-        const unfinished = state.tracks.find((t) => t.states.final !== "done");
+        const unfinished = state.tracks.find((t) => t.states.anim !== "done");
         state.trackId = (unfinished || state.tracks[0]).id;
       }
     } else {
       state.trackId = null;
     }
+    return modeChanged;
   }
 
   function activeMode() { return MODES.find((m) => m.id === state.mode) || MODES[0]; }
@@ -240,31 +393,29 @@
 
   function stepDef(id) { return activeSteps().find((s) => s.id === id) || activeSteps()[0]; }
 
-  /* Состояние шага. Для проектных шагов — агрегат по всем трекам. */
+  /* Состояние шага. Правило берётся У РЕЖИМА: пока здесь стояло
+     `if (state.mode !== "clip") return "empty"`, любой новый режим был нем —
+     все его шаги показывали пустые точки, а кнопка «что дальше» молчала. */
   function stepState(stepId) {
-    if (state.mode !== "clip") return "empty";
-    const t = activeTrack();
-    const def = stepDef(stepId);
-    if (!def) return "empty";
-    if (def.scope === "track") return t ? t.states[stepId] || "empty" : "empty";
-    if (!state.tracks.length) return "empty";
-    const all = state.tracks.map((x) => x.states[stepId] || "empty");
-    if (all.includes("error")) return "error";
-    if (all.includes("busy")) return "busy";
-    if (all.every((s) => s === "done")) return "done";
-    if (all.some((s) => s !== "empty")) return "part";
-    return "empty";
+    const mode = activeMode();
+    if (state.mode === "account") return "empty";
+    const fn = mode.stepState || baseStepState;
+    return fn(state, stepId, mode) || "empty";
   }
 
   /* Доля готовности шага — заливка в нижней кромке капсулы. */
   function stepProgress(stepId) {
-    if (state.mode !== "clip" || !state.tracks.length) return 0;
+    if (state.mode === "account" || !state.tracks.length) return 0;
     const def = stepDef(stepId);
-    if (def && def.scope === "track") {
+    if (!def || !def.pane) {
       const s = stepState(stepId);
       return s === "done" ? 1 : s === "part" || s === "busy" ? 0.5 : 0;
     }
-    const done = state.tracks.filter((t) => (t.states[stepId] || "empty") === "done").length;
+    if (def.scope === "track") {
+      const s = stepState(stepId);
+      return s === "done" ? 1 : s === "part" || s === "busy" ? 0.5 : 0;
+    }
+    const done = state.tracks.filter((t) => (t.states[def.pane] || "empty") === "done").length;
     return done / state.tracks.length;
   }
 
@@ -423,8 +574,6 @@
     if (cfg.demo) return;
 
     const pts = $("#points-badge");
-    const plan = $("#plan-badge");
-    const saveAcc = $("#save-account-btn");
     const accBtn = $("#account-btn");
     const logout = $("#logout-btn");
     const select = $("#project-select");
@@ -432,17 +581,27 @@
     const cover = $("#project-cover");
     const name = $("#project-name");
     const kind = $("#project-kind");
+    const modeBadge = $("#project-mode");
 
-    // правый край рейки: настоящие узлы встают ПЕРЕД нашей кнопкой «Тариф»
+    // ПРАВЫЙ КРАЙ РЕЙКИ: усыновляем ВСЁ содержимое .tb-user списком, а не
+    // поимённо. Поимённый список уже один раз тихо съел кнопку — #chat-btn
+    // появился в топбаре позже прототипа, в перечень не попал, а верстак
+    // прячет топбар целиком (body.wb-on .topbar{display:none}). Единственный
+    // вход в чат просто исчезал бы с экрана, и следующая новая кнопка
+    // шапки умерла бы так же молча.
+    const tbUser = $(".topbar .tb-user");
+    if (tbUser) {
+      Array.from(tbUser.children).forEach((node) => {
+        if (node === accBtn || node === logout) return;   // им место в поповере
+        els.right.insertBefore(node, els.planBtn);
+      });
+    }
     if (pts) {
-      els.right.insertBefore(pts, els.planBtn);
       els.points.hidden = true;
       els.points.dataset.adopted = "1";
       pts.style.cursor = "pointer";
       on(pts, "click", () => openAccount("plan"));
     }
-    if (plan) els.right.insertBefore(plan, els.planBtn);
-    if (saveAcc) els.right.insertBefore(saveAcc, els.planBtn);
 
     // «Кабинет» и «выйти» уезжают в поповер, но остаются в DOM
     if (accBtn) { accBtn.classList.add("hidden"); els.pop.appendChild(accBtn); }
@@ -451,21 +610,28 @@
     els.logoutBtn = logout;
 
     // селект проекта прячем, но не трогаем: на нём висит обработчик app.js
-    if (select) { select.classList.add("hidden"); els.shelf.appendChild(select); }
+    if (select) {
+      select.classList.add("hidden");
+      els.shelf.appendChild(select);
+      // Смену проекта слушаем ЗДЕСЬ, а не через наблюдателя за #tracks: у
+      // проекта без объектов список не меняется вовсе, наблюдатель молчит, и
+      // рейка режимов остаётся показывать предыдущий вид. dataset.kind у
+      // option уже верный — данные проекта для этого ждать не нужно.
+      on(select, "change", () => { if (syncData()) renderModes(); renderShelf(); });
+    }
     els.projSelect = select;
 
     // «+ проект» переезжает в ящик
     if (newProj) { newProj.classList.add("wb-drawer-new"); els.drawerNewBtn = newProj; }
 
-    // обложка + имя + вид проекта уезжают в шаг «Сюжет»
-    const storyPanel = panelOf("#story");
-    if (storyPanel && (cover || name || kind)) {
+    // Обложка + имя + вид + режим уезжают в шапку рабочей области, а не в
+    // панель сюжета: у сериала и UGC панели сюжета нет вовсе, и привязка к
+    // ней оставила бы их без имени проекта.
+    if (cover || name || kind || modeBadge) {
       const head = el("div", "wb-projhead");
       head.style.cssText = "display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap";
-      if (cover) head.appendChild(cover);
-      if (name) head.appendChild(name);
-      if (kind) head.appendChild(kind);
-      storyPanel.insertBefore(head, storyPanel.firstChild);
+      [cover, name, kind, modeBadge].forEach((n) => { if (n) head.appendChild(n); });
+      els.body.insertBefore(head, els.body.firstChild);
       if (name) on(name, "input", () => { state.project.name = name.value; paintProjectChip(); });
     }
   }
@@ -478,7 +644,11 @@
   /* Разметка приложения размечается атрибутом data-nav-stage. */
   function tagPanels() {
     if (cfg.demo) return;
-    const map = [["#story", "story"], ["#characters", "chars"], ["#tracks", "tracks board anim final"]];
+    // Имена здесь — ЗНАЧЕНИЯ step.panel из реестра, а не имена шагов: один
+    // и тот же «tracks» обслуживает три режима с разными названиями шагов.
+    const map = [["#story", "story"], ["#docs-panel", "docs"],
+                 ["#characters", "chars"], ["#tracks", "tracks"],
+                 ["#add-track-panel", "tracks"]];
     map.forEach(([sel, stages]) => {
       const p = panelOf(sel);
       if (p && !p.hasAttribute("data-nav-stage")) p.setAttribute("data-nav-stage", stages);
@@ -497,7 +667,7 @@
       if (m.id === state.mode) b.setAttribute("aria-current", "page");
       b.title = m.full || m.title;
       b.append(el("span", "wb-mode-ico", m.icon), el("span", "wb-mode-cap", m.title));
-      if (m.id === "clip" && anyBusy()) b.classList.add("is-busy");
+      if (m.id === state.mode && anyBusy()) b.classList.add("is-busy");
       on(b, "click", () => goMode(m.id));
       els.modes.appendChild(b);
     });
@@ -511,7 +681,7 @@
       b.dataset.mode = m.id;
       if (m.id === state.mode) b.setAttribute("aria-current", "page");
       b.append(el("span", "wb-dock-ico", m.icon), el("span", "wb-dock-cap", m.title));
-      if (m.id === "clip" && anyBusy()) b.classList.add("is-busy");
+      if (m.id === state.mode && anyBusy()) b.classList.add("is-busy");
       on(b, "click", () => goMode(m.id));
       els.dock.appendChild(b);
     });
@@ -545,7 +715,7 @@
     els.stages.innerHTML = "";
 
     steps.forEach((s) => {
-      const st = state.mode === "clip" ? stepState(s.id) : "empty";
+      const st = stepState(s.id);
       const b = el("button", "wb-stage" + (s.id === state.step ? " on" : ""));
       b.type = "button";
       b.dataset.step = s.id;
@@ -560,9 +730,9 @@
       fill.style.setProperty("--p", String(stepProgress(s.id)));
       b.appendChild(fill);
 
-      if (state.mode === "clip" && s.scope === "track" && !state.tracks.length) {
+      if (s.scope === "track" && !state.tracks.length) {
         b.disabled = true;
-        b.title = "Сначала добавь трек на шаге «Треки»";
+        b.title = "Сначала добавь объект на предыдущем шаге";
       }
       on(b, "click", () => goStep(s.id));
       els.stages.appendChild(b);
@@ -578,7 +748,7 @@
       if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
     // разделитель между проектными и трековыми шагами
-    els.sep.style.display = state.mode === "clip" ? "" : "none";
+    els.sep.style.display = (activeMode().steps || []).length ? "" : "none";
     els.projBtn.style.display = state.mode === "account" ? "none" : "";
   }
 
@@ -621,7 +791,7 @@
 
   function renderObjects() {
     const def = stepDef(state.step);
-    const trackScope = state.mode === "clip" && def && def.scope === "track";
+    const trackScope = Boolean(def && def.scope === "track");
     const show = trackScope && state.tracks.length > 0;
     if (!show) els.head.classList.remove("has-objects");
     els.objects.hidden = !show;
@@ -658,31 +828,33 @@
   /* Где именно сейчас крутится генерация — туда и ведёт кнопка.
      Уход в другой режим/шаг очередь не рвёт, поэтому кнопка кликабельна. */
   function busyAction() {
-    const order = ["board", "anim", "final", "story", "tracks"];
+    // Ключи ПАНЕЛЕЙ, а не шагов: карточка трека знает только setup|board|anim.
+    const order = ["board", "anim", "setup"];
     const pick = (t) => order.find((k) => t.states[k] === "busy");
     const cur = activeTrack();
-    let track = cur && pick(cur) ? cur : state.tracks.find((t) => pick(t));
+    const track = cur && pick(cur) ? cur : state.tracks.find((t) => pick(t));
     if (!track) return null;
-    return { label: "Генерится: " + track.title, cls: "is-busy", step: pick(track), track: track.id, cost: 0 };
+    const pane = pick(track);
+    const step = (activeMode().steps || []).find((s) => s.pane === pane);
+    return { label: "Генерится: " + track.title, cls: "is-busy",
+             step: step ? step.id : null, track: track.id, cost: 0 };
   }
 
-  const NEXT_RULES = [
-    { when: () => !state.tracks.length, label: "Добавить трек", step: "tracks", cost: 0 },
-    { when: () => stepState("tracks") !== "done", label: "Дозаполнить трек", step: "tracks", cost: 0 },
-    { when: () => stepState("story") === "empty", label: "Сгенерировать сюжет", step: "story", cost: 2 },
-    { when: () => stepState("board") === "empty", label: "Разбить на сцены", step: "board", cost: 3 },
-    { when: () => stepState("board") !== "done", label: "Сгенерировать кадры", step: "board", cost: 8 },
-    { when: () => stepState("anim") !== "done", label: "Оживить кадры", step: "anim", cost: 12 },
-    { when: () => stepState("final") !== "done", label: "Собрать клип", step: "final", cost: 1 },
-  ];
-
+  /* «Что дальше» СПРАШИВАЕМ У РЕЖИМА. Захардкоженный список правил работал
+     ровно для клипа и делал реестр режимов декорацией: сериал и UGC остались
+     бы без единственной акцентной кнопки экрана. */
   function nextAction() {
-    if (state.mode !== "clip") return null;
+    const mode = activeMode();
+    if (state.mode === "account" || !mode.next) return null;
     if (anyBusy()) { const b = busyAction(); if (b) return b; }
-    for (const r of NEXT_RULES) if (r.when()) return r;
-    const un = state.tracks.find((t) => t.states.final !== "done");
-    if (un) return { label: `Следующий трек: ${un.title}`, step: "board", track: un.id, cost: 0 };
-    return { label: "Альбом готов", cls: "is-done", step: null, cost: 0 };
+    const rules = mode.next(state, stepState) || [];
+    for (const r of rules) if (r.when()) return r;
+    const un = state.tracks.find((t) => t.states.anim !== "done");
+    if (un) {
+      const label = T("modes.object." + (mode.object || "track") + ".one", "трек");
+      return { label: `Следующий ${label}: ${un.title}`, step: "board", track: un.id, cost: 0 };
+    }
+    return { label: "Всё готово", cls: "is-done", step: null, cost: 0 };
   }
 
   function renderNext() {
@@ -719,24 +891,31 @@
 
   function applyStage() {
     const key = state.step;
+    const stepPanel = (stepDef(key) || {}).panel || key;
     $$("[data-nav-stage]", els.body).forEach((node) => {
       const list = (node.getAttribute("data-nav-stage") || "").split(/\s+/).filter(Boolean);
-      node.classList.toggle("wb-on", list.includes(key));
+      node.classList.toggle("wb-on", list.includes(stepPanel));
     });
 
     const def = stepDef(key);
-    const paneKey = def && def.pane ? def.pane : key;
-    const trackScope = state.mode === "clip" && def && def.scope === "track";
+    // paneKey — панель ВНУТРИ карточки трека (setup|board|anim). Раньше сюда
+    // подставлялся id шага, и шаги «Сюжет»/«Монтаж» искали панели plot и
+    // final, которых в разметке нет: первый гасил карточку целиком, второй
+    // показывал пустое место.
+    const paneKey = (def && def.pane) || "";
+    const trackScope = Boolean(def && def.scope === "track");
 
     $$(".track-card", els.body).forEach((card) => {
       const mine = !trackScope || String(card.dataset.id) === String(state.trackId);
       card.hidden = !mine;
-      if (!mine) return;
+      if (!mine || !paneKey) return;
       $$(".stage-pane", card).forEach((p) => p.classList.toggle("on", p.dataset.stage === paneKey));
     });
 
-    // форма «+ добавить трек» — только на шаге «Треки»
-    $$(".add-track", els.body).forEach((d) => { d.hidden = key !== "tracks"; });
+    // Блок «+ добавить объект» — только на шаге настройки объекта (pane
+    // "setup"): у клипа это «Треки», у UGC «Ролики», у сериала «Серии».
+    const onSetup = Boolean(def && def.pane === "setup");
+    $$(".add-track-panel, .add-track", els.body).forEach((d) => { d.hidden = !onSetup; });
 
     // Ни одна панель не подошла (режим ещё без контента, кабинет в модалке) —
     // показываем явное пустое состояние, а не белый лист.
@@ -823,7 +1002,7 @@
   function buildHash() {
     if (state.mode === "account") return `#/account/${state.step}`;
     const def = stepDef(state.step);
-    const trackPart = state.mode === "clip" && def && def.scope === "track" && state.trackId ? `/t${state.trackId}` : "";
+    const trackPart = def && def.scope === "track" && state.trackId ? `/t${state.trackId}` : "";
     return `#/${state.mode}/${state.step}${trackPart}`;
   }
 
@@ -845,7 +1024,10 @@
     syncData();
     // шаг уровня трека без треков — откатываемся на «Треки»
     const def = stepDef(state.step);
-    if (state.mode === "clip" && def && def.scope === "track" && !state.tracks.length) state.step = "tracks";
+    if (def && def.scope === "track" && !state.tracks.length) {
+      const setup = activeSteps().find((x) => x.pane === "setup");
+      if (setup) state.step = setup.id;
+    }
     renderAll();
     emit("route", { mode: state.mode, step: state.step, trackId: state.trackId });
     if (els.body) els.body.style.animation = "none";
@@ -855,7 +1037,23 @@
   function goMode(id) {
     const m = MODES.find((x) => x.id === id);
     if (!m) return;
+    // Режим-«переход»: у чата свой экран в app.js, и верстак его не рисует.
+    // Клик по такой плитке должен вести туда, а не гасить рабочую область.
+    if (typeof m.external === "function") { m.external(); return; }
     if (state.mode === id) return;
+    // Режим = ВИД ОТКРЫТОГО ПРОЕКТА. Переключить его на месте нельзя: сериал
+    // не превращается в клип, у них разные объекты второго уровня. Поэтому
+    // клик по чужому режиму открывает ящик проектов, а не гасит рабочую
+    // область под пустой режим, в который нечего показать.
+    if ((m.projectKinds || []).length && !cfg.demo) {
+      const sel = $("#project-select");
+      const opts = sel ? Array.from(sel.options) : [];
+      if (!opts.some((o) => m.projectKinds.includes(o.dataset.kind || "album"))) {
+        toast(`${m.full || m.title}: создай проект этого вида`);
+      }
+      openDrawer("projects");
+      return;
+    }
     state.lastStep[state.mode] = state.step;
     state.mode = id;
     const steps = activeSteps();
@@ -1206,8 +1404,24 @@
       let t = null;
       new MutationObserver(() => {
         clearTimeout(t);
-        t = setTimeout(() => { syncData(); renderShelf(); renderObjects(); applyStage(); }, 30);
+        t = setTimeout(() => {
+          // Рейку режимов пересобираем ТОЛЬКО когда режим действительно
+          // сменился: она перестраивает DOM целиком, а этот путь дёргает
+          // поллинг раз в пару секунд.
+          if (syncData()) renderModes();
+          renderShelf(); renderObjects(); applyStage();
+        }, 30);
       }).observe(tracks, { childList: true });
+    }
+    // Список проектов приезжает ПОСЛЕ первой отрисовки рейки, и у проекта без
+    // объектов наблюдатель за #tracks не сработает никогда (пустой список
+    // «меняется» на пустой без записей мутации). Поэтому вид первого
+    // открытого проекта ловим по наполнению самого селекта.
+    const projSel = $("#project-select");
+    if (projSel) {
+      new MutationObserver(() => {
+        if (syncData()) { renderModes(); renderShelf(); renderObjects(); applyStage(); }
+      }).observe(projSel, { childList: true });
     }
     const app = $(cfg.appSelector);
     if (app) {

@@ -753,9 +753,11 @@ async def _not_enough_points_handler(request: Request, exc: NotEnoughPoints) -> 
 # поэтому кабинет не мог показать ни расход по дням, ни «на что ушло», ни
 # возвраты — строить было не из чего.
 #
-# Точек записи ровно четыре: _take_points (расход), _refund (возврат),
-# _add_points (оплата и капли года), _grant_points (админский грант). Писать
-# журнал где-то ещё нельзя: тогда сумма журнала перестанет объяснять баланс.
+# Точек записи пять, и все они известны поимённо: _take_points (расход),
+# _refund (возврат), _grant_payment (оплата), _points_drip_pass (месячный
+# транш годовой подписки) и stars.stars_refund (откат звёздного платежа).
+# Писать журнал где-то ещё нельзя: тогда сумма журнала перестанет объяснять
+# остаток, а именно ради этого он и заводился.
 
 # Метка расхода по человеческому описанию операции. Так журнал не требует
 # протаскивать лишний параметр через полсотни вызовов _charge, а разбор
@@ -2066,11 +2068,58 @@ async def save_doc(project_id: int, request: Request,
     track_id = int(body.get("track_id") or 0) or None
     if track_id:
         _own_track(db, user, track_id)
+    text = str(body.get("body") or "")
+    # Поэпизодный план читается ТОЛЬКО из body_json: по нему заводятся серии и
+    # по нему пишется сценарий. Пока правка текста туда не доезжала, владелец
+    # правил план, жал «создать серии» и молча получал СТАРЫЙ — расхождение
+    # между тем, что на экране, и тем, что поехало в работу.
+    data = _parse_beatsheet(text, _find_doc(db, project.id, kind, track_id)) \
+        if kind == "beatsheet" else None
     doc = _put_doc(db, project.id, kind, track_id=track_id,
                    title=str(body.get("title") or ""),
-                   body=str(body.get("body") or ""),
-                   status="", error="")
+                   body=text, data=data, status="", error="")
     return doc_dict(doc)
+
+
+# Разбор ровно той раскладки, которую пишет _run_beatsheet: «N. Название» и
+# строки «Событие/Меняется/Обрыв». Не парсер произвольного текста: если
+# владелец написал план от руки в свободной форме, вернём None и прежний
+# body_json останется на месте — это ровно то поведение, что было до правки,
+# то есть отката не требуется.
+_BEATSHEET_FIELDS = {"событие": "event", "меняется": "changes",
+                     "обрыв": "cliffhanger", "главный": "lead"}
+
+
+def _parse_beatsheet(text: str, old: "Doc | None") -> dict | None:
+    keep = {}
+    if old is not None and old.body_json:
+        try:
+            for r in (json.loads(old.body_json) or {}).get("episodes") or []:
+                keep[int(r.get("no") or 0)] = r
+        except Exception:  # noqa: BLE001
+            keep = {}
+    rows: list[dict] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        head = re.match(r"^(\d{1,3})[.)]\s*(.+)$", line)
+        if head:
+            no = int(head.group(1))
+            # Поля, которых нет в тексте (beat, lead), берём у прежней версии
+            # той же серии: иначе ручная правка названия стирала бы привязку
+            # серии к биту арки сезона.
+            row = dict(keep.get(no) or {})
+            row.update({"no": no, "title": head.group(2).strip()})
+            rows.append(row)
+            continue
+        if not rows or ":" not in line:
+            continue
+        label, _, val = line.partition(":")
+        field = _BEATSHEET_FIELDS.get(label.strip().lower())
+        if field:
+            rows[-1][field] = val.strip()
+    return {"episodes": rows} if rows else None
 
 
 @app.delete("/api/docs/{doc_id}")
@@ -2290,11 +2339,12 @@ async def create_episodes(project_id: int, request: Request,
         if (season, no) in have:
             continue          # эта серия уже заведена — второй раз не создаём
         pos += 1
-        comment = "\n".join(x for x in (
-            f"Событие: {r.get('event', '')}",
-            f"Меняется: {r.get('changes', '')}",
-            f"Главный: {r.get('lead', '')}",
-            f"Обрыв: {r.get('cliffhanger', '')}") if x.split(": ", 1)[1].strip())
+        # JSON от модели легко приезжает с null вместо строки — без `or ""`
+        # в комментарий серии попало бы литеральное «Событие: None».
+        parts = [("Событие", r.get("event")), ("Меняется", r.get("changes")),
+                 ("Главный", r.get("lead")), ("Обрыв", r.get("cliffhanger"))]
+        comment = "\n".join(f"{name}: {str(val).strip()}"
+                            for name, val in parts if str(val or "").strip())
         db.add(Track(
             project_id=project.id, position=pos,
             title=str(r.get("title") or f"Серия {no}"),
@@ -3689,9 +3739,10 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
     if which not in ("both", "first", "last"):
         which = "both"
-    # Кадры не имеют своей цены: они берут аванс в счёт цены сцены. Видео потом
-    # добирает разницу до цены движка, а перерисовка кадров уже оплаченной
-    # сцены бесплатна — человек не должен бояться жать «перегенерировать».
+    # Движок разрешаем ДО списания: цена кадров зависит именно от него, а сам
+    # он берётся по цепочке «явный выбор → движок объекта → тариф». Раньше
+    # выбор из карточки кадра доезжал сюда и молча затирался внутри
+    # _run_scene_frames дефолтом тарифа.
     engine = _resolve_image_engine(user, scene.track, engine)
     _scene_charge(db, user, scene, _frames_cost(user, scene, engine),
                   f"кадры сцены {scene.id} ({which})", kind="frames", engine=engine)

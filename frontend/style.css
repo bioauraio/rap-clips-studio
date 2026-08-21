@@ -17,6 +17,19 @@
   --gold: #ffb545;
   --danger: #e5484d;
   --ok: #14a06b;
+  /* ОГОНЬ ОДИН НА ВЕСЬ СЕРВИС. Раньше студия заливала акцентные кнопки
+     градиентом #ff7a29 → #ff3d3d: белый текст на нём даёт 2.6:1 — не читается
+     и выглядит неоном, из-за чего экран входа и назывался «красным».
+     Лендинг уже жил на чернильном огне (landing.css:--fire-ink), студия —
+     нет. Теперь токен один, и правится он в двух файлах одинаково.
+     Белый на #d92626 — 4.95:1, на #b3261e — 6.4:1. */
+  --fire-ink: linear-gradient(180deg, #d92626, #b3261e);
+  --on-accent: #fff;
+  /* Чернильные дублёры марки для ТЕКСТА: сам --accent (#ff3d3d) на тёплой
+     бумаге даёт 3.4:1, --accent-2 (#ff7a29) — 2.4:1. Заливкам это не мешает,
+     подписям мешает. */
+  --accent-ink: #cf2222;
+  --accent-2-ink: #c1401b;
   --font-head: "SF Pro Display", -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   font-family: -apple-system, "Inter", "Segoe UI", Arial, sans-serif;
@@ -54,12 +67,27 @@ body {
   background: var(--inset); color: var(--text); font-size: 14px;
 }
 .login-box input:focus { outline: none; border-color: var(--border-bright); box-shadow: 0 0 0 3px rgba(255,122,41,.16); }
-.login-box button {
-  padding: 12px; border-radius: 14px; border: 2px solid #2d211a; cursor: pointer; font-weight: 800;
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  box-shadow: 0 5px 0 #2d211a, 0 12px 28px rgba(255, 90, 40, .35);
+/* ОДНА огненная кнопка на экран — и это «войти».
+   Раньше здесь стоял `.login-box button`, то есть КАЖДАЯ кнопка внутри
+   коробки входа: и EN/RU, и «Продолжить в Telegram», и Яндекс, и Google.
+   Специфичность (0,1,1) перебивала честный картонный `.auth-btn` (0,1,0) —
+   поэтому весь экран входа заливался огнём и читался как «красный».
+   Теперь селектор сужен до сабмита, а геометрия та же, что у любой другой
+   `button.primary` в студии (8/14, радиус 12, офсет 4): у входа не должно
+   быть собственной, третьей по счёту, формы кнопки. */
+.login-box > button[type="submit"] {
+  padding: 10px 14px; border-radius: 12px; border: 2px solid #2d211a;
+  cursor: pointer; font-weight: 800; font-size: 13.5px;
+  color: var(--on-accent); background: var(--fire-ink);
+  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(207, 34, 34, .28);
 }
-.login-box button:active { transform: translateY(5px); box-shadow: 0 0 0 #2d211a; }
+.login-box > button[type="submit"]:hover:not(:disabled) {
+  background: var(--fire-ink);
+  filter: brightness(1.06);
+}
+.login-box > button[type="submit"]:active {
+  transform: translateY(4px); box-shadow: 0 0 0 #2d211a;
+}
 .error { color: var(--danger); font-size: 13px; }
 
 /* ────────── старый лендинг (заменён .landing в landing.css) ────────── */
@@ -132,7 +160,7 @@ body {
   content: counter(gstep); flex: none; width: 22px; height: 22px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-size: 11px; font-weight: 800; color: #fff;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  background: var(--fire-ink);
   border: 1.5px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
 }
 .guide-desc { margin: 7px 0 0 31px; font-size: 13.5px; line-height: 1.5; }
@@ -234,9 +262,9 @@ button {
 button:hover:not(:disabled) { background: #fff; }
 button:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
 button.primary {
-  color: #fff; border: 2px solid #2d211a;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  box-shadow: 0 4px 0 #2d211a, 0 10px 26px rgba(255, 90, 40, .35);
+  color: var(--on-accent); border: 2px solid #2d211a;
+  background: var(--fire-ink);
+  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(207, 34, 34, .28);
 }
 button.primary:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
 button.ghost { background: transparent; border: none; color: var(--muted); padding: 5px 9px; }
@@ -288,7 +316,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 .stage-tab.on,
 .stage-tab.on:hover:not(:disabled) {
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: #fff; background: var(--fire-ink);
 }
 .stage-tab.on .st-num { background: rgba(255,255,255,.22); color: #fff; }
 .stage-dot { width: 8px; height: 8px; border-radius: 50%; background: #cfc2b4; flex: none; }
@@ -312,7 +340,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
   padding: 3px 0; user-select: none;
 }
-.final-scenes > summary:hover { color: var(--accent-2); }
+.final-scenes > summary:hover { color: var(--accent-2-ink); }
 .final-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px; margin-top: 8px;
@@ -326,7 +354,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
 .add-track { margin-top: 12px; }
 .add-track summary {
-  cursor: pointer; color: var(--accent-2); font-weight: 700; padding: 8px 0;
+  cursor: pointer; color: var(--accent-2-ink); font-weight: 700; padding: 8px 0;
   font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase;
 }
 .track-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
@@ -352,7 +380,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .storyboard-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .media-box { aspect-ratio: 9/16; max-height: 270px; }
 .media-box img, .media-box video { width: 100%; height: 100%; object-fit: cover; }
-.clip-download { color: var(--accent); font-family: var(--font-mono); font-size: 12px; text-decoration: none; letter-spacing: .06em; }
+.clip-download { color: var(--accent-ink); font-family: var(--font-mono); font-size: 12px; text-decoration: none; letter-spacing: .06em; }
 
 /* ────────── витрина клипа: всегда внизу карточки трека ──────────
    Клип перестал быть этапом: окно видно на любом шаге и показывает актуальную
@@ -429,18 +457,15 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .s-top-right .s-prompt-details summary { text-align: right; }
 .scene-card.prompt-open .s-top-right { flex: 1 1 100%; margin-left: 0; align-items: stretch; }
 .scene-card.prompt-open .s-top-right .s-prompt-details summary { text-align: left; }
-/* движок видео: сегментный переключатель вместо системного селекта */
-.s-provider-seg { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
-.prov-chip {
-  padding: 3px 9px; font-size: 10.5px; border-radius: 999px;
-  border-width: 1.5px; box-shadow: 0 2px 0 #2d211a; white-space: nowrap;
-}
-.prov-chip.on,
-.prov-chip.on:hover:not(:disabled) {
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
-}
-.prov-chip.single { cursor: default; }
-.prov-chip.single:active { transform: none; box-shadow: 0 2px 0 #2d211a; }
+/* Движки в карточке кадра. Ленты чипов теперь общие (.eng-tabs / .eng-chip,
+   см. блок «РЕЖИМЫ, ДВИЖКИ ОБЪЕКТА…» в конце файла) и живут ВНУТРИ свёрнутого
+   «поменять для этого кадра»: на треке из тридцати сцен развёрнутые чипы
+   занимали экран тридцать раз. Прежние классы .prov-chip / .img-chip больше
+   не рисуются — правила удалены, чтобы не гадать, какое из двух работает. */
+.s-top-right .eng-tabs { justify-content: flex-end; }
+.s-top-right details.s-engine-override { width: 100%; text-align: right; }
+.s-top-right details.s-engine-override[open] { text-align: left; }
+.s-top-right details.s-engine-override .eng-row { justify-content: flex-end; }
 
 /* референсы кадра: картинки-образцы композиции/света/вайба (картон, как фото
    персонажей) — стилистику всё равно диктует стиль трека, реф только «как снято» */
@@ -470,7 +495,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .char-chip { padding: 3px 9px; font-size: 10.5px; border-radius: 999px; box-shadow: 0 2px 0 #2d211a; }
 .char-chip.on,
 .char-chip.on:hover:not(:disabled) {
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: #fff; background: var(--fire-ink);
 }
 .char-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
 .s-prompt-details summary, .style-desc summary {
@@ -478,7 +503,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
   padding: 3px 0; user-select: none;
 }
-.s-prompt-details summary:hover, .style-desc summary:hover { color: var(--accent-2); }
+.s-prompt-details summary:hover, .style-desc summary:hover { color: var(--accent-2-ink); }
 .s-edit { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px dashed var(--border); }
 .s-board-actions { margin-top: auto; }
 .s-gen-mid { font-size: 11.5px; }
@@ -645,7 +670,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 .style-chip input { accent-color: var(--accent); width: auto; }
 .style-chip.on {
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: #fff; background: var(--fire-ink);
 }
 .style-chip:active { transform: translateY(3px); box-shadow: 0 0 0 #2d211a; }
 
@@ -674,9 +699,12 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
   background: var(--inset); border: 2px solid #2d211a; box-shadow: 0 3px 0 #2d211a;
 }
-.modal-tab.on { color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent)); }
+.modal-tab.on { color: #fff; background: var(--fire-ink); }
 
 /* карточки-кнопки выбора типа проекта */
+/* Четыре вида проекта (rap clips ×2, UGC, сериал) — сетка 2×2, а не два
+   в ряд: пятая карточка сюда не влезет, и это правильно — режимов должно
+   быть немного, иначе выбор превращается в каталог. */
 .kind-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .kind-card {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
@@ -685,8 +713,8 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 .kind-card .kind-emoji { font-size: 26px; }
 .kind-card.on {
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  box-shadow: 0 4px 0 #2d211a, 0 10px 26px rgba(255, 90, 40, .35);
+  color: #fff; background: var(--fire-ink);
+  box-shadow: 0 4px 0 #2d211a, 0 8px 20px rgba(207, 34, 34, .28);
 }
 .kind-card.on .muted { color: rgba(255, 255, 255, .85); }
 
@@ -779,7 +807,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   .char-photo { width: 60px; height: 60px; }
   .style-picker { gap: 5px; }
   .style-chip { font-size: 10.5px; padding: 4px 8px; }
-  .kind-cards { flex-direction: column; }
+  .kind-cards { grid-template-columns: 1fr; }
   /* лендинг: одна колонка, скриншоты во всю ширину карточки */
   .welcome-screen { padding: 16px 10px 32px; gap: 14px; }
   .welcome-box { padding: 22px 16px 18px; border-radius: 18px; }
@@ -818,7 +846,7 @@ textarea { transition: min-height .15s; }
   content: counter(step); flex: none; width: 20px; height: 20px; border-radius: 7px;
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-size: 11px; font-weight: 800; color: #fff;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  background: var(--fire-ink);
   border: 1.5px solid #2d211a; box-shadow: 0 2px 0 #2d211a;
 }
 
@@ -855,7 +883,7 @@ textarea { transition: min-height .15s; }
   content: counter(wls); flex: none; width: 17px; height: 17px; border-radius: 6px;
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-size: 10px; font-weight: 800; color: #fff;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  background: var(--fire-ink);
   border: 1.5px solid #2d211a;
 }
 .wl-feats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.35; }
@@ -863,7 +891,7 @@ textarea { transition: min-height .15s; }
 .wl-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .welcome-cta { font-size: 16px; padding: 12px 18px; }
 .welcome-privacy { font-size: 11px; line-height: 1.5; }
-.welcome-privacy a { color: var(--accent-2); }
+.welcome-privacy a { color: var(--accent-2-ink); }
 
 /* гайд со скриншотами — модалкой поверх */
 .guide-modal { position: fixed; inset: 0; z-index: 50; background: rgba(45,33,26,.55); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 20px 14px; }
@@ -971,7 +999,7 @@ textarea { transition: min-height .15s; }
 }
 .acc-chip.on {
   color: #fff; border-color: #2d211a; box-shadow: 0 2px 0 #2d211a;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  background: var(--fire-ink);
 }
 
 /* витрина тарифов */
@@ -1066,7 +1094,7 @@ textarea { transition: min-height .15s; }
    в белый — вместе с градиентом пропадает и белый текст: под курсором кнопка
    выглядит пустым прямоугольником. Возвращаем градиент явным правилом. */
 button.primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  background: var(--fire-ink);
   filter: brightness(1.06);
 }
 
@@ -1099,7 +1127,7 @@ button.primary:hover:not(:disabled) {
 .lang-switch button:active:not(:disabled) { transform: none; box-shadow: none; }
 .lang-switch button.on,
 .lang-switch button.on:hover:not(:disabled) {
-  color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: #fff; background: var(--fire-ink);
 }
 .lang-switch-center { align-self: center; }
 
@@ -1604,4 +1632,272 @@ button.primary:hover:not(:disabled) {
 .acc-scale-marks button.on i { color: var(--text); }
 @media (max-width: 700px) {
   .acc-scale-marks { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   РЕЖИМЫ, ДВИЖКИ ОБЪЕКТА, СЦЕНАРНЫЕ ДОКУМЕНТЫ, ДАШБОРД КАБИНЕТА
+   Тот же картон и тот же огонь, что и во всей студии: обводка 2px #2d211a,
+   офсет 0 4px 0, шкала отступов 4/8/12/16/24. Ни одного нового цвета —
+   акценты берутся из существующих --accent / --accent-2 / --gold.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ────────── бейдж режима рядом с видом проекта ────────── */
+.mode-badge {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 34px; padding: 0 12px; border-radius: 999px;
+  border: 1.5px solid #2d211a; background: var(--inset);
+  box-shadow: 0 2px 0 #2d211a;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
+  letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+}
+.mode-badge .mode-ico { font-size: 13px; letter-spacing: 0; }
+@media (max-width: 700px) { .mode-badge { height: 30px; padding: 0 10px; } }
+
+/* ────────── ДВИЖКИ ОБЪЕКТА: один выбор на весь трек ──────────
+   Табами, а не выпадающим списком: движков восемь, и цена сцены у них
+   отличается в тридцать раз — выбор такого веса обязан быть виден целиком,
+   а не прятаться за схлопнутым select. */
+.t-engines {
+  margin: 12px 0 4px; padding: 12px;
+  border: 2px solid rgba(45, 33, 26, .18); border-radius: 16px;
+  background: var(--inset);
+}
+.t-engines-head {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.t-engines-head b {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); font-weight: 800;
+}
+.t-engines-head .eng-hint { font-size: 11.5px; color: var(--muted); }
+.eng-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.eng-row > label {
+  margin: 0; min-width: 62px; flex: none;
+}
+.eng-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap; flex: 1; min-width: 0;
+}
+.eng-chip {
+  padding: 6px 11px; border-radius: 999px; white-space: nowrap;
+  font-size: 11.5px; font-weight: 700; line-height: 1;
+  border: 1.5px solid #2d211a; background: var(--card); color: var(--text);
+  box-shadow: 0 2px 0 #2d211a; cursor: pointer;
+}
+.eng-chip:hover:not(:disabled) { background: #fff; }
+.eng-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.eng-chip.on, .eng-chip.on:hover:not(:disabled) {
+  color: var(--on-accent); background: var(--fire-ink);
+}
+.eng-chip .eng-cost {
+  font-family: var(--font-mono); font-size: 9.5px; opacity: .72; margin-left: 5px;
+}
+.eng-chip:disabled { opacity: .4; cursor: default; box-shadow: none; }
+.eng-forecast {
+  margin-top: 10px; font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--muted);
+}
+.eng-forecast b { color: var(--accent-ink); }
+
+/* Карточка кадра: не выбор, а НАСЛЕДОВАНИЕ. Строка «как у объекта», и
+   маленькое «поменять» — чипы раскрываются только по требованию, иначе на
+   треке из тридцати сцен они занимают экран тридцать раз. */
+.s-engine-line {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--muted); margin-top: 4px;
+}
+.s-engine-line .s-engine-name { color: var(--text); font-weight: 700; }
+details.s-engine-override { margin-top: 4px; }
+details.s-engine-override > summary {
+  cursor: pointer; list-style: none; font-size: 11px; color: var(--accent-2-ink);
+  font-weight: 700;
+}
+details.s-engine-override > summary::-webkit-details-marker { display: none; }
+details.s-engine-override[open] > summary { color: var(--muted); }
+details.s-engine-override .eng-tabs { margin-top: 6px; }
+details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
+
+/* ────────── «Добавить объект» — отдельный блок под лентой ──────────
+   Раньше форма жила внутри панели треков и была видна всегда, включая
+   сингл, где второй трек создать нельзя в принципе. */
+.add-track-panel { margin-top: 4px; }
+.add-track-panel .add-track {
+  border: 2px dashed rgba(45, 33, 26, .3); border-radius: 16px;
+  padding: 12px 14px; background: rgba(255, 255, 255, .5);
+}
+.add-track-panel .add-track > summary {
+  cursor: pointer; list-style: none; font-weight: 800; font-size: 13.5px;
+  color: var(--accent-2-ink);
+}
+.add-track-panel .add-track > summary::-webkit-details-marker { display: none; }
+.add-track-panel .add-track[open] > summary { margin-bottom: 10px; color: var(--text); }
+
+/* ────────── сценарные документы (сериал и UGC) ────────── */
+.docs-lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.docs-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.docs-form .docs-idea { flex: 1; min-width: 220px; }
+.docs-form .docs-eps { width: 88px; flex: none; }
+.docs-grid { display: flex; flex-direction: column; gap: 12px; }
+.doc-card {
+  border: 2px solid rgba(45, 33, 26, .2); border-radius: 16px;
+  padding: 12px 14px; background: var(--inset);
+}
+.doc-card.is-busy { border-color: var(--accent-2); }
+.doc-card.is-error { border-color: var(--danger); }
+.doc-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.doc-head b { font-family: var(--font-head); font-size: 14.5px; }
+.doc-head .doc-acts { margin-left: auto; display: flex; gap: 4px; }
+.doc-body {
+  white-space: pre-wrap; font-size: 13px; line-height: 1.5;
+  max-height: 240px; overflow: auto;
+}
+.doc-body.muted { white-space: normal; }
+.doc-card textarea { min-height: 140px; }
+
+/* Поэпизодный план: карточки серий сеткой, а не простынёй текста —
+   по ним видно, где сезон провисает. */
+.ep-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px; margin-top: 8px;
+}
+.ep-card {
+  border: 1.5px solid rgba(45, 33, 26, .25); border-radius: 14px;
+  padding: 10px 12px; background: var(--card); font-size: 12.5px; line-height: 1.45;
+}
+.ep-card b { display: block; font-size: 13px; margin-bottom: 4px; }
+.ep-card .ep-no {
+  font-family: var(--font-mono); font-size: 10px; color: var(--accent-ink);
+  letter-spacing: .08em;
+}
+.ep-card .ep-line { color: var(--muted); margin-top: 4px; }
+.ep-card .ep-line i { font-style: normal; color: var(--text); }
+
+/* Серии группируются по сезонам — заголовок сезона над лентой. */
+.season-head {
+  display: flex; align-items: center; gap: 10px; margin: 18px 0 10px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted); font-weight: 800;
+}
+.season-head::after {
+  content: ""; flex: 1; height: 2px; border-radius: 2px;
+  background: rgba(45, 33, 26, .12);
+}
+.season-head:first-child { margin-top: 0; }
+.ep-badge {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800;
+  padding: 3px 7px; border-radius: 999px; letter-spacing: .06em;
+  border: 1.5px solid #2d211a; background: var(--inset); flex: none;
+}
+/* Акт кадра — метка в углу карточки сцены. */
+.s-act {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.s-speaker { font-size: 11px; font-weight: 700; color: var(--accent-2-ink); }
+
+/* ═══════════════ ДАШБОРД КАБИНЕТА ═══════════════
+   Главная цифра — не тариф, а «сколько я ещё сделаю»: кабинет открывают с
+   вопросом «хватит ли». Поэтому герой один и широкий, а тариф уезжает во
+   второй ярус к остальным трём карточкам. */
+.modal-card.modal-wide { max-width: 720px; }
+.dash-hero {
+  border: 2.5px solid #2d211a; border-radius: 20px; padding: 16px 18px;
+  background: var(--card); box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px #2d211a;
+  margin-bottom: 16px;
+}
+.dash-hero-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.dash-big {
+  font-family: var(--font-head); font-weight: 800; font-size: 40px; line-height: 1;
+  background: var(--fire-ink);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.dash-unit {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); font-weight: 800;
+}
+.dash-hero-lines { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.dash-line { font-size: 13px; color: var(--muted); }
+.dash-line b { color: var(--text); }
+.dash-hero .row { margin-top: 12px; }
+
+.dash-cards {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;
+}
+.dash-card {
+  border: 2px solid rgba(45, 33, 26, .2); border-radius: 16px;
+  padding: 12px 14px; background: var(--inset);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.dash-card > span:first-child {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); font-weight: 800;
+}
+.dash-card b { font-family: var(--font-head); font-size: 19px; line-height: 1.1; }
+.dash-card .dash-sub { font-size: 12px; color: var(--muted); }
+.dash-card button { align-self: flex-start; margin-top: 6px; }
+
+/* График: столбики по дням, сегментированные по виду работы. Абсолютные
+   очки, без процентов — процент от собственного расхода ничего не объясняет. */
+.dash-chart { margin-bottom: 16px; }
+.dash-chart-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.dash-bars {
+  display: flex; align-items: flex-end; gap: 2px; height: 120px;
+  padding: 0 2px 0; border-bottom: 2px solid rgba(45, 33, 26, .18);
+}
+.dash-bar {
+  flex: 1; min-width: 3px; display: flex; flex-direction: column-reverse;
+  border-radius: 3px 3px 0 0; overflow: hidden; min-height: 2px;
+}
+.dash-bar i { display: block; width: 100%; }
+.dash-bar.is-empty { background: rgba(45, 33, 26, .07); height: 2px; }
+.dash-seg-frames { background: var(--gold); }
+.dash-seg-video { background: var(--accent); }
+.dash-seg-chat { background: #7a9bd4; }
+.dash-seg-audio { background: var(--ok); }
+.dash-seg-story { background: var(--accent-2); }
+.dash-seg-sheet { background: #c58bd8; }
+.dash-seg-model { background: #8fd0c0; }
+.dash-seg-assemble { background: #b4a08c; }
+.dash-seg-other { background: rgba(45, 33, 26, .35); }
+.dash-legend {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;
+  font-size: 11.5px; color: var(--muted);
+}
+.dash-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.dash-legend i {
+  width: 10px; height: 10px; border-radius: 3px; display: inline-block;
+  border: 1px solid rgba(45, 33, 26, .3);
+}
+.dash-approx { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+
+.dash-recent { display: flex; flex-direction: column; gap: 2px; }
+.dash-ev {
+  display: flex; align-items: center; gap: 10px; padding: 8px 4px;
+  border-bottom: 1.5px dashed rgba(45, 33, 26, .12); font-size: 12.5px;
+}
+.dash-ev:last-child { border-bottom: none; }
+.dash-ev .dash-ev-kind {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); min-width: 74px; flex: none;
+}
+.dash-ev .dash-ev-what {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dash-ev .dash-ev-delta {
+  font-family: var(--font-mono); font-weight: 800; white-space: nowrap;
+}
+.dash-ev .dash-ev-delta.minus { color: var(--text); }
+.dash-ev .dash-ev-delta.plus { color: var(--ok); }
+.dash-ev .dash-ev-when { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+@media (max-width: 700px) {
+  .dash-cards { grid-template-columns: 1fr; }
+  .dash-big { font-size: 34px; }
+  .dash-ev .dash-ev-kind { min-width: 60px; }
+  .dash-ev .dash-ev-when { display: none; }
+  .eng-row > label { min-width: 0; }
 }

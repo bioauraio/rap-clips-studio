@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="robots" content="noindex, nofollow" />
 <title>qlolvideo — навигация: живой прототип</title>
-<link rel="stylesheet" href="style.css?v=1" />
-<link rel="stylesheet" href="nav.css?v=1" />
+<link rel="stylesheet" href="style.css?v=56" />
+<link rel="stylesheet" href="nav.css?v=56" />
 <style>
   /* Только для демо-страницы: фейковые кадры и мелочи, которых нет в проде. */
   .dm-strip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: thin; }
@@ -151,7 +151,7 @@
   </section>
 </div>
 
-<script src="nav.js?v=1"></script>
+<script src="nav.js?v=56"></script>
 <script>
 /* ────────────────────────────────────────────────────────────────
    Фейковые данные прототипа. Никакого бэкенда: страница открывается
@@ -178,14 +178,17 @@
   /* 8 треков с разной степенью готовности — чтобы точки состояний
      и полоски прогресса в капсулах были не декоративными. */
   var TRACKS = [
-    { id: "1", pos: "1", title: "Интро: гудок",  states: { story:"done", chars:"done", tracks:"done", board:"done", anim:"done",  final:"done"  } },
-    { id: "2", pos: "2", title: "Ночь на связи", states: { story:"done", chars:"done", tracks:"done", board:"done", anim:"done",  final:"done"  } },
-    { id: "3", pos: "3", title: "Рейс",          states: { story:"done", chars:"done", tracks:"done", board:"busy", anim:"part",  final:"empty" } },
-    { id: "4", pos: "4", title: "Седьмой этаж",  states: { story:"done", chars:"done", tracks:"done", board:"part", anim:"empty", final:"empty" } },
-    { id: "5", pos: "5", title: "Дождь по шлему",states: { story:"done", chars:"done", tracks:"done", board:"part", anim:"empty", final:"empty" } },
-    { id: "6", pos: "6", title: "Ошибка адреса", states: { story:"done", chars:"done", tracks:"part", board:"empty",anim:"empty", final:"empty" } },
-    { id: "7", pos: "7", title: "Сдача смены",   states: { story:"done", chars:"done", tracks:"part", board:"error",anim:"empty", final:"empty" } },
-    { id: "8", pos: "8", title: "Заказ себе",    states: { story:"done", chars:"done", tracks:"empty",board:"empty",anim:"empty", final:"empty" } }
+    // states — КЛЮЧИ ПАНЕЛЕЙ карточки трека (setup|board|anim), ровно как их
+    // читает nav.js из живого DOM. Раньше здесь лежали имена шагов клипа
+    // (tracks/story/final), и демо показывало не то, что покажет прод.
+    { id: "1", pos: "1", title: "Интро: гудок",  states: { setup:"done", board:"done", anim:"done"  } },
+    { id: "2", pos: "2", title: "Ночь на связи", states: { setup:"done", board:"done", anim:"done"  } },
+    { id: "3", pos: "3", title: "Рейс",          states: { setup:"done", board:"busy", anim:"part"  } },
+    { id: "4", pos: "4", title: "Седьмой этаж",  states: { setup:"done", board:"part", anim:"empty" } },
+    { id: "5", pos: "5", title: "Дождь по шлему",states: { setup:"done", board:"part", anim:"empty" } },
+    { id: "6", pos: "6", title: "Ошибка адреса", states: { setup:"part", board:"empty",anim:"empty" } },
+    { id: "7", pos: "7", title: "Сдача смены",   states: { setup:"part", board:"error",anim:"empty" } },
+    { id: "8", pos: "8", title: "Заказ себе",    states: { setup:"empty",board:"empty",anim:"empty" } }
   ];
 
   var PROJECTS = [
@@ -245,10 +248,10 @@
 
     // скрытые табы — источник состояний для nav.js на живом приложении
     var tabs = el("div", "stage-tabs");
-    ["setup", "plot", "board", "anim", "final"].forEach(function (k, i) {
+    ["setup", "board", "anim"].forEach(function (k, i) {
       var b = el("button", "stage-tab");
       b.dataset.stage = k;
-      var st = k === "setup" ? t.states.tracks : k === "plot" ? t.states.story : t.states[k];
+      var st = t.states[k] || "empty";
       b.innerHTML = '<span class="st-num">' + (i + 1) + '</span>' + k + '<span class="stage-dot ' + st + '"></span>';
       tabs.appendChild(b);
     });
@@ -267,11 +270,6 @@
       '<label>Аудио</label><div class="dm-kv"><span>3:24</span><span>128 kbps</span><span>bpm 92</span></div>' +
       '</div></div>';
     panes.appendChild(setup);
-
-    var plot = el("div", "stage-pane");
-    plot.dataset.stage = "plot";
-    plot.innerHTML = '<p class="dm-note">Сквозной сюжет живёт на шаге 1 — тут только заметка трека.</p>';
-    panes.appendChild(plot);
 
     var board = el("div", "stage-pane");
     board.dataset.stage = "board";
@@ -307,16 +305,18 @@
     anim.appendChild(arow);
     panes.appendChild(anim);
 
-    var fin = el("div", "stage-pane");
-    fin.dataset.stage = "final";
+    // Готовый клип — НЕ этап, а витрина: в проде это .clip-dock под панелями,
+    // видимая на любом шаге. Держать его пятой панелью значило бы показывать
+    // в демо структуру, которой в приложении нет.
+    var fin = el("div", "clip-dock");
     var fwrap = el("div");
     fwrap.style.cssText = "display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start";
-    var clip = el("div", "dm-clip", t.states.final === "done" ? "▶" : "…");
+    var clip = el("div", "dm-clip", t.states.anim === "done" ? "▶" : "…");
     clip.style.background = GRAD[ti % GRAD.length];
     fwrap.appendChild(clip);
     var side = el("div");
     side.style.cssText = "flex:1 1 220px;min-width:200px";
-    side.innerHTML = '<p class="dm-note">' + (t.states.final === "done"
+    side.innerHTML = '<p class="dm-note">' + (t.states.anim === "done"
       ? "Клип собран: 3:24, 1080×1920, h264."
       : "Клип ещё не собран — сначала закончи анимацию.") + '</p>';
     var frow = el("div", "row");
@@ -325,9 +325,9 @@
     side.appendChild(frow);
     fwrap.appendChild(side);
     fin.appendChild(fwrap);
-    panes.appendChild(fin);
 
     card.appendChild(panes);
+    card.appendChild(fin);
     box.appendChild(card);
   });
 

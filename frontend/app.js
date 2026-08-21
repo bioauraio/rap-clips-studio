@@ -442,7 +442,11 @@ function openModal(title, buildBody, opts = {}) {
   const body = $("#modal-body");
   body.innerHTML = "";
   body.removeAttribute("data-char-id");
-  $("#modal-overlay .modal-card").classList.toggle("wide", Boolean(opts.wide));
+  const cardEl = $("#modal-overlay .modal-card");
+  cardEl.classList.toggle("wide", Boolean(opts.wide));
+  // medium — просто шире обычного (720px). Кабинету нужен график по дням,
+  // а в 600px он превращается в частокол из чёрточек.
+  cardEl.classList.toggle("modal-wide", Boolean(opts.medium));
   buildBody(body);
   $("#modal-overlay").classList.remove("hidden");
   // В Telegram «назад» — системная кнопка клиента, а не наш крестик: свайп
@@ -453,7 +457,7 @@ function openModal(title, buildBody, opts = {}) {
 
 function closeModal() {
   $("#modal-overlay").classList.add("hidden");
-  $("#modal-overlay .modal-card").classList.remove("wide");
+  $("#modal-overlay .modal-card").classList.remove("wide", "modal-wide");
   const body = $("#modal-body");
   body.innerHTML = "";
   body.removeAttribute("data-char-id");
@@ -791,7 +795,7 @@ function openAccountModal(initial = "account") {
     };
     $$(".modal-tab", body).forEach((el) => el.addEventListener("click", () => open(el.dataset.tab)));
     open(start);
-  });
+  }, { medium: true });
 }
 
 // Одна строка правды о подписке: кто списывает, когда следующий раз и, для
@@ -807,14 +811,109 @@ function payLine(a) {
     + (src === "stars" ? " · " + t("account.starsWhere") : "");
 }
 
-// ────────── вкладка «Аккаунт» ──────────
+// ────────── вкладка «Аккаунт»: дашборд ──────────
+// Главный вопрос кабинета — «сколько я ещё сделаю», а не «какой у меня
+// тариф». Поэтому герой один и широкий (остаток + прогноз при нынешнем
+// темпе), а тариф уезжает во второй ярус к расходу и партнёрке.
+//
+// Раньше здесь лежали четыре одинаковые плашки «Тариф / До / Очки / Проекты».
+// Из них выжила одна: «Проекты: 3» не отвечает ни на один вопрос, а «До»
+// дублирует строку оплаты. График строится по journalу очков (PointEvent) —
+// до него история расхода существовала только в логах контейнера.
+
+function dashSpark(usage) {
+  const box = document.createElement("div");
+  box.className = "dash-bars";
+  const days = usage.daily || [];
+  const max = Math.max(1, ...days.map((d) => d.spent || 0));
+  days.forEach((d) => {
+    const bar = document.createElement("div");
+    bar.className = "dash-bar" + (d.spent ? "" : " is-empty");
+    bar.title = `${d.date}: ${tNum(d.spent || 0)}`;
+    if (d.spent) {
+      bar.style.height = Math.max(3, Math.round((d.spent / max) * 118)) + "px";
+      (usage.kinds || []).forEach((k) => {
+        if (!d[k]) return;
+        const seg = document.createElement("i");
+        seg.className = "dash-seg-" + k;
+        seg.style.height = Math.round((d[k] / d.spent) * 100) + "%";
+        bar.appendChild(seg);
+      });
+    }
+    box.appendChild(bar);
+  });
+  return box;
+}
+
+function dashLegend(usage) {
+  const box = document.createElement("div");
+  box.className = "dash-legend";
+  const total = {};
+  (usage.daily || []).forEach((d) => {
+    (usage.kinds || []).forEach((k) => { total[k] = (total[k] || 0) + (d[k] || 0); });
+  });
+  Object.entries(total)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([k, v]) => {
+      const item = document.createElement("span");
+      const dot = document.createElement("i");
+      dot.className = "dash-seg-" + k;
+      item.append(dot, document.createTextNode(`${t("dash.kinds." + k) || k} · ${tNum(v)}`));
+      box.appendChild(item);
+    });
+  return box;
+}
+
+function dashRecent(usage) {
+  const box = document.createElement("div");
+  box.className = "dash-recent";
+  const rows = usage.recent || [];
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("dash.recentEmpty");
+    box.appendChild(empty);
+    return box;
+  }
+  rows.forEach((e) => {
+    const row = document.createElement("div");
+    row.className = "dash-ev";
+    const kind = document.createElement("span");
+    kind.className = "dash-ev-kind";
+    kind.textContent = t("dash.kinds." + e.kind) || e.kind;
+    const what = document.createElement("span");
+    what.className = "dash-ev-what";
+    // Упавшая генерация с возвратом видна отдельной строкой — иначе «молча
+    // съеденные очки» остаются молча съеденными.
+    what.textContent = (e.what || "") + (e.engine ? ` · ${engineTitle(e.engine)}` : "");
+    const when = document.createElement("span");
+    when.className = "dash-ev-when";
+    when.textContent = fmtDate(e.at, true);
+    const delta = document.createElement("span");
+    delta.className = "dash-ev-delta " + (e.delta < 0 ? "minus" : "plus");
+    delta.textContent = (e.delta > 0 ? "+" : "") + tNum(e.delta);
+    row.append(kind, what, when, delta);
+    box.appendChild(row);
+  });
+  return box;
+}
+
 async function renderAccountPane(pane) {
   let a;
   try { a = await api("/api/account"); } catch (e) { return accFail(pane, e); }
+  // Расход — отдельный запрос и НЕ обязательный: журнал мог не завестись на
+  // старой базе, и кабинет обязан открыться всё равно.
+  const usage = await api("/api/account/usage?days=30").catch(() => null);
   const linked = a.linked || {};
   const chips = [["telegram", "Telegram"], ["google", "Google"],
                  ["yandex", t("account.yandex")], ["password", t("account.password")]];
   const initial = (a.name || "?").trim().charAt(0).toUpperCase() || "?";
+  const sceneCost = (providers.frames_cost || 0)
+    + ((videoEngineById(effVideoEngine(null)) || {}).video_cost || 0);
+  const scenesLeft = sceneCost > 0 ? Math.floor((a.points || 0) / sceneCost) : 0;
+  const burn = usage ? usage.burn_day : 0;
+
   pane.innerHTML = `
     <div class="acc-head">
       ${a.avatar_url
@@ -825,23 +924,97 @@ async function renderAccountPane(pane) {
         <span class="muted">${escHtml(a.email || a.login || t("account.noContacts"))}</span>
       </div>
     </div>
-    <div class="acc-stats">
-      <div class="acc-stat"><b>${escHtml(a.plan_title || "FREE")}</b><span>${escHtml(t("account.statPlan"))}</span></div>
-      <div class="acc-stat"><b>${a.plan_until ? escHtml(fmtDate(a.plan_until)) : "—"}</b><span>${escHtml(t("account.statUntil"))}</span></div>
-      <div class="acc-stat"><b>${escHtml(tNum(a.points))}</b><span>${escHtml(t("account.statPoints"))}</span></div>
-      <div class="acc-stat"><b>${escHtml(tNum(a.projects))}</b><span>${escHtml(t("account.statProjects"))}</span></div>
+
+    <div class="dash-hero">
+      <div class="dash-hero-top">
+        <span class="dash-big">${escHtml(tNum(a.points))}</span>
+        <span class="dash-unit">${escHtml(t("top.pointsUnit"))}</span>
+      </div>
+      <div class="dash-hero-lines">
+        <span class="dash-line">${sceneCost > 0
+          ? escHtml(t("dash.enough", { n: tNum(scenesLeft),
+                                       word: tPlural(scenesLeft, tRaw("dash.sceneWord")) }))
+            + (a.movies_left ? " · " + escHtml(t("dash.enoughClips", {
+                n: tNum(a.movies_left),
+                word: tPlural(a.movies_left, tRaw("dash.clipWord")) })) : "")
+          : escHtml(t("dash.leftOf", { n: tNum(a.points) }))}</span>
+        <span class="dash-line">${escHtml(
+          burn > 0 ? t("dash.burn", { n: tNum(burn) }) : t("dash.burnNone"))}</span>
+        <span class="dash-line">${escHtml(
+          usage && usage.forecast_date
+            ? t("dash.forecast", { date: fmtDate(usage.forecast_date) })
+            : t("dash.forecastNever"))}</span>
+      </div>
+      <div class="row dash-hero-acts"></div>
     </div>
-    ${a.plan_note ? `<p class="muted acc-note">${escHtml(a.plan_note)}</p>` : ""}
+
+    <div class="dash-cards">
+      <div class="dash-card">
+        <span>${escHtml(t("dash.plan"))}</span>
+        <b>${escHtml(a.plan_title || t("dash.planFree"))}</b>
+        <span class="dash-sub">${escHtml(payLine(a) || a.plan_note || "")}</span>
+      </div>
+      <div class="dash-card">
+        <span>${escHtml(t("dash.spent30", { n: usage ? usage.days : 30 }))}</span>
+        <b>${escHtml(tNum(usage ? usage.spent : 0))}</b>
+        <!-- Со словом, а не голым «+4 754»: рядом с «потрачено» знак плюса без
+             подписи читается как «потрачено ещё столько же». -->
+        <span class="dash-sub">${escHtml(
+          usage && usage.granted ? t("dash.granted", { n: tNum(usage.granted) }) : "")}</span>
+      </div>
+      <div class="dash-card">
+        <span>${escHtml(t("dash.ref"))}</span>
+        <b>${escHtml(fmtRub((a.ambassador && a.ambassador.balance_kopeks) || 0))}</b>
+        <span class="dash-sub">${escHtml(
+          t("dash.refInvited", { n: tNum((a.ambassador && a.ambassador.referrals) || 0) }))}</span>
+      </div>
+    </div>
+
+    <div class="dash-chart">
+      <div class="dash-chart-head">
+        <label style="margin:0">${escHtml(t("dash.chart"))}</label>
+      </div>
+    </div>
+
+    <label>${escHtml(t("dash.recent"))}</label>
+    <div class="dash-recent-box"></div>
+
     <label>${escHtml(t("account.logins"))}</label>
     <div class="acc-chips">
-      ${chips.map(([k, t]) => `<span class="acc-chip${linked[k] ? " on" : ""}">${linked[k] ? "✓" : "○"} ${t}</span>`).join("")}
+      ${chips.map(([k, label]) => `<span class="acc-chip${linked[k] ? " on" : ""}">${linked[k] ? "✓" : "○"} ${escHtml(label)}</span>`).join("")}
     </div>
     <!-- Кнопки привязать вход: без них человек с одним внешним входом
          навсегда оставался бы заперт в одном способе входа. -->
     <div class="auth-buttons acc-link"></div>
-    ${payLine(a) ? `<p class="muted acc-note">${escHtml(payLine(a))}</p>` : ""}
     <div class="row acc-actions"></div>
     <span class="acc-msg status"></span>`;
+
+  const chart = $(".dash-chart", pane);
+  if (usage && usage.spent) {
+    chart.append(dashSpark(usage), dashLegend(usage));
+    if (usage.approx_before) {
+      const note = document.createElement("p");
+      note.className = "dash-approx muted";
+      note.textContent = t("dash.approx", { date: fmtDate(usage.approx_before) });
+      chart.appendChild(note);
+    }
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("dash.chartEmpty");
+    chart.appendChild(empty);
+  }
+  $(".dash-recent-box", pane).appendChild(dashRecent(usage || {}));
+
+  // Герой ведёт в кассу: это единственное действие, ради которого сюда
+  // приходят, когда очки кончаются. Огонь — только на нём.
+  const heroActs = $(".dash-hero-acts", pane);
+  const topup = document.createElement("button");
+  topup.type = "button";
+  topup.className = "primary";
+  topup.textContent = t("dash.topup");
+  topup.addEventListener("click", () => openAccountModal("plan"));
+  heroActs.appendChild(topup);
 
   renderAuthButtons($(".acc-link", pane), { mode: "link", linked });
 
@@ -1374,6 +1547,105 @@ let project = null;
 let projects = [];
 let activeProjectId = Number(localStorage.getItem("rc_project") || 0) || null;
 let providers = { video: ["grok"], seedance: false };
+
+// ═══════════════════════════ РЕЖИМЫ (КЛИЕНТ) ═══════════════════════════
+// Реестр приезжает с сервера (GET /api/modes → backend/formats.py) и НЕ
+// дублируется здесь: вторая копия таблицы «какой вид проекта в каком режиме»
+// однажды разъедется с первой, и разъедется молча. Здесь только подписи из
+// словаря и то, что из реестра рисуется.
+//
+// Режим = project.kind. Отдельного переключателя режимов нет намеренно:
+// режим выбирается один раз, в момент создания проекта, и меняться потом не
+// может — сериал не превращается в клип, у них разные объекты второго уровня.
+
+let modesCatalog = null;
+let modesPromise = null;
+
+async function loadModes(force) {
+  if (!force && modesCatalog) return modesCatalog;
+  if (modesPromise && !force) return modesPromise;
+  modesPromise = api(`/api/modes?lang=${encodeURIComponent(LANG)}`)
+    .then((d) => { modesCatalog = d; return d; })
+    .catch(() => {
+      // Реестр не приехал: работаем как клип и БОЛЬШЕ НЕ ДЁРГАЕМСЯ. Без этой
+      // записи modesCatalog остался бы null, и поллинг (раз в 3 секунды, пока
+      // что-то генерится) бил бы в /api/modes бесконечно.
+      modesCatalog = { modes: [], kinds: ["album", "single", "ugc", "series"] };
+      return modesCatalog;
+    })
+    .finally(() => { modesPromise = null; });
+  return modesPromise;
+}
+
+const CLIP_FALLBACK = {
+  id: "clip", object: "track", needs_audio: true, needs_lyrics: true,
+  format_catalog: "clip", docs: [], track_docs: [], group_by: "",
+  scenes: { min: 12, typ: 30, max: 45, slot: [2, 10] }, formats: [], steps: [],
+};
+
+function modeById(id) {
+  const list = (modesCatalog && modesCatalog.modes) || [];
+  return list.find((m) => m.id === id) || (id === "clip" ? CLIP_FALLBACK : null);
+}
+
+/* Режим ОТКРЫТОГО проекта. Пока /api/modes не приехал — клип: он умеет всё,
+   что умели проекты до появления режимов, и ничего не ломает. */
+function curMode() {
+  return modeById((project && project.mode) || "clip") || CLIP_FALLBACK;
+}
+
+function modeOfKind(kind) {
+  const list = (modesCatalog && modesCatalog.modes) || [];
+  return list.find((m) => (m.kinds || []).includes(kind)) || CLIP_FALLBACK;
+}
+
+/* Как называется объект второго уровня: трек / ролик / серия. */
+function objT(sub, mode) {
+  const m = mode || curMode();
+  return t(`modes.object.${m.object || "track"}.${sub}`);
+}
+
+function modeFormats(mode) { return ((mode || curMode()).formats) || []; }
+
+function formatLabel(mode, key) {
+  const f = modeFormats(mode).find((x) => x.key === key);
+  if (!f) return "";
+  return typeof f.label === "string" ? f.label : (f.label && (f.label[LANG] || f.label.en)) || key;
+}
+
+function kindLabel(kind) {
+  return t({ single: "top.kindSingle", ugc: "top.kindUgc", series: "top.kindSeries" }[kind]
+           || "top.kindAlbum");
+}
+
+/* Можно ли добавить ещё один объект. Сингл — ровно один трек, и форму
+   «добавить» надо не блокировать, а убирать: заблокированная кнопка,
+   которая никогда не разблокируется, — это мусор на экране. */
+function canAddObject() {
+  if (!project) return false;
+  return !(project.kind === "single" && (project.tracks || []).length >= 1);
+}
+
+// ────────── сценарные документы ──────────
+// Один вид документа = одна строка project.docs. Ручная правка обязательна:
+// модель ошибается в именах и мелочах мира, а перегенерировать сезон ради
+// одной фразы — это заново платить за весь текст.
+
+function docsOf(scope) {
+  const all = (project && project.docs) || [];
+  return scope === "project" ? all.filter((d) => !d.track_id) : all;
+}
+
+function docBy(kind, trackId) {
+  return ((project && project.docs) || []).find(
+    (d) => d.kind === kind && (trackId ? d.track_id === trackId : !d.track_id)) || null;
+}
+
+function docsBusy() {
+  return ((project && project.docs) || [])
+    .some((d) => d.status === "queued" || d.status === "running");
+}
+
 let pollTimer = null;
 
 async function loadProject() {
@@ -1390,6 +1662,7 @@ async function loadProject() {
   if (!providers.loaded) {
     providers = { ...(await api("/api/providers")), loaded: true };
   }
+  await loadModes();
   // До отрисовки: автосборка может поставить клип в очередь, и карточка
   // должна показать это сразу, а поллер — не погаснуть.
   await autoAssembleTick();
@@ -1407,10 +1680,27 @@ function renderProjectBar() {
     const o = document.createElement("option");
     o.value = p.id;
     o.textContent = p.name;
+    // Вид проекта прямо в option: навигация (nav.js) читает режим отсюда и
+    // не заводит второй копии списка проектов.
+    o.dataset.kind = p.kind || "album";
+    o.dataset.mode = p.mode || "clip";
     if (p.id === activeProjectId) o.selected = true;
     sel.appendChild(o);
   }
-  $("#project-kind").textContent = t(project.kind === "single" ? "top.kindSingle" : "top.kindAlbum");
+  $("#project-kind").textContent = kindLabel(project.kind);
+  // Режим — не второй вид проекта, а его прочтение: album/single читаются как
+  // «rap clips». Бейдж стоит рядом с видом, чтобы «сингл» не выглядел режимом.
+  const modeEl = $("#project-mode");
+  const m = curMode();
+  modeEl.innerHTML = "";
+  const ico = document.createElement("span");
+  ico.className = "mode-ico";
+  ico.textContent = m.icon || "🎬";
+  const cap = document.createElement("span");
+  cap.textContent = t(`modes.${m.id}.title`);
+  modeEl.append(ico, cap);
+  modeEl.title = t(`modes.${m.id}.full`);
+  modeEl.classList.remove("hidden");
   const coverImg = $("#project-cover-img");
   if (project.cover_url) {
     coverImg.src = project.cover_url;
@@ -1433,13 +1723,16 @@ $("#new-project-btn").addEventListener("click", () => {
       <label>${escHtml(t("modal.newProject.nameLabel"))}</label>
       <input class="np-name" placeholder="${escHtml(t("modal.newProject.namePh"))}" />
       <label>${escHtml(t("modal.newProject.kindLabel"))}</label>
+      <!-- Вид проекта И ЕСТЬ режим: album/single читаются как rap clips, ugc —
+           канал блогера, series — сериал. Отдельного переключателя режимов
+           нет намеренно: режим выбирается один раз и потом не меняется —
+           сериал не превращается в клип, у них разные объекты. -->
       <div class="kind-cards">
-        <button type="button" class="kind-card on" data-kind="album">
-          <b>${escHtml(t("modal.newProject.album"))}</b><span class="muted">${escHtml(t("modal.newProject.albumNote"))}</span>
-        </button>
-        <button type="button" class="kind-card" data-kind="single">
-          <b>${escHtml(t("modal.newProject.single"))}</b><span class="muted">${escHtml(t("modal.newProject.singleNote"))}</span>
-        </button>
+        ${[["album", "album", "albumNote"], ["single", "single", "singleNote"],
+           ["ugc", "ugc", "ugcNote"], ["series", "series", "seriesNote"]]
+          .map(([k, lab, note], i) => `<button type="button" class="kind-card${i ? "" : " on"}" data-kind="${k}">
+          <b>${escHtml(t("modal.newProject." + lab))}</b><span class="muted">${escHtml(t("modal.newProject." + note))}</span>
+        </button>`).join("")}
       </div>
       <label>${escHtml(t("modal.newProject.coverLabel"))}</label>
       <label class="cover-drop">
@@ -1542,6 +1835,9 @@ function schedulePoll() {
   clearTimeout(pollTimer);
   const busy =
     project.story_status === "queued" || project.story_status === "running" ||
+    // Сценарные документы живут в том же ответе /api/project и имеют тот же
+    // status/error — отдельного поллера им не нужно.
+    docsBusy() ||
     project.tracks.some(
       (t) => ["queued", "running"].includes(t.scenes_status) ||
         ["queued", "running"].includes(t.storyboard_status) ||
@@ -1654,8 +1950,53 @@ function statusLabel(status, doneWord) {
   return { text: "", cls: "" };
 }
 
+/* Какие панели видит режим. Панель сюжета — только у клипа: у сериала её
+   место занимает библия сезона, у UGC — персона блогера, и держать оба
+   блока на экране значило бы предлагать написать сюжет дважды. */
+function applyMode() {
+  const m = curMode();
+  const storyPanel = $("#story").closest(".panel");
+  const docsPanel = $("#docs-panel");
+  const isClip = m.id === "clip";
+  storyPanel.classList.toggle("hidden", !isClip);
+  docsPanel.classList.toggle("hidden", isClip);
+  $("#tracks-title").textContent = objT("many", m);
+  // Заголовок персонажей тоже режимный: «Персонажи альбома» над сквозными
+  // героями сериала читается как чужая надпись из другого приложения.
+  const charsTitle = $("[data-i18n='chars.title']");
+  if (charsTitle) charsTitle.textContent = objT("chars", m) || t("chars.title");
+  const addPanel = $("#add-track-panel");
+  addPanel.classList.toggle("hidden", !canAddObject());
+  const summary = $("#add-track-panel .add-track > summary");
+  if (summary) summary.textContent = objT("add", m);
+  // Лирика и аудио — свойства клипа: у ролика реплики пишет генератор, у
+  // серии их пишет сценарий. Показывать пустые поля «текст песни» в сериале
+  // значит предлагать заполнить то, что никуда не пойдёт.
+  const form = $("#add-track-form");
+  if (form) {
+    form.lyrics.classList.toggle("hidden", !m.needs_lyrics);
+    form.audio.classList.toggle("hidden", !m.needs_audio);
+    const fw = $("#add-format-wrap");
+    const fsel = $("#add-format");
+    const list = modeFormats(m);
+    fw.classList.toggle("hidden", !list.length);
+    if (list.length && fsel.dataset.mode !== m.id) {
+      fsel.dataset.mode = m.id;
+      fsel.innerHTML = "";
+      list.forEach((f) => {
+        const o = document.createElement("option");
+        o.value = f.key;
+        o.textContent = formatLabel(m, f.key);
+        fsel.appendChild(o);
+      });
+    }
+  }
+}
+
 function render() {
   renderProjectBar();
+  applyMode();
+  renderDocs();
   $("#project-name").value = project.name;
   $("#character-bible").value = project.character_bible;
   $("#story").value = project.story;
@@ -1687,8 +2028,216 @@ function render() {
 
   const container = $("#tracks");
   container.innerHTML = "";
-  project.tracks.forEach((tr) => container.appendChild(renderTrack(tr)));
+  const mode = curMode();
+  if (mode.group_by === "season_no") {
+    // Сезон — не таблица, а колонка Track.season_no: группировка живёт здесь,
+    // в отрисовке. Заводить ради номера отдельную сущность значило бы менять
+    // внешний ключ у самой горячей таблицы проекта.
+    const seasons = [...new Set(project.tracks.map((tr) => tr.season_no || 0))]
+      .sort((a, b) => a - b);
+    seasons.forEach((n) => {
+      const head = document.createElement("div");
+      head.className = "season-head";
+      head.textContent = n ? t("modes.season", { n }) : objT("many", mode);
+      container.appendChild(head);
+      project.tracks.filter((tr) => (tr.season_no || 0) === n)
+        .forEach((tr) => container.appendChild(renderTrack(tr)));
+    });
+  } else {
+    project.tracks.forEach((tr) => container.appendChild(renderTrack(tr)));
+  }
+  if (!project.tracks.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = objT("empty", mode);
+    container.appendChild(empty);
+  }
 }
+
+
+// ═══════════════ СЦЕНАРНЫЕ ДОКУМЕНТЫ: сезонный слой ═══════════════
+// Панель одна на два режима: у сериала это библия сезона + поэпизодный план,
+// у UGC — персона блогера + формула локации. Разводит их только список видов
+// документов из реестра режима, а не две отдельные панели: рисование,
+// правка, статусы и поллинг у них общие.
+
+function docTitle(kind) { return t("docs." + kind) || kind; }
+
+function docCard(doc, kind) {
+  const card = document.createElement("div");
+  card.className = "doc-card";
+  const busy = doc && (doc.status === "queued" || doc.status === "running");
+  if (busy) card.classList.add("is-busy");
+  if (doc && doc.status === "error") card.classList.add("is-error");
+
+  const head = document.createElement("div");
+  head.className = "doc-head";
+  const name = document.createElement("b");
+  name.textContent = docTitle(kind);
+  const status = document.createElement("span");
+  const st = statusLabel(doc ? doc.status : "");
+  status.className = "status " + st.cls;
+  status.textContent = doc && doc.status === "error" ? (doc.error || st.text) : st.text;
+  const acts = document.createElement("div");
+  acts.className = "doc-acts";
+  head.append(name, status, acts);
+  card.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "doc-body" + (doc && doc.body ? "" : " muted");
+  body.textContent = (doc && doc.body) || t("docs.empty");
+  card.appendChild(body);
+
+  // Поэпизодный план — сетка карточек, а не простыня: по ней сразу видно,
+  // где сезон провисает и какая серия ничем не заканчивается.
+  if (kind === "beatsheet" && doc && doc.data && (doc.data.episodes || []).length) {
+    body.classList.add("hidden");
+    const grid = document.createElement("div");
+    grid.className = "ep-grid";
+    (doc.data.episodes || []).forEach((r, i) => {
+      const c = document.createElement("div");
+      c.className = "ep-card";
+      const no = document.createElement("span");
+      no.className = "ep-no";
+      no.textContent = t("modes.episodeNo", { n: r.no || i + 1 });
+      const title = document.createElement("b");
+      title.textContent = r.title || "";
+      c.append(no, title);
+      [["event", r.event], ["changes", r.changes], ["cliffhanger", r.cliffhanger]]
+        .forEach(([, val]) => {
+          if (!val) return;
+          const line = document.createElement("div");
+          line.className = "ep-line";
+          line.textContent = val;
+          c.appendChild(line);
+        });
+      grid.appendChild(c);
+    });
+    card.appendChild(grid);
+  }
+
+  if (!busy) {
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = t("docs.edit");
+    edit.addEventListener("click", () => openDocEditor(kind, doc));
+    acts.appendChild(edit);
+  }
+  return card;
+}
+
+function openDocEditor(kind, doc) {
+  openModal(docTitle(kind), (box) => {
+    const ta = document.createElement("textarea");
+    ta.rows = 14;
+    ta.value = (doc && doc.body) || "";
+    const row = document.createElement("div");
+    row.className = "row";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "primary";
+    save.textContent = t("docs.save");
+    const msg = document.createElement("span");
+    msg.className = "status";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      msg.textContent = t("common.saving");
+      try {
+        await api(`/api/projects/${activeProjectId}/docs`, {
+          method: "POST",
+          body: { kind, body: ta.value, track_id: (doc && doc.track_id) || 0 },
+        });
+        closeModal();
+        await loadProject();
+      } catch (e) {
+        save.disabled = false;
+        msg.textContent = errText(e);
+        msg.className = "status error";
+      }
+    });
+    row.append(save, msg);
+    box.append(ta, row);
+    ta.focus();
+  });
+}
+
+function renderDocs() {
+  const panel = $("#docs-panel");
+  if (panel.classList.contains("hidden")) return;
+  const mode = curMode();
+  $("#docs-title").textContent = t(`modes.${mode.id}.full`);
+  $("#docs-lead").textContent = mode.id === "series" ? t("docs.seriesHint") : t("docs.ugcHint");
+  const isSeries = mode.id === "series";
+  $("#docs-eps-wrap").classList.toggle("hidden", !isSeries);
+
+  const busy = docsBusy();
+  const bibleBtn = $("#docs-gen-bible");
+  bibleBtn.textContent = busy ? t("docs.genBibleBusy")
+    : (isSeries ? t("docs.genBibleSeries") : t("docs.genBibleUgc"));
+  bibleBtn.disabled = busy;
+
+  const sheetBtn = $("#docs-gen-sheet");
+  const epsBtn = $("#docs-make-eps");
+  sheetBtn.classList.toggle("hidden", !isSeries);
+  epsBtn.classList.toggle("hidden", !isSeries);
+  if (isSeries) {
+    const hasBible = Boolean(docBy("logline"));
+    const sheet = docBy("beatsheet");
+    sheetBtn.textContent = t("docs.genBeatsheet");
+    sheetBtn.disabled = busy || !hasBible;
+    sheetBtn.title = hasBible ? "" : t("docs.needBible");
+    epsBtn.textContent = t("docs.createEpisodes");
+    epsBtn.disabled = busy || !(sheet && sheet.data && (sheet.data.episodes || []).length);
+    epsBtn.title = epsBtn.disabled ? t("docs.needSheet") : "";
+  }
+
+  const grid = $("#docs-grid");
+  grid.innerHTML = "";
+  // Порядок карточек — из реестра режима; «location» у UGC дописываем следом
+  // за персоной: это второй обязательный дословный блок, а не мелочь.
+  const kinds = (mode.docs || []).slice();
+  if (mode.id === "ugc" && !kinds.includes("location")) kinds.push("location");
+  kinds.forEach((kind) => grid.appendChild(docCard(docBy(kind), kind)));
+}
+
+function docsMsg(text, cls = "") {
+  const el = $("#docs-status");
+  el.textContent = text;
+  el.className = "status " + cls;
+}
+
+$("#docs-gen-bible").addEventListener("click", async () => {
+  const body = { idea: $("#docs-idea").value.trim() };
+  if (curMode().id === "series") body.episodes = Number($("#docs-eps").value) || 8;
+  docsMsg(t("docs.genBibleBusy"));
+  try {
+    await api(`/api/projects/${activeProjectId}/generate-bible`, { method: "POST", body });
+    docsMsg("");
+  } catch (e) { docsMsg(errText(e), "error"); }
+  await loadProject();
+});
+
+$("#docs-gen-sheet").addEventListener("click", async () => {
+  docsMsg(t("docs.genBibleBusy"));
+  try {
+    await api(`/api/projects/${activeProjectId}/generate-beatsheet`, {
+      method: "POST", body: { episodes: Number($("#docs-eps").value) || 8 },
+    });
+    docsMsg("");
+  } catch (e) { docsMsg(errText(e), "error"); }
+  await loadProject();
+});
+
+$("#docs-make-eps").addEventListener("click", async () => {
+  try {
+    const r = await api(`/api/projects/${activeProjectId}/create-episodes`, {
+      method: "POST", body: { season_no: 1 },
+    });
+    docsMsg(r.created ? t("docs.createdEpisodes", { n: r.created }) : t("docs.createdNone"),
+            r.created ? "done" : "");
+  } catch (e) { docsMsg(errText(e), "error"); }
+  await loadProject();
+});
 
 // ────────── степпер трека: 3 этапа, никакой автогенерации при переключении ──────────
 // Ключи этапов; подписи — в словаре (stages.*), чтобы степпер переводился.
@@ -1730,6 +2279,18 @@ function defaultStage(tr) {
 // (в trackStages может лежать ключ, которого уже нет) — иначе трек откроется
 // без единой видимой панели.
 function activeStage(tr) {
+  // Когда включён верстак (nav.js), активный этап знает ОН: у app.js и у
+  // навигации иначе получаются два источника правды об одном и том же, и
+  // после каждого опроса render() возвращал бы свой этап, а MutationObserver
+  // через 30 мс — навовский. Видимое мигание раз в цикл поллинга.
+  const nav = window.QlolNav;
+  if (nav && nav.state && document.body.classList.contains("wb-on")) {
+    const def = (nav.MODES || [])
+      .filter((m) => m.id === nav.state.mode)
+      .flatMap((m) => m.steps || [])
+      .find((x) => x.id === nav.state.step);
+    if (def && STAGES.includes(def.pane)) return def.pane;
+  }
   const cur = trackStages.get(tr.id);
   return STAGES.includes(cur) ? cur : defaultStage(tr);
 }
@@ -1745,6 +2306,209 @@ function bindStrip(wrap) {
   const step = () => Math.max(280, Math.round(box.clientWidth * 0.8));
   $(".strip-prev", wrap).addEventListener("click", () => box.scrollBy({ left: -step(), behavior: "smooth" }));
   $(".strip-next", wrap).addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
+}
+
+
+// ═══════════ ДВИЖКИ ОБЪЕКТА: один выбор на трек, а не на кадр ═══════════
+// Владелец просил ровно это: «выбирать не надо в каждом кадре, всё табами и
+// на весь видос». Раньше чипы движка рисовались в КАЖДОЙ карточке кадра
+// (тридцать наборов по восемь), нигде не сохранялись — клик менял только
+// dataset в DOM, который следующий же опрос стирал, — и кнопки «все кадры» /
+// «все видео» звали роут вообще без параметров, то есть выбор игнорировали
+// всегда. Теперь выбор живёт на треке (tracks.video_engine/image_engine),
+// а карточка кадра его наследует.
+
+function liveImageEngines() {
+  return (providers.image_engines || []).filter((e) => e.live !== false);
+}
+function liveVideoEngines() {
+  return (providers.video_engines || []).filter((e) => e.live !== false);
+}
+
+/* Что реально поедет в генерацию: выбор объекта, иначе дефолт тарифа. */
+function effImageEngine(tr) {
+  const list = liveImageEngines();
+  const want = (tr && tr.image_engine) || "";
+  if (want && list.some((e) => e.id === want)) return want;
+  const cur = list.find((e) => e.current) || list[0];
+  return cur ? cur.id : "";
+}
+function effVideoEngine(tr) {
+  const list = liveVideoEngines();
+  const want = (tr && tr.video_engine) || "";
+  if (want && list.some((e) => e.id === want)) return want;
+  const def = list.find((e) => e.default) || list[0];
+  return def ? def.id : "";
+}
+function imageEngineById(id) { return liveImageEngines().find((e) => e.id === id) || null; }
+function videoEngineById(id) { return liveVideoEngines().find((e) => e.id === id) || null; }
+
+function engineTitle(id) {
+  const e = imageEngineById(id) || videoEngineById(id);
+  return e ? e.title : id;
+}
+
+/* Одна лента чипов. value === "" — «по тарифу»: выбор должно быть можно не
+   только сделать, но и снять, иначе первый же клик становится вечным. */
+function buildEngineTabs(box, list, current, costOf, onPick) {
+  box.innerHTML = "";
+  const mk = (id, title, cost) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "eng-chip" + (id === current ? " on" : "");
+    chip.dataset.engine = id;
+    chip.textContent = title;
+    if (cost != null) {
+      const c = document.createElement("span");
+      c.className = "eng-cost";
+      c.textContent = cost;
+      chip.appendChild(c);
+    }
+    chip.addEventListener("click", () => onPick(id));
+    box.appendChild(chip);
+    return chip;
+  };
+  mk("", t("engines.auto"), null).title = t("engines.autoNote");
+  list.forEach((e) => {
+    const chip = mk(e.id, e.title, costOf(e));
+    chip.title = e.note || e.title;
+  });
+}
+
+function renderTrackEngines(card, tr) {
+  const box = $(".t-engines", card);
+  if (!box) return;
+  const mode = curMode();
+  $(".eng-hint", box).textContent = t("engines.hint", { object: objT("one", mode) });
+
+  const imgList = liveImageEngines();
+  const vidList = liveVideoEngines();
+  const save = async (patch) => {
+    try {
+      await api(`/api/tracks/${tr.id}`, { method: "PATCH", body: patch });
+      Object.assign(tr, patch);
+      renderTrackEngines(card, tr);
+      // Карточки кадров показывают наследование — их строку тоже освежаем.
+      $$(".scene-card", card).forEach((sc) => {
+        const line = $(".s-engine-line", sc);
+        if (line) paintSceneEngineLine(line, tr, Number(sc.dataset.id));
+      });
+    } catch (e) { fail(e); }
+  };
+
+  buildEngineTabs($(".t-img-engines", box), imgList, tr.image_engine || "",
+                  (e) => e.frames_cost, (id) => save({ image_engine: id }));
+  buildEngineTabs($(".t-vid-engines", box), vidList, tr.video_engine || "",
+                  (e) => e.scene_cost, (id) => save({ video_engine: id }));
+
+  // Прогноз на весь объект, а не на кадр: цена сцены отличается в тридцать
+  // раз между Grok и Seedance 2.5, и решение принимается по итогу за трек.
+  const img = imageEngineById(effImageEngine(tr));
+  const vid = videoEngineById(effVideoEngine(tr));
+  const scenes = tr.scenes_count || (mode.scenes && mode.scenes.typ) || 30;
+  const per = (img ? img.frames_cost : 0) + (vid ? vid.video_cost : 0);
+  const fc = $(".eng-forecast", box);
+  fc.innerHTML = "";
+  if (per > 0) {
+    fc.appendChild(document.createTextNode(
+      t("engines.forecast", { scenes, cost: per, total: tNum(scenes * per) })));
+  }
+}
+
+/* Строка «как у объекта · Seedance 2 Mini» в карточке кадра.
+   Показывает то, что РЕАЛЬНО поедет в следующую генерацию, а не то, чем
+   сцену сняли в прошлый раз: прежний чип подсвечивал именно прошлое и
+   поэтому всегда врал после смены движка на треке. Чем сняли — в подсказке. */
+function paintSceneEngineLine(line, tr, sceneId) {
+  const s = (tr.scenes || []).find((x) => x.id === sceneId);
+  const eff = videoEngineById(effVideoEngine(tr));
+  line.innerHTML = "";
+  const cap = document.createElement("span");
+  cap.className = "s-engine-name";
+  cap.textContent = t("engines.inherit", { object: objT("one") });
+  line.appendChild(cap);
+  if (eff) {
+    const note = document.createElement("span");
+    note.textContent = "· " + eff.title;
+    line.appendChild(note);
+  }
+  const made = s && (s.video_engine || s.image_engine);
+  if (made) line.title = engineTitle(made);
+}
+
+
+/* Поля режимов «сериалы» и «UGC» на этапе «Настройка». У клипа блок скрыт
+   целиком: сезона, акта и формулы локации у него нет, и пустые поля здесь
+   были бы предложением заполнить то, что никуда не поедет. */
+function renderTrackModeFields(card, tr) {
+  const box = $(".t-mode-fields", card);
+  if (!box) return;
+  const mode = curMode();
+  const isClip = mode.id === "clip";
+  box.classList.toggle("hidden", isClip);
+  if (isClip) return;
+
+  const isSeries = mode.id === "series";
+  $(".t-season-wrap", card).classList.toggle("hidden", !isSeries);
+  $(".t-episode-wrap", card).classList.toggle("hidden", !isSeries);
+  $(".t-location-wrap", card).classList.toggle("hidden", isSeries);
+  $(".t-script-wrap", card).classList.toggle("hidden", !isSeries);
+
+  const patch = async (body) => {
+    try {
+      await api(`/api/tracks/${tr.id}`, { method: "PATCH", body });
+      Object.assign(tr, body);
+    } catch (e) { fail(e); }
+  };
+
+  const fsel = $(".t-format", card);
+  fsel.innerHTML = "";
+  modeFormats(mode).forEach((f) => {
+    const o = document.createElement("option");
+    o.value = f.key;
+    o.textContent = formatLabel(mode, f.key);
+    o.title = typeof f.logline === "string" ? f.logline : "";
+    fsel.appendChild(o);
+  });
+  fsel.value = tr.format_key || "";
+  fsel.addEventListener("change", () => patch({ format_key: fsel.value }));
+
+  if (isSeries) {
+    const se = $(".t-season", card);
+    const ep = $(".t-episode", card);
+    se.value = tr.season_no || 0;
+    ep.value = tr.episode_no || 0;
+    se.addEventListener("change", () => patch({ season_no: Number(se.value) || 0 }));
+    ep.addEventListener("change", () => patch({ episode_no: Number(ep.value) || 0 }));
+
+    // Сценарий серии живёт документом (docs, kind="script", track_id) и
+    // ОБЯЗАТЕЛЕН до разбивки на кадры: без него разбивка выдумывает сюжет
+    // заново и расходится с поэпизодным планом.
+    const doc = docBy("script", tr.id);
+    const btn = $(".t-gen-script", card);
+    const st = $(".t-script-status", card);
+    const bodyEl = $(".t-script-body", card);
+    const busy = doc && (doc.status === "queued" || doc.status === "running");
+    btn.textContent = busy ? t("docs.genScriptBusy") : t("docs.genScript");
+    btn.disabled = Boolean(busy) || !docBy("logline");
+    btn.title = docBy("logline") ? "" : t("docs.needBible");
+    const lab = statusLabel(doc ? doc.status : "");
+    st.textContent = doc && doc.status === "error" ? (doc.error || lab.text) : lab.text;
+    st.className = "status t-script-status " + lab.cls;
+    bodyEl.textContent = (doc && doc.body) || t("docs.needScript");
+    bodyEl.className = "t-script-body doc-body" + (doc && doc.body ? "" : " muted");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/tracks/${tr.id}/generate-script`, { method: "POST" });
+      } catch (e) { fail(e); }
+      await loadProject();
+    });
+  } else {
+    const loc = $(".t-location", card);
+    loc.value = tr.location_bible || "";
+    loc.addEventListener("change", () => patch({ location_bible: loc.value }));
+  }
 }
 
 function renderTrack(tr) {
@@ -1830,6 +2594,9 @@ function renderTrack(tr) {
       await api(`/api/tracks/${tr.id}/style`, { method: "POST", body: { style_keys: keys } });
     } catch (e) { fail(e); }
   });
+  // ── движки объекта и поля режима ──
+  renderTrackEngines(card, tr);
+  renderTrackModeFields(card, tr);
   $(".t-comment", card).value = tr.comment;
   $(".t-grain", card).checked = Boolean(tr.film_grain);
   $(".t-nostory", card).checked = Boolean(tr.no_story);
@@ -1840,6 +2607,29 @@ function renderTrack(tr) {
   const durEl = $(".t-duration", card);
   durEl.textContent = tr.audio_duration_sec ? fmtTime(tr.audio_duration_sec) : "";
   if (tr.audio_profile) durEl.title = t("track.audioProfile") + ": " + tr.audio_profile;
+
+  // Лирика и аудио — свойства КЛИПА, и режим уже знает это (needs_lyrics,
+  // needs_audio). До этого гейт стоял только на форме «добавить объект», а в
+  // карточке серии всё равно висели «Текст песни» и загрузка дорожки: поля,
+  // которые никуда не поедут (серию режет сценарий, ролик — генератор).
+  // Значения не стираем — прячем: у серии, заведённой как клип, лирика
+  // остаётся в базе и вернётся, если проект снова станет клипом.
+  const trMode = curMode();
+  const gate = (sel, on) => {
+    const el = $(sel, card);
+    if (el) el.classList.toggle("hidden", !on);
+  };
+  gate(".t-lyrics-label", trMode.needs_lyrics);
+  gate(".t-lyrics", trMode.needs_lyrics);
+  gate(".t-audio-label", trMode.needs_audio);
+  gate(".t-duration", trMode.needs_audio);
+  // «Без сюжета (рандомные кадры)» — обход раскадровки по дорожке, у серии и
+  // ролика обходить нечего.
+  gate(".t-nostory-wrap", trMode.needs_audio);
+  if (!trMode.needs_audio) audioEl.style.display = "none";
+  $(".save-track", card).textContent = objT("save", trMode) || t("track.saveTrack");
+  const styleLab = $(".stage-pane[data-stage=\"setup\"] > label", card);
+  if (styleLab) styleLab.textContent = objT("style", trMode) || t("track.styleLabel");
 
   // Плеер трека сам подсвечивает кадр, который сейчас звучит — и наоборот,
   // клик по кадру перематывает трек на его начало и проигрывает.
@@ -1863,7 +2653,10 @@ function renderTrack(tr) {
   $(".all-frames-note", card).textContent = framesBusy ? t("track.allFramesNote") : "";
   allBtn.addEventListener("click", async () => {
     try {
-      await api(`/api/tracks/${tr.id}/generate-all-frames`, { method: "POST" });
+      // Движок передаём ЯВНО. Раньше кнопка звала роут без параметров, и
+      // любой выбор в интерфейсе для пакетной генерации не значил ничего.
+      const eng = encodeURIComponent(effImageEngine(tr));
+      await api(`/api/tracks/${tr.id}/generate-all-frames?engine=${eng}`, { method: "POST" });
     } catch (e) {
       fail(e);
     }
@@ -1876,23 +2669,51 @@ function renderTrack(tr) {
     allVidBtn.disabled = vidBusy || !vidTodo;
     allVidBtn.textContent = vidBusy ? t("track.allVideosBusy") : t("track.allVideosN", { n: vidTodo });
     allVidBtn.addEventListener("click", async () => {
-      if (!confirm(t("track.allVideosConfirm", { n: vidTodo }))) return;
+      const engSpec = videoEngineById(effVideoEngine(tr));
+      const priceLine = engSpec
+        ? `\n${engSpec.title} — ${tNum(vidTodo * engSpec.scene_cost)} ⚡`
+        : "";
+      if (!confirm(t("track.allVideosConfirm", { n: vidTodo }) + priceLine)) return;
       try {
-        await api(`/api/tracks/${tr.id}/generate-all-videos`, { method: "POST" });
+        const eng = effVideoEngine(tr);
+        const spec = videoEngineById(eng);
+        const qs = `?engine=${encodeURIComponent(eng)}`
+          + (spec ? `&provider=${encodeURIComponent(spec.family)}` : "");
+        await api(`/api/tracks/${tr.id}/generate-all-videos${qs}`, { method: "POST" });
       } catch (e) { fail(e); }
       await loadProject();
     });
   }
   const genBtn = $(".gen-scenes", card);
   const busy = tr.scenes_status === "queued" || tr.scenes_status === "running";
-  genBtn.disabled = busy || !project.story;
-  genBtn.title = project.story ? "" : t("track.genScenesTitle");
+  // Предусловие разбивки у каждого режима СВОЁ: клипу нужен сквозной сюжет
+  // проекта, серии — её собственный сценарий по актам, ролику не нужно
+  // ничего (каркас формата и есть его план). Общее «нет сюжета — кнопка
+  // мертва» держало бы два режима из трёх выключенными навсегда.
+  const modeNow = curMode();
+  let scenesReady = true;
+  let scenesWhy = "";
+  if (modeNow.id === "clip") {
+    scenesReady = Boolean(project.story) || Boolean(tr.no_story);
+    scenesWhy = t("track.genScenesTitle");
+  } else if (modeNow.id === "series") {
+    const sc = docBy("script", tr.id);
+    scenesReady = Boolean(sc && sc.body);
+    scenesWhy = t("docs.needScript");
+  }
+  genBtn.disabled = busy || !scenesReady;
+  genBtn.title = scenesReady ? "" : scenesWhy;
   genBtn.addEventListener("click", () => genScenes(tr.id));
 
   // ⚡ Супергенерация: весь конвейер одним нажатием (кнопка живёт в шапке).
   const superBtn = $(".s-supergen", card);
   const superBusy = ["queued", "running"].includes(tr.supergen_status);
-  superBtn.disabled = superBusy || !tr.audio_duration_sec;
+  // Дорожка обязательна только там, где она задаёт ритм: у ролика ритм дают
+  // слоты 5–8 секунд, у серии — акты. Требовать mp3 значило бы запрещать им
+  // супергенерацию без всякой причины.
+  superBtn.disabled = superBusy
+    || (modeNow.needs_audio !== false && !tr.audio_duration_sec)
+    || (modeNow.id === "series" && !scenesReady);
   superBtn.textContent = superBusy ? t("track.supergenBusy") : t("track.supergen");
   superBtn.addEventListener("click", () => openSupergenModal(tr));
   const superNote = $(".supergen-note", card);
@@ -2058,6 +2879,12 @@ function highlightActiveScene(trackCard, currentTime) {
 
 // mode: "board" — компактная карточка кадров (лента этапа «Раскадровка»),
 // "anim" — карточка видео (лента этапа «Анимация»). Один шаблон, CSS решает.
+/* Переопределение движка кадров ЭТОЙ сцены. Пусто — значит «как у объекта». */
+function sceneImgOverride(card) {
+  const seg = $(".s-image-seg", card);
+  return (seg && seg.dataset.engine) || "";
+}
+
 function renderScene(s, audioEl, mode = "board") {
   const tpl = $("#scene-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".scene-card");
@@ -2068,6 +2895,12 @@ function renderScene(s, audioEl, mode = "board") {
   card.dataset.duration = s.duration_sec;
   $(".s-pos", card).textContent = t("scene.pos", { n: s.position });
   $(".s-time", card).textContent = `${fmtTime(s.start_sec)} — ${fmtTime(s.start_sec + s.duration_sec)}`;
+  // Акт серии и кто говорит — метки режимов «сериалы»/«UGC». У клипа обе
+  // пустые, и пустой span в разметке ничего не занимает.
+  const actEl = $(".s-act", card);
+  if (actEl) actEl.textContent = s.act ? s.act.replace(/_/g, " ") : "";
+  const spEl = $(".s-speaker", card);
+  if (spEl) spEl.textContent = s.speaker || "";
   $(".s-duration", card).value = s.duration_sec;
   $(".s-shotsize", card).value = s.shot_size || "";
   $(".s-camera", card).value = s.camera_move || "";
@@ -2157,16 +2990,16 @@ function renderScene(s, audioEl, mode = "board") {
   framesBtn.disabled = imgBusy;
   framesBtn.textContent = imgBusy ? t("scene.framesBusy")
     : s.image_url ? t("scene.regenFrames") : t("scene.genFrames");
-  framesBtn.addEventListener("click", () => genSceneFrames(s.id));
+  framesBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
   const firstBtn = $(".s-gen-first", card);
   const lastBtn = $(".s-gen-last", card);
   if (firstBtn) {
     firstBtn.disabled = imgBusy;
-    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "first"));
+    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "first", sceneImgOverride(card)));
   }
   if (lastBtn) {
     lastBtn.disabled = imgBusy;
-    lastBtn.addEventListener("click", () => genSceneFrames(s.id, "last"));
+    lastBtn.addEventListener("click", () => genSceneFrames(s.id, "last", sceneImgOverride(card)));
   }
 
   // Промежуточные кадры: ряд мини-превью + кнопка с числом по длительности.
@@ -2277,45 +3110,39 @@ function renderScene(s, audioEl, mode = "board") {
     const ph = $(".s-image-preview", card);
     if (ph) { ph.src = s.image_thumb_url || s.image_url; ph.classList.remove("hidden"); }
   }
-  // Движок видео: системный select оставлен источником правды (на его .value
-  // висит генерация), а виден — сегментный переключатель в стиле студии.
-  // Движок КАДРОВ: у платных тарифов это Nano Banana (до 14 отдельных
-  // референсов и нативная вертикаль), у бесплатного — ChatGPT-шлюз по подписке.
-  // Показываем реальную доступность: тариф может обещать платный движок,
-  // а ключа не быть — тогда честно активен шлюз.
+  // ── ДВИЖОК КАДРА: наследование от объекта, переопределение по требованию ──
+  // Ключевое отличие от прежнего кода: чипы больше не «выбор по умолчанию».
+  // Умолчание задано на треке, здесь только исключение — и оно свёрнуто,
+  // потому что на треке из тридцати сцен развёрнутые чипы занимали экран
+  // тридцать раз подряд.
+  const trackOfScene = (project.tracks || []).find(
+    (x) => (x.scenes || []).some((y) => y.id === s.id)) || null;
+  const engLine = $(".s-engine-line", card);
+  if (engLine && trackOfScene) paintSceneEngineLine(engLine, trackOfScene, s.id);
+
   const imgSeg = $(".s-image-seg", card);
   if (imgSeg) {
-    imgSeg.innerHTML = "";
-    const imgList = (providers.image_engines || []).filter((e) => e.live !== false);
-    if (imgList.length > 1) {
-      let curImg = s.image_engine || providers.image_engine || (imgList[0] && imgList[0].id);
-      if (!imgList.some((e) => e.id === curImg)) curImg = imgList[0].id;
-      const syncImg = () => $$(".img-chip", imgSeg)
-        .forEach((el) => el.classList.toggle("on", el.dataset.engine === curImg));
-      imgList.forEach((e) => {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "img-chip";
-        chip.dataset.engine = e.id;
-        chip.textContent = e.title;
-        chip.title = `${e.title} — ${e.frames_cost} ${t("scene.pointsSuffix") || "очков за кадры"}`;
-        chip.addEventListener("click", () => { curImg = e.id; imgSeg.dataset.engine = e.id; syncImg(); });
-        imgSeg.appendChild(chip);
+    // По умолчанию подсвечен «По тарифу» — то есть НАСЛЕДОВАНИЕ от объекта, а
+    // не «движок этой сцены». Иначе поменять движок сразу всему треку было бы
+    // нельзя: каждая уже отрисованная сцена держала бы старый.
+    imgSeg.dataset.engine = "";
+    buildEngineTabs(imgSeg, liveImageEngines(), "",
+      (e) => e.frames_cost,
+      (id) => {
+        imgSeg.dataset.engine = id || "";
+        $$(".eng-chip", imgSeg).forEach((el) =>
+          el.classList.toggle("on", el.dataset.engine === id));
       });
-      imgSeg.dataset.engine = curImg;
-      syncImg();
-    }
   }
 
   const provSel = $(".s-provider", card);
   const provSeg = $(".s-provider-seg", card);
   if (provSel) {
-  provSel.innerHTML = "";
-  // Источник правды — video_engines из /api/providers: там КОНКРЕТНЫЕ модели
-  // с настоящими именами и ценой. Раньше рисовался список семейств, и всё,
-  // что не seedance, подписывалось «Grok» — поэтому Kling выглядел вторым Grok.
-  const engineList = (providers.video_engines || []).filter((e) => e.live !== false);
-  if (engineList.length) {
+    provSel.innerHTML = "";
+    // Источник правды — video_engines из /api/providers: там КОНКРЕТНЫЕ модели
+    // с настоящими именами и ценой. Раньше рисовался список семейств, и всё,
+    // что не seedance, подписывалось «Grok» — поэтому Kling выглядел вторым Grok.
+    const engineList = liveVideoEngines();
     engineList.forEach((e) => {
       const opt = document.createElement("option");
       opt.value = e.family || "grok";
@@ -2323,67 +3150,27 @@ function renderScene(s, audioEl, mode = "board") {
       opt.textContent = `${e.title} · ${e.scene_cost}`;
       provSel.appendChild(opt);
     });
-  } else {
-    (providers.video || ["grok"]).forEach((p) => {
-      const opt = document.createElement("option");
-      opt.value = p;
-      opt.dataset.engine = "";
-      opt.textContent = t(p === "seedance" ? "scene.providerSeedance" : "scene.providerGrok");
-      provSel.appendChild(opt);
-    });
-  }
-  provSel.value = s.video_provider;
-  // Сцену сняли на движке, который сейчас недоступен (free-тариф оставляет
-  // только Grok): у select'а не осталось выбранного пункта, и .value пуст.
-  // Ставим первый доступный — на нём сервер и сгенерирует (_allowed_provider
-  // всё равно понижает недоступный), а чип показывает это честно, а не пустым.
-  if (!provSel.value && provSel.options.length) provSel.value = provSel.options[0].value;
-  if (provSeg) {
-    const list = engineList.length
-      ? engineList
-      : (providers.video || ["grok"]).map((p) => ({
-          id: p, family: p, scene_cost: null,
-          title: t(p === "seedance" ? "scene.providerSeedanceShort" : "scene.providerGrokShort"),
-        }));
-    // Активна та модель, что выбрана сценой; если сцена помнит только семейство —
-    // подсвечиваем первую модель этого семейства.
-    let curEngine = s.video_engine || "";
-    if (!curEngine || !list.some((e) => e.id === curEngine)) {
-      const byFam = list.find((e) => e.family === provSel.value);
-      curEngine = byFam ? byFam.id : (list[0] && list[0].id) || "";
-    }
-    const applyEngine = (e) => {
-      curEngine = e.id;
-      provSel.value = e.family || "grok";
-      const opt = $$("option", provSel).find((o) => o.dataset.engine === e.id);
-      if (opt) provSel.value = opt.value;
-      provSel.dataset.engine = e.id;
-      syncSeg();
-    };
-    const syncSeg = () => $$(".prov-chip", provSeg)
-      .forEach((el) => el.classList.toggle("on", el.dataset.engine === curEngine));
-    list.forEach((e) => {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "prov-chip";
-      chip.dataset.prov = e.family || e.id;
-      chip.dataset.engine = e.id;
-      // В чипе — короткое имя модели; цена сцены в очках уходит в подсказку,
-      // иначе чипы не помещаются в узкой карточке кадра.
-      chip.textContent = e.title;
-      chip.title = e.scene_cost != null
-        ? `${e.title} — ${e.scene_cost} ${t("scene.pointsSuffix") || "очков за сцену"}`
-        : e.title;
-      if (list.length > 1) {
-        chip.addEventListener("click", () => applyEngine(e));
-      } else {
-        chip.classList.add("single");
+    const inherited = effVideoEngine(trackOfScene);
+    const applyEngine = (id) => {
+      // Семейство (grok|seedance|kling) сервер по-прежнему принимает отдельно:
+      // select остаётся источником правды для него.
+      const spec = videoEngineById(id || inherited);
+      if (spec) {
+        const opt = $$("option", provSel).find((o) => o.dataset.engine === spec.id);
+        provSel.value = opt ? opt.value : (spec.family || "grok");
       }
-      provSeg.appendChild(chip);
-    });
-    provSel.dataset.engine = curEngine;
-    syncSeg();
-  }
+      // dataset.engine пустой = «как у объекта»: цепочку сцена → трек → тариф
+      // разрешает сервер, и второй её копии на клиенте нет.
+      provSel.dataset.engine = id || "";
+      if (provSeg) {
+        $$(".eng-chip", provSeg).forEach((el) =>
+          el.classList.toggle("on", el.dataset.engine === id));
+      }
+    };
+    if (provSeg) {
+      buildEngineTabs(provSeg, engineList, "", (e) => e.scene_cost, applyEngine);
+    }
+    applyEngine("");
   }
 
   // Раскрытый промпт занимает всю ширину карточки, свёрнутый — жмётся вправо.
@@ -2576,9 +3363,12 @@ async function deleteScene(id) {
   await loadProject();
 }
 
-async function genSceneFrames(id, which = "both") {
+async function genSceneFrames(id, which = "both", engine = "") {
   try {
-    await api(`/api/scenes/${id}/generate-frames?which=${which}`, { method: "POST" });
+    // engine пустой = «как у объекта»: сервер разрешит цепочку
+    // сцена → трек → тариф сам, второй копии этой логики на клиенте нет.
+    const q = engine ? `&engine=${encodeURIComponent(engine)}` : "";
+    await api(`/api/scenes/${id}/generate-frames?which=${which}${q}`, { method: "POST" });
   } catch (e) {
     fail(e);
   }
@@ -2613,6 +3403,7 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   fd.append("style_keys", form.style_keys.value);
   fd.append("lyrics", form.lyrics.value);
   fd.append("comment", form.comment.value);
+  if (form.format_key && form.format_key.value) fd.append("format_key", form.format_key.value);
   if (form.audio.files[0]) fd.append("audio", form.audio.files[0]);
   await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
   form.reset();
@@ -4228,6 +5019,14 @@ let onboarding = null;
 async function renderOnboarding() {
   const box = $("#onboarding");
   if (!box || !me || !me.authed) return;
+  // Чеклист написан про клип целиком («загрузи трек», «кадры → оживление →
+  // сборка») и в открытом сериале читается как инструкция не к этому экрану.
+  // Плитка привязана к аккаунту, а не к проекту, поэтому не гасим её
+  // насовсем — просто не показываем в тех режимах, про которые она не.
+  if (curMode().id !== "clip") {
+    box.classList.add("hidden");
+    return;
+  }
   try {
     onboarding = await api("/api/onboarding");
   } catch (e) {
@@ -4484,6 +5283,12 @@ syncLangSwitches();
 onLangChange(() => {
   // applyI18n(document) уже отработал в setLang — здесь только то, что рисует код.
   closeModal();
+  // Каркасы форматов (названия и логлайны) сервер локализует на своей стороне
+  // — после смены языка реестр надо перезабрать, иначе «Дело недели» так и
+  // останется английским до перезагрузки страницы.
+  loadModes(true).then(() => {
+    if (project && !$("#app").classList.contains("hidden")) render();
+  });
   if (!$("#app").classList.contains("hidden")) {
     renderUserBar();                  // бейдж очков и тариф тоже подписаны словами
     if (project) render();
