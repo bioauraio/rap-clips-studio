@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>It came out bad: the usual causes — School</title>
+<meta name="description" content="Faces that drift, motion that does nothing, a clip that reads flat, and credits gone with nothing to show. Symptom, cause, fix." />
+<link rel="canonical" href="https://qlolapp.art/learn/troubleshooting/" />
+<link rel="alternate" hreflang="en" href="https://qlolapp.art/learn/troubleshooting/" />
+<link rel="alternate" hreflang="ru" href="https://qlolapp.art/ru/learn/troubleshooting/" />
+<link rel="alternate" hreflang="x-default" href="https://qlolapp.art/learn/troubleshooting/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" content="It came out bad: the usual causes — School" />
+<meta property="og:description" content="Faces that drift, motion that does nothing, a clip that reads flat, and credits gone with nothing to show. Symptom, cause, fix." />
+<meta property="og:url" content="https://qlolapp.art/learn/troubleshooting/" />
+<meta property="og:image" content="https://qlolapp.art/img/shots/step-frames.jpg" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="It came out bad: the usual causes — School" />
+<meta name="twitter:description" content="Faces that drift, motion that does nothing, a clip that reads flat, and credits gone with nothing to show. Symptom, cause, fix." />
+<meta name="twitter:image" content="https://qlolapp.art/img/shots/step-frames.jpg" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/blog.css?v=1" />
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"LearningResource","name":"It came out bad: the usual causes","description":"Faces that drift, motion that does nothing, a clip that reads flat, and credits gone with nothing to show. Symptom, cause, fix.","inLanguage":"en","datePublished":"2026-08-21","dateModified":"2026-08-21","timeRequired":"PT6M","isAccessibleForFree":true,"learningResourceType":"tutorial","url":"https://qlolapp.art/learn/troubleshooting/","provider":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"lolq.ai","item":"https://qlolapp.art/"},{"@type":"ListItem","position":2,"name":"School","item":"https://qlolapp.art/learn/"},{"@type":"ListItem","position":3,"name":"It came out bad: the usual causes"}]}</script>
+</head>
+<body>
+<header class="bh">
+  <a class="bh-brand" href="/"><img src="/img/logo-mark.svg" width="26" height="26" alt="" /><span>lolq<span class="dot">.</span>ai</span></a>
+  <nav class="bh-nav">
+    <a href="/blog/">Journal</a>
+    <a href="/#ld-how">How it works</a>
+    <a href="/#ld-pricing">Pricing</a>
+    <a class="bh-cta" href="/">Start free</a>
+  </nav>
+</header>
+<main class="bw">
+<article class="bpost">
+<p class="bmeta"><a href="/learn/">← All lessons</a>
+ · 6 min read <a class="blang" href="/ru/learn/troubleshooting/" hreflang="ru">Читать по-русски</a></p>
+<h1 id="it-came-out-bad-the-usual-causes">It came out bad: the usual causes</h1>
+<p>Almost every disappointing first clip has the same three or four problems in it, and almost all of them are fixed at the frame stage, where redrawing is free.</p>
+<h2 id="the-picture">The picture</h2>
+<h3 id="the-character-is-a-different-person-every-scene">The character is a different person every scene</h3>
+<p>The most common one, and it is usually the description.</p>
+<p>If <strong>Personality and looks</strong> is written in adjectives — *charismatic, iconic, stylish* — there is nothing for the model to hold constant. Rewrite it as features: build, hair, wardrobe, one distinguishing detail. Then upload two or three <strong>+ reference photo</strong> images, and only then <strong>Generate model sheet</strong> so the turnaround is built from your person rather than an invented one.</p>
+<p>Second cause: the character is not actually toggled on in the scene. Each scene card has <strong>characters in the scene</strong> — check that the right ones are lit up.</p>
+<h3 id="their-jacket-keeps-turning-into-a-different-jacket">Their jacket keeps turning into a different jacket</h3>
+<p>Signature objects belong in <strong>Attributes</strong>, not in the character description. Give the jacket its own attribute with its own photo, then switch it on in the scenes where it appears.</p>
+<h3 id="the-frame-does-not-look-like-the-style-i-picked">The frame does not look like the style I picked</h3>
+<p>Two possibilities.</p>
+<p>The scenes were generated *before* you changed the style, so the scene text is still describing the old look. Press <strong>Generate storyboard</strong> again, then redraw the frames.</p>
+<p>Or you blended three presets that each specify a complete world, and they are taking turns. Drop to one or two. See <a href="01-styles.md">Styles: picking one, and blending three</a>.</p>
+<h3 id="text-in-the-frame-is-gibberish">Text in the frame is gibberish</h3>
+<p>Frame generators are bad at letters and always have been. Do not plan a clip around readable signage, lyrics burned into the frame, or a logo. If you need text, make it a separate title-card scene with a simple background, or add it afterwards in whatever you edit with.</p>
+<h3 id="the-composition-is-wrong-and-i-cannot-describe-why">The composition is wrong and I cannot describe why</h3>
+<p>Stop writing prompt. Attach a reference image with <strong>+ ref</strong> on the scene card — composition, light, the vibe of the frame — and redraw. One picture settles what three paragraphs cannot.</p>
+<h2 id="the-motion">The motion</h2>
+<h3 id="nothing-really-moves">Nothing really moves</h3>
+<p>If you are on the free plan, this is expected: Grok animates the <strong>first frame</strong> and invents the rest, and what it invents is usually small. The fix is not a better prompt, it is an engine that interpolates between your first and last frame. See <a href="04-engines.md">Video engines</a>.</p>
+<p>On a paid engine, the usual cause is that the first and last frames are nearly identical. The engine has nowhere to travel. Redraw the last frame with an actual difference in it — the character has crossed the room, the camera has pulled back, the light has changed.</p>
+<h3 id="the-motion-is-chaos-things-morph-and-melt">The motion is chaos: things morph and melt</h3>
+<p>The opposite problem. Your first and last frames are in different rooms, or the character changed clothes between them, and the engine is trying to get from one to the other in six seconds.</p>
+<p>Press <strong>⟳ last</strong> and redraw the last frame as the *same shot, later* — not as a different shot. Free.</p>
+<h3 id="the-camera-does-something-i-did-not-ask-for">The camera does something I did not ask for</h3>
+<p><strong>camera move</strong> is free text and it is read literally. *slow push-in* works. Leaving it empty lets the engine choose, and it usually chooses drift. Filling it in is the cheapest control you have over motion.</p>
+<h2 id="the-edit">The edit</h2>
+<h3 id="every-frame-is-good-and-the-clip-is-boring">Every frame is good and the clip is boring</h3>
+<p>Look at the sketch sheet — <strong>Generate sheet</strong>, <strong>Open large</strong> — and check the shot sizes. A flat clip is almost always thirty medium shots in a row.</p>
+<p>Vary them: an establishing shot to open, close-ups on the lines that matter, one extreme close-up as a punctuation mark. Changing <strong>shot size</strong> and redrawing costs nothing.</p>
+<p>The other half of the same problem: no punch. The most-watched clips in this genre put <strong>one clear idea in each frame</strong> — readable in a second, without sound. If you cannot say what a scene is *of* in five words, it is probably a scene that should be deleted.</p>
+<h3 id="the-cuts-stutter">The cuts stutter</h3>
+<p>Two neighbouring scenes with almost the same framing read as an error rather than a cut. Change one of them, or delete it.</p>
+<h3 id="the-clip-ends-before-the-song-does">The clip ends before the song does</h3>
+<p>The assembly stops at whichever runs out first, video or audio. You have approved fewer scenes than the track needs. Check the timecode on the last scene against the length of the track, animate the missing scenes, reassemble.</p>
+<h3 id="black-bars-appear-on-some-scenes">Black bars appear on some scenes</h3>
+<p>That scene came back from the engine in the wrong shape and was padded rather than cropped. Re-animate that one scene.</p>
+<h2 id="the-money">The money</h2>
+<h3 id="credits-are-gone-and-there-is-no-clip">Credits are gone and there is no clip</h3>
+<p>Nearly always one of three things.</p>
+<p><strong>You animated before fixing the frames.</strong> Redrawing frames is free; re-animating is charged at the engine's full video price. Get the frames right first, then animate once.</p>
+<p><strong>You pressed ⚡ One-click clip on a tight balance.</strong> It charges for the entire pipeline up front and approves every scene automatically, which means you never get the free redraw pass.</p>
+<p><strong>You re-animated repeatedly to fix something that was a frame problem.</strong> If the scene comes back wrong three times in a row, the frame is wrong, not the engine.</p>
+<h3 id="not-enough-credits-halfway-through-the-run">"Not enough credits" halfway through the run</h3>
+<p>On the free plan, 120 credits is exactly one three-minute clip at 4 credits a scene, with nothing spare. A generated character model sheet (2) and a storyboard sheet (2) are enough to leave you a scene short.</p>
+<p>Either use a shorter track for the free run — two minutes is 20 scenes, 80 credits — or skip the two optional images. Full arithmetic in <a href="00-first-clip.md">Your first clip</a>.</p>
+<h2 id="errors">Errors</h2>
+<p><strong>"⚡ One-click clip" refuses to start.</strong> It needs three things: audio on the track, a style picked, and at least one named character in the project. The dialog tells you which one is missing.</p>
+<p><strong>A scene sits on an error.</strong> Open it and try again — most failures are the engine timing out, not your input. If it fails repeatedly, check that the scene actually has a first-frame prompt; an empty prompt is rejected.</p>
+<p><strong>"Generate the frames of this scene first."</strong> Video is built from the frames. Draw them, then animate.</p>
+<p><strong>The queue looks stuck.</strong> It runs one scene at a time on purpose. You can close the tab — progress is kept server-side and will be there when you come back.</p>
+<aside class="bcta">
+  <p>Make a clip from your own track — the first one is free</p>
+  <a class="bbtn" href="/">Open the studio</a>
+</aside>
+</article>
+</main>
+<footer class="bf">
+  <a href="/">lolq.ai</a> · <a href="/blog/">Journal</a> · <a href="/music.html">qlolmusic</a>
+</footer>
+</body>
+</html>

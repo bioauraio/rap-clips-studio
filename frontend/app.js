@@ -1,40 +1,61 @@
+// ═════════════════════════ КАТАЛОГ СТИЛЕЙ (КЛИЕНТ) ═════════════════════════
+// ЗДЕСЬ БОЛЬШЕ НЕТ НИ ОДНОГО ПРОМПТА. Раньше в этом файле лежал массив
+// STYLE_PRESETS с полными текстами пятнадцати пресетов — и уезжал каждому
+// гостю вместе с бандлом. Шесть из них сняты покадровым разбором виральных
+// аккаунтов и являются единственным рвом сервиса; конкурент вставлял их себе
+// за минуту, просто открыв исходник страницы.
+//
+// Теперь реестр живёт на сервере (backend/prompts_catalog.py):
+//   GET  /api/styles                    — карточки БЕЗ текста промпта
+//   POST /api/tracks/{id}/style         — клиент шлёт КЛЮЧИ, текст собирает сервер
+// Вторая половина той же дыры закрыта в track_dict: /api/tracks отдаёт
+// style_keys и подпись, а не сам промпт.
+
+let stylesCatalog = null;          // ответ /api/styles, грузится один раз
+let stylesCatalogLang = "";        // на каком языке загружен — при смене перегружаем
+let stylesCatalogPromise = null;   // склейка параллельных запросов
+
+async function loadStyles(force) {
+  if (!force && stylesCatalog && stylesCatalogLang === LANG) return stylesCatalog;
+  if (stylesCatalogPromise && stylesCatalogLang === LANG && !force) return stylesCatalogPromise;
+  stylesCatalogLang = LANG;
+  stylesCatalogPromise = (async () => {
+    try {
+      stylesCatalog = await api(`/api/styles?lang=${encodeURIComponent(LANG)}`);
+    } catch (e) {
+      // Каталог не приехал — пикер обязан сказать об этом, а не молча
+      // показать пустоту: без стилей раскадровка не запускается вообще.
+      stylesCatalog = { styles: [], groups: [], collections: [], presets: [], max_mix: 3, failed: true };
+    }
+    return stylesCatalog;
+  })();
+  return stylesCatalogPromise;
+}
+
+function styleByKey(key) {
+  return (stylesCatalog && stylesCatalog.styles || []).find((s) => s.key === key) || null;
+}
+
+// Подписи приезжают с сервера уже на нужном языке (в них живёт и «★ основа»),
+// но словарь фронта остаётся запасным вариантом для старых ключей.
+function styleLabel(s) {
+  return (s && s.label) || t(`styles.${s && s.key}.label`) || (s && s.key) || "";
+}
+function styleDesc(s) {
+  return (s && s.desc) || t(`styles.${s && s.key}.desc`) || "";
+}
+
 // Микс стилей: 1–3 пресета чекбокс-чипами, ПЕРВЫЙ выбранный — основа.
-// 1 пресет — чистый value; 2–3 — value основы + короткие выжимки остальных.
-function styleExcerpt(value) {
-  // Первые ~2 предложения промпта: ими дополнительный стиль «подмешивается».
-  const m = value.match(/[^.]+\./g);
-  return m ? m.slice(0, 2).join("").trim() : value;
-}
-
-// Подписи пресетов живут в словаре (i18n.js), в коде ходит только key.
-function styleLabel(p) { return t(`styles.${p.key}.label`) || p.key; }
-function styleDesc(p) { return t(`styles.${p.key}.desc`); }
-
-function buildFusionStyle(keys) {
-  const chosen = keys
-    .map((k) => STYLE_PRESETS.find((p) => p.key === k))
-    .filter(Boolean);
-  if (!chosen.length) return "";
-  if (chosen.length === 1) return chosen[0].value;
-  const extras = chosen.slice(1).map((p) => styleExcerpt(p.value));
-  return chosen[0].value + "\n\nBlend in elements of: " + extras.join(" ");
-}
-
-function styleKeysFromValue(value) {
-  // Восстановление выбора из сохранённого промпта: основа хранится полным
-  // value (идёт первой), дополнительные — выжимками (идут следом).
-  if (!value) return [];
-  const base = STYLE_PRESETS.filter((p) => value.includes(p.value)).map((p) => p.key);
-  const extras = STYLE_PRESETS
-    .filter((p) => !value.includes(p.value) && value.includes(styleExcerpt(p.value)))
-    .map((p) => p.key);
-  return [...base, ...extras];
-}
-
-function buildStylePicker(container, current, onChange) {
+// Порядок решает всё (основа идёт в промпт целиком, остальные выжимками),
+// поэтому основа помечена звёздочкой и в чипах, и в подписи.
+//
+// onChange(keys) отдаёт МАССИВ КЛЮЧЕЙ, а не текст: сохранением занимается
+// вызывающий через POST /api/tracks/{id}/style либо через поле формы.
+function buildStylePicker(container, currentKeys, onChange) {
   container.innerHTML = "";
-  // Порядок выбора важен: order[0] — основа микса.
-  const order = styleKeysFromValue(current);
+  const order = Array.isArray(currentKeys)
+    ? currentKeys.slice()
+    : String(currentKeys || "").split(",").filter(Boolean);
 
   const chipsBox = document.createElement("div");
   chipsBox.className = "style-chips";
@@ -46,121 +67,67 @@ function buildStylePicker(container, current, onChange) {
   descBody.className = "style-desc-body muted";
   desc.append(descSummary, descBody);
 
-  const sync = (fireChange) => {
-    $$(".style-chip", chipsBox).forEach((el) => {
-      const on = order.includes(el.dataset.key);
-      el.classList.toggle("on", on);
-      el.classList.toggle("base", order[0] === el.dataset.key);
-      el.querySelector("input").checked = on;
-    });
-    const chosen = order
-      .map((k) => STYLE_PRESETS.find((p) => p.key === k))
-      .filter(Boolean);
-    descBody.textContent = chosen.length
-      ? chosen.map((p, i) => `${i ? "＋" : "★"} ${styleLabel(p)} — ${styleDesc(p)}`).join("\n")
-      : t("stylePicker.none");
-    desc.classList.toggle("hidden", !chosen.length);
-    if (fireChange) onChange(buildFusionStyle(order));
+  const render = (list, maxMix) => {
+    chipsBox.innerHTML = "";
+    const sync = (fireChange) => {
+      $$(".style-chip", chipsBox).forEach((el) => {
+        const on = order.includes(el.dataset.key);
+        el.classList.toggle("on", on);
+        el.classList.toggle("base", order[0] === el.dataset.key);
+        const cb = el.querySelector("input");
+        if (cb) cb.checked = on;
+      });
+      const chosen = order.map(styleByKey).filter(Boolean);
+      descBody.textContent = chosen.length
+        ? chosen.map((s, i) => `${i ? "＋" : "★"} ${styleLabel(s)} — ${styleDesc(s)}`).join("\n")
+        : t("stylePicker.none");
+      desc.classList.toggle("hidden", !chosen.length);
+      if (fireChange) onChange(order.slice());
+    };
+
+    for (const s of list) {
+      const label = document.createElement("label");
+      label.className = "style-chip" + (s.locked ? " locked" : "");
+      label.dataset.key = s.key;
+      label.title = s.locked ? t("stylePicker.locked") : styleDesc(s);
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.disabled = Boolean(s.locked);
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          if (order.length >= maxMix) { cb.checked = false; return; }
+          order.push(s.key);
+        } else {
+          const i = order.indexOf(s.key);
+          if (i >= 0) order.splice(i, 1);
+        }
+        sync(true);
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(styleLabel(s)));
+      // Замок — честная метка тарифа, а не выключенная кнопка без объяснения.
+      if (s.locked) {
+        const lock = document.createElement("span");
+        lock.className = "style-chip-lock";
+        lock.textContent = "🔒";
+        label.appendChild(lock);
+      }
+      chipsBox.appendChild(label);
+    }
+    sync(false);
   };
 
-  for (const p of STYLE_PRESETS) {
-    const label = document.createElement("label");
-    label.className = "style-chip";
-    label.dataset.key = p.key;
-    label.title = styleDesc(p);
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.addEventListener("change", () => {
-      if (cb.checked) {
-        if (order.length >= 3) { cb.checked = false; return; } // максимум 3
-        order.push(p.key);
-      } else {
-        const i = order.indexOf(p.key);
-        if (i >= 0) order.splice(i, 1);
-      }
-      sync(true);
-    });
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(styleLabel(p)));
-    chipsBox.appendChild(label);
-  }
   container.appendChild(chipsBox);
   container.appendChild(desc);
-  if (current && !order.length) {
-    const note = document.createElement("div");
-    note.className = "muted";
-    note.textContent = t("stylePicker.custom");
-    container.appendChild(note);
-  }
-  // Первичная отрисовка БЕЗ onChange: кастомный стиль не затираем пустотой.
-  sync(false);
-}
 
-// Стили клипов: выбор ТОЛЬКО из пресетов — каждый промпт полностью
-// срежиссирован (эстетика, свет, палитра, фактура), чтобы кадры внутри
-// трека не разъезжались. value уходит в промпты as-is.
-const STYLE_PRESETS = [
-  {
-    key: "ghibli",
-    value: "Hand-painted Studio Ghibli style anime inspired by Hayao Miyazaki films, vertical 9:16. Soft watercolor backgrounds with visible brush texture, lush painterly clouds and greenery, warm golden-hour sunlight or cozy lamp glow through windows. Gentle pleasant palette: warm cream, soft sky blue, grass green, sunset amber — nothing acidic, everything nostalgic and comforting. Characters drawn in classic 2D anime cel style with simple expressive faces, natural relaxed poses, wind gently moving hair and clothes. Quiet magical realism mood: dust motes in sunbeams, steam from food, fireflies, rustling leaves. Every frame feels like a warm memory — calm, humane, a little wistful. No harsh shadows, no neon, no 3D render look, no text."
-  },
-  {
-    key: "pixar",
-    value: "High-end 3D animated feature film style like Pixar and DreamWorks, vertical 9:16, ultra HD render. Rounded appealing character design with large expressive eyes, soft subsurface scattering skin, detailed hair and fabric simulation. Rich cinematic lighting: warm key light, colorful bounce light, gentle rim light separating character from background. Vibrant but tasteful saturated palette, shallow depth of field with creamy bokeh, subtle film grain. Polished storytelling composition, emotional facial expressions. No text, no watermark."
-  },
-  {
-    key: "shinkai",
-    value: "Modern cinematic anime film style inspired by Makoto Shinkai, vertical 9:16. Breathtaking hyper-detailed backgrounds: glowing skies with layered clouds, lens flares, glittering city lights, rain droplets catching light. Emotional color grading with luminous gradients — deep blues into warm oranges and pinks. Crisp 2D character animation with delicate lighting on hair and eyes. Dramatic sense of scale: vast skies over small human figures. Melancholic-hopeful atmosphere. No text, no watermark."
-  },
-  {
-    key: "cinema",
-    value: "Photorealistic cinematic film still, vertical 9:16, shot on ARRI Alexa with anamorphic lenses. Natural skin texture and imperfections, real physical lighting: practical sources, soft window light or hard sun with true shadows. Film color grading with gentle teal-orange balance, subtle 35mm grain, shallow depth of field. Documentary-authentic staging: real locations, lived-in details, honest emotion on faces. No CGI look, no oversharpening, no text."
-  },
-  {
-    key: "flat2d",
-    value: "Bold flat 2D vector animation style, vertical 9:16. Clean geometric shapes, thick confident outlines, limited harmonious palette of 4-6 colors per scene, flat color fills with simple two-tone shading. Playful exaggerated proportions and snappy poses, minimal but expressive faces. Mid-century modern and contemporary motion-design influence: textured paper grain overlay, simple patterned backgrounds. Cheerful, graphic, poster-like compositions. No gradients overload, no 3D, no text."
-  },
-  {
-    key: "noir",
-    value: "Gritty noir graphic novel style like Sin City and Batman animated classics, vertical 9:16. High-contrast chiaroscuro: deep ink-black shadows swallowing half of every frame, stark white or single warm accent color (red neon, amber streetlight) cutting through darkness. Heavy dramatic hatching and ink texture, rain-slick streets reflecting light, cigarette smoke curling through venetian-blind shadows. Hard-boiled atmosphere: trench coats, brooding silhouettes, low camera angles. Monochrome with one accent color per scene. No text, no captions."
-  },
-  {
-    key: "longheads",
-    value: "1990s analog film street photography, scanned 35mm frame with heavy grain and slightly faded Kodak colors, candid documentary framing. Surreal characters with elongated non-human heads on long necks (ostrich-like, greyhound, pale alien with almond eyes, porcelain mannequin mask) on completely ordinary human bodies in baggy 90s streetwear: oversized denim jackets, loose white shirts, wide pants, chunky chains, plastic grocery bags, coffee cups. Deadpan poses, mundane everyday activities, nobody reacts to the surrealism. Locations: laundromats, convenience stores, crosswalks, chain-link fences, boxy 80s sedans, night streets with neon signage and wet asphalt reflections. Muted denim-blue palette with warm cream skin tones and red/neon accents, harsh daylight or direct flash by day, deep black sky and neon glow by night. Vertical 9:16, no text."
-  },
-  {
-    key: "embroidery",
-    value: "Hand-embroidered thread-art illustration: the entire image is stitched in dense chain-stitch and satin-stitch embroidery with clearly visible thread loops and fiber texture, like a lovingly hand-sewn patch. Background of warm cream felt and kraft cardboard with soft fabric grain. Bold simplified shapes with clean dark outlines; characters rendered in colored thread, directional stitching following the forms of faces, hair and clothes; flames, smoke and effects also stitched in swirling orange-red-amber threads. Cozy handcrafted feel, slightly naive proportions, saturated yarn colors against the neutral textile background, tiny loose thread ends visible. Vertical 9:16, no text."
-  },
-  {
-    key: "spike",
-    value: "Cinematic photorealistic night scene shot on vintage anamorphic lenses, warm tungsten and smoky haze, heavy 35mm film grain with teal-and-amber grade. Post-Soviet Russian setting reimagined with subtle Atomic Heart retrofuturism: khrushchyovka courtyards, cramped old Lada interiors, kiosks, snow-dusted parking lots, delivery couriers in Ozon blue jackets and yellow Yandex thermo-bag backpacks. Photorealistic larger-than-life characters and deadpan cartoon-headed cameos ride together in old cars filled with smoke, count worn banknotes in shabby ornate bedrooms, stare into the lens with calm swagger. Golden chains, tracksuit textures, cigarette smoke curling in headlight beams, wet asphalt reflections. Everyday grit filmed like an epic music video, nobody reacts to the surreal cameos. Vertical 9:16, no text."
-  },
-  {
-    key: "munir",
-    value: "Gulf street documentary photography with direct on-camera flash at night and harsh daylight, ultra-wide fisheye lens distortion, saturated 35mm film colors with crushed shadows. Middle Eastern everyday swagger played deadpan: elderly men in red-checkered ghutra headdress and white thobes grinning as they push a fist with a chunky custom name-ring straight into the lens, women in black abayas fueling a black G63 at a midnight gas station, a Doberman with a heavy chain collar lunging toward the camera, corner grocery shops with Arabic signage and packed shelves, plastic chairs, dates and spice jars. Objects thrust toward the ultra-wide lens so they loom huge in the foreground, faces close and warped at the edges, flash bleaching the foreground against deep black night. Humor and quiet confidence, mundane life shot like a rap video. Vertical 9:16, no text."
-  },
-  {
-    key: "fanuel",
-    value: "Hyperreal cinematic surreal fashion film, epic single-frame worldbuilding. One elegant figure in a sharply tailored suit of a single bold color (burnt orange, saffron yellow, deep crimson) stands or walks calmly inside an impossible landscape: on the open sea at dusk, along the rings of a giant planet, across endless dunes, under colossal celestial bodies. Recurring fire motif — burning umbrellas, floating flames, embers, fire reflected in water. Deadpan composed poses, quiet confidence, no reaction to the impossible. Painterly dusk palettes: violet-pink-orange gradient skies, deep ocean blues, warm firelight against cool darkness; volumetric cinematic lighting, anamorphic depth, ultra-detailed photorealistic rendering with epic scale contrast between the small figure and the vast world. Vertical 9:16, no text."
-  },
-  {
-    key: "clay",
-    value: "Handcrafted claymation stop-motion style (Aardman/Laika vibe): visible fingerprints in plasticine, slightly imperfect frame-to-frame jitter, miniature set with real fabric and cardboard props, warm practical lighting, shallow depth of field macro look, expressive oversized eyes, vertical 9:16, no text."
-  },
-  {
-    key: "punkrf",
-    value: "Hyperreal Russian street found-footage: night dashcam, GoPro, phone or CCTV camera look with heavy VHS grain, analog noise and motion blur; harsh headlights, red neon gas-station canopies, wet asphalt, dense traffic with glowing tail lights, grey soviet panel blocks, ruined brick factories, dusty supercars in wastelands. One absurd event unfolds in the middle of mundane Russian reality — animals rearing between cars, flying couriers, delivery drones, aliens in queues — filmed like an accidental viral video: documentary believability, realistic physics, nobody poses, aggressive dynamic framing, violent handheld shake, strobing flash by night. Muted cold palette with red neon accents. Vertical 9:16, no text."
-  },
-  {
-    key: "dreamclad",
-    value: "1990s American hood-cinema still, shot on grainy 35mm film: faded low-contrast color grade with warm orange-brown skin tones and dusty teal shadows (or deep-grain black-and-white), heavy film grain, soft halation, subtle gate weave and VHS-era imperfections. Brick-block New York / LA streets of the 90s — bodegas with graffiti, chain-link fences, stone staircases, boxy sedans and vintage Cadillacs — or night-time mansion gates and museum halls lit by warm tungsten windows and headlights. Young men in white tank tops, bandana masks, hoodies and baggy denim; crowds dressed identically like a uniform; recurring icons of money stacks, doves, crosses, candles and classical statues — sacred mixed with street. Frontal, symmetric, almost ceremonial compositions, subjects staring straight into the lens, or candid through-the-windshield documentary angles; overexposed hazy daylight or moody night backlight. Cinematic, nostalgic, quietly menacing, music-video energy. No clean digital look, no HDR, no modern cars or clothing, no neon cyberpunk, no glossy skin, no watermarks. Vertical 9:16, no text."
-  },
-  {
-    key: "katsumi",
-    value: "Hyperrealistic absurdist found-footage aesthetic: a deadpan surreal protagonist (animal or costumed figure) doing mundane human things with total seriousness, shot like accidental amateur documentary footage from the 1990s–2000s — handheld camcorder or disposable-camera look with harsh direct on-camera flash at night, or flat overcast daylight; heavy analog film grain, VHS noise, slight chromatic aberration, motion blur, fisheye or wide-angle distortion, tilted imperfect framing with the subject too close to the lens, often staring straight into the camera. Muted dirty palette of swampy olive, tobacco brown, dusty grey and desaturated flesh tones, background falling into deep black shadow, with one rare accent color (neon sign, police lights, orange robe, gold chain). Gritty tactile textures: wet fur, greasy pavement, cigarette smoke, scuffed metal, cheap floral motel interiors, cluttered convenience-store shelves. Cinematic realism, not cartoon — everything must look physically shot, grimy street-punk mood, crime-scene-snapshot lighting, deadpan comedy with zero wink. Avoid: clean digital sharpness, glossy studio light, saturated candy colors, cartoon or 3D-render look, symmetry, beauty-filter smoothness. Vertical 9:16, no text."
-  },
-];
+  loadStyles().then((cat) => {
+    if (cat.failed) {
+      chipsBox.innerHTML = `<span class="muted">${escHtml(t("stylePicker.failed"))}</span>`;
+      return;
+    }
+    render(cat.styles || [], Number(cat.max_mix) || 3);
+  });
+}
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -202,18 +169,41 @@ function errText(e) {
 // Единая точка «не получилось»: alert с переведённым текстом.
 function fail(e) { alert(errText(e)); }
 
+// Внутри мини-аппа Telegram сессия едет ещё и заголовком: в Desktop и Web
+// мини-апп живёт в iframe, запросы кросс-сайтовые, и кука с SameSite=Lax до
+// нас не доезжает — человек оставался бы вечно неавторизованным.
+function apiHeaders(opts) {
+  const h = {};
+  if (opts.body && !(opts.body instanceof FormData)) h["content-type"] = "application/json";
+  const tg = window.TGA && TGA.active ? TGA.authHeader() : null;
+  if (tg) Object.assign(h, tg);
+  return Object.keys(h).length ? h : undefined;
+}
+
 async function api(path, opts = {}) {
   let res;
   try {
     res = await fetch(path, {
       method: opts.method || "GET",
-      headers: opts.body && !(opts.body instanceof FormData) ? { "content-type": "application/json" } : undefined,
+      headers: apiHeaders(opts),
       body: opts.body instanceof FormData ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
     });
   } catch (e) {
     throw new ApiError({ error: "network" }, 0);
   }
-  if (res.status === 401) { showLogin(); throw new ApiError({ error: "unauthorized" }, 401); }
+  if (res.status === 401) {
+    // В Telegram формы входа нет и быть не может: человека уже опознала
+    // платформа. Протухшая сессия чинится молча — переспрашиваем Telegram и
+    // повторяем запрос ОДИН раз, чтобы не уйти в бесконечный круг.
+    if (window.TGA && TGA.active && !opts._retry) {
+      try {
+        await TGA.signIn(true);
+        return await api(path, { ...opts, _retry: true });
+      } catch (e) { /* не опознал — падаем ниже общим путём */ }
+    }
+    if (!(window.TGA && TGA.active)) showLogin();
+    throw new ApiError({ error: "unauthorized" }, 401);
+  }
   if (!res.ok) throw new ApiError(await res.json().catch(() => ({})), res.status);
   return res.status === 204 ? null : res.json();
 }
@@ -238,7 +228,11 @@ function stripQueryParam(name) {
 
 function pickRefCode() {
   try {
-    const fromUrl = (new URLSearchParams(location.search).get("ref") || "").trim();
+    // В Telegram ссылки с ?ref= не бывает: ссылка амбассадора выглядит как
+    // t.me/<bot>/app?startapp=ref_КОД, и код приезжает в start_param. Без
+    // этой ветки реферал терялся бы на входе в мини-апп.
+    const fromTg = window.TGA && TGA.active ? (TGA.refFromStart() || "") : "";
+    const fromUrl = fromTg || (new URLSearchParams(location.search).get("ref") || "").trim();
     if (fromUrl) {
       sessionStorage.setItem(REF_KEY, fromUrl.slice(0, 32));
       // Адрес чистим: код уже сохранён, светить его в строке незачем.
@@ -264,26 +258,41 @@ function renderRefBanner() {
   }
 }
 
+// Экранов теперь четыре: лендинг, вход, студия и чат. Гасим все разом, чтобы
+// добавление пятого не требовало править каждый переход по отдельности.
+function hideScreens() {
+  ["#welcome", "#login", "#app", "#chat"].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.classList.add("hidden");
+  });
+}
+
 function showWelcome() {
   renderRefBanner();
+  hideScreens();
   $("#welcome").classList.remove("hidden");
-  $("#login").classList.add("hidden");
-  $("#app").classList.add("hidden");
   // Главная — полноценная витрина: тексты, шаги, тарифы и шкала очков
   // собираются в renderLanding() (низ файла) из словаря I18N (i18n.js).
   renderLanding();
 }
 function showLogin() {
-  $("#welcome").classList.add("hidden");
+  hideScreens();
   $("#login").classList.remove("hidden");
-  $("#app").classList.add("hidden");
+  // Кнопки Telegram/Яндекс/Google. Заголовок «или войти через» показываем
+  // только если хоть один вход настроен — иначе он висел бы над пустотой.
+  renderAuthButtons($("#login-auth"), { mode: "login", column: true }).then((n) => {
+    const label = $("#login-auth-label");
+    if (label) label.classList.toggle("hidden", !n);
+  });
 }
 function showApp() {
-  $("#welcome").classList.add("hidden");
-  $("#login").classList.add("hidden");
+  hideScreens();
   $("#app").classList.remove("hidden");
   renderUserBar();
   loadProject();
+  // Прямая ссылка /#/chat открывает чат сразу. Проект при этом всё равно
+  // грузится фоном: «Сохранить в проект» нужен список персонажей.
+  if (location.hash === "#/chat") showChat();
 }
 
 // Бейдж «⚡ N» (не-админу), «Кабинет» и «Сохранить аккаунт» (гостю без логина) в топбаре.
@@ -338,10 +347,34 @@ $("#login-form").addEventListener("submit", async (e) => {
 // Вернувшемуся с живой сессией новый аккаунт НЕ заводим: /api/start всегда
 // создаёт свежего гостя и перезаписывает cookie — человек потерял бы проекты.
 async function ldStart() {
-  if (me && me.authed) { showApp(); return; }
-  await api("/api/start" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""), { method: "POST" });
-  me = await api("/api/me");
+  if (!(me && me.authed)) {
+    await api("/api/start" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""), { method: "POST" });
+    me = await api("/api/me");
+  }
   showApp();
+  // Раздел «Промты» заканчивается действием: выбранный стиль или каркас
+  // применяется к треку сразу, а не остаётся картинкой на витрине.
+  await ldApplyPending();
+}
+
+// Применить выбор с карточки промта к первому треку проекта. Трека нет —
+// запоминаем и применим, когда он появится (loadProject зовёт нас снова).
+async function ldApplyPending() {
+  if (!ldPending) return;
+  try {
+    const p = project || await api("/api/project");
+    const tr = (p.tracks || [])[0];
+    if (!tr) return;                     // трека ещё нет — ждём загрузки аудио
+    const body = ldPending.style
+      ? { style_keys: [ldPending.style] }
+      : { preset: ldPending.preset };
+    ldPending = null;
+    await api(`/api/tracks/${tr.id}/style`, { method: "POST", body });
+    await loadProject();
+  } catch (e) {
+    ldPending = null;
+    fail(e);
+  }
 }
 
 $("#welcome-start").addEventListener("click", ldStart);
@@ -407,6 +440,10 @@ function openModal(title, buildBody, opts = {}) {
   $("#modal-overlay .modal-card").classList.toggle("wide", Boolean(opts.wide));
   buildBody(body);
   $("#modal-overlay").classList.remove("hidden");
+  // В Telegram «назад» — системная кнопка клиента, а не наш крестик: свайп
+  // и аппаратная кнопка Android ведут именно к ней. Пока модалка открыта,
+  // она закрывает модалку, а не всё приложение.
+  if (window.TGA && TGA.active) TGA.back(closeModal);
 }
 
 function closeModal() {
@@ -415,6 +452,11 @@ function closeModal() {
   const body = $("#modal-body");
   body.innerHTML = "";
   body.removeAttribute("data-char-id");
+  if (window.TGA && TGA.active) {
+    TGA.back(null);
+    TGA.main("");
+    TGA.swipeGuard(false);
+  }
 }
 
 $("#modal-close").addEventListener("click", closeModal);
@@ -528,6 +570,192 @@ function payoutStatus(status) {
   };
 }
 
+// ═════════════ внешние входы: Telegram, Яндекс ID, Google ═════════════
+//
+// ДЫРА, КОТОРУЮ ЭТО ЗАКРЫВАЕТ. Роут /api/auth/config существовал с самого
+// начала, но фронт его НИ РАЗУ не дёргал: кнопок входа на сайте не было
+// вообще, экран #login знал только логин с паролем. Человек, заведённый через
+// Google или Яндекс, вернуться в свой аккаунт не мог — его данные были
+// фактически заперты. Здесь одна функция рисует кнопки в трёх местах.
+//
+// Если ключей на сервере нет, /api/auth/config отдаёт false — и кнопок просто
+// не будет. Это правильная деградация, а не поломка.
+
+let authCfgCache = null;
+
+async function authConfig() {
+  if (authCfgCache) return authCfgCache;
+  try {
+    authCfgCache = await api("/api/auth/config");
+  } catch (e) {
+    authCfgCache = { telegram: false, yandex: false, google: false };
+  }
+  return authCfgCache;
+}
+
+// Иконки инлайном: внешних библиотек и CDN у проекта нет и заводить их ради
+// трёх значков незачем.
+const AUTH_ICO = {
+  telegram: '<svg class="auth-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#29a9eb" d="M12 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24Z"/><path fill="#fff" d="M5.5 11.8 17 7.3c.5-.2 1 .1.8.9l-2 9.2c-.1.6-.5.7-1 .5l-2.8-2-1.3 1.3c-.2.2-.3.3-.6.3l.2-3 5.4-4.9c.2-.2 0-.3-.3-.1l-6.7 4.2-2.9-.9c-.6-.2-.6-.6.1-.9Z"/></svg>',
+  yandex: '<svg class="auth-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#fc3f1d"/><path fill="#fff" d="M13.2 19h2.1V5h-3c-3 0-4.8 1.6-4.8 4 0 1.9.9 3 2.5 4.1L7.2 19h2.3l2.5-5-1-.7c-1.3-.9-1.9-1.6-1.9-3 0-1.3.9-2.2 2.4-2.2h1.7V19Z"/></svg>',
+  google: '<svg class="auth-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285f4" d="M23 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.2a5.3 5.3 0 0 1-2.3 3.5v2.9h3.7c2.2-2 3.4-5 3.4-8.6Z"/><path fill="#34a853" d="M12 23.5c3.1 0 5.7-1 7.6-2.8l-3.7-2.9c-1 .7-2.3 1.1-3.9 1.1-3 0-5.5-2-6.4-4.7H1.8v3A11.5 11.5 0 0 0 12 23.5Z"/><path fill="#fbbc05" d="M5.6 14.2a6.9 6.9 0 0 1 0-4.4v-3H1.8a11.5 11.5 0 0 0 0 10.4l3.8-3Z"/><path fill="#ea4335" d="M12 4.7c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.2 15.1 0 12 0 7.5 0 3.6 2.6 1.8 6.4l3.8 3c.9-2.8 3.4-4.7 6.4-4.7Z"/></svg>',
+};
+
+// Login Widget Telegram — единственный способ входа через Telegram на обычном
+// сайте: он требует домена, прописанного боту через /setdomain в BotFather.
+// Внутри мини-аппа его НЕ показываем — там вход уже произошёл.
+window.onTelegramAuth = async function (user) {
+  try {
+    await api("/api/auth/telegram" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""),
+              { method: "POST", body: user });
+    me = await api("/api/me");
+    closeModal();
+    showApp();
+  } catch (e) {
+    fail(e);
+  }
+};
+
+function tgWidget(botName) {
+  const holder = document.createElement("div");
+  holder.className = "auth-widget";
+  const s = document.createElement("script");
+  s.async = true;
+  s.src = "https://telegram.org/js/telegram-widget.js?22";
+  s.setAttribute("data-telegram-login", botName);
+  s.setAttribute("data-size", "medium");
+  s.setAttribute("data-radius", "14");
+  s.setAttribute("data-userpic", "false");
+  s.setAttribute("data-onauth", "onTelegramAuth(user)");
+  holder.appendChild(s);
+  return holder;
+}
+
+function authBtn(kind, label, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "auth-btn";
+  b.innerHTML = `${AUTH_ICO[kind] || ""}<span></span>`;
+  b.querySelector("span").textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+/* Кнопки входа. mode:
+     "login"  — экран входа и лендинг: кнопка ВХОДИТ;
+     "link"   — кабинет: кнопка ПРИВЯЗЫВАЕТ (показываем только непривязанное). */
+async function renderAuthButtons(container, opts = {}) {
+  if (!container) return;
+  const cfg = await authConfig();
+  const linked = opts.linked || {};
+  const inTg = Boolean(window.TGA && TGA.active);
+  container.innerHTML = "";
+  container.className = "auth-buttons" + (opts.column ? " auth-column" : "");
+
+  const go = (provider) => {
+    // В мини-аппе OAuth уходит во ВНЕШНИЙ браузер: редирект внутри webview
+    // убивает window.Telegram.WebApp, и вернуться потом некуда.
+    if (inTg) { tgExternalLogin(provider, container); return; }
+    const q = refCode ? `?ref=${encodeURIComponent(refCode)}` : "";
+    window.location.href = `/api/auth/${provider}/start${q}`;
+  };
+
+  let shown = 0;
+  if (cfg.telegram && cfg.telegram_bot && !inTg && !linked.telegram) {
+    container.appendChild(tgWidget(cfg.telegram_bot));
+    shown += 1;
+  }
+  for (const p of ["yandex", "google"]) {
+    if (!cfg[p] || linked[p]) continue;
+    const label = opts.mode === "link"
+      ? t("auth.link", { name: t("auth.name." + p) })
+      : t("auth.with", { name: t("auth.name." + p) });
+    container.appendChild(authBtn(p, label, () => go(p)));
+    shown += 1;
+  }
+  // «Продолжить в Telegram» для того, кто уже сидит на сайте: код привязки
+  // живёт 15 минут и сгорает при использовании.
+  if (opts.mode === "link" && !inTg && cfg.telegram_bot && !linked.telegram) {
+    container.appendChild(authBtn("telegram", t("auth.openInTg"), async (e) => {
+      const btn = e ? e.currentTarget : null;
+      if (btn) btn.disabled = true;
+      try {
+        const r = await api("/api/bot/link-code");
+        if (r && r.url) window.open(r.url, "_blank", "noopener");
+        else throw new Error(t("auth.noBot"));
+      } catch (err) { fail(err); }
+      if (btn) btn.disabled = false;
+    }));
+    shown += 1;
+  }
+  if (!shown && opts.emptyNote) {
+    const p = document.createElement("p");
+    p.className = "auth-note";
+    p.textContent = opts.emptyNote;
+    container.appendChild(p);
+  }
+  return shown;
+}
+
+// Вход через Яндекс/Google изнутри мини-аппа: браузер снаружи + ожидание.
+async function tgExternalLogin(provider, container) {
+  const note = document.createElement("p");
+  note.className = "auth-note";
+  note.textContent = t("tg.waitingBrowser");
+  container.appendChild(note);
+  try {
+    const st = await TGA.externalLogin(provider, (state) => {
+      if (state === "timeout") note.textContent = t("tg.linkTimeout");
+    });
+    if (st.status === "done") {
+      me = await api("/api/me");
+      TGA.done();
+      closeModal();
+      showApp();
+      return;
+    }
+    if (st.status === "conflict") { note.textContent = t("tg.conflictShort"); return; }
+    if (st.status === "expired") note.textContent = t("tg.linkExpired");
+  } catch (e) {
+    note.textContent = errText(e);
+  }
+}
+
+// ═════════════════════ мини-апп: экраны и состояния ═════════════════════
+
+// Telegram не опознал — единственный тупик, из которого мини-апп сам не
+// выберется. Говорим что случилось, а не показываем пустой экран.
+function showTgFail(e) {
+  hideScreens();
+  const box = $("#login");
+  if (!box) return;
+  box.classList.remove("hidden");
+  const form = $("#login-form");
+  if (form) {
+    form.innerHTML = `
+      <h1 class="login-word">lolq<span class="brand-dot">.</span>ai</h1>
+      <p class="error">${escHtml(t("tg.authFail"))}</p>
+      <p class="auth-note">${escHtml(errText(e) || "")}</p>`;
+  }
+}
+
+// После входа в мини-апп: подхватываем мост (привязка аккаунта сайта) и
+// отпускаем свайп-закрытие на стартовом экране.
+function tgAfterSignIn() {
+  if (!(window.TGA && TGA.active)) return;
+  TGA.swipeGuard(false);
+  if (TGA.bridge === "conflict" && TGA.other) {
+    const o = TGA.other;
+    TGA.alert(t("tg.conflict", {
+      name: o.name || "—", plan: o.plan || "free", points: tNum(o.points || 0),
+    }));
+  } else if (TGA.bridge === "expired") {
+    TGA.alert(t("tg.linkExpired"));
+  } else if (TGA.merged) {
+    TGA.done();
+  }
+}
+
 function openAccountModal(initial = "account") {
   const isAdmin = Boolean(me && me.user && me.user.is_admin);
   const tabs = ACC_TABS.filter((tab) => !tab.admin || isAdmin);
@@ -561,6 +789,19 @@ function openAccountModal(initial = "account") {
   });
 }
 
+// Одна строка правды о подписке: кто списывает, когда следующий раз и, для
+// звёзд, где её можно отменить помимо нас. Раньше кабинет вообще не знал о
+// Stars и писал звёздному подписчику «автопродление выключено».
+function payLine(a) {
+  const src = a.pay_provider || "";
+  if (!src || a.plan === "free") return "";
+  const when = a.next_charge ? fmtDate(a.next_charge) : (a.plan_until ? fmtDate(a.plan_until) : "");
+  const via = t("account.via." + (src === "stars" ? "stars" : src === "stripe" ? "card" : "card"));
+  if (!a.autopay) return t("account.payUntil", { via: via, date: when });
+  return t("account.payNext", { via: via, date: when })
+    + (src === "stars" ? " · " + t("account.starsWhere") : "");
+}
+
 // ────────── вкладка «Аккаунт» ──────────
 async function renderAccountPane(pane) {
   let a;
@@ -590,8 +831,14 @@ async function renderAccountPane(pane) {
     <div class="acc-chips">
       ${chips.map(([k, t]) => `<span class="acc-chip${linked[k] ? " on" : ""}">${linked[k] ? "✓" : "○"} ${t}</span>`).join("")}
     </div>
+    <!-- Кнопки привязать вход: без них человек с одним внешним входом
+         навсегда оставался бы заперт в одном способе входа. -->
+    <div class="auth-buttons acc-link"></div>
+    ${payLine(a) ? `<p class="muted acc-note">${escHtml(payLine(a))}</p>` : ""}
     <div class="row acc-actions"></div>
     <span class="acc-msg status"></span>`;
+
+  renderAuthButtons($(".acc-link", pane), { mode: "link", linked });
 
   const actions = $(".acc-actions", pane);
   if (a.autopay) {
@@ -614,7 +861,10 @@ async function renderAccountPane(pane) {
     });
     const note = document.createElement("span");
     note.className = "muted";
-    note.textContent = t("account.autopayOffNote");
+    // У звёзд отмена не возвращает неиспользованные дни и работает на стороне
+    // Telegram — говорим это прямо, а не общей фразой про автопродление.
+    note.textContent = a.pay_provider === "stars"
+      ? t("account.starsCancelNote") : t("account.autopayOffNote");
     actions.append(btn, note);
   } else {
     const btn = document.createElement("button");
@@ -631,8 +881,140 @@ async function renderAccountPane(pane) {
   }
 }
 
+// ────────── витрина в звёздах (только внутри Telegram) ──────────
+//
+// Ни долларов, ни рублей здесь нет намеренно: показывать внутри Telegram
+// сравнение со своей ценой на сайте нельзя — это и есть тот steering, за
+// который приложение сначала прячут из мобильных клиентов, а потом удаляют.
+// Годовой период и ULTRA в этой витрине отсутствуют: у звёздной подписки
+// период ровно один (30 дней) и потолок 10000 ⭐.
+
+function starsCard(kind, row) {
+  const price = row.discount_pct
+    ? `<span class="stars-old">${escHtml(tNum(row.xtr_base))} ⭐</span>${escHtml(tNum(row.xtr))} ⭐`
+    : `${escHtml(tNum(row.xtr))} ⭐`;
+  const title = kind === "plan"
+    ? escHtml(row.title)
+    : escHtml(t("stars.packTitle", { n: tNum(row.points) }));
+  const note = kind === "plan"
+    ? escHtml(t("stars.planNote", { n: tNum(row.points), days: row.period_days || 30 }))
+    : escHtml(t("stars.packNote"));
+  return `<div class="stars-card" data-kind="${kind}" data-id="${escHtml(row.id)}">
+    <div class="stars-top"><b>${title}</b><span class="stars-price">${price}</span></div>
+    <p class="stars-note">${note}</p>
+    <button type="button" class="primary stars-buy">${escHtml(t("stars.buy"))}</button>
+  </div>`;
+}
+
+async function renderStarsPane(pane) {
+  let d;
+  try { d = await api("/api/tg/pricing"); } catch (e) { return accFail(pane, e); }
+  if (!d.enabled) {
+    pane.innerHTML = `<p class="muted">${escHtml(t("stars.off"))}</p>`;
+    return;
+  }
+  const sub = d.subscription || {};
+  // Telegram разрешает НЕСКОЛЬКО одновременных подписок одного человека на
+  // одного бота и второй счёт оплатится молча. Поэтому при живой звёздной
+  // подписке кнопок «купить тариф» не показываем вообще — только управление
+  // текущей и докупку очков.
+  const hasSub = sub.provider === "stars" && sub.active;
+  const plans = hasSub ? [] : (d.plans || []).filter((p) => p.available && p.id !== d.current);
+  const packs = (d.packs || []).filter((p) => p.available && d.topup_allowed);
+  pane.innerHTML = `
+    <div class="acc-stats">
+      <div class="acc-stat"><b>${escHtml(String(d.current || "free").toUpperCase())}</b><span>${escHtml(t("account.statPlan"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(tNum(d.points))}</b><span>${escHtml(t("account.statPoints"))}</span></div>
+    </div>
+    ${sub.provider === "stars" ? `<p class="stars-state">${escHtml(t("stars.subLine", {
+        plan: String(sub.plan || "").toUpperCase(), xtr: tNum(sub.xtr || 0),
+        days: sub.period_days || 30, date: sub.until ? fmtDate(sub.until) : "—",
+      }))}<br>${escHtml(t("stars.subWhere"))}</p>` : ""}
+    ${hasSub ? `<p class="muted acc-note">${escHtml(t("stars.subOnly"))}</p>` : ""}
+    <div class="stars-grid">${plans.map((p) => starsCard("plan", p)).join("")}</div>
+    ${packs.length ? `<label>${escHtml(t("stars.packsLabel"))}</label>
+      <div class="stars-grid">${packs.map((p) => starsCard("topup", p)).join("")}</div>` : ""}
+    ${!d.topup_allowed && (d.packs || []).length
+      ? `<p class="muted acc-note">${escHtml(t("stars.packsNeedPlan"))}</p>` : ""}
+    ${sub.provider === "stars" && sub.active
+      ? `<div class="row"><button type="button" class="danger stars-cancel">${escHtml(t("account.autopayOff"))}</button></div>` : ""}
+    <span class="acc-msg status"></span>`;
+
+  // Длинная витрина + свайп вниз = случайно закрытое приложение посреди
+  // покупки. На этом экране свайп-закрытие придерживаем.
+  TGA.swipeGuard(true);
+
+  $$(".stars-buy", pane).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const card = btn.closest(".stars-card");
+      const kind = card.dataset.kind;
+      const id = card.dataset.id;
+      btn.disabled = true;
+      accMsg(pane, "");
+      // Снимок ДО оплаты: выдачу мы определяем по изменению кабинета, а не по
+      // ответу openInvoice — «paid» не значит, что очки уже начислены.
+      let before = { plan: d.current, points: d.points };
+      try {
+        const st = await TGA.pay(kind, id, () => {});
+        if (st === "cancelled") { btn.disabled = false; return; }
+        if (st === "failed") {
+          btn.disabled = false;
+          accMsg(pane, t("stars.failed"), "error");
+          return;
+        }
+        accMsg(pane, t("stars.checking"));
+        const got = await TGA.waitGrant(before, 90);
+        if (got) {
+          me = await api("/api/me").catch(() => me);
+          renderUserBar();
+          await renderStarsPane(pane);
+          accMsg(pane, t("stars.done"), "done");
+        } else {
+          // Деньги взяты, выдача задерживается — это правда, и говорить надо
+          // именно её. Суточная сверка догонит платёж сама.
+          accMsg(pane, t("stars.slow"), "error");
+          btn.disabled = false;
+        }
+      } catch (e) {
+        btn.disabled = false;
+        TGA.oops();
+        accMsg(pane, errText(e), "error");
+      }
+    });
+  });
+
+  const cancel = $(".stars-cancel", pane);
+  if (cancel) {
+    cancel.addEventListener("click", () => {
+      TGA.confirm(t("stars.cancelAsk"), async (yes) => {
+        if (!yes) return;
+        cancel.disabled = true;
+        accMsg(pane, t("account.autopayOffBusy"));
+        try {
+          const r = await api("/api/billing/cancel", { method: "POST" });
+          await renderStarsPane(pane);
+          accMsg(pane, r && r.stars_cancelled === false
+            ? t("stars.cancelPartial") : t("account.autopayOffDone"),
+            r && r.stars_cancelled === false ? "error" : "done");
+        } catch (e) {
+          cancel.disabled = false;
+          accMsg(pane, errText(e), "error");
+        }
+      });
+    });
+  }
+}
+
 // ────────── вкладка «Тариф» ──────────
+// Ступень, выбранная в кабинете: {plan_id: индекс}. Живёт вне функции —
+// панель перерисовывается на каждый клик, и выбор обязан это пережить.
+let accTierPick = {};
+
 async function renderPlanPane(pane) {
+  // Внутри Telegram цифровой товар продаётся ТОЛЬКО за звёзды: внешняя
+  // платёжная ссылка здесь — нарушение правил платформы. На обычном сайте
+  // всё остаётся как было, ЮKassa и Stripe.
+  if (window.TGA && TGA.active) return renderStarsPane(pane);
   let data;
   try { data = await api("/api/billing/plans"); } catch (e) { return accFail(pane, e); }
   // Контракт витрины: новый (usd + providers) и старый (price в рублях +
@@ -644,25 +1026,55 @@ async function renderPlanPane(pane) {
   // Описание тарифа берём из своего словаря: у бэкенда оно всегда английское,
   // а интерфейс обязан говорить на одном языке. Числа — из API.
   const planNote = (p) => t(`landing.pricing.plans.${p.id}.note`) || p.note || "";
-  const planMoney = (p) => (p.usd != null ? ldMoney(p.usd) : fmtRub((Number(p.price) || 0) * 100));
   const planPaid = (p) => (p.usd != null ? Number(p.usd) : Number(p.price)) > 0;
+  const curTier = data.current_tier || "";
+  // Ступень, выбранная в кабинете. По умолчанию — уже купленная: человек с
+  // ULTRA u3 не должен видеть в своей карточке чужой объём.
+  const tierOf = (p) => {
+    const tiers = p.tiers || [];
+    if (!tiers.length) return null;
+    if (accTierPick[p.id] == null) {
+      const i = tiers.findIndex((x) => x.id === curTier);
+      accTierPick[p.id] = p.id === current && i >= 0 ? i : 0;
+    }
+    return tiers[Math.min(Math.max(accTierPick[p.id], 0), tiers.length - 1)];
+  };
+  const planMoney = (p) => {
+    const tr = tierOf(p);
+    if (tr) return ldMoney(tr.usd != null ? tr.usd : tr.usd_cents / 100);
+    return p.usd != null ? ldMoney(p.usd) : fmtRub((Number(p.price) || 0) * 100);
+  };
   pane.innerHTML = `
     <div class="acc-plans">
       ${(data.plans || []).map((p) => {
-        const isCur = p.id === current;
+        const tr = tierOf(p);
+        const pts = tr ? tr.points : p.points;
+        // «Текущий» — это тариф И ступень: на ULTRA имя тарифа одно, а
+        // объёмов четыре, и путать их значит показывать неверную цену.
+        const isCur = p.id === current && (!tr || tr.id === (curTier || (p.tiers[0] || {}).id));
+        const scale = tr ? `<div class="acc-tier">${p.tiers.map((x, i) => `
+            <button type="button" class="${x.id === tr.id ? "on" : ""}"
+                    data-plan="${escHtml(p.id)}" data-idx="${i}"
+              >${escHtml(ldPointsLabel(x.points))}</button>`).join("")}</div>` : "";
         return `<div class="acc-plan${isCur ? " on" : ""}">
           <div class="acc-plan-top"><b>${escHtml(p.title)}</b><span>${escHtml(planMoney(p))}</span></div>
+          ${scale}
           <p class="acc-plan-note">${escHtml(planNote(p))}</p>
-          <p class="acc-plan-points">${escHtml(t("plan.pointsLine", { n: tNum(p.points) }))}</p>
+          <p class="acc-plan-points">${escHtml(t("plan.pointsLine", { n: tNum(pts) }))}</p>
           ${isCur
             ? `<span class="acc-plan-cur">${escHtml(t("plan.current"))}</span>`
             : (planPaid(p)
               ? `<button type="button" class="primary acc-pay" data-plan="${escHtml(p.id)}"
-                  >${escHtml(t("plan.pay"))}</button>`
+                  data-tier="${escHtml(tr ? tr.id : "")}"
+                  >${escHtml(tr && p.id === current ? t("plan.changeTier") : t("plan.pay"))}</button>`
               : `<span class="acc-plan-cur muted">${escHtml(t("plan.basic"))}</span>`)}
         </div>`;
       }).join("")}
     </div>
+    ${data.next_tier ? `<p class="muted acc-note">${escHtml(t("plan.tierScheduled", {
+        tier: data.next_tier.toUpperCase(),
+        date: data.plan_until ? fmtDate(data.plan_until) : "",
+      }))}</p>` : ""}
     <label>${escHtml(t("plan.promoLabel"))}</label>
     <input class="acc-promo" placeholder="${escHtml(t("plan.promoPh"))}" />
     <span class="acc-msg status"></span>`;
@@ -683,9 +1095,23 @@ async function renderPlanPane(pane) {
       btn.disabled = true;
       accMsg(pane, t("plan.creating"));
       try {
+        // Понижение ступени внутри УЖЕ КУПЛЕННОГО тарифа — не платёж: за
+        // текущий период заплачено, и новый счёт выставлять не за что.
+        // Сервер сам решает, что это: "scheduled" (записал на продление)
+        // или "checkout" (нужна доплата — уходим в кассу).
+        if (btn.dataset.tier && btn.dataset.plan === current) {
+          const r0 = await api("/api/billing/tier",
+                               { method: "POST", body: { tier: btn.dataset.tier } });
+          if (r0 && r0.action !== "checkout") {
+            await renderPlanPane(pane);
+            accMsg(pane, t("plan.tierSaved"), "done");
+            return;
+          }
+        }
         const r = await api("/api/billing/create", {
           method: "POST",
-          body: { kind: "plan", plan: btn.dataset.plan, period: "month", promo: promo.value.trim() },
+          body: { kind: "plan", plan: btn.dataset.plan, tier: btn.dataset.tier || "",
+                  period: "month", promo: promo.value.trim() },
         });
         if (r && r.url) { window.location.href = r.url; return; }
         throw new Error(t("plan.noUrl"));
@@ -695,6 +1121,12 @@ async function renderPlanPane(pane) {
       }
     });
   });
+  // Тики ступени: перерисовываем панель, а не только цену — от объёма зависят
+  // и надпись на кнопке, и отметка «текущий».
+  $$(".acc-tier button", pane).forEach((b) => b.addEventListener("click", () => {
+    accTierPick[b.dataset.plan] = Number(b.dataset.idx) || 0;
+    renderPlanPane(pane);
+  }));
   if (!enabled) {
     const note = document.createElement("p");
     note.className = "muted acc-note";
@@ -931,6 +1363,9 @@ async function loadProject() {
   await autoAssembleTick();
   render();
   schedulePoll();
+  // Отложенный выбор с витрины промтов: трек мог появиться только сейчас.
+  if (ldPending) await ldApplyPending();
+  renderOnboarding();
 }
 
 function renderProjectBar() {
@@ -1239,8 +1674,8 @@ function stageStates(tr) {
   const framesDone = scenes.length > 0 && scenes.every((s) => s.image_url && s.image_last_url);
   const videosDone = scenes.length > 0 && scenes.every((s) => s.video_url);
   return {
-    setup: tr.style && tr.audio_duration_sec ? "done"
-      : (tr.title || tr.style || tr.audio_duration_sec || tr.lyrics || tr.comment) ? "part" : "empty",
+    setup: tr.has_style && tr.audio_duration_sec ? "done"
+      : (tr.title || tr.has_style || tr.audio_duration_sec || tr.lyrics || tr.comment) ? "part" : "empty",
     board: (tr.scenes_status === "error" || tr.storyboard_status === "error" ||
         scenes.some((s) => s.image_status === "error")) ? "error"
       : (busy(tr.scenes_status) || busy(tr.storyboard_status) || anyImgBusy) ? "busy"
@@ -1354,8 +1789,15 @@ function renderTrack(tr) {
     $(".t-note-view", card).classList.remove("hidden");
     $(".t-note-text", card).textContent = tr.director_note;
   }
-  $(".t-style", card).value = tr.style;
-  buildStylePicker($(".t-style-picker", card), tr.style, (v) => { $(".t-style", card).value = v; });
+  // Стиль трека: пикер отдаёт КЛЮЧИ, текст промпта собирает сервер. Скрытое
+  // поле держит их же csv — на нём завязан обычный сабмит карточки.
+  $(".t-style", card).value = (tr.style_keys || []).join(",");
+  buildStylePicker($(".t-style-picker", card), tr.style_keys || [], async (keys) => {
+    $(".t-style", card).value = keys.join(",");
+    try {
+      await api(`/api/tracks/${tr.id}/style`, { method: "POST", body: { style_keys: keys } });
+    } catch (e) { fail(e); }
+  });
   $(".t-comment", card).value = tr.comment;
   $(".t-grain", card).checked = Boolean(tr.film_grain);
   $(".t-nostory", card).checked = Boolean(tr.no_story);
@@ -1980,11 +2422,14 @@ async function deleteTrack(id) {
 }
 
 async function saveTrack(id, card) {
+  // Стиль сохраняется СВОИМ роутом и ключами: PATCH больше не принимает
+  // текст промпта — реестр живёт на сервере, и собирать его тут нечем.
+  const keys = ($(".t-style", card).value || "").split(",").filter(Boolean);
+  await api(`/api/tracks/${id}/style`, { method: "POST", body: { style_keys: keys } });
   await api(`/api/tracks/${id}`, {
     method: "PATCH",
     body: {
       title: $(".t-title", card).value,
-      style: $(".t-style", card).value,
       comment: $(".t-comment", card).value,
       film_grain: $(".t-grain", card).checked,
       no_story: $(".t-nostory", card).checked,
@@ -2017,7 +2462,7 @@ function openSupergenModal(tr) {
     // Чек-лист готовности: без стиля и персонажей генератор выдумывает своё.
     const chars = (project.characters || []).filter((c) => (c.name || "").trim());
     const checks = [
-      [Boolean((tr.style || "").trim()), t("modal.supergen.styleOk"), t("modal.supergen.styleBad")],
+      [Boolean(tr.has_style), t("modal.supergen.styleOk"), t("modal.supergen.styleBad")],
       [chars.length > 0, t("modal.supergen.charsOk", { names: chars.map((c) => c.name).join(", ") }),
         t("modal.supergen.charsBad")],
       [Boolean((tr.comment || "").trim() || (tr.lyrics || "").trim()),
@@ -2133,7 +2578,7 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   const form = e.target;
   const fd = new FormData();
   fd.append("title", form.title.value);
-  fd.append("style", form.style.value);
+  fd.append("style_keys", form.style_keys.value);
   fd.append("lyrics", form.lyrics.value);
   fd.append("comment", form.comment.value);
   if (form.audio.files[0]) fd.append("audio", form.audio.files[0]);
@@ -2152,7 +2597,10 @@ function renderCharacter(c) {
   card.dataset.id = c.id;
   const name = (c.name || "").trim();
   $(".cc-name", card).textContent = name || t("character.noName");
-  const photo = (c.photos || [])[0];
+  // На визитке показываем ТУ картинку, которая реально уедет в кадры сцен
+  // (разворот, если он есть), а не первое попавшееся фото.
+  const photos = c.photos || [];
+  const photo = photos.find((p) => p.id === c.model_photo_id) || photos[0];
   if (photo) {
     const img = $(".cc-img", card);
     img.src = photo.url + `?t=${photo.id}`;
@@ -2197,12 +2645,31 @@ function bindCharacterEditor(card, c) {
   $(".c-name", card).value = c.name;
   $(".c-desc", card).value = c.description;
   $(".c-main", card).checked = c.is_main;
+  // Два ряда: ЗАГРУЖЕННЫЕ фото (они уходят референсом в разворот) и
+  // СГЕНЕРИРОВАННЫЕ развороты (последний из них берут кадры сцен). Одна
+  // общая куча скрывала главное: какая именно картинка работает.
   const photosBox = $(".char-photos", card);
-  (c.photos || []).forEach((ph) => {
+  const modelsBox = $(".char-models", card);
+  const modelsHead = $(".char-models-head", card);
+  const all = c.photos || [];
+  const uploads = all.filter((p) => (p.kind || "photo") !== "model");
+  const models = all.filter((p) => (p.kind || "photo") === "model");
+
+  const photoTile = (ph, isModel) => {
     const wrap = document.createElement("div");
-    wrap.className = "char-photo";
+    wrap.className = "char-photo" + (isModel ? " char-photo-model" : "");
+    if (ph.id === c.model_photo_id) wrap.classList.add("in-use");
     const img = document.createElement("img");
-    img.src = ph.url + `?t=${ph.id}`;
+    img.src = (ph.thumb_url || ph.url) + `?t=${ph.id}`;
+    img.loading = "lazy";
+    // Миниатюру делает ffmpeg; не вышло — показываем оригинал, а не иконку
+    // битой картинки на месте лица героя.
+    img.addEventListener("error", () => {
+      const full = ph.url + `?t=${ph.id}`;
+      if (!img.src.endsWith(full)) img.src = full;
+    }, { once: true });
+    wrap.appendChild(img);
+
     const del = document.createElement("button");
     del.className = "ghost danger char-photo-del";
     del.textContent = "✕";
@@ -2211,10 +2678,62 @@ function bindCharacterEditor(card, c) {
       await api(`/api/characters/photos/${ph.id}`, { method: "DELETE" });
       await back();
     });
-    wrap.appendChild(img);
     wrap.appendChild(del);
-    photosBox.appendChild(wrap);
-  });
+
+    if (isModel) {
+      const cap = document.createElement("span");
+      cap.className = "char-photo-cap";
+      // Разворот честно говорит, по скольким фото он собран: «не похоже»
+      // почти всегда означает «фото не было ни одного».
+      cap.textContent = ph.from_photos
+        ? t("character.builtFrom", { n: ph.from_photos })
+        : t("character.builtFromNone");
+      wrap.appendChild(cap);
+      if (ph.id === c.model_photo_id) {
+        const badge = document.createElement("span");
+        badge.className = "char-photo-badge";
+        badge.textContent = t("character.inUse");
+        wrap.appendChild(badge);
+      } else {
+        const use = document.createElement("button");
+        use.className = "ghost char-photo-use";
+        use.textContent = t("character.makePrimary");
+        use.addEventListener("click", async () => {
+          await api(`/api/characters/photos/${ph.id}`, { method: "PATCH", body: { primary: true } });
+          await back();
+        });
+        wrap.appendChild(use);
+      }
+    } else {
+      // Подпись ракурса уезжает прямо в промпт разворота. Классификатора у
+      // нас нет и не надо: человек знает про своё фото больше любой модели.
+      const pose = document.createElement("select");
+      pose.className = "char-photo-pose";
+      pose.title = t("character.poseTitle");
+      [["", "none"], ["face", "face"], ["three_quarter", "three_quarter"],
+       ["full", "full"], ["back", "back"]].forEach(([v, key]) => {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = t(`character.pose.${key}`);
+        pose.appendChild(o);
+      });
+      pose.value = ph.pose_kind || "";
+      pose.addEventListener("change", async () => {
+        try {
+          await api(`/api/characters/photos/${ph.id}`, { method: "PATCH", body: { pose: pose.value } });
+        } catch (e) { fail(e); }
+      });
+      wrap.appendChild(pose);
+    }
+    return wrap;
+  };
+
+  uploads.forEach((ph) => photosBox.appendChild(photoTile(ph, false)));
+  if (models.length) {
+    modelsHead.classList.remove("hidden");
+    modelsBox.classList.remove("hidden");
+    models.forEach((ph) => modelsBox.appendChild(photoTile(ph, true)));
+  }
   $(".c-save", card).addEventListener("click", async () => {
     await api(`/api/characters/${c.id}`, { method: "PATCH", body: {
       name: $(".c-name", card).value,
@@ -2535,12 +3054,31 @@ async function addManualScene(trackId) {
 function rebuildAddTrackPicker() {
   const form = document.querySelector("#add-track-form");
   if (!form) return;
-  const current = form.style.value || "";
-  buildStylePicker(form.querySelector(".style-picker"), current, (v) => { form.style.value = v; });
+  // Скрытое поле называется style_keys и хранит csv ключей: полного текста
+  // промпта на клиенте больше нет — его собирает сервер при создании трека.
+  const current = (form.style_keys.value || "").split(",").filter(Boolean);
+  buildStylePicker(form.querySelector(".style-picker"), current,
+                   (keys) => { form.style_keys.value = keys.join(","); });
 }
 rebuildAddTrackPicker();
 
 (async () => {
+  // ── мини-апп Telegram ──
+  // Вход делается ДО первого /api/me: иначе человек на долю секунды увидит
+  // лендинг, которого внутри Telegram быть не должно.
+  if (window.TGA && TGA.active) {
+    try {
+      await TGA.signIn();
+    } catch (e) {
+      showTgFail(e);
+      return;
+    }
+    me = await api("/api/me");
+    if (!me.authed) { showTgFail(new Error("no_session")); return; }
+    showApp();
+    tgAfterSignIn();
+    return;
+  }
   me = await api("/api/me");
   // Без сессии гость видит главную, а не форму пароля. С живой сессией сразу
   // открывается студия — кроме случая, когда человек пришёл именно на главную
@@ -2681,25 +3219,50 @@ async function openCellsModal(tr) {
   });
 }
 
-// Генерация модельки персонажа: разворот в 4 ракурсах по описанию + фото-рефам.
+// 3D-РАЗВОРОТ персонажа: лист ракурсов, собранный по его фотографиям.
+//
+// Слово «3D-модель» здесь не употребляется намеренно: вращаемого объекта не
+// получится, и обещать его нельзя. Что получится — лист ракурсов в
+// 3D-рендер-стиле, из которого дальше строятся кадры сцен; ровно это и
+// написано под заголовком, до нажатия кнопки, а не после.
 function openModelModal(c, onDone = null) {
   openModal(t("modal.model.title", { name: c.name || t("modal.model.someone") }), (body) => {
+    // openModal стирает data-char-id, а charModalRefresh по нему решает, не
+    // закрыл ли человек модалку. Без этой строки досье после генерации не
+    // возвращалось: модалка навсегда застывала на «генерирую…».
+    body.dataset.charId = String(c.id);
+    const uploads = (c.photos || []).filter((p) => (p.kind || "photo") !== "model");
+
+    const what = document.createElement("p");
+    what.className = "muted";
+    what.style.margin = "0 0 8px";
+    what.textContent = t("modal.model.what");
+    body.appendChild(what);
+
     const info = document.createElement("p");
-    info.className = "muted";
+    // Отсутствие фото и «фото всего одно» — это предупреждения, а не ошибки:
+    // красный тут читался бы как «сломалось», хотя генерация пойдёт.
+    info.className = uploads.length > 1 ? "muted" : "modal-warn";
     info.style.margin = "0 0 10px";
-    info.textContent = (c.photos || []).length
-      ? t("modal.model.withPhotos", { n: Math.min(3, c.photos.length) })
-      : t("modal.model.noPhotos");
+    if (!uploads.length) info.textContent = t("modal.model.noPhotos");
+    else if (uploads.length === 1) info.textContent = t("modal.model.onePhoto");
+    else info.textContent = t("modal.model.withPhotos", { n: Math.min(6, uploads.length) });
     body.appendChild(info);
 
     const lab = document.createElement("label");
     lab.textContent = t("modal.model.descLabel");
+    lab.title = t("modal.model.descHint");
     body.appendChild(lab);
     const ta = document.createElement("textarea");
-    ta.rows = 5;
+    ta.rows = 4;
     ta.value = c.description || "";
     ta.placeholder = t("modal.model.descPh");
     body.appendChild(ta);
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.style.margin = "4px 0 10px";
+    hint.textContent = t("modal.model.descHint");
+    body.appendChild(hint);
 
     const lab2 = document.createElement("label");
     lab2.textContent = t("modal.model.kindLabel");
@@ -2712,6 +3275,19 @@ function openModelModal(c, onDone = null) {
     });
     body.appendChild(sel);
 
+    // Второй тип листа: крупные планы лица и кистей. Для узнаваемости героя
+    // в кадрах он полезнее полного роста — там лицо занимает три пикселя.
+    const lab3 = document.createElement("label");
+    lab3.textContent = t("modal.model.viewsLabel");
+    body.appendChild(lab3);
+    const views = document.createElement("select");
+    [["full", "modal.model.viewsFull"], ["closeup", "modal.model.viewsCloseup"]]
+      .forEach(([v, key]) => {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = t(key); views.appendChild(o);
+      });
+    body.appendChild(views);
+
     const row = document.createElement("div");
     row.className = "row";
     const go = document.createElement("button");
@@ -2721,9 +3297,17 @@ function openModelModal(c, onDone = null) {
       go.disabled = true;
       go.textContent = t("modal.model.busy");
       try {
-        await api(`/api/characters/${c.id}/generate-model`, {
-          method: "POST", body: { description: ta.value, kind: sel.value },
+        const res = await api(`/api/characters/${c.id}/generate-model`, {
+          method: "POST",
+          body: { description: ta.value, kind: sel.value, views: views.value },
         });
+        // Чем и по скольким фото собрано — говорим сразу, не заставляя
+        // догадываться по картинке.
+        if (res && res.engine_title) {
+          info.className = "muted";
+          info.textContent = t("modal.model.engine",
+            { name: res.engine_title, n: res.from_photos || 0 });
+        }
         if (onDone) { await onDone(); } else { closeModal(); await loadProject(); }
       } catch (e) {
         go.disabled = false;
@@ -2765,25 +3349,31 @@ function openModelModal(c, onDone = null) {
 
 // Цена работы в очках — зеркало SCENE_COST в backend/main.py. Если там
 // поменяются числа, поменяй и здесь: витрина считает «сколько это клипов».
-const LD_SCENE_COST = { grok: 4, seedance: 10, top: 16 };
+// Цена сцены в очках — зеркало SCENE_COST в backend/main.py (кадры на шлюзе +
+// видео движком). Эти три числа УЖЕ РАЗЪЕЗЖАЛИСЬ с прайсом: было
+// {grok:4, seedance:10, top:16} при живых 4 / 101 / 154, то есть витрина
+// занижала стоимость впятеро. Живой ответ /api/billing/plans их
+// перезаписывает (см. ldNormalizePricing) — здесь только запасной вариант.
+const LD_SCENE_COST = { grok: 4, seedance: 22, top: 154 };
 const LD_SCENES_PER_CLIP = 30;          // трёхминутный трек ≈ 30 сцен по 6 сек
 const LD_REF = { discount: 10, reward: 30 };  // REF_DISCOUNT_PCT / REF_REWARD_PCT
 
-// Запасная витрина: гость не авторизован, а GET /api/billing/plans требует
-// сессию — лендинг обязан рисоваться и без ответа сервера. Числа держим
-// синхронными с PLANS/TOPUP_PACKS бэкенда; живой ответ их перезаписывает.
+// Запасная витрина: лендинг обязан рисоваться, даже если ответ сервера не
+// приехал. Числа ДЕРЖИ СИНХРОННЫМИ с PLANS/TOPUP_PACKS бэкенда — этот блок
+// уже однажды протух (PRO 700 очков при живых 660, STUDIO 6000 при 10500,
+// пакеты по старым ценам), и заметить это было невозможно.
 const LD_PLANS_FALLBACK = [
   { id: "free", points: 120, usd: 0 },
-  { id: "pro", points: 700, usd: 20 },
-  { id: "pro_max", points: 2400, usd: 100 },
-  { id: "studio", points: 6000, usd: 299 },
+  { id: "pro", points: 660, usd: 20 },
+  { id: "pro_max", points: 3400, usd: 100 },
+  { id: "studio", points: 10500, usd: 299 },
 ];
 const LD_PACKS_FALLBACK = [
-  { id: "p400", points: 400, usd: 9 },
-  { id: "p1000", points: 1000, usd: 19 },
-  { id: "p2500", points: 2500, usd: 39 },
-  { id: "p6000", points: 6000, usd: 79 },
-  { id: "p15000", points: 15000, usd: 169 },
+  { id: "p400", points: 400, usd: 15 },
+  { id: "p1000", points: 1000, usd: 36 },
+  { id: "p2500", points: 2500, usd: 87 },
+  { id: "p6000", points: 6000, usd: 199 },
+  { id: "p15000", points: 15000, usd: 479 },
 ];
 
 let ldBuilt = false;         // тяжёлую разметку собираем один раз
@@ -2917,6 +3507,19 @@ function ldNormalizePricing(data) {
           points,
           badge: p.badge || "",
           movies: p.movies_estimate || "",
+          // Ступени объёма (ULTRA). Пустой массив = тариф без шкалы, и
+          // карточка рисуется как раньше — старый контракт не ломается.
+          tiers: Array.isArray(p.tiers) ? p.tiers.map((tr) => ({
+            id: String(tr.id || ""),
+            points: Number(tr.points) || 0,
+            usd: ldUsd(tr, "usd", "usd_cents") || 0,
+            usdYear: ldUsd(tr, "usd_year", "usd_year_cents") || 0,
+            listUsd: ldUsd(tr, "list_usd", "list_usd_cents") || 0,
+            savePct: Number(tr.save_pct) || 0,
+            yearPct: Number(tr.year_discount_pct) || 0,
+            volume: tr.volume || null,
+          })) : [],
+          volume: p.volume || null,
         };
       })
       .filter(Boolean);
@@ -2948,8 +3551,18 @@ function ldNormalizePricing(data) {
   let current = null;
   if (data && data.current) {
     current = typeof data.current === "string"
-      ? { plan: data.current, period: data.current_period || "month" }
-      : { plan: data.current.plan || "", period: data.current.period || "month" };
+      ? { plan: data.current, period: data.current_period || "month",
+          tier: data.current_tier || "", nextTier: data.next_tier || "" }
+      : { plan: data.current.plan || "", period: data.current.period || "month",
+          tier: data.current.tier || "", nextTier: "" };
+  }
+  // Цена сцены приезжает живой — иначе на витрине появляется третья копия
+  // прайса, и она протухает молча (см. историю LD_SCENE_COST).
+  const costs = (data && data.costs && data.costs.scene) || null;
+  if (costs) {
+    if (costs.grok) LD_SCENE_COST.grok = Number(costs.grok);
+    if (costs["seedance-2-mini"]) LD_SCENE_COST.seedance = Number(costs["seedance-2-mini"]);
+    if (costs["seedance-2-5"]) LD_SCENE_COST.top = Number(costs["seedance-2-5"]);
   }
   return { plans, packs, providers, current };
 }
@@ -2990,23 +3603,131 @@ function ldYearMonthly(plan) {
   return { total, mo: Math.round(total / 12) };
 }
 
+// ────────── ULTRA: шкала объёма внутри карточки тарифа ──────────
+// Выбранная ступень живёт в состоянии страницы, а не в карточке: карточки
+// перерисовываются на каждом чихе (смена языка, тумблер года, ответ кассы),
+// и выбор человека переживать это обязан.
+let ldTierIndex = {};        // {plan_id: индекс ступени}
+
+function ldTierOf(plan) {
+  const tiers = plan.tiers || [];
+  if (!tiers.length) return null;
+  let i = ldTierIndex[plan.id];
+  if (i == null) {
+    // По умолчанию — уже КУПЛЕННАЯ ступень, иначе первая: человек с ULTRA u3
+    // не должен видеть в своей карточке чужой объём.
+    const cur = ldPricing && ldPricing.current && ldPricing.current.plan === plan.id
+      ? ldPricing.current.tier : "";
+    const found = tiers.findIndex((tr) => tr.id === cur);
+    i = found >= 0 ? found : 0;
+    ldTierIndex[plan.id] = i;
+  }
+  return tiers[Math.min(Math.max(i, 0), tiers.length - 1)];
+}
+
+// Короткая подпись объёма для тика шкалы: 10.5k, 26k, 104k.
+function ldPointsLabel(points) {
+  const n = Number(points) || 0;
+  if (n < 1000) return String(n);
+  const sep = LT("topup.decimalSep") || ".";
+  return (Math.round(n / 100) / 10).toString().replace(".", sep) + "k";
+}
+
+// Расшифровка объёма в человеческих единицах. ГЛАВНОЕ ПРАВИЛО: если клипов
+// выходит меньше одного — пишем СЦЕНЫ, а не «0 клипов». На дорогом движке
+// объём часто не дотягивает до целого клипа (3400 очков PRO MAX = 20 сцен
+// на Seedance 2.5, две трети песни), и «0 клипов» убивает карточку, а врать
+// про единицу нельзя.
+function ldVolumeLine(row) {
+  const T = LT("pricing");
+  if (row.clips >= 1) {
+    return tFill(T.volClips, {
+      n: tNum(row.clips), word: tPlural(row.clips, T.clipWord), engine: row.title,
+    });
+  }
+  return tFill(T.volScenes, { n: tNum(row.scenes), engine: row.title });
+}
+
+function ldVolumeBlock(volume) {
+  if (!volume || !Array.isArray(volume.engines) || !volume.engines.length) return "";
+  const T = LT("pricing");
+  const rows = volume.engines;
+  // Три строки в лицо — потолок, середина, самый дешёвый платный, — а полная
+  // таблица под раскрытием: восемь движков в карточке никто не читает.
+  const pick = [rows[0], rows[Math.floor(rows.length / 2)], rows[rows.length - 2] || rows[rows.length - 1]]
+    .filter((r, i, a) => r && a.indexOf(r) === i);
+  const head = pick.map((r) => `<li>${escHtml(ldVolumeLine(r))}</li>`).join("");
+  const table = rows.map((r) => `<tr><td>${escHtml(r.title)}</td>`
+    + `<td>${escHtml(tFill(T.volCost, { n: tNum(r.scene_cost) }))}</td>`
+    + `<td>${escHtml(r.clips >= 1 ? tFill(T.volClipsShort, { n: tNum(r.clips) })
+                                  : tFill(T.volScenesShort, { n: tNum(r.scenes) }))}</td></tr>`).join("");
+  return `<ul class="ld-vol">${head}
+      <li>${escHtml(tFill(T.volImages, { n: tNum(volume.images) }))}</li>
+    </ul>
+    <details class="ld-vol-all"><summary>${escHtml(T.volAll)}</summary>
+      <div class="tw"><table>${table}</table></div>
+    </details>`;
+}
+
 function ldPlanCard(plan) {
   const T = LT("pricing");
   const copy = (T.plans || {})[plan.id] || {};
   const paid = plan.usd > 0;
-  const year = paid ? ldYearMonthly(plan) : null;
+  const tier = ldTierOf(plan);
+  // Ступень подменяет цену и объём тарифа целиком: дальше по коду разницы
+  // между «тариф» и «тариф на ступени» уже нет.
+  const usd = tier ? tier.usd : plan.usd;
+  const usdYear = tier ? tier.usdYear : plan.usdYear;
+  const points = tier ? tier.points : plan.points;
+  const year = paid ? ldYearMonthly({ usd, usdYear }) : null;
   const yearMode = paid && ldPeriod === "year";
-  const price = paid ? ldMoney(yearMode ? year.mo : plan.usd) : T.free;
+  const price = paid ? ldMoney(yearMode ? year.mo : usd) : T.free;
   const per = paid ? T.perMonth : T.forever;
   const hint = !paid ? "&nbsp;"
     : yearMode ? escHtml(tFill(T.yearNote, { total: ldMoney(year.total) }))
                : escHtml(tFill(T.yearHint, { mo: ldMoney(year.mo) }));
   const badge = copy.badge || plan.badge || "";
   const engine = copy.engine || "grok";
-  const clips = plan.movies && !copy.engine ? plan.movies : ldClipsLine(plan.points, engine);
   const isCur = Boolean(me && me.authed && ldPricing && ldPricing.current
-                        && ldPricing.current.plan === plan.id);
+                        && ldPricing.current.plan === plan.id
+                        && (!tier || ldPricing.current.tier === tier.id
+                            || (!ldPricing.current.tier && tier.id === (plan.tiers[0] || {}).id)));
   const feats = (copy.features || []).map((f) => `<li>${escHtml(f)}</li>`).join("");
+
+  // Шкала: те же тики, что у докупки очков, плюс ползунок на широком экране.
+  let scale = "";
+  let saveBadge = "";
+  let volume = "";
+  if (tier) {
+    const idx = plan.tiers.indexOf(tier);
+    scale = `<div class="ld-plan-scale">
+      <input class="ld-range ld-tier-range" type="range" min="0" max="${plan.tiers.length - 1}"
+             step="1" value="${idx}" data-plan="${escHtml(plan.id)}"
+             aria-label="${escHtml(T.tierAria)}"
+             aria-valuetext="${escHtml(tFill(T.pointsLine, { points: tNum(points) }))}" />
+      <div class="ld-ticks ld-tier-ticks">${plan.tiers.map((tr, i) => `
+        <button type="button" class="${i === idx ? "on" : ""}" data-plan="${escHtml(plan.id)}" data-idx="${i}">
+          <span>${escHtml(ldPointsLabel(tr.points))}</span>
+        </button>`).join("")}</div>
+    </div>`;
+    // Зачёркнутая цена — честная: тот же объём по цене очка базовой ступени.
+    // Проценты приходят с сервера посчитанными, включая годовой (после пола
+    // цены очка он уже не −20 %, и рисовать −20 % там нельзя).
+    const pct = yearMode ? tier.yearPct : tier.savePct;
+    if (pct > 0) {
+      const listMo = yearMode ? Math.round((tier.usd * 12) / 12) : tier.listUsd;
+      saveBadge = `<div class="ld-plan-was">`
+        + (yearMode ? `<s>${escHtml(ldMoney(listMo))}</s>` : `<s>${escHtml(ldMoney(tier.listUsd))}</s>`)
+        + `<span class="ld-save-badge">${escHtml(tFill(
+            yearMode ? T.saveYear : T.saveVolume, { pct }))}</span></div>`;
+    }
+    volume = ldVolumeBlock(tier.volume);
+  } else if (plan.volume && paid) {
+    volume = ldVolumeBlock(plan.volume);
+  }
+
+  const clips = (!tier && plan.movies && !copy.engine)
+    ? plan.movies : ldClipsLine(points, engine);
 
   let action;
   if (isCur) {
@@ -3015,19 +3736,23 @@ function ldPlanCard(plan) {
     action = `<button type="button" class="ld-plan-start">${escHtml(T.ctaFree)}</button>`;
   } else {
     action = `<button type="button" class="primary ld-plan-pay" data-plan="${escHtml(plan.id)}"
+      data-tier="${escHtml(tier ? tier.id : "")}"
       >${escHtml(tFill(T.cta, { plan: copy.title || plan.id.toUpperCase() }))}</button>`;
   }
 
   // Рамкой выделяем РОВНО один тариф — рекомендованный (hi в словаре).
   // Бейдж может быть и у других, но второй жирной рамки на экране не будет.
-  return `<article class="ld-plan${copy.hi ? " ld-plan-hi" : ""}">
+  return `<article class="ld-plan${copy.hi ? " ld-plan-hi" : ""}${tier ? " ld-plan-ultra" : ""}">
     ${badge ? `<span class="ld-plan-badge">${escHtml(badge)}</span>` : ""}
     <span class="ld-plan-name">${escHtml(copy.title || plan.id.toUpperCase())}</span>
+    ${scale}
+    ${saveBadge}
     <div class="ld-plan-price">${escHtml(price)}<span> ${escHtml(per)}</span></div>
     <div class="ld-plan-year muted">${hint}</div>
     <span class="ld-plan-clips">${escHtml(clips)}</span>
-    <p class="ld-plan-note">${escHtml(tFill(T.pointsLine, { points: tNum(plan.points) }))}${
+    <p class="ld-plan-note">${escHtml(tFill(T.pointsLine, { points: tNum(points) }))}${
       copy.note ? " · " + escHtml(copy.note) : ""}</p>
+    ${volume}
     <ul class="ld-plan-feats">${feats}</ul>
     ${action}
   </article>`;
@@ -3052,12 +3777,58 @@ function ldRenderPlans() {
       btn.textContent = T.payOff;
       return;
     }
-    btn.addEventListener("click", () => ldCheckout("plan", btn.dataset.plan, btn));
+    btn.addEventListener("click", () =>
+      ldCheckout("plan", btn.dataset.plan, btn, btn.dataset.tier || ""));
   });
   $$(".ld-plan-start", box).forEach((btn) => btn.addEventListener("click", ldStart));
 
+  // Шкала объёма: тики и ползунок двигают одну и ту же цифру.
+  const pick = (planId, idx) => {
+    const plan = ldPricing.plans.find((p) => p.id === planId);
+    if (!plan || !plan.tiers.length) return;
+    ldTierIndex[planId] = Math.min(Math.max(Number(idx) || 0, 0), plan.tiers.length - 1);
+    ldRenderPlans();
+  };
+  $$(".ld-tier-ticks button", box).forEach((b) =>
+    b.addEventListener("click", () => pick(b.dataset.plan, b.dataset.idx)));
+  $$(".ld-tier-range", box).forEach((r) => {
+    const paint = () => {
+      const max = Number(r.max) || 1;
+      const pct = max ? (Number(r.value) / max) * 100 : 0;
+      r.style.background =
+        `linear-gradient(90deg, var(--accent-2) 0 ${pct}%, var(--surface-2) ${pct}% 100%)`;
+    };
+    paint();
+    // input — на каждое движение (мгновенная подсветка), change — уже перерисовка:
+    // пересобирать всю секцию на каждый пиксель ползунка незачем.
+    r.addEventListener("input", paint);
+    r.addEventListener("change", () => pick(r.dataset.plan, r.value));
+  });
+
+  // Приписка мелким с точным расчётом — под всей витриной, один раз.
+  const fine = $("#ld-price-fine");
+  if (fine) fine.textContent = ldFinePrint();
+
   // Годовой тумблер держим в актуальном состоянии вместе с карточками.
   $$("#ld-period button").forEach((b) => b.classList.toggle("on", b.dataset.period === ldPeriod));
+}
+
+// Приписка мелким: точная цена сцены по каждому движку верхнего тарифа.
+// Это то место, где витрина обязана сойтись с кассой до очка — считается из
+// живого ответа сервера, а не из констант фронта.
+function ldFinePrint() {
+  const T = LT("pricing");
+  const top = (ldPricing && ldPricing.plans || []).find((p) => (p.tiers || []).length)
+    || (ldPricing && ldPricing.plans || [])[3];
+  const vol = top && ((ldTierOf(top) || {}).volume || top.volume);
+  if (!vol || !vol.engines) return "";
+  const list = vol.engines.slice().reverse()
+    .map((r) => `${r.title} ${tNum(r.scene_cost)}`).join(" · ");
+  return tFill(T.finePrint, {
+    list,
+    pair: tNum(vol.frames_pair_cost),
+    scenes: tNum(vol.clip_scenes),
+  });
 }
 
 // ────────── шкала докупки очков ──────────
@@ -3134,6 +3905,358 @@ function ldRenderTopup() {
   }
 }
 
+
+// ══════════════════════ РАЗДЕЛ «ПРОМТЫ»: каталог витрины ══════════════════════
+// Каталог живёт на сервере целиком (backend/prompts_catalog.py). Здесь только
+// отрисовка публичной части карточки: название, «что получишь», музыка, миксы,
+// счётчик применений. Текста промпта в этих данных нет — и появиться он тут
+// не может, сервер отдаёт по белому списку полей.
+
+let ldPromptTab = "viral";      // выбранная вкладка: подборка или группа
+
+function ldPromptTabs(cat) {
+  // Первой идёт подборка «Вирусные форматы»: человек приходит не за
+  // «плёнкой», а за «чтобы залетело». Группы («как выглядит кадр») — следом.
+  const cols = (cat.collections || []).map((c) => ({ id: `c:${c.key}`, label: c.label }));
+  const groups = (cat.groups || []).map((g) => ({ id: `g:${g.key}`, label: g.label }));
+  return [{ id: "presets", label: LTX("prompts.tabPresets") }].concat(cols, groups);
+}
+
+function ldPromptItems(cat, tab) {
+  if (tab === "presets") return { kind: "preset", items: cat.presets || [] };
+  const [type, key] = String(tab).split(":");
+  if (type === "c") {
+    const col = (cat.collections || []).find((c) => c.key === key);
+    const keys = col ? col.styles : [];
+    return { kind: "style", items: (cat.styles || []).filter((s) => keys.includes(s.key)) };
+  }
+  return { kind: "style", items: (cat.styles || []).filter((s) => s.group === key) };
+}
+
+function ldStyleCard(s) {
+  const T = LT("prompts");
+  const m = s.media || {};
+  const tags = (s.tags || []).slice(0, 3).map((x) => `<span>${escHtml(x)}</span>`).join("");
+  // «Закрытый» — про ров, «замок» — про деньги. Это РАЗНЫЕ вещи, и путать их
+  // на карточке нельзя: dreamclad закрыт по тексту, но снимать им можно и
+  // на бесплатном тарифе.
+  const marks = [
+    s.prompt_class === "closed" ? `<span class="ld-card-mark" title="${escHtml(T.closedHint)}">${escHtml(T.closed)}</span>` : "",
+    s.locked ? `<span class="ld-card-mark ld-card-lock">${escHtml(T.pro)}</span>` : "",
+  ].join("");
+  return `<article class="ld-card" data-style="${escHtml(s.key)}">
+    <div class="ld-card-media">
+      <img src="${escHtml(m.poster || "/img/shots/step-frames.jpg")}" alt="" loading="lazy"
+           width="360" height="640" onerror="this.style.visibility='hidden'" />
+      ${marks}
+    </div>
+    <h3>${escHtml(s.label || s.key)}</h3>
+    <p class="ld-card-gain">${escHtml(s.gain || s.desc || "")}</p>
+    <p class="ld-card-meta muted">${escHtml((s.music && s.music.text) || "")}</p>
+    <div class="ld-card-tags">${tags}</div>
+    <div class="ld-card-foot">
+      <span class="muted">${escHtml(s.uses ? tFill(T.uses, { n: tNum(s.uses) }) : T.usesNone)}</span>
+      <button type="button" class="ld-card-use" data-style="${escHtml(s.key)}">${escHtml(T.use)}</button>
+    </div>
+  </article>`;
+}
+
+function ldPresetCard(p) {
+  const T = LT("prompts");
+  const beats = (p.beats || []).map((b) => `<li>${escHtml(b.text)}</li>`).join("");
+  const kind = p.no_story ? T.kindPunch : T.kindStory;
+  return `<article class="ld-card ld-card-preset" data-preset="${escHtml(p.key)}">
+    <span class="ld-card-mark">${escHtml(kind)}</span>
+    <h3>${escHtml(p.label || p.key)}</h3>
+    <p class="ld-card-gain">${escHtml(p.logline || "")}</p>
+    <details class="ld-vol-all"><summary>${escHtml(T.beats)}</summary><ol>${beats}</ol></details>
+    ${p.research ? `<p class="ld-card-meta muted">${escHtml(p.research)}</p>` : ""}
+    <div class="ld-card-foot">
+      <span class="muted">${escHtml(tFill(T.scenes, { n: tNum((p.scenes || {}).typ || 30) }))}</span>
+      <button type="button" class="ld-card-use" data-preset="${escHtml(p.key)}">${escHtml(T.use)}</button>
+    </div>
+  </article>`;
+}
+
+async function ldRenderPrompts() {
+  const tabsBox = $("#ld-prompt-tabs");
+  const cardsBox = $("#ld-prompt-cards");
+  if (!tabsBox || !cardsBox) return;
+  const cat = await loadStyles();
+  if (cat.failed) {
+    cardsBox.innerHTML = `<p class="muted">${escHtml(LTX("prompts.failed"))}</p>`;
+    return;
+  }
+  const tabs = ldPromptTabs(cat);
+  if (!tabs.some((x) => x.id === ldPromptTab)) ldPromptTab = tabs[1] ? tabs[1].id : tabs[0].id;
+
+  tabsBox.innerHTML = tabs.map((x) => `
+    <button type="button" role="tab" class="${x.id === ldPromptTab ? "on" : ""}"
+            data-tab="${escHtml(x.id)}" aria-selected="${x.id === ldPromptTab}">${escHtml(x.label)}</button>`).join("");
+  $$("button", tabsBox).forEach((b) => b.addEventListener("click", () => {
+    ldPromptTab = b.dataset.tab;
+    ldRenderPrompts();
+  }));
+
+  const { kind, items } = ldPromptItems(cat, ldPromptTab);
+  cardsBox.innerHTML = items.map(kind === "style" ? ldStyleCard : ldPresetCard).join("")
+    || `<p class="muted">${escHtml(LTX("prompts.empty"))}</p>`;
+  // «Взять» ведёт в студию с преднастройкой: раздел обязан заканчиваться
+  // действием, а не восхищением.
+  $$(".ld-card-use", cardsBox).forEach((b) => b.addEventListener("click", async () => {
+    ldPending = b.dataset.style ? { style: b.dataset.style } : { preset: b.dataset.preset };
+    await ldStart();
+  }));
+}
+
+// Что применить к треку сразу после входа в студию (клик «взять» на карточке).
+let ldPending = null;
+
+// ══════════════════════ РАЗДЕЛ «ШКОЛА»: уроки ══════════════════════
+// Тексты — файлы docs/learn, отданные через /api/learn в маркдауне. Разметку
+// рисует ldMd(): свой маленький рендерер вместо библиотеки — уроки используют
+// ровно h1–h3, абзацы, списки, таблицы и жирный, а 40 КБ парсера в бандл
+// ради этого не лезут.
+
+function ldMdInline(text) {
+  const code = [];
+  // Код прячем ПЕРВЫМ и под непечатаемым сентинелом: экранирование не
+  // должно трогать его содержимое, а текст урока не должен случайно
+  // совпасть с меткой (« 0 » в тексте встречается, u0000 — нет).
+  let out = text.replace(/`([^`]+)`/g, (m, c) => {
+    code.push(`<code>${escHtml(c)}</code>`);
+    return `\u0000${code.length - 1}\u0000`;
+  });
+  out = escHtml(out);
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+    (m, txt, href) => `<a href="${escHtml(href)}">${txt}</a>`);
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  code.forEach((c, i) => { out = out.replace(`\u0000${i}\u0000`, c); });
+  return out;
+}
+
+function ldMd(md) {
+  const lines = String(md || "").split("\n");
+  const out = [];
+  let i = 0;
+  const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    if (!line) { i += 1; continue; }
+    const h = line.match(/^(#{1,3})\s+(.*)$/);
+    if (h) { out.push(`<h${h[1].length}>${ldMdInline(h[2])}</h${h[1].length}>`); i += 1; continue; }
+    if (/^(---|\*\*\*|___)$/.test(line)) { out.push("<hr />"); i += 1; continue; }
+    if (line.startsWith("|") && /^\|[\s:|-]+\|$/.test((lines[i + 1] || "").trim())) {
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) { rows.push(cells(lines[i])); i += 1; }
+      out.push(`<div class="tw"><table><thead><tr>${head.map((c) => `<th>${ldMdInline(c)}</th>`).join("")}</tr></thead>`
+        + `<tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${ldMdInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(ldMdInline(lines[i].trim().replace(/^[-*]\s+/, ""))); i += 1;
+      }
+      out.push(`<ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(ldMdInline(lines[i].trim().replace(/^\d+\.\s+/, ""))); i += 1;
+      }
+      out.push(`<ol>${items.map((x) => `<li>${x}</li>`).join("")}</ol>`);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,3}\s|[-*]\s|\d+\.\s|\|)/.test(lines[i].trim())) {
+      para.push(lines[i].trim()); i += 1;
+    }
+    out.push(`<p>${ldMdInline(para.join(" "))}</p>`);
+  }
+  return out.join("\n");
+}
+
+let ldLearn = null;
+
+async function ldRenderLearn() {
+  const box = $("#ld-learn-list");
+  if (!box) return;
+  try {
+    ldLearn = await api(`/api/learn?lang=${encodeURIComponent(LANG)}`);
+  } catch (e) {
+    box.innerHTML = `<p class="muted">${escHtml(LTX("learn.failed"))}</p>`;
+    return;
+  }
+  const T = LT("learn");
+  const byLevel = {};
+  (ldLearn.lessons || []).forEach((l) => { (byLevel[l.level] = byLevel[l.level] || []).push(l); });
+  box.innerHTML = (ldLearn.levels || []).map((lv) => `
+    <div class="ld-learn-level">
+      <h3>${escHtml(lv.title || "")}</h3>
+      <ul>${(byLevel[lv.level] || []).map((l) => `
+        <li class="${l.locked ? "locked" : ""}">
+          <button type="button" data-slug="${escHtml(l.slug)}">
+            <span class="ld-learn-t">${escHtml(l.title)}${l.done ? " ✓" : ""}</span>
+            <span class="ld-learn-m muted">${escHtml(tFill(T.minutes, { n: l.minutes }))}${
+              l.locked ? " · " + escHtml(T.locked) : ""}</span>
+          </button>
+          <a class="ld-learn-perma" href="${escHtml(l.url)}" title="${escHtml(T.openPage)}">↗</a>
+        </li>`).join("")}</ul>
+    </div>`).join("");
+  $$(".ld-learn-level button", box).forEach((b) =>
+    b.addEventListener("click", () => ldOpenLesson(b.dataset.slug)));
+}
+
+async function ldOpenLesson(slug) {
+  const T = LT("learn");
+  openModal(T.loading, async (body) => {
+    body.innerHTML = `<p class="muted">${escHtml(T.loading)}</p>`;
+    let data;
+    try {
+      data = await api(`/api/learn/${encodeURIComponent(slug)}?lang=${encodeURIComponent(LANG)}`);
+    } catch (e) {
+      body.innerHTML = `<p class="error">${escHtml(errText(e))}</p>`;
+      return;
+    }
+    $("#modal-title").textContent = data.title || slug;
+    // Закрытый урок показывает НАЧАЛО и честную причину замка, а не пустой
+    // экран: человек должен видеть, что именно он не читает.
+    const gate = data.full ? "" : `<div class="ld-learn-gate">
+      <p>${escHtml(tFill(T.gate, { plan: (data.access || "pro").toUpperCase() }))}</p>
+      <button type="button" class="primary ld-learn-plans">${escHtml(T.gateCta)}</button>
+    </div>`;
+    body.innerHTML = `<article class="ld-lesson">${ldMd(data.markdown || "")}</article>${gate}
+      ${data.full ? `<div class="row"><button type="button" class="ld-learn-done">${
+        escHtml(data.done ? T.undone : T.markDone)}</button>
+        <a class="muted" href="${escHtml(data.url)}">${escHtml(T.openPage)}</a></div>` : ""}`;
+    const plansBtn = $(".ld-learn-plans", body);
+    if (plansBtn) plansBtn.addEventListener("click", () => {
+      closeModal();
+      const el = $("#ld-pricing");
+      if (el) el.scrollIntoView({ behavior: "smooth" });
+    });
+    const doneBtn = $(".ld-learn-done", body);
+    if (doneBtn) doneBtn.addEventListener("click", async () => {
+      doneBtn.disabled = true;
+      try {
+        await api(`/api/learn/${encodeURIComponent(slug)}/done`,
+                  { method: "POST", body: { done: !data.done } });
+        data.done = !data.done;
+        doneBtn.textContent = data.done ? T.undone : T.markDone;
+        await ldRenderLearn();
+      } catch (e) { fail(e); }
+      doneBtn.disabled = false;
+    });
+  });
+}
+
+
+// ═════════════ ОНБОРДИНГ FREE: чеклист «первый клип» ═════════════
+// Требование простое: на бесплатном тарифе должна быть инструкция. Простыня
+// текста его не выполняет — инструкцию читают, когда УЖЕ застряли. Поэтому
+// здесь не текст, а доведение до первого собранного клипа: четыре пункта,
+// подсвеченный следующий шаг и цифра списания ДО нажатия.
+//
+// Состояние считается по ДАННЫМ (есть ли аудио, стиль, сцены, клип), а не по
+// галочкам: галочку можно поставить и уйти, а трек либо загружен, либо нет.
+
+let onboarding = null;
+
+async function renderOnboarding() {
+  const box = $("#onboarding");
+  if (!box || !me || !me.authed) return;
+  try {
+    onboarding = await api("/api/onboarding");
+  } catch (e) {
+    box.classList.add("hidden");
+    return;
+  }
+  const marks = onboarding.marks || [];
+  // Плитка исчезает после первого клипа или если её закрыли руками.
+  if (onboarding.done || marks.includes("hide")) {
+    if (onboarding.done && !marks.includes("winseen")) { renderOnboardingWin(box); return; }
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+
+  const steps = onboarding.steps || [];
+  const doneCount = steps.filter((s) => s.done).length;
+  const nextIdx = steps.findIndex((s) => !s.done);
+  const c = onboarding.costs || {};
+  // Прогноз честный: текстовые шаги идут по нашей подписке и стоят НОЛЬ —
+  // об этом надо говорить вслух, иначе человек боится нажать.
+  const costOf = {
+    track: t("onboarding.costFree"),
+    style: t("onboarding.costFree"),
+    scenes: t("onboarding.costFree"),
+    clip: t("onboarding.costClip", { n: tNum(c.clip_total || 0) }),
+  };
+
+  box.innerHTML = `
+    <div class="ob-head">
+      <h2>${escHtml(t("onboarding.title"))}</h2>
+      <span class="ob-count">${escHtml(t("onboarding.count", { done: doneCount, all: steps.length }))}</span>
+      <button type="button" class="ghost ob-hide" title="${escHtml(t("onboarding.hide"))}">✕</button>
+    </div>
+    <div class="ob-bar"><i style="width:${Math.round((doneCount / steps.length) * 100)}%"></i></div>
+    <ol class="ob-steps">
+      ${steps.map((s, i) => `
+        <li class="${s.done ? "done" : i === nextIdx ? "now" : ""}">
+          <span class="ob-mark">${s.done ? "✓" : i + 1}</span>
+          <span class="ob-text">
+            <b>${escHtml(t(`onboarding.steps.${s.id}.title`))}</b>
+            <em>${escHtml(t(`onboarding.steps.${s.id}.hint`))}</em>
+          </span>
+          ${i === nextIdx ? `<span class="ob-cost">${escHtml(costOf[s.id] || "")}</span>` : ""}
+        </li>`).join("")}
+    </ol>
+    <p class="ob-note">${escHtml(onboarding.enough
+      ? t("onboarding.enough", { n: tNum(onboarding.points) })
+      : t("onboarding.short", { n: tNum(onboarding.points),
+                                need: tNum(c.clip_total || 0) }))}</p>
+    <div class="row ob-actions">
+      <button type="button" class="ob-guide">${escHtml(t("onboarding.guide"))}</button>
+      <button type="button" class="ob-lesson">${escHtml(t("onboarding.lesson"))}</button>
+    </div>`;
+
+  $(".ob-hide", box).addEventListener("click", async () => {
+    await api("/api/onboarding", { method: "POST", body: { mark: "hide", on: true } });
+    box.classList.add("hidden");
+  });
+  $(".ob-guide", box).addEventListener("click", ldOpenGuide);
+  // «Как это работает» ведёт в первый урок школы, а не в отдельную простыню:
+  // текст один и тот же, и держать его в двух местах нельзя.
+  $(".ob-lesson", box).addEventListener("click", () => ldOpenLesson("first-clip"));
+}
+
+// Момент победы: клип собран. Апселл ровно здесь и с ТОЧНОЙ цифрой остатка —
+// человек только что увидел результат, и это единственная секунда, когда
+// разговор про следующий движок уместен.
+function renderOnboardingWin(box) {
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <div class="ob-head"><h2>${escHtml(t("onboarding.winTitle"))}</h2>
+      <button type="button" class="ghost ob-hide" title="${escHtml(t("onboarding.hide"))}">✕</button></div>
+    <p class="ob-note">${escHtml(t("onboarding.winText", { n: tNum(onboarding.points) }))}</p>
+    <div class="row ob-actions">
+      <button type="button" class="primary ob-plans">${escHtml(t("onboarding.winCta"))}</button>
+    </div>`;
+  $(".ob-hide", box).addEventListener("click", async () => {
+    await api("/api/onboarding", { method: "POST", body: { mark: "winseen", on: true } });
+    box.classList.add("hidden");
+  });
+  $(".ob-plans", box).addEventListener("click", async () => {
+    await api("/api/onboarding", { method: "POST", body: { mark: "winseen", on: true } });
+    openAccountModal("plan");
+  });
+}
+
 // ────────── оплата ──────────
 // Гость платит тем же кликом, которым заводит аккаунт: без аккаунта платёж
 // не к чему привязать, а форму регистрации мы принципиально не показываем.
@@ -3144,7 +4267,7 @@ async function ldEnsureAccount() {
   ldRenderAuth();
 }
 
-async function ldCheckout(kind, id, btn) {
+async function ldCheckout(kind, id, btn, tier) {
   const note = $("#ld-pay-note");
   const label = btn.textContent;
   btn.disabled = true;
@@ -3153,7 +4276,9 @@ async function ldCheckout(kind, id, btn) {
   try {
     await ldEnsureAccount();
     const body = kind === "plan"
-      ? { kind: "plan", plan: id, period: ldPeriod, promo: refCode || "" }
+      // tier — выбранная ступень объёма. Сервер всё равно проверяет её сам:
+      // неизвестную и скрытую флагом он молча понижает до базовой.
+      ? { kind: "plan", plan: id, tier: tier || "", period: ldPeriod, promo: refCode || "" }
       : { kind: "topup", pack: id, promo: refCode || "" };
     const r = await api("/api/billing/create", { method: "POST", body });
     if (r && r.url) { window.location.href = r.url; return; }
@@ -3197,6 +4322,11 @@ function ldRenderAuth() {
   if (navStart) navStart.textContent = authed ? T.nav.open : T.nav.start;
   if (navLogin) navLogin.classList.toggle("hidden", authed);
   if (trust) trust.textContent = authed ? T.hero.trustBack : T.hero.trust;
+  const auth = $("#ld-auth");
+  if (auth) {
+    auth.classList.toggle("hidden", authed);
+    if (!authed) renderAuthButtons(auth, { mode: "login" });
+  }
 }
 
 // ────────── сборка страницы ──────────
@@ -3230,6 +4360,10 @@ function ldRenderText() {
   ldBuildFooter();
   ldRenderPlans();
   ldRenderTopup();
+  // Каталог промтов и уроки приходят с сервера уже на нужном языке, поэтому
+  // при смене языка их нужно перезапросить, а не просто перерисовать.
+  loadStyles(true).then(ldRenderPrompts);
+  ldRenderLearn();
   ldRenderAuth();
   renderRefBanner();
 }
@@ -3267,6 +4401,9 @@ function renderLanding() {
 // Вернувшийся пользователь может попасть на главную по ссылке или якорю —
 // тогда студию не открываем, но первый экран зовёт «Открыть студию».
 function ldWantsLanding() {
+  // Внутри мини-аппа лендинга нет никогда: человек уже пришёл, продавать ему
+  // оффер нечем, а «Старт» и «Войти» ведут в тупик.
+  if (window.TGA && TGA.active) return false;
   try {
     if (new URLSearchParams(location.search).has("home")) return true;
     const h = location.hash || "";
@@ -3294,5 +4431,759 @@ onLangChange(() => {
   }
   rebuildAddTrackPicker();
   if (!$("#welcome").classList.contains("hidden")) ldRenderText();
+  if (!$("#chat").classList.contains("hidden")) chatRenderAll();
   syncLangSwitches();
 });
+
+
+// ═════════════════════════ ЧАТ: одно окно, переключается модель ═════════════════════════
+//
+// Ключевое решение, ради которого это не «ещё три вкладки»: ВЫБРАННАЯ МОДЕЛЬ И
+// ЕСТЬ НАМЕРЕНИЕ. Селектор живёт внутри строки ввода; текстовая модель отвечает
+// текстом, движок картинок рисует по тому же промпту, движок видео оживляет
+// картинку. Никаких режимов экрана.
+//
+// Цена видна ДО отправки и пересчитывается на каждое движение селектора. Сервер
+// остаётся авторитетом по деньгам — клиент только показывает то же число.
+//
+// Авто-режима «сам решу, что ты хотел» здесь нет намеренно: текст стоит 2 очка,
+// картинка 8, видео до 154. Автороутер, промахнувшийся в видео, стоит человеку
+// месячной нормы тарифа — цена ошибки несимметрична, поэтому решает человек.
+
+const chatState = {
+  models: [],          // плоский список позиций селектора с /api/chat/models
+  meta: null,          // тарифные данные ответа: очки, ретенция, дефолты
+  chats: [],
+  activeId: 0,
+  messages: [],
+  files: [],           // залитые вложения, ещё не отправленные
+  sourceId: 0,         // «Оживить»: из какого сообщения берём первый кадр
+  search: "",
+  hasMore: false,     // есть ли сообщения РАНЬШЕ загруженного куска
+  loadingMore: false,
+  poll: null,
+  busy: false,
+};
+
+function chatEl(id) { return document.getElementById(id); }
+
+// Единица очков в нужной форме: «1 очко», «2 очка», «5 очков».
+function chatUnit(n) { return tPlural(n, tRaw("chat.unit")); }
+
+// Лента всегда показывает последнее сообщение. Отдельная функция нужна из-за
+// картинок: они догружаются ПОСЛЕ отрисовки и меняют высоту ленты уже после
+// того, как мы её пролистали, — кнопки под кадром уезжали за нижний край.
+function chatScrollBottom() {
+  const feed = chatEl("chat-feed");
+  if (feed) feed.scrollTop = feed.scrollHeight;
+}
+
+function showChat() {
+  hideScreens();
+  $("#chat").classList.remove("hidden");
+  // Поллинг студии гасим: пока человек в чате, дёргать проект незачем.
+  clearTimeout(pollTimer);
+  if (location.hash !== "#/chat") history.replaceState(null, "", "#/chat");
+  chatBoot();
+}
+
+function chatLeave() {
+  clearTimeout(chatState.poll);
+  if (location.hash === "#/chat") history.replaceState(null, "", location.pathname);
+  showApp();
+}
+
+async function chatBoot() {
+  try {
+    if (!chatState.models.length) await chatLoadModels();
+    await chatLoadList();
+    if (!chatState.activeId && chatState.chats.length) {
+      await chatOpen(chatState.chats[0].id);
+    } else if (chatState.activeId) {
+      await chatLoadMessages();
+    } else {
+      chatRenderFeed();
+    }
+    chatRenderAll();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function chatLoadModels() {
+  const data = await api("/api/chat/models");
+  chatState.models = data.models || [];
+  chatState.meta = data;
+}
+
+function chatModel(id) {
+  return chatState.models.find((m) => m.id === id) || null;
+}
+
+function chatCurrentModel() {
+  const sel = chatEl("cc-model");
+  return chatModel(sel && sel.value) || chatState.models[0] || null;
+}
+
+// ────────── селектор модели внутри строки ввода ──────────
+
+function chatRenderModelSelect() {
+  const sel = chatEl("cc-model");
+  if (!sel || !chatState.meta) return;
+  const keep = sel.value;
+  sel.innerHTML = "";
+  const groups = [["text", "chat.optText"], ["image", "chat.optImage"], ["video", "chat.optVideo"]];
+  for (const [kind, key] of groups) {
+    const items = chatState.models.filter((m) => m.kind === kind);
+    if (!items.length) continue;
+    const g = document.createElement("optgroup");
+    g.label = t(key);
+    for (const m of items) {
+      const o = document.createElement("option");
+      o.value = m.id;
+      if (!m.live) {
+        // Движок не настроен ключами — честно говорим это, а не прячем.
+        o.textContent = t("chat.offline", { title: m.title });
+        o.disabled = true;
+      } else if (!m.allowed) {
+        // Закрытое тарифом ВИДНО с ценой и именем тарифа: молчаливый запрет
+        // читается как поломка, а видимый замок работает витриной.
+        o.textContent = t("chat.locked", {
+          title: m.title, n: tNum(m.points), unit: chatUnit(m.points),
+          plan: (m.plan || "pro").toUpperCase().replace("_", " "),
+        });
+        o.disabled = true;
+      } else {
+        o.textContent = t("chat.byEngine", { title: m.title, n: tNum(m.points), unit: chatUnit(m.points) });
+      }
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  }
+  const wanted = chatModel(keep || chatDefaultModelId());
+  sel.value = (wanted && wanted.allowed && wanted.live) ? wanted.id : "";
+  if (!sel.value) {
+    const first = chatState.models.find((m) => m.allowed && m.live);
+    sel.value = first ? first.id : "";
+  }
+}
+
+function chatDefaultModelId() {
+  const active = chatState.chats.find((c) => c.id === chatState.activeId);
+  if (active && active.model && chatModel(active.model)) return active.model;
+  return (chatState.meta && chatState.meta.default_text) || "";
+}
+
+function chatRenderDuration() {
+  const box = chatEl("cc-duration");
+  const model = chatCurrentModel();
+  if (!box || !chatState.meta) return;
+  const on = Boolean(model && model.kind === "video");
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  if (!box.options.length) {
+    (chatState.meta.durations || [6]).forEach((d) => {
+      const o = document.createElement("option");
+      o.value = String(d);
+      o.textContent = t("chat.duration", { n: d });
+      box.appendChild(o);
+    });
+    box.value = "6";
+  } else {
+    Array.from(box.options).forEach((o) => {
+      o.textContent = t("chat.duration", { n: Number(o.value) });
+    });
+  }
+}
+
+// Цена ДО отправки. Видео считается пропорционально длительности — ровно так
+// же, как на сервере (video_engine_usd), поэтому число совпадает с тем, что
+// реально спишется.
+function chatPrice() {
+  const model = chatCurrentModel();
+  if (!model) return 0;
+  if (model.kind !== "video") return model.points;
+  const dur = Number((chatEl("cc-duration") || {}).value || 6) || 6;
+  return Math.max(2, Math.ceil(model.points * (dur / 6)));
+}
+
+function chatRenderPrice() {
+  const price = chatEl("cc-price");
+  const send = chatEl("cc-send");
+  if (!price || !send) return;
+  send.textContent = t("chat.send");
+  const admin = chatState.meta && chatState.meta.is_admin;
+  const have = chatState.meta ? Number(chatState.meta.points || 0) : 0;
+  const need = chatPrice();
+  price.textContent = admin
+    ? ""
+    : `${t("chat.price", { n: tNum(need), unit: chatUnit(need) })} · `
+      + `${t("chat.priceHave", { n: tNum(have) })}`;
+  price.classList.toggle("short", !admin && need > have);
+}
+
+// ────────── сайдбар: чаты по датам ──────────
+
+function chatDayGroup(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "chat.groupOlder";
+  const today = new Date();
+  const days = Math.floor((today - d) / 86400000);
+  if (d.toDateString() === today.toDateString()) return "chat.groupToday";
+  if (days < 2) return "chat.groupYesterday";
+  if (days < 7) return "chat.groupWeek";
+  return "chat.groupOlder";
+}
+
+function chatRenderList() {
+  const box = chatEl("chat-list");
+  if (!box) return;
+  box.innerHTML = "";
+  const q = chatState.search.trim().toLowerCase();
+  const rows = chatState.chats.filter((c) => !q || (c.title || "").toLowerCase().includes(q));
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted chat-list-empty";
+    empty.textContent = t("chat.noChats");
+    box.appendChild(empty);
+    return;
+  }
+  let group = "";
+  for (const c of rows) {
+    const g = chatDayGroup(c.updated_at || c.created_at);
+    if (g !== group) {
+      group = g;
+      const h = document.createElement("div");
+      h.className = "chat-list-group";
+      h.textContent = t(g);
+      box.appendChild(h);
+    }
+    const row = document.createElement("div");
+    row.className = "chat-row" + (c.id === chatState.activeId ? " on" : "");
+    const name = document.createElement("button");
+    name.type = "button";
+    name.className = "chat-row-name";
+    name.textContent = c.title || t("chat.untitled");
+    name.addEventListener("click", () => chatOpen(c.id));
+    const spent = document.createElement("span");
+    spent.className = "chat-row-spent";
+    spent.textContent = c.spent ? tNum(c.spent) : "";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "ghost danger chat-row-del";
+    del.textContent = "✕";
+    del.title = t("chat.del");
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(t("chat.delConfirm"))) return;
+      try {
+        await api(`/api/chats/${c.id}`, { method: "DELETE" });
+        if (chatState.activeId === c.id) {
+          chatState.activeId = 0;
+          chatState.messages = [];
+        }
+        await chatLoadList();
+        chatRenderAll();
+      } catch (err) { fail(err); }
+    });
+    row.appendChild(name);
+    row.appendChild(spent);
+    row.appendChild(del);
+    box.appendChild(row);
+  }
+}
+
+async function chatLoadList() {
+  chatState.chats = await api("/api/chats");
+}
+
+async function chatOpen(id) {
+  chatState.activeId = id;
+  chatState.sourceId = 0;
+  await chatLoadMessages();
+  const active = chatState.chats.find((c) => c.id === id);
+  if (active && active.model && chatModel(active.model)) {
+    chatEl("cc-model").value = active.model;
+  }
+  chatRenderAll();
+}
+
+async function chatLoadMessages() {
+  if (!chatState.activeId) {
+    chatState.messages = [];
+    chatState.hasMore = false;
+    return;
+  }
+  // Тянем ровно столько, сколько уже показано (но не меньше страницы): иначе
+  // поллинг статусов схлопывал бы подгруженную вверх историю обратно в 50.
+  const limit = Math.max(50, chatState.messages.length);
+  const data = await api(`/api/chats/${chatState.activeId}/messages?limit=${limit}`);
+  chatState.messages = data.messages || [];
+  chatState.hasMore = Boolean(data.has_more);
+  if (chatState.meta && data.points !== undefined) chatState.meta.points = data.points;
+  const idx = chatState.chats.findIndex((c) => c.id === data.chat.id);
+  if (idx >= 0) chatState.chats[idx] = data.chat;
+}
+
+// Подгрузка старых сообщений вверх. Без неё длинный разговор упирался бы в
+// последние 50 реплик: история лежит в базе, но человеку недоступна.
+async function chatLoadOlder() {
+  if (chatState.loadingMore || !chatState.messages.length) return;
+  chatState.loadingMore = true;
+  const feed = chatEl("chat-feed");
+  const keepHeight = feed ? feed.scrollHeight : 0;
+  try {
+    const before = chatState.messages[0].id;
+    const data = await api(
+      `/api/chats/${chatState.activeId}/messages?before=${before}&limit=50`);
+    chatState.messages = (data.messages || []).concat(chatState.messages);
+    chatState.hasMore = Boolean(data.has_more);
+    chatRenderFeed();
+    // Возвращаем взгляд на то же сообщение, а не в начало ленты.
+    if (feed) feed.scrollTop = feed.scrollHeight - keepHeight;
+  } catch (e) {
+    fail(e);
+  } finally {
+    chatState.loadingMore = false;
+  }
+}
+
+// ────────── лента ──────────
+
+function chatBubble(m) {
+  const wrap = document.createElement("div");
+  wrap.className = `chat-msg chat-${m.role}` + (m.status === "error" ? " chat-failed" : "");
+
+  if (m.role === "assistant" && m.engine_title) {
+    const head = document.createElement("div");
+    head.className = "chat-msg-head";
+    head.textContent = m.engine_title + (m.points ? ` · ${tNum(m.points)}` : "");
+    if (m.params && m.params.provider) {
+      head.title = t("chat.provider", { name: m.params.provider });
+    }
+    wrap.appendChild(head);
+  }
+
+  if (m.text) {
+    const p = document.createElement("div");
+    p.className = "chat-msg-text";
+    p.textContent = m.text;
+    wrap.appendChild(p);
+  }
+
+  (m.files || []).forEach((f) => {
+    const img = document.createElement("img");
+    img.className = "chat-attach";
+    img.src = f.thumb_url || f.url;
+    img.loading = "lazy";
+    wrap.appendChild(img);
+  });
+
+  if (m.status === "queued" || m.status === "running") {
+    const s = document.createElement("div");
+    s.className = "status";
+    s.textContent = t(m.status === "queued" ? "chat.queued" : "chat.running");
+    wrap.appendChild(s);
+  }
+
+  if (m.status === "error") {
+    const s = document.createElement("div");
+    s.className = "status error";
+    s.textContent = `${t("chat.failed")}: ${m.error || ""}`.slice(0, 300);
+    wrap.appendChild(s);
+  }
+
+  if (m.expired) {
+    // Файла нет, промпт есть: срок хранения не должен выглядеть как потеря
+    // работы — повторить можно в один клик.
+    const s = document.createElement("div");
+    s.className = "muted chat-expired";
+    s.textContent = t("chat.expired");
+    wrap.appendChild(s);
+  }
+
+  if (m.url && m.kind === "image") {
+    const a = document.createElement("a");
+    a.href = m.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    const img = document.createElement("img");
+    img.className = "chat-media";
+    img.src = m.thumb_url || m.url;
+    img.loading = "lazy";
+    // Миниатюру рисует ffmpeg; не срослось — показываем оригинал, а не
+    // иконку битой картинки на месте оплаченной генерации.
+    img.addEventListener("error", () => {
+      if (m.url && img.src !== m.url) img.src = m.url;
+    }, { once: true });
+    img.addEventListener("load", chatScrollBottom, { once: true });
+    a.appendChild(img);
+    wrap.appendChild(a);
+  } else if (m.url && m.kind === "video") {
+    const v = document.createElement("video");
+    v.className = "chat-media";
+    v.src = m.url;
+    v.controls = true;
+    v.playsInline = true;
+    v.addEventListener("loadeddata", chatScrollBottom, { once: true });
+    wrap.appendChild(v);
+  }
+
+  if (m.role === "assistant") {
+    const bar = document.createElement("div");
+    bar.className = "chat-msg-bar";
+    if (m.url && m.kind === "image") {
+      // ГЛАВНЫЙ приём одного окна: картинка → ролик, не выходя из ленты.
+      const anim = document.createElement("button");
+      anim.className = "ghost";
+      anim.textContent = t("chat.animate");
+      anim.title = t("chat.animateTitle");
+      anim.addEventListener("click", () => chatPickSource(m.id));
+      bar.appendChild(anim);
+
+      // Мост чат → студия: удачный кадр не остаётся в переписке.
+      const save = document.createElement("button");
+      save.className = "ghost";
+      save.textContent = t("chat.saveTo");
+      save.title = t("chat.saveToTitle");
+      save.addEventListener("click", () => chatSaveModal(m));
+      bar.appendChild(save);
+    }
+    if (m.status === "error" || m.expired) {
+      const again = document.createElement("button");
+      again.className = "ghost";
+      again.textContent = t("chat.retry");
+      again.addEventListener("click", () => chatRetry(m.id));
+      bar.appendChild(again);
+    }
+    if (bar.childNodes.length) wrap.appendChild(bar);
+  }
+  return wrap;
+}
+
+function chatRenderFeed() {
+  const feed = chatEl("chat-feed");
+  if (!feed) return;
+  feed.innerHTML = "";
+  if (!chatState.messages.length) {
+    const hello = document.createElement("div");
+    hello.className = "chat-hello";
+    const h = document.createElement("h2");
+    h.textContent = t("chat.hello");
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = t("chat.helloHint");
+    hello.appendChild(h);
+    hello.appendChild(p);
+    feed.appendChild(hello);
+    return;
+  }
+  if (chatState.hasMore) {
+    const more = document.createElement("button");
+    more.className = "ghost chat-more";
+    more.textContent = t("chat.older");
+    more.addEventListener("click", chatLoadOlder);
+    feed.appendChild(more);
+  }
+  chatState.messages.forEach((m) => feed.appendChild(chatBubble(m)));
+  chatScrollBottom();
+}
+
+function chatRenderCompose() {
+  const files = chatEl("cc-files");
+  if (files) {
+    files.innerHTML = "";
+    chatState.files.forEach((f) => {
+      const chip = document.createElement("span");
+      chip.className = "cc-file";
+      const img = document.createElement("img");
+      img.src = f.thumb_url || f.url;
+      chip.appendChild(img);
+      const x = document.createElement("button");
+      x.className = "ghost danger";
+      x.textContent = "✕";
+      x.addEventListener("click", () => {
+        chatState.files = chatState.files.filter((y) => y.id !== f.id);
+        chatRenderCompose();
+      });
+      chip.appendChild(x);
+      files.appendChild(chip);
+    });
+  }
+  const src = chatEl("cc-source");
+  if (src) {
+    src.classList.toggle("hidden", !chatState.sourceId);
+    if (chatState.sourceId) {
+      src.innerHTML = "";
+      const label = document.createElement("span");
+      label.textContent = t("chat.source");
+      const clear = document.createElement("button");
+      clear.className = "ghost";
+      clear.textContent = t("chat.sourceClear");
+      clear.addEventListener("click", () => { chatState.sourceId = 0; chatRenderCompose(); });
+      src.appendChild(label);
+      src.appendChild(clear);
+    }
+  }
+  const meter = chatEl("cc-meter");
+  const active = chatState.chats.find((c) => c.id === chatState.activeId);
+  const spent = active ? Number(active.spent || 0) : 0;
+  if (meter) meter.textContent = t("chat.meter", { n: tNum(spent), unit: chatUnit(spent) });
+  // Под полем — про деньги, в сайдбаре — про срок хранения: две разные
+  // обязанности, и дублировать одну и ту же строку дважды незачем.
+  const note = chatEl("cc-note");
+  if (note) note.textContent = t("chat.payNote");
+  const retention = chatEl("chat-retention");
+  if (retention && chatState.meta) {
+    retention.textContent = chatState.meta.retention_days
+      ? t("chat.retention", { n: chatState.meta.retention_days })
+      : t("chat.retentionAdmin");
+  }
+  const points = chatEl("chat-points");
+  if (points && chatState.meta) {
+    points.classList.toggle("hidden", Boolean(chatState.meta.is_admin));
+    points.textContent = `${tNum(chatState.meta.points || 0)} ${t("top.pointsUnit")}`;
+  }
+  const title = chatEl("chat-head-title");
+  if (title) title.textContent = active ? (active.title || t("chat.untitled")) : t("chat.untitled");
+}
+
+function chatRenderAll() {
+  chatRenderModelSelect();
+  chatRenderDuration();
+  chatRenderPrice();
+  chatRenderList();
+  chatRenderFeed();
+  chatRenderCompose();
+  chatSchedulePoll();
+}
+
+// ────────── действия ──────────
+
+function chatPickSource(messageId) {
+  chatState.sourceId = messageId;
+  // Селектор сам переезжает на видео: человек нажал «Оживить», значит
+  // намерение уже понятно, и требовать от него ещё и выбрать модель — лишнее.
+  const sel = chatEl("cc-model");
+  const wanted = (chatState.meta && chatState.meta.default_video) || "";
+  const model = chatModel(wanted);
+  if (sel && model && model.allowed && model.live) sel.value = wanted;
+  else if (sel) {
+    const first = chatState.models.find((m) => m.kind === "video" && m.allowed && m.live);
+    if (first) sel.value = first.id;
+  }
+  chatRenderDuration();
+  chatRenderPrice();
+  chatRenderCompose();
+  const ta = chatEl("cc-text");
+  if (ta) ta.focus();
+}
+
+async function chatRetry(messageId) {
+  try {
+    await api(`/api/chats/${chatState.activeId}/messages/${messageId}/retry`, { method: "POST" });
+    await chatAfterSend();
+  } catch (e) { fail(e); }
+}
+
+async function chatAfterSend() {
+  await chatLoadList();
+  await chatLoadMessages();
+  me = await api("/api/me").catch(() => me);
+  if (me && me.user && chatState.meta) chatState.meta.points = me.user.gen_points;
+  renderUserBar();
+  chatRenderAll();
+}
+
+async function chatSend() {
+  if (chatState.busy) return;
+  const ta = chatEl("cc-text");
+  const model = chatCurrentModel();
+  if (!model) return;
+  const text = (ta.value || "").trim();
+  if (!text && model.kind !== "video") return;
+  const send = chatEl("cc-send");
+  chatState.busy = true;
+  send.disabled = true;
+  send.textContent = t("chat.sending");
+  try {
+    if (!chatState.activeId) {
+      const created = await api("/api/chats", { method: "POST", body: {} });
+      chatState.activeId = created.id;
+    }
+    const body = {
+      text,
+      engine: model.id,
+      file_ids: chatState.files.map((f) => f.id),
+      duration: Number((chatEl("cc-duration") || {}).value || 6),
+    };
+    if (chatState.sourceId) body.from_message_id = chatState.sourceId;
+    await api(`/api/chats/${chatState.activeId}/messages`, { method: "POST", body });
+    ta.value = "";
+    chatState.files = [];
+    chatState.sourceId = 0;
+    await chatAfterSend();
+  } catch (e) {
+    // Нехватка очков приходит структурой (402 not_enough_points) — открываем
+    // тарифы прямо отсюда, а не оставляем человека в тупике с alert'ом.
+    if (e && e.code === "not_enough_points") openAccountModal("plan");
+    fail(e);
+  } finally {
+    chatState.busy = false;
+    send.disabled = false;
+    chatRenderPrice();
+  }
+}
+
+async function chatUpload(fileList) {
+  for (const file of Array.from(fileList || []).slice(0, 8)) {
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await api("/api/chat/upload", { method: "POST", body: fd });
+      chatState.files.push(res);
+    } catch (e) { fail(e); }
+  }
+  chatRenderCompose();
+}
+
+// «В проект»: картинка из чата уезжает персонажу — фотографией или разворотом.
+function chatSaveModal(m) {
+  openModal(t("chat.saveTitle"), (body) => {
+    const chars = (project && project.characters) || [];
+    if (!chars.length) {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = t("chat.saveNoChars");
+      body.appendChild(p);
+      return;
+    }
+    const sel = document.createElement("select");
+    chars.forEach((c) => {
+      const o = document.createElement("option");
+      o.value = String(c.id);
+      o.textContent = c.name || t("character.noName");
+      sel.appendChild(o);
+    });
+    body.appendChild(sel);
+
+    const asSel = document.createElement("select");
+    [["photo", "chat.saveAsPhoto"], ["model", "chat.saveAsModel"]].forEach(([v, key]) => {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = t(key); asSel.appendChild(o);
+    });
+    body.appendChild(asSel);
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const go = document.createElement("button");
+    go.className = "primary";
+    go.textContent = t("common.save");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        await api(`/api/chats/messages/${m.id}/save-to`, {
+          method: "POST",
+          body: { character_id: Number(sel.value), as: asSel.value },
+        });
+        closeModal();
+        await loadProject();
+        await chatLoadMessages();
+        chatRenderFeed();
+        alert(t("chat.saved"));
+      } catch (e) {
+        go.disabled = false;
+        fail(e);
+      }
+    });
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.textContent = t("common.cancel");
+    cancel.addEventListener("click", closeModal);
+    row.appendChild(go);
+    row.appendChild(cancel);
+    body.appendChild(row);
+  });
+}
+
+// Статусы тянем тем же приёмом, что и в студии: пока что-то в работе —
+// перечитываем ленту раз в три секунды. SSE ради этого не заводим.
+function chatSchedulePoll() {
+  clearTimeout(chatState.poll);
+  const busy = chatState.messages.some((m) => m.status === "queued" || m.status === "running");
+  if (!busy || $("#chat").classList.contains("hidden")) return;
+  chatState.poll = setTimeout(async () => {
+    try {
+      await chatLoadMessages();
+      me = await api("/api/me").catch(() => me);
+      if (me && me.user && chatState.meta) chatState.meta.points = me.user.gen_points;
+      chatRenderFeed();
+      chatRenderCompose();
+      // Цена под полем показывает и остаток очков: после возврата за упавшую
+      // генерацию он меняется, и строка обязана это отразить.
+      chatRenderPrice();
+      chatSchedulePoll();
+    } catch (e) { /* сеть моргнула — следующий тик разберётся */ }
+  }, 3000);
+}
+
+// ────────── проводка кнопок ──────────
+{
+  const btn = chatEl("chat-btn");
+  if (btn) btn.addEventListener("click", showChat);
+  const back = chatEl("chat-to-studio");
+  if (back) back.addEventListener("click", chatLeave);
+  const toggle = chatEl("chat-side-toggle");
+  if (toggle) toggle.addEventListener("click", () => $("#chat-side").classList.toggle("open"));
+
+  const nw = chatEl("chat-new");
+  if (nw) nw.addEventListener("click", async () => {
+    chatState.activeId = 0;
+    chatState.messages = [];
+    chatState.files = [];
+    chatState.sourceId = 0;
+    chatRenderAll();
+    const ta = chatEl("cc-text");
+    if (ta) ta.focus();
+  });
+
+  const search = chatEl("chat-search");
+  if (search) search.addEventListener("input", () => {
+    chatState.search = search.value;
+    chatRenderList();
+  });
+
+  const model = chatEl("cc-model");
+  if (model) model.addEventListener("change", () => {
+    // Сменили модель на не-видео — «Оживить» больше не в силе.
+    const cur = chatCurrentModel();
+    if (!cur || cur.kind !== "video") chatState.sourceId = 0;
+    chatRenderDuration();
+    chatRenderPrice();
+    chatRenderCompose();
+  });
+
+  const dur = chatEl("cc-duration");
+  if (dur) dur.addEventListener("change", chatRenderPrice);
+
+  const send = chatEl("cc-send");
+  if (send) send.addEventListener("click", chatSend);
+
+  const ta = chatEl("cc-text");
+  if (ta) ta.addEventListener("keydown", (e) => {
+    // Enter отправляет, Shift+Enter переносит строку — как во всех чатах.
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      chatSend();
+    }
+  });
+
+  const file = chatEl("cc-file");
+  if (file) file.addEventListener("change", async () => {
+    await chatUpload(file.files);
+    file.value = "";
+  });
+}
+
+// Вход по адресу /#/chat разбирает showApp(): к моменту его вызова сессия уже
+// проверена, а до неё открывать чат нечем — /api/chat/models требует входа.

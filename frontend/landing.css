@@ -420,6 +420,55 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 }
 .ld-scale-note { margin: var(--s-4) 0 0; font-size: var(--fs-sm); color: var(--ink-muted); }
 
+/* ────────── ULTRA: шкала объёма внутри карточки тарифа ──────────
+   Компонент шкалы переиспользован из докупки очков (.ld-range + .ld-ticks):
+   второй ползунок с нуля означал бы вторую реализацию тех же состояний.
+   Отличий два — тиков четыре вместо пяти, и на узкой карточке ползунок
+   прячется: 26-пиксельный бегунок в колонке 260 px не попадает пальцем. */
+.ld-plan-scale { display: flex; flex-direction: column; gap: var(--s-2); margin: var(--s-1) 0; }
+.ld-plan-scale .ld-range { height: 5px; }
+.ld-plan-scale .ld-range::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -8px; }
+.ld-plan-scale .ld-range::-moz-range-thumb { width: 18px; height: 18px; }
+.ld-tier-ticks { grid-template-columns: repeat(4, 1fr); }
+.landing .ld-tier-ticks button { min-height: 32px; font-size: 11px; }
+/* Колонка тарифа ~260 px: попасть пальцем в 20-пиксельный бегунок нельзя,
+   поэтому на узких экранах ползунок скрыт и ступень выбирается тиками.
+   На мобиле карточка снова широкая (одна колонка) — там ползунок вернётся. */
+@media (min-width: 701px) and (max-width: 1180px) {
+  .ld-plan-scale .ld-range { display: none; }
+}
+
+/* Зачёркнутая цена — ЧЕСТНАЯ: тот же объём по цене очка базовой ступени.
+   Не выдуманный «якорь», а число из нашего же прайса. */
+.ld-plan-was { display: flex; align-items: baseline; gap: var(--s-2); flex-wrap: wrap; }
+.ld-plan-was s { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-muted); }
+.ld-plan-was .ld-save-badge {
+  font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
+  text-transform: uppercase; color: var(--gold-ink); background: var(--gold-wash);
+  border-radius: 999px; padding: 2px var(--s-2); white-space: nowrap;
+}
+
+/* Расшифровка объёма в человеческих единицах: три строки в лицо,
+   полная таблица под раскрытием. */
+.ld-vol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
+  font-size: var(--fs-sm); color: var(--text); }
+.ld-vol li::before { content: "= "; color: var(--ink-muted); }
+.ld-vol-all { font-size: var(--fs-sm); }
+.ld-vol-all summary { cursor: pointer; color: var(--ink-muted); font-size: var(--fs-meta);
+  font-family: var(--font-mono); letter-spacing: var(--ls-caps); text-transform: uppercase; }
+.ld-vol-all summary:hover { color: var(--text); }
+.ld-vol-all .tw { overflow-x: auto; margin-top: var(--s-2); }
+.ld-vol-all table { border-collapse: collapse; width: 100%; font-size: var(--fs-meta); }
+.ld-vol-all td { padding: 3px var(--s-1); border-bottom: var(--bw-hair) solid var(--line);
+  white-space: nowrap; color: var(--ink-muted); }
+.ld-vol-all td:first-child { color: var(--text); white-space: normal; }
+
+/* Приписка мелким под всей витриной: точный расчёт цены сцены. */
+.ld-fine {
+  margin: var(--s-4) 0 0; font-size: var(--fs-meta); line-height: 1.5;
+  color: var(--ink-muted); max-width: 74ch;
+}
+
 /* ────────── партнёрка ────────── */
 .ld-partner-box {
   display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr);
@@ -520,6 +569,9 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   .ld-feat-wide { grid-column: span 1; flex-direction: column; align-items: stretch; }
   .ld-plans { grid-template-columns: 1fr; }
   .ld-plan-badge { top: calc(-1 * var(--s-2)); }
+  /* На одной колонке карточка широкая — ползунок объёма помещается целиком
+     и работает пальцем; тики остаются для точного попадания. */
+  .landing .ld-tier-ticks button { min-height: 44px; }
   .ld-scale-box, .ld-partner-box { padding: var(--s-4); }
   .ld-foot-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
   .ld-a { padding-right: 0; }
@@ -599,3 +651,107 @@ body:has(#welcome:not(.hidden)) {
 /* Ни одна секция не имеет права раздвигать страницу вбок: горизонтальный
    скролл на телефоне читается как сломанная вёрстка. */
 .landing { overflow-x: clip; }
+
+/* ══════════════════ РАЗДЕЛ «ПРОМТЫ»: вкладки и плитки ══════════════════
+   Карточки рисует app.js из /api/styles. Постер — единственная тяжёлая
+   вещь на плитке, поэтому он lazy и с фиксированным соотношением: без
+   height картинка на загрузке дёргает всю сетку. */
+.ld-tabs {
+  display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-5);
+}
+.landing .ld-tabs button {
+  min-height: 34px; padding: 0 var(--s-3); border: var(--bw-hair) solid var(--line);
+  background: var(--surface); color: var(--ink-muted); box-shadow: none;
+  border-radius: 999px; font-size: var(--fs-sm);
+}
+.landing .ld-tabs button:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.landing .ld-tabs button.on {
+  background: var(--accent-wash); color: var(--accent-ink);
+  border-color: var(--edge); font-weight: 600;
+}
+
+.ld-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--s-3); align-items: stretch;
+}
+.ld-card {
+  display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3);
+  background: var(--surface); border: var(--bw-hair) solid var(--line);
+  border-radius: var(--r-3); box-shadow: var(--lift-1);
+}
+.ld-card h3 { margin: 0; font-size: var(--fs-md); line-height: 1.25; }
+.ld-card-media {
+  position: relative; aspect-ratio: 9 / 16; overflow: hidden;
+  border-radius: var(--r-2); background: var(--surface-2);
+}
+.ld-card-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ld-card-mark {
+  position: absolute; top: var(--s-2); left: var(--s-2);
+  font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
+  text-transform: uppercase; color: var(--gold-ink); background: var(--gold-wash);
+  border-radius: 999px; padding: 2px var(--s-2);
+}
+.ld-card-lock { left: auto; right: var(--s-2); color: var(--accent-ink); background: var(--accent-wash); }
+.ld-card-preset .ld-card-mark { position: static; align-self: flex-start; }
+.ld-card-gain { margin: 0; font-size: var(--fs-sm); line-height: 1.45; }
+.ld-card-meta { margin: 0; font-size: var(--fs-meta); line-height: 1.4; }
+.ld-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.ld-card-tags span {
+  font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-muted);
+  background: var(--surface-2); border-radius: 999px; padding: 1px var(--s-2);
+}
+.ld-card-foot {
+  margin-top: auto; display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s-2); font-size: var(--fs-meta);
+}
+.landing .ld-card-foot button { min-height: 32px; padding: 0 var(--s-3); font-size: var(--fs-sm); }
+.ld-card-preset ol { margin: var(--s-2) 0 0; padding-left: 1.1em; font-size: var(--fs-sm);
+  color: var(--ink-muted); display: flex; flex-direction: column; gap: 3px; }
+
+/* ══════════════════ РАЗДЕЛ «ШКОЛА»: уровни и уроки ══════════════════ */
+.ld-learn-list {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--s-4);
+}
+.ld-learn-level {
+  padding: var(--s-4); background: var(--surface);
+  border: var(--bw-hair) solid var(--line); border-radius: var(--r-3);
+}
+.ld-learn-level h3 {
+  margin: 0 0 var(--s-2); font-family: var(--font-mono); font-size: var(--fs-meta);
+  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted);
+}
+.ld-learn-level ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ld-learn-level li { display: flex; align-items: center; gap: var(--s-1);
+  border-top: var(--bw-hair) solid var(--line); }
+.ld-learn-level li:first-child { border-top: none; }
+.landing .ld-learn-level li button {
+  flex: 1; min-height: 44px; padding: var(--s-2) 0; border: none; box-shadow: none;
+  background: transparent; text-align: left; display: flex; flex-direction: column; gap: 1px;
+}
+.landing .ld-learn-level li button:hover:not(:disabled) { background: transparent; }
+.landing .ld-learn-level li button:hover .ld-learn-t { color: var(--accent-ink); }
+.ld-learn-t { font-size: var(--fs-base); color: var(--text); }
+.ld-learn-m { font-size: var(--fs-meta); font-family: var(--font-mono); }
+.ld-learn-level li.locked .ld-learn-t { color: var(--ink-muted); }
+.ld-learn-perma { font-size: var(--fs-sm); color: var(--ink-muted); text-decoration: none; padding: 0 var(--s-1); }
+.ld-learn-perma:hover { color: var(--accent-ink); }
+
+/* Урок в модалке: читаемая колонка, широкие таблицы скроллятся внутри себя. */
+.ld-lesson { max-width: 68ch; line-height: 1.6; }
+.ld-lesson h1 { font-size: var(--fs-xl); margin: 0 0 var(--s-3); }
+.ld-lesson h2 { font-size: var(--fs-lg); margin: var(--s-5) 0 var(--s-2); }
+.ld-lesson h3 { font-size: var(--fs-md); margin: var(--s-4) 0 var(--s-1); }
+.ld-lesson p, .ld-lesson ul, .ld-lesson ol { margin: 0 0 var(--s-3); }
+.ld-lesson code { font-family: var(--font-mono); font-size: .92em; background: var(--surface-2);
+  border-radius: var(--r-1); padding: 1px 4px; }
+.ld-lesson .tw { overflow-x: auto; margin: 0 0 var(--s-3); }
+.ld-lesson table { border-collapse: collapse; font-size: var(--fs-sm); }
+.ld-lesson th, .ld-lesson td { padding: var(--s-1) var(--s-2); text-align: left;
+  border-bottom: var(--bw-hair) solid var(--line); white-space: nowrap; }
+.ld-lesson th { font-family: var(--font-mono); font-size: var(--fs-meta);
+  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted); }
+.ld-learn-gate {
+  margin-top: var(--s-4); padding: var(--s-4); border-radius: var(--r-3);
+  background: var(--accent-wash); border: var(--bw-hair) solid var(--edge);
+}
+.ld-learn-gate p { margin: 0 0 var(--s-2); }

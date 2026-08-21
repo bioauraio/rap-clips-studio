@@ -11,10 +11,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ /app/
 COPY frontend/ /app/static/
+# Уроки школы — ФАЙЛЫ, а не строки в базе: правка урока = коммит и деплой,
+# версионирование и откат бесплатны. /api/learn читает их отсюда.
+COPY docs/learn/ /app/learn/
 
 ENV DB_PATH=/data/rapclips.db
 ENV UPLOAD_DIR=/data/uploads
 ENV FRONTEND_DIR=/app/static
+ENV LEARN_DIR=/app/learn
 
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

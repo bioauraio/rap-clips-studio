@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from datetime import timedelta
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -26,7 +27,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import claude
+import learn
 import mediagen
+import prompts_catalog
 import stripe_pay
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, FileOwner,
@@ -84,17 +87,30 @@ def _verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def _bearer_token(request: Request) -> str:
+    """Тот же подписанный {"uid": …}, но заголовком.
+
+    Нужен ровно одному контуру — мини-аппу Telegram: в Desktop и Web он живёт
+    в iframe, запросы к нам кросс-сайтовые, и кука с SameSite=Lax не поедет ни
+    в fetch, ни куда-либо ещё — человек оставался бы вечно неавторизованным.
+    CSRF от этого не появляется: заголовок браузер кросс-сайтово сам не
+    подставляет, его выставляет только наш собственный код."""
+    raw = request.headers.get("authorization") or ""
+    return raw[7:].strip() if raw[:7].lower() == "bearer " else ""
+
+
 def _resolve_user(request: Request, db: Session) -> User | None:
     """qv_session ({"uid": …}) или легаси rc_session ({"ok": True} → админ)."""
-    token = request.cookies.get(QV_COOKIE)
-    if token:
+    for token in (request.cookies.get(QV_COOKIE), _bearer_token(request)):
+        if not token:
+            continue
         try:
             data = signer.loads(token, max_age=QV_MAX_AGE)
             user = db.get(User, int(data.get("uid") or 0))
             if user:
                 return user
         except (BadSignature, ValueError, TypeError, AttributeError):
-            pass
+            continue
     legacy = request.cookies.get(COOKIE_NAME)
     if legacy:
         try:
@@ -282,10 +298,15 @@ PLANS = {
         ],
     },
     "studio": {
-        "title": "STUDIO", "usd_cents": int(os.environ.get("PRICE_STUDIO_USD", "299")) * 100,
+        # ULTRA — тот же plan_id "studio". Ключ НЕ переименован сознательно:
+        # он лежит в базе у живых подписчиков, в metadata обеих платёжек и в
+        # вебхуках. Переименование стоило бы миграции и сломанных продлений,
+        # а меняется здесь вывеска, а не идентификатор.
+        "title": "ULTRA", "usd_cents": int(os.environ.get("PRICE_STUDIO_USD", "299")) * 100,
         # 10500 очков = два полных клипа на Seedance 2.5 (62 сцены) или шесть
         # на Kling 3.0 Pro. Целый клип на самой дорогой модели физически
-        # помещается только сюда.
+        # помещается только сюда. Это ПЕРВАЯ ступень шкалы (см. PLAN_TIERS):
+        # у действующих подписчиков STUDIO ничего не меняется.
         "points": 10500,
         "video": ["grok", "seedance", "kling"],
         "engines": {"grok": "grok", "seedance": "seedance-2-5", "kling": "kling-3.0-pro"},
@@ -296,9 +317,9 @@ PLANS = {
         # однопоточная (см. _run_all_videos). Реальный приоритет = отдельная
         # задача; не обещай в интерфейсе больше, чем этот флаг делает.
         "priority": True, "badge": "For labels",
-        "note": "Album-scale volume on every engine",
+        "note": "Album-scale volume on every engine — pick your monthly volume",
         "features": [
-            "10500 points every month — two full clips on Seedance 2.5",
+            "From 10500 to 104000 points a month — you choose the step",
             "Every engine, including Seedance 2.0 and 480p Seedance 2.5",
             "Nano Banana Pro frames, priority processing and direct support",
         ],
@@ -316,6 +337,74 @@ for _pid, _p in PLANS.items():
     _p["rub_year_kopeks"] = _rub_kopeks(f"{_pid}_year", _p["usd_year_cents"])
     # Легаси-поле для старого фронта, который рисует «₽»: цена в рублях.
     _p["price"] = _p["rub_kopeks"] // 100
+
+# ───────────────────── ULTRA: ступени объёма верхнего тарифа ─────────────────
+#
+# Верхний тариф продаётся не одной цифрой, а шкалой: человек двигает ползунок
+# и выбирает месячный объём. Пятого тарифа сознательно НЕ заводим — витрина
+# рисует четыре колонки, а четыре варианта человек ещё сравнивает, пять уже нет.
+#
+# Якорь ступеней — ЦЕЛЫЙ КЛИП НА ФЛАГМАНЕ. На ULTRA кадры рисует Nano Banana
+# Pro (пара 15 очков), сцена на Seedance 2.5 720p = 15 + 152 = 167 очков,
+# клип 3 минуты = 30 сцен = 5010 очков. Каждая ступень — целое число таких
+# клипов: 2 / 5 / 10 / 20. Отсюда и цифры очков, они не подогнаны «покруглее».
+#
+# ПОЧЕМУ МАРЖА НЕ МОЖЕТ УЕХАТЬ ВНИЗ. VIDEO_COST/FRAME_COST считаются как
+# ceil(себестоимость / POINT_USD) — очко физически не может стоить нам дороже
+# POINT_USD ($0.0125) ни на одном движке. Худший случай ступени =
+# points × POINT_USD, и он заложен в цену:
+#   u1  10500 → $131 из $299 (маржа 56 %)   u3  52000 → $650 из $1199 (46 %)
+#   u2  26000 → $325 из $659 (51 %)         u4 104000 → $1300 из $2149 (40 %)
+#
+# top=True — ступень за флагом ULTRA_TOP_TIERS. Продажа u4 создаёт
+# обязательство на $1300 живых генераций от ОДНОГО человека в месяц, а баланс
+# kie.ai маленький: верхние ступени открываем, когда баланс это выдерживает.
+PLAN_TIERS = {
+    "studio": [
+        {"id": "u1", "points": 10500,  "usd_cents": 29900,  "top": False},
+        {"id": "u2", "points": 26000,  "usd_cents": 65900,  "top": False},
+        {"id": "u3", "points": 52000,  "usd_cents": 119900, "top": True},
+        {"id": "u4", "points": 104000, "usd_cents": 214900, "top": True},
+    ],
+}
+ULTRA_TOP_TIERS = os.environ.get("ULTRA_TOP_TIERS", "1") not in ("0", "false", "no")
+
+# ПОЛ ЦЕНЫ ОЧКА. Объёмная скидка и годовая −20 % складываются, и на верхней
+# ступени год выходил $20630 = 1.65¢ за очко при потолке себестоимости 1.25¢ —
+# маржа 24 %, а с реферальной −10 % уже 16 %. Пол в 1.8¢ (маржа 30.6 %) ниже
+# себя не пускает НИКАКУЮ скидку. Бьёт он сегодня ровно по годовому u4, и
+# витрина честно пишет там −13 %, а не −20 %: процент считается из цены.
+# Единственное исключение — реферальная скидка на первый платёж: это разовая
+# стоимость привлечения, её пол не трогает (она применяется позже, в кассе).
+POINT_PRICE_FLOOR_USD = float(os.environ.get("POINT_PRICE_FLOOR_USD", "0.018"))
+
+
+def _floor_cents(points: int, cents: int) -> int:
+    """Цена не ниже пола за очко. Округляем вверх до целого доллара —
+    дробный ценник на витрине выглядит как ошибка вёрстки."""
+    floor = int(math.ceil(points * POINT_PRICE_FLOOR_USD * 100))
+    return max(int(cents), (floor + 99) // 100 * 100)
+
+
+for _pid, _tiers in PLAN_TIERS.items():
+    _base = _tiers[0]
+    _base_per_point = _base["usd_cents"] / _base["points"]
+    for _t in _tiers:
+        _t["usd_year_cents"] = _floor_cents(_t["points"] * 12,
+                                            _year_cents(_t["usd_cents"]))
+        _t["rub_kopeks"] = _rub_kopeks(f"{_pid}_{_t['id']}", _t["usd_cents"])
+        _t["rub_year_kopeks"] = _rub_kopeks(f"{_pid}_{_t['id']}_year",
+                                            _t["usd_year_cents"])
+        # Зачёркнутая цена — ЧЕСТНАЯ: тот же объём по цене очка базовой
+        # ступени. Не выдуманный «якорь», а число из нашего же прайса,
+        # которое человек может проверить делением сам.
+        _t["list_usd_cents"] = int(round(_t["points"] * _base_per_point / 100)) * 100
+        _t["save_pct"] = max(0, int(round(
+            100 - 100 * (_t["usd_cents"] / _t["points"]) / _base_per_point)))
+        # Годовая скидка СЧИТАЕТСЯ, а не берётся из YEAR_DISCOUNT_PCT: после
+        # пола она уже другая, и обещать −20 % там, где −13 %, нельзя.
+        _t["year_discount_pct"] = max(0, int(round(
+            100 - 100 * _t["usd_year_cents"] / (_t["usd_cents"] * 12))))
 
 # Пакеты очков (докупка сверх подписки).
 #
@@ -392,6 +481,60 @@ def _plan_of(user: "User") -> str:
     if user.is_admin:
         return "pro_max"
     return user.plan if user.plan in PLANS else "free"
+
+
+# ───────────────── ступени объёма (ULTRA): одно место правды ─────────────────
+# Ступень живёт в users.plan_tier. Пустая строка = ПЕРВАЯ ступень, поэтому все
+# действующие подписчики STUDIO валидны без единого UPDATE в базе.
+
+def _tiers_of(plan_id: str, *, visible_only: bool = False) -> list[dict]:
+    tiers = PLAN_TIERS.get(plan_id) or []
+    if visible_only and not ULTRA_TOP_TIERS:
+        return [t for t in tiers if not t["top"]]
+    return list(tiers)
+
+
+def _norm_tier(plan_id: str, tier) -> str:
+    """Ступень → её id. Неизвестная, пустая и скрытая флагом — базовая.
+
+    Скрытую флагом ступень нельзя пропускать даже если её прислали руками:
+    иначе выключенный ULTRA_TOP_TIERS обходится одной строкой в теле запроса.
+    Уже КУПЛЕННУЮ ступень флаг при этом не отбирает — для чтения баланса и
+    продления используется _tier_spec, а не эта функция."""
+    tiers = _tiers_of(plan_id)
+    if not tiers:
+        return ""
+    want = str(tier or "").strip().lower()
+    allowed = {t["id"] for t in _tiers_of(plan_id, visible_only=True)}
+    return want if want in allowed else tiers[0]["id"]
+
+
+def _tier_spec(plan_id: str, tier) -> dict | None:
+    """Описание ступени по её id — БЕЗ фильтра видимости: купленное продлевается
+    по своей цене, даже если ступень сняли с витрины."""
+    want = str(tier or "").strip().lower()
+    for t in _tiers_of(plan_id):
+        if t["id"] == want:
+            return t
+    tiers = _tiers_of(plan_id)
+    return tiers[0] if tiers else None
+
+
+def _plan_points(plan_id: str, tier: str = "") -> int:
+    """Месячная норма очков тарифа с учётом ступени."""
+    spec = _tier_spec(plan_id, tier)
+    if spec:
+        return int(spec["points"])
+    return int(PLANS[plan_id]["points"])
+
+
+def _tier_of_user(user: "User") -> str:
+    """Ступень человека. У тарифа без шкалы — пустая строка."""
+    plan_id = _plan_of(user)
+    if not PLAN_TIERS.get(plan_id):
+        return ""
+    spec = _tier_spec(plan_id, getattr(user, "plan_tier", "") or "")
+    return spec["id"] if spec else ""
 
 
 def _plan_image_engine(user: "User | None", want: str = "") -> str:
@@ -728,7 +871,8 @@ def _ref_first_payment(db: Session, user: User) -> bool:
                                          RefEvent.kind == "payment").first()
 
 
-def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str) -> None:
+def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str,
+                pct: "int | None" = None) -> None:
     """Начислить амбассадору долю с платежа его реферала.
 
     Вебхук ЮKassa штатно приходит по нескольку раз на один платёж, поэтому
@@ -751,7 +895,10 @@ def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str) -
     legacy = pay_id.split(":", 1)[1] if ":" in pay_id else pay_id
     if db.query(RefEvent).filter(RefEvent.payment_id.in_([pay_id, legacy])).first():
         return
-    reward = amount_kopeks * REF_REWARD_PCT // 100
+    # pct задан — платёж пришёл контуром со своей экономикой (Telegram Stars
+    # оставляет нам 65 % цены). По умолчанию — общая ставка партнёрки.
+    rate = REF_REWARD_PCT if pct is None else max(0, min(100, int(pct)))
+    reward = amount_kopeks * rate // 100
     db.add(RefEvent(ambassador_id=amb.id, referral_id=buyer.id, kind="payment",
                     amount_kopeks=amount_kopeks, reward_kopeks=reward,
                     payment_id=pay_id))
@@ -846,8 +993,19 @@ def get_or_create_project(db: Session, user: User, project_id: int | None = None
 # ─────────────────────────── авторизация ───────────────────────────
 
 def _user_dict(user: User) -> dict:
+    plan_id = _plan_of(user)
+    tier = _tier_of_user(user)
     return {"id": user.id, "name": user.name, "login": user.login,
-            "is_admin": user.is_admin, "gen_points": user.gen_points, "plan": _plan_of(user), "plan_title": PLANS[_plan_of(user)]["title"]}
+            "is_admin": user.is_admin, "gen_points": user.gen_points,
+            "plan": plan_id, "plan_title": PLANS[plan_id]["title"],
+            # Ступень объёма и месячная норма ЭТОГО человека: интерфейсу нужно
+            # различать u1 и u4, у них разный объём при одном имени тарифа.
+            "plan_tier": tier,
+            "plan_points": _plan_points(plan_id, tier),
+            # Онбординг «первый клип»: чеклист живёт на сервере, а не в
+            # localStorage — человек начинает на десктопе, продолжает с телефона.
+            "onboarding": [s for s in (user.onboarding or "").split(",") if s],
+            "onboarding_done": bool(user.onboarding_done)}
 
 
 def _session_response(user: User) -> JSONResponse:
@@ -930,10 +1088,14 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://qlolapp.art")
 
 
 def _auth_response(user: "User") -> JSONResponse:
-    """Ставит сессионную куку внешнего входа — как обычный логин."""
+    """Ставит сессионную куку внешнего входа — как обычный логин.
+
+    Срок — QV_MAX_AGE (180 дней), как у гостевой сессии. Раньше здесь стоял
+    COOKIE_MAX_AGE (30 дней): вошедший через Telegram, Яндекс или Google терял
+    сессию вшестеро быстрее гостя, который вообще не регистрировался."""
     token = signer.dumps({"uid": user.id})
     resp = JSONResponse({"ok": True, "name": user.name})
-    resp.set_cookie(QV_COOKIE, token, max_age=COOKIE_MAX_AGE, httponly=True,
+    resp.set_cookie(QV_COOKIE, token, max_age=QV_MAX_AGE, httponly=True,
                     samesite="lax", secure=True)
     return resp
 
@@ -991,7 +1153,10 @@ async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(d
     token = request.cookies.get(QV_COOKIE)
     if token:
         try:
-            guest = db.get(User, int(signer.loads(token, max_age=COOKIE_MAX_AGE).get("uid") or 0))
+            # QV_MAX_AGE, а не COOKIE_MAX_AGE: гостевая кука живёт 180 дней,
+            # и на тридцати гость старше месяца просто «не находился» — его
+            # проекты молча оставались на брошенном аккаунте.
+            guest = db.get(User, int(signer.loads(token, max_age=QV_MAX_AGE).get("uid") or 0))
         except Exception:  # noqa: BLE001
             guest = None
     name = " ".join(x for x in [data.get("first_name"), data.get("last_name")] if x) or "гость"
@@ -1028,7 +1193,10 @@ def _external_login(db: Session, request: Request, field: str, ext_id: str,
     token = request.cookies.get(QV_COOKIE)
     if token:
         try:
-            guest = db.get(User, int(signer.loads(token, max_age=COOKIE_MAX_AGE).get("uid") or 0))
+            # QV_MAX_AGE, а не COOKIE_MAX_AGE: гостевая кука живёт 180 дней,
+            # и на тридцати гость старше месяца просто «не находился» — его
+            # проекты молча оставались на брошенном аккаунте.
+            guest = db.get(User, int(signer.loads(token, max_age=QV_MAX_AGE).get("uid") or 0))
         except Exception:  # noqa: BLE001
             guest = None
     fresh_guest = guest and not guest.login and not guest.tg_id and not guest.yandex_id \
@@ -1051,8 +1219,40 @@ def _external_login(db: Session, request: Request, field: str, ext_id: str,
     return user
 
 
+def _oauth_state(ref: str, state: str) -> str:
+    """Что положить в state OAuth-провайдера.
+
+    Обычный вход с сайта кладёт туда промокод. Вход из мини-аппа Telegram
+    кладёт «<nonce>~<промокод>»: по nonce мини-апп потом узнаёт, что человек
+    вошёл во внешнем браузере, и подхватывает аккаунт (см. tg_app.py). Готовый
+    state передаём как есть — он собран нашим же кодом."""
+    raw = str(state or "").strip()
+    if "~" in raw:
+        nonce, _, ref_in = raw.partition("~")
+        nonce = "".join(c for c in nonce if c.isalnum() or c in "-_")[:32]
+        return f"{nonce}~{_norm_code(ref_in or ref)}"
+    return _norm_code(ref or raw)
+
+
+def _oauth_finish(user: "User", state: str):
+    """Куда вернуть человека после внешнего входа и с какой кукой.
+
+    Из мини-аппа вернуть надо не на сайт, а обратно в Telegram: браузер
+    открывался поверх мини-аппа именно ради входа."""
+    import tg_app  # noqa: PLC0415
+    from fastapi.responses import RedirectResponse  # noqa: PLC0415
+    nonce, _ = tg_app.split_state(state)
+    target = "/"
+    if nonce and tg_app.remember_login(nonce, user.id):
+        target = tg_app.miniapp_url(f"ylink_{nonce}") or "/"
+    resp = RedirectResponse(target)
+    resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=QV_MAX_AGE,
+                    httponly=True, samesite="lax", secure=True)
+    return resp
+
+
 @app.get("/api/auth/google/start")
-def auth_google_start(ref: str = ""):
+def auth_google_start(ref: str = "", state: str = ""):
     """ref едет в state: после редиректа на Google наши query-параметры
     теряются, а state Google возвращает обратно как есть."""
     if not GOOGLE_CLIENT_ID:
@@ -1062,7 +1262,7 @@ def auth_google_start(ref: str = ""):
     url = ("https://accounts.google.com/o/oauth2/v2/auth?response_type=code"
            f"&client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect}"
            "&scope=openid%20email%20profile&access_type=online&prompt=select_account")
-    code = _norm_code(ref)
+    code = _oauth_state(ref, state)
     if code:
         url += f"&state={code}"
     return RedirectResponse(url)
@@ -1094,19 +1294,17 @@ async def auth_google_callback(code: str = "", state: str = "", request: Request
     gid = str(prof.get("id") or "")
     if not gid:
         raise HTTPException(403, "Google не вернул id")
+    import tg_app  # noqa: PLC0415
+    _, ref_code = tg_app.split_state(state)
     user = _external_login(db, request, "google_id", gid,
                            prof.get("name") or prof.get("email") or "гость",
                            prof.get("email") or "", prof.get("picture") or "",
-                           ref=state)
-    from fastapi.responses import RedirectResponse
-    resp = RedirectResponse("/")
-    resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=COOKIE_MAX_AGE,
-                    httponly=True, samesite="lax", secure=True)
-    return resp
+                           ref=ref_code)
+    return _oauth_finish(user, state)
 
 
 @app.get("/api/auth/yandex/start")
-def auth_yandex_start(ref: str = ""):
+def auth_yandex_start(ref: str = "", state: str = ""):
     """ref едет в state — обратно с Яндекса вернётся тот же код (см. Google)."""
     if not YANDEX_CLIENT_ID:
         raise HTTPException(400, "вход через Яндекс не настроен")
@@ -1114,7 +1312,7 @@ def auth_yandex_start(ref: str = ""):
     redirect = f"{PUBLIC_BASE_URL}/api/auth/yandex/callback"
     url = ("https://oauth.yandex.ru/authorize?response_type=code"
            f"&client_id={YANDEX_CLIENT_ID}&redirect_uri={redirect}")
-    ref_code = _norm_code(ref)
+    ref_code = _oauth_state(ref, state)
     if ref_code:
         url += f"&state={ref_code}"
     return RedirectResponse(url)
@@ -1145,33 +1343,15 @@ async def auth_yandex_callback(code: str = "", state: str = "", request: Request
     yid = str(prof.get("id") or "")
     if not yid:
         raise HTTPException(403, "Яндекс не вернул id")
-    user = db.query(User).filter(User.yandex_id == yid).first()
-    guest = None
-    token = request.cookies.get(QV_COOKIE) if request else None
-    if token:
-        try:
-            guest = db.get(User, int(signer.loads(token, max_age=COOKIE_MAX_AGE).get("uid") or 0))
-        except Exception:  # noqa: BLE001
-            guest = None
+    # Раньше здесь лежала своя копия логики входа — с забытой проверкой
+    # google_id в условии «свежий гость», то есть гость, вошедший через Google,
+    # мог быть перехвачен Яндексом. Теперь общий путь, один на всех провайдеров.
+    import tg_app  # noqa: PLC0415
+    _, ref_code = tg_app.split_state(state)
     name = prof.get("real_name") or prof.get("display_name") or prof.get("login") or "гость"
-    if not user:
-        if guest and not guest.login and not guest.tg_id and not guest.yandex_id:
-            user = guest
-        else:
-            user = User(name=name)
-            db.add(user)
-        user.yandex_id = yid
-        user.name = name
-        db.commit()
-        db.refresh(user)
-    else:
-        user = _adopt_guest(db, guest, user)
-    _attach_ref(db, user, state)
-    from fastapi.responses import RedirectResponse
-    resp = RedirectResponse("/")
-    resp.set_cookie(QV_COOKIE, signer.dumps({"uid": user.id}), max_age=COOKIE_MAX_AGE,
-                    httponly=True, samesite="lax", secure=True)
-    return resp
+    user = _external_login(db, request, "yandex_id", yid, name,
+                           prof.get("default_email") or "", ref=ref_code)
+    return _oauth_finish(user, state)
 
 
 @app.post("/api/logout")
@@ -1296,10 +1476,34 @@ def scene_dict(s: Scene) -> dict:
     }
 
 
+def _track_style_keys(t: Track) -> list[str]:
+    """Ключи стилей трека. Старые треки хранят только текст промпта — для них
+    один раз разбираем текст обратно в ключи тем же алгоритмом, каким его
+    собирали (prompts_catalog.fusion — дословный порт buildFusionStyle)."""
+    keys = [k for k in (t.style_keys or "").split(",") if k.strip()]
+    if keys:
+        return keys
+    return prompts_catalog.keys_from_prompt(t.style or "")
+
+
 def track_dict(t: Track, with_scenes: bool = False) -> dict:
+    keys = _track_style_keys(t)
     d = {
         "id": t.id, "position": t.position, "title": t.title, "lyrics": t.lyrics,
-        "comment": t.comment, "style": t.style, "audio_filename": t.audio_filename,
+        "comment": t.comment, "audio_filename": t.audio_filename,
+        # ПОЛНЫЙ ТЕКСТ СТИЛЯ НАРУЖУ НЕ УХОДИТ. Раньше здесь стояло
+        # "style": t.style — тот же промпт из закрытого реестра, только уже
+        # записанный в трек. Перенос реестра на сервер без этой строки был бы
+        # бессмысленным: промпт продолжал бы утекать через /api/tracks.
+        # Наружу — ключи, подпись и та приписка, которую человек написал сам.
+        "style_keys": keys,
+        "style_label": prompts_catalog.labels(keys),
+        "style_extra": t.style_extra or "",
+        "clip_preset_key": t.clip_preset_key or "",
+        # has_style — «стиль задан»: этапу настройки хватает факта, а не текста.
+        # Кастом старого трека (текст без ключей) тоже считается заданным.
+        "has_style": bool(keys or (t.style or "").strip()),
+        "style_custom": bool(not keys and (t.style or "").strip()),
         "director_note": t.director_note, "audio_profile": t.audio_profile,
         "audio_duration_sec": t.audio_duration_sec,
         "scenes_status": t.scenes_status, "scenes_error": t.scenes_error,
@@ -1326,6 +1530,166 @@ def project_dict(p: Project, with_scenes: bool = False) -> dict:
         "cover_url": f"/api/media/{p.cover_filename}" if p.cover_filename else "",
         "tracks": [track_dict(t, with_scenes) for t in p.tracks],
     }
+
+
+
+# ────────────────── «Школа lolq»: обучение и онбординг FREE ──────────────────
+# Тексты уроков — файлы в docs/learn (см. backend/learn.py). Здесь только
+# доступ по тарифу, прогресс и чеклист первого клипа.
+
+ONBOARDING_STEPS = ("track", "style", "scenes", "clip")
+
+
+def _learn_done(user: "User | None") -> set:
+    if not user:
+        return set()
+    return {s for s in (user.onboarding or "").split(",")
+            if s and s.startswith("learn:")}
+
+
+@app.get("/api/learn")
+def api_learn(request: Request, lang: str = "", db: Session = Depends(db_session)):
+    """Список уроков с замками по тарифу и отметками пройденного.
+
+    ПУБЛИЧНЫЙ: уровни 0–2 открыты без регистрации — они же двигатель органики,
+    и требовать аккаунт ради чтения значит терять человека на входе."""
+    user = _resolve_user(request, db)
+    lg = _lang_of(request, lang)
+    plan_id = _plan_of(user) if user else "free"
+    done = {s.split(":", 1)[1] for s in _learn_done(user)}
+    lessons = learn.index(lg, plan_id=plan_id,
+                          is_admin=bool(user and user.is_admin), done=done)
+    return {
+        "lang": lg,
+        "plan": plan_id,
+        "authorized": bool(user),
+        "levels": learn.levels(lg),
+        "lessons": lessons,
+        "done": sorted(done),
+    }
+
+
+@app.get("/api/learn/{slug}")
+def api_lesson(slug: str, request: Request, lang: str = "",
+               db: Session = Depends(db_session)):
+    """Один урок. Закрытому тарифу отдаём начало и честную причину замка,
+    а не пустой экран: человек должен видеть, что именно он не читает."""
+    user = _resolve_user(request, db)
+    lg = _lang_of(request, lang)
+    item = learn.lesson(slug, lg)
+    if not item:
+        raise ApiError(404, "unknown_lesson", f"Unknown lesson: {slug!r}")
+    plan_id = _plan_of(user) if user else "free"
+    ok = learn.allowed(item["access"], plan_id,
+                       is_admin=bool(user and user.is_admin))
+    done = {s.split(":", 1)[1] for s in _learn_done(user)}
+    out = learn.card(item, plan_id=plan_id,
+                     is_admin=bool(user and user.is_admin),
+                     done=item["slug"] in done)
+    # Текст в маркдауне: разметку рисует клиент. Так один и тот же урок
+    # ложится и в шторку студии, и в статическую страницу /learn — без
+    # второго шаблона и второго набора метатегов.
+    out["markdown"] = item["body"] if ok else learn.teaser(item["body"])
+    out["full"] = ok
+    out["lang"] = item["lang"]
+    return out
+
+
+@app.post("/api/learn/{slug}/done")
+async def api_lesson_done(slug: str, request: Request,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """Отметка «прочитал». Нужна не ради галочки, а чтобы онбординг знал,
+    что человеку уже показывали, и не звал на тот же урок второй раз."""
+    body = await request.json() if await request.body() else {}
+    on = bool(body.get("done", True))
+    steps = [s for s in (user.onboarding or "").split(",") if s]
+    mark = f"learn:{slug}"
+    if on and mark not in steps:
+        steps.append(mark)
+    if not on and mark in steps:
+        steps.remove(mark)
+    user.onboarding = ",".join(steps)
+    db.commit()
+    return {"ok": True, "done": on, "slug": slug}
+
+
+# ─────────────────── онбординг FREE: чеклист «первый клип» ───────────────────
+
+def _onboarding_state(db: Session, user: User) -> dict:
+    """Где человек в своём первом клипе — СЧИТАЕТСЯ ПО ДАННЫМ, а не по
+    галочкам. Галочку можно поставить и уйти, а трек либо загружен, либо нет.
+    Ручные отметки лежат рядом и только добавляют шаги, которых в данных нет
+    (например «взял демо-трек»).
+
+    Плитка живёт до первого собранного клипа и после него исчезает: чеклист,
+    который висит вечно, перестают читать."""
+    tracks = (db.query(Track).join(Project, Track.project_id == Project.id)
+              .filter(Project.owner_id == user.id).all())
+    has_audio = any(t.audio_filename for t in tracks)
+    has_style = any((t.style_keys or "").strip() or (t.style or "").strip()
+                    for t in tracks)
+    has_scenes = any(t.scenes for t in tracks)
+    has_clip = any(t.clip_filename for t in tracks)
+    if has_clip and not user.onboarding_done:
+        user.onboarding_done = now()
+        db.commit()
+    manual = [s for s in (user.onboarding or "").split(",")
+              if s and not s.startswith("learn:")]
+    plan_id = _plan_of(user)
+    points = int(user.gen_points or 0)
+    # Прогноз до конца пути — та же арифметика, что и в списании: кадры и
+    # видео по движкам тарифа, текстовые шаги бесплатны (они идут по нашей
+    # подписке и стоят нам ноль — об этом надо говорить вслух).
+    scene_cost = _plan_work_cost(plan_id)
+    return {
+        "done": bool(has_clip or user.onboarding_done),
+        "steps": [
+            {"id": "track", "done": has_audio},
+            {"id": "style", "done": has_style},
+            {"id": "scenes", "done": has_scenes},
+            {"id": "clip", "done": has_clip},
+        ],
+        "marks": manual,
+        "points": points,
+        "plan": plan_id,
+        # Что почём на этом тарифе — чеклист обязан показывать цифру ДО
+        # нажатия, а не после списания.
+        "costs": {
+            "story": COST_STORY, "scenes": COST_SCENES,
+            "scene": scene_cost, "clip_scenes": CLIP_SCENES,
+            "clip_total": scene_cost * CLIP_SCENES,
+        },
+        # Хватает ли остатка на целый клип. На FREE 120 очков = ровно 30 сцен
+        # по 4, то есть впритык и без запаса: врать тут нельзя.
+        "enough": points >= scene_cost * CLIP_SCENES,
+    }
+
+
+@app.get("/api/onboarding")
+def api_onboarding(user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    return _onboarding_state(db, user)
+
+
+@app.post("/api/onboarding")
+async def api_onboarding_mark(request: Request, user: User = Depends(current_user),
+                              db: Session = Depends(db_session)):
+    """Ручная отметка шага: «взял демо-трек», «скрыл чеклист» и подобное.
+    Шаги, которые видно по данным, сюда не пишутся — они и так считаются."""
+    body = await request.json() if await request.body() else {}
+    mark = re.sub(r"[^a-z0-9_\-]", "", str(body.get("mark") or "").lower())[:32]
+    if not mark:
+        raise ApiError(400, "bad_mark", "mark is required")
+    steps = [s for s in (user.onboarding or "").split(",") if s]
+    if bool(body.get("on", True)):
+        if mark not in steps:
+            steps.append(mark)
+    elif mark in steps:
+        steps.remove(mark)
+    user.onboarding = ",".join(steps)[:500]
+    db.commit()
+    return _onboarding_state(db, user)
 
 
 # ─────────────────────────────── проект ───────────────────────────────
@@ -1504,7 +1868,8 @@ def _ffprobe_duration(path: str) -> int:
 
 @app.post("/api/tracks")
 async def create_track(
-    title: str = Form(""), lyrics: str = Form(""), comment: str = Form(""), style: str = Form(""),
+    title: str = Form(""), lyrics: str = Form(""), comment: str = Form(""),
+    style_keys: str = Form(""), style_extra: str = Form(""),
     audio: UploadFile | None = None,
     project_id: int | None = None,
     user: User = Depends(current_user), db: Session = Depends(db_session),
@@ -1513,9 +1878,16 @@ async def create_track(
     if project.kind == "single" and project.tracks:
         raise HTTPException(400, "это сингл — трек может быть только один")
     max_pos = max((t.position for t in project.tracks), default=0)
+    # Стиль приходит КЛЮЧАМИ (csv), текст промпта собирает сервер: реестр
+    # живёт в prompts_catalog и в браузер не уезжает.
+    keys = [k.strip() for k in (style_keys or "").split(",")
+            if k.strip() in prompts_catalog.STYLE_KEYS][:3]
+    extra = (style_extra or "").strip()[:2000]
     track = Track(
         project_id=project.id, position=max_pos + 1,
-        title=title, lyrics=lyrics, comment=comment, style=style,
+        title=title, lyrics=lyrics, comment=comment,
+        style_keys=",".join(keys), style_extra=extra,
+        style=prompts_catalog.fusion(keys, extra),
     )
     if audio is not None:
         ext = os.path.splitext(audio.filename or "")[1] or ".mp3"
@@ -1541,13 +1913,194 @@ async def create_track(
 async def update_track(track_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     track = _own_track(db, user, track_id)
     body = await request.json()
-    for field in ("title", "lyrics", "comment", "style"):
+    # style ЗДЕСЬ БОЛЬШЕ НЕ ПРИНИМАЕТСЯ. Раньше фронт присылал сюда собранный
+    # промпт целиком — это и была вторая половина утечки реестра. Стиль
+    # ставится ключами через POST /api/tracks/{id}/style, где текст собирает
+    # сервер.
+    for field in ("title", "lyrics", "comment"):
         if field in body:
             setattr(track, field, str(body[field]))
     if "film_grain" in body:
         track.film_grain = bool(body["film_grain"])
     if "no_story" in body:
         track.no_story = bool(body["no_story"])
+    db.commit()
+    return track_dict(track)
+
+
+# ─────────────────────── раздел «Промты»: каталог ───────────────────────
+# Реестр целиком лежит в backend/prompts_catalog.py и наружу отдаётся ТОЛЬКО
+# через public_* — по белому списку полей. Текстов промптов в этих ответах
+# нет и быть не может: фирменные пресеты сняты покадровым разбором виральных
+# аккаунтов, и отдать их — значит отдать единственный ров сервиса.
+
+def _is_pro(user: "User | None") -> bool:
+    """Открыт ли человеку разбор приёма. PRO+ — то есть любой платный тариф."""
+    return bool(user and (user.is_admin or _plan_of(user) != "free"))
+
+
+def _style_uses(db: Session) -> dict[str, int]:
+    """Сколько раз стиль реально доехал до СОБРАННОГО клипа.
+
+    Считаем по клипам, а не по кликам: счётчик на клике накрутит любопытство,
+    и цифра перестанет что-либо значить. У конкурента в этом месте вбитые
+    руками просмотры чужих тиктоков — у нас будет настоящее число."""
+    out: dict[str, int] = {}
+    rows = (db.query(Track.style_keys)
+            .filter(Track.style_keys != "", Track.clip_filename != "").all())
+    for (keys,) in rows:
+        for k in (keys or "").split(","):
+            k = k.strip()
+            if k:
+                out[k] = out.get(k, 0) + 1
+    return out
+
+
+def _lang_of(request: Request, lang: str = "") -> str:
+    """Язык карточки: явный параметр, иначе Accept-Language, иначе английский."""
+    want = (lang or "").strip().lower()[:2]
+    if want in ("en", "ru"):
+        return want
+    head = (request.headers.get("accept-language") or "").lower()
+    return "ru" if head.startswith("ru") else "en"
+
+
+@app.get("/api/styles")
+def api_styles(request: Request, lang: str = "", group: str = "", tier: str = "",
+               db: Session = Depends(db_session)):
+    """Витрина раздела «Промты»: группы, подборки, стили и сюжетные каркасы.
+
+    ПУБЛИЧНЫЙ роут — раздел индексируется и открывается без аккаунта, как и
+    витрина цен. Тариф читается, только чтобы поставить замок на карточке."""
+    user = _resolve_user(request, db)
+    lg = _lang_of(request, lang)
+    uses = _style_uses(db)
+    plan_id = _plan_of(user) if user else "free"
+    paid = plan_id != "free"
+    styles = prompts_catalog.public_styles(lang=lg, group=group, tier=tier, uses=uses)
+    for s in styles:
+        # locked — «нельзя снимать на этом тарифе», а не «нельзя смотреть»:
+        # карточка, превью и описание открыты всем и всегда.
+        s["locked"] = bool(s.get("tier") == "pro" and not paid)
+    return {
+        "lang": lg,
+        "groups": [
+            {"key": g["key"], "label": g["label"][lg], "hint": g["hint"][lg]}
+            for g in prompts_catalog.GROUPS
+        ],
+        "collections": [
+            {"key": c["key"], "label": c["label"][lg], "desc": c["desc"][lg],
+             "styles": list(c.get("styles") or []),
+             "featured": bool(c.get("featured"))}
+            for c in prompts_catalog.COLLECTIONS
+        ],
+        "tags": {
+            axis: [{"key": k, "label": (v[lg] if isinstance(v, dict) else v)}
+                   for k, v in vals.items()]
+            for axis, vals in prompts_catalog.TAGS.items()
+        },
+        "styles": styles,
+        "presets": prompts_catalog.public_presets(lang=lg),
+        "plan": plan_id,
+        "authorized": bool(user),
+        # Сколько стилей можно смешать за раз — правило принадлежит серверу,
+        # а не вёрстке чипов.
+        "max_mix": 3,
+    }
+
+
+@app.get("/api/styles/{key}")
+def api_style(key: str, request: Request, lang: str = "",
+              db: Session = Depends(db_session)):
+    """Страница одного стиля: карточка, превью, примеры кадров."""
+    user = _resolve_user(request, db)
+    lg = _lang_of(request, lang)
+    card = prompts_catalog.public_style(key, lang=lg,
+                                        uses=_style_uses(db).get(key, 0))
+    if not card:
+        raise ApiError(404, "unknown_style", f"Unknown style: {key!r}")
+    card["locked"] = bool(card.get("tier") == "pro"
+                          and (not user or _plan_of(user) == "free"))
+    # Разбор приёма — отдельным полем и только если он реально доступен:
+    # closed-стили не раскрываются никогда и ни на каком тарифе.
+    card["structure"] = prompts_catalog.style_structure(key, is_pro=_is_pro(user))
+    card["structure_locked"] = bool(card.get("has_structure") and not card["structure"])
+    return card
+
+
+@app.get("/api/presets")
+def api_presets(request: Request, lang: str = "", kind: str = ""):
+    """Сюжетные каркасы — «что снимаем». Второй слой раздела: стиль отвечает
+    на «как выглядит», каркас — на «что происходит в кадре»."""
+    lg = _lang_of(request, lang)
+    return {"lang": lg, "presets": prompts_catalog.public_presets(lang=lg, kind=kind)}
+
+
+@app.get("/api/presets/{key}")
+def api_preset(key: str, request: Request, lang: str = ""):
+    card = prompts_catalog.public_preset(key, lang=_lang_of(request, lang))
+    if not card:
+        raise ApiError(404, "unknown_preset", f"Unknown preset: {key!r}")
+    return card
+
+
+@app.post("/api/tracks/{track_id}/style")
+async def set_track_style(track_id: int, request: Request,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """Применить стиль (и, если попросили, сюжетный каркас) к треку.
+
+    body: {style_keys: [...], extra?: "", preset?: "ключ каркаса"}
+
+    Текст промпта собирает СЕРВЕР: клиент присылает ключи, обратно получает
+    ключи. Так реестр остаётся на сервере целиком, а не разъезжается по
+    браузерам вместе с бандлом.
+
+    Каркас ложится НЕ в поле стиля, а в свои: story-каркас пишет сквозной
+    сюжет проекта и режиссёрскую заметку трека, punch-каркас поднимает
+    no_story — и claude.py уходит в готовую ветку «РЕЖИМ БЕЗ СЮЖЕТА»."""
+    track = _own_track(db, user, track_id)
+    body = await request.json() if await request.body() else {}
+
+    raw = body.get("style_keys")
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    keys: list[str] = []
+    seen: set[str] = set()
+    paid = bool(user.is_admin or _plan_of(user) != "free")
+    for item in (raw or []):
+        k = str(item or "").strip()
+        if not k or k in seen or k not in prompts_catalog.STYLE_KEYS:
+            continue
+        # Тариф решает, чем СНИМАТЬ. Закрытый тарифом стиль молча пропускаем,
+        # а не падаем ошибкой: кнопка обязана работать, просто без него.
+        if not paid and (prompts_catalog.public_style(k) or {}).get("tier") == "pro":
+            continue
+        seen.add(k)
+        keys.append(k)
+        if len(keys) >= 3:      # больше трёх стилей — каша, а не микс
+            break
+
+    extra = str(body.get("extra") or "").strip()[:2000]
+    track.style_keys = ",".join(keys)
+    track.style_extra = extra
+    track.style = prompts_catalog.fusion(keys, extra)
+
+    if "preset" in body:
+        pkey = str(body.get("preset") or "").strip()
+        preset = prompts_catalog.public_preset(pkey) if pkey else None
+        track.clip_preset_key = preset["key"] if preset else ""
+        if preset:
+            seed = prompts_catalog.preset_seed(preset["key"])
+            track.no_story = bool(preset.get("no_story"))
+            if seed.get("note"):
+                track.director_note = seed["note"]
+            # Сквозной сюжет — свойство ПРОЕКТА, и перетирать чужой текст
+            # нельзя: подставляем только в пустой.
+            if seed.get("story") and not (track.project.story or "").strip():
+                track.project.story = seed["story"]
+                track.project.story_status = "done"
+
     db.commit()
     return track_dict(track)
 
@@ -2851,10 +3404,17 @@ def get_thumb(filename: str, user: User = Depends(current_user), db: Session = D
     _check_file_owner(db, user, os.path.basename(filename))
     dst = os.path.join(THUMB_DIR, os.path.basename(filename) + ".jpg")
     if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-i", src, "-vf", "scale=640:-2", "-q:v", "5", dst],
-            capture_output=True, timeout=60,
-        )
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-i", src, "-vf", "scale=640:-2", "-q:v", "5", dst],
+                capture_output=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            # Нет ffmpeg или он завис: раньше отсюда улетал 500, и на месте
+            # оплаченной генерации человек видел иконку битой картинки.
+            # Оригинал тяжелее миниатюры — но он есть.
+            log.warning("миниатюра %s не собралась: %s", filename, str(e)[:150])
+            return FileResponse(src)
         if r.returncode != 0 or not os.path.exists(dst):
             return FileResponse(src)  # не вышло — отдаём оригинал, хуже не станет
     return FileResponse(dst)
@@ -3173,6 +3733,10 @@ MODEL_SHEET_IDENTITY = (
 # однотипных селфи размывает идентичность вместо того, чтобы её уточнить —
 # движку нужны РАЗНЫЕ ракурсы, а не количество.
 MODEL_SHEET_MAX_PHOTOS = 6
+# Сколько фото влезает в ОДИН коллаж для шлюза. Шлюз принимает ровно одну
+# картинку, поэтому фото склеиваются в лист — но не больше четырёх: hstack
+# делит ширину поровну, и на пятом лицо в исходнике уже нечитаемо.
+MODEL_SHEET_COLLAGE_PHOTOS = 4
 
 
 def _model_sheet_photos(ch: Character, limit: int) -> list:
@@ -3187,8 +3751,11 @@ def _model_sheet_photos(ch: Character, limit: int) -> list:
     live = [p for p in sorted(ch.photos, key=lambda x: (x.position, x.id))
             if (p.kind or "photo") == "photo"
             and os.path.exists(os.path.join(UPLOAD_DIR, p.filename))]
-    if len(live) <= limit or limit < 2:
-        return live[:limit] if limit else live
+    limit = max(1, int(limit))
+    if len(live) <= limit:
+        return live
+    if limit == 1:
+        return live[:1]
     return [live[0]] + live[-(limit - 1):]
 
 
@@ -3249,7 +3816,12 @@ async def generate_character_model(char_id: int, request: Request,
     engine = _model_sheet_engine(user)
     spec = mediagen.IMAGE_ENGINES.get(engine, {})
     max_refs = int(spec.get("max_refs") or 1)
-    photos = _model_sheet_photos(ch, min(MODEL_SHEET_MAX_PHOTOS, max(1, max_refs)))
+    # Движок с несколькими входами берёт фото по одному; шлюзу с его
+    # единственным входом фото всё равно нужны — только склеенные листом,
+    # поэтому и здесь их несколько, а не одно.
+    photos = _model_sheet_photos(
+        ch, min(MODEL_SHEET_MAX_PHOTOS, max_refs) if max_refs > 1
+        else MODEL_SHEET_COLLAGE_PHOTOS)
     # Ни фото, ни описания — генерировать нечего. Одного из двух достаточно:
     # фото без описания работает, описание без фото работает тоже.
     if not desc and not photos:
@@ -3273,9 +3845,13 @@ async def generate_character_model(char_id: int, request: Request,
     elif len(paths) == 1:
         reference = paths[0]
     elif paths:
-        reference = _ref_collage(db, paths[:4], owner_id)
+        reference = _ref_collage(db, paths[:MODEL_SHEET_COLLAGE_PHOTOS], owner_id)
         if reference:
             collage = os.path.basename(reference)
+        else:
+            # Склейка — удобство, а не условие генерации: упавший ffmpeg не
+            # должен оставить лист вообще БЕЗ референса, то есть без лица.
+            reference = paths[0]
 
     prompt = _model_sheet_prompt(kind, views, desc, photos)
     try:
@@ -3567,13 +4143,19 @@ def _norm_period(value) -> str:
     return "year" if str(value or "").strip().lower() in ("year", "annual", "yearly") else "month"
 
 
-def _plan_price(plan_id: str, period: str) -> tuple[int, int]:
+def _plan_price(plan_id: str, period: str, tier: str = "") -> tuple[int, int]:
     """Ценник тарифа за период: (центы, копейки). Одно место, где месяц
-    превращается в год, — иначе витрина и платёжка разъедутся."""
+    превращается в год и где ступень объёма превращается в деньги, — иначе
+    витрина, касса и автосписание посчитают цену каждая по-своему.
+
+    tier читается БЕЗ фильтра видимости (_tier_spec): купленную ступень
+    продлеваем по её цене, даже если её убрали с витрины флагом."""
     plan = PLANS[plan_id]
+    spec = _tier_spec(plan_id, tier) if PLAN_TIERS.get(plan_id) else None
+    src = spec or plan
     if period == "year":
-        return int(plan["usd_year_cents"]), int(plan["rub_year_kopeks"])
-    return int(plan["usd_cents"]), int(plan["rub_kopeks"])
+        return int(src["usd_year_cents"]), int(src["rub_year_kopeks"])
+    return int(src["usd_cents"]), int(src["rub_kopeks"])
 
 
 def _pay_key(provider: str, payment_id: str) -> str:
@@ -3583,22 +4165,73 @@ def _pay_key(provider: str, payment_id: str) -> str:
     return f"{provider}:{pid}" if pid else ""
 
 
-def _grant_plan_points(user: User, plan_id: str, period: str) -> int:
-    """Начислить очки за оплаченный период.
+def _add_points(user: User, grant: int) -> int:
+    """Прибавить очки с потолком в две МЕСЯЧНЫЕ нормы этого начисления.
 
     ПРИБАВЛЯЕМ к остатку, а не перезаписываем. Раньше стояло
     max(остаток, норма): экономный человек, у которого осталось 590 из 600,
     после оплаты получал 10 очков за 990 ₽ — тариф наказывал за бережливость.
-    Потолок — две нормы периода: копить бесконечно нельзя, иначе подписка
-    превращается в склад, но месяц простоя больше не сгорает.
+    Потолок — две нормы: копить бесконечно нельзя, иначе подписка превращается
+    в склад, но месяц простоя больше не сгорает.
     Опускать баланс потолок не имеет права: сверху могли лежать докупленные
     пакеты, за них заплачено отдельно и они не сгорают."""
-    norm = int(PLANS[plan_id]["points"])
-    grant = norm * (12 if period == "year" else 1)
-    cap = 2 * grant
     cur = int(user.gen_points or 0)
-    user.gen_points = max(cur, min(cur + grant, cap))
+    user.gen_points = max(cur, min(cur + int(grant), 2 * int(grant)))
     return int(user.gen_points) - cur
+
+
+def _grant_plan_points(user: User, plan_id: str, period: str, tier: str = "") -> int:
+    """Начислить очки за оплаченный период.
+
+    ГОД НАЧИСЛЯЕТСЯ ПОМЕСЯЧНО. Раньше period="year" клал норму ×12 разом при
+    потолке накопления 2×12 норм: годовой ULTRA u4 — это $2149×12 выручки
+    против 104000×12×POINT_USD = $15600 обязательства В ДЕНЬ ОПЛАТЫ, и при
+    накоплении до потолка тариф уходил в минус. Теперь оплата даёт ПЕРВЫЙ
+    транш, а остальные 11 капают раз в PLAN_DAYS (см. _points_drip_pass).
+    Человек получает то же самое за год, мы — ровный расход вместо ямы.
+
+    Оплата года ПЕРЕЗАПИСЫВАЕТ график капель, а не складывает его с прежним:
+    иначе два годовых платежа подряд дали бы 22 транша вместо 11."""
+    norm = _plan_points(plan_id, tier)
+    if period == "year":
+        user.points_drip_left = 11
+        user.points_drip_size = norm
+        user.points_drip_at = now() + timedelta(days=PLAN_DAYS)
+    else:
+        user.points_drip_left = 0
+        user.points_drip_size = 0
+        user.points_drip_at = None
+    return _add_points(user, norm)
+
+
+def _points_drip_pass(db: Session) -> int:
+    """Очередной месячный транш годовым подписчикам. Возвращает, скольким
+    начислили.
+
+    Отдельный проход, а не побочный эффект продления: годовую подписку никто
+    не продлевает 11 месяцев, и цепляться начислению не за что."""
+    rows = (db.query(User)
+            .filter(User.points_drip_left > 0, User.points_drip_at.isnot(None),
+                    User.points_drip_at <= now()).all())
+    done = 0
+    for u in rows:
+        # Тариф кончился раньше срока (отмена, возврат) — капли прекращаем:
+        # очки годовой подписки не должны пережить саму подписку.
+        if (u.plan or "free") == "free":
+            u.points_drip_left = 0
+            u.points_drip_size = 0
+            u.points_drip_at = None
+            continue
+        _add_points(u, int(u.points_drip_size or 0))
+        u.points_drip_left = int(u.points_drip_left) - 1
+        u.points_drip_at = (_as_utc(u.points_drip_at) or now()) + timedelta(days=PLAN_DAYS)
+        if u.points_drip_left <= 0:
+            u.points_drip_left = 0
+            u.points_drip_at = None
+        done += 1
+    if rows:
+        db.commit()
+    return done
 
 
 def _already_processed(db: Session, provider: str, payment_id: str,
@@ -3658,7 +4291,7 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
                    pack_id: str = "", amount_cents: int = 0, amount_kopeks: int = 0,
                    currency: str = "USD", pay_method_id: str = "",
                    stripe_customer: str = "", stripe_subscription: str = "",
-                   alt_ids=()) -> bool:
+                   tier: str = "", alt_ids=()) -> bool:
     """Выдать оплаченное: тариф с очками или пакет очков. False — уже выдавали.
 
     ИДЕМПОТЕНТНОСТЬ. Обе платёжки повторяют уведомление, пока не получат 200,
@@ -3687,10 +4320,23 @@ def _grant_payment(db: Session, user: User, *, provider: str, payment_id: str,
             log.warning("платёж %s: неизвестный тариф %r", key, plan_id)
             return False
         period = _norm_period(period)
-        points = _grant_plan_points(user, plan_id, period)
+        # Ступень: из metadata платежа, а при продлении без неё — из
+        # запланированного понижения, иначе текущая. Понижение применяется
+        # ровно здесь, в момент продления: раньше человек платил бы дважды
+        # за один месяц.
+        if PLAN_TIERS.get(plan_id):
+            want = str(tier or "").strip().lower() \
+                or (user.plan_tier_next or "") or (user.plan_tier or "")
+            tier = _tier_spec(plan_id, want)["id"]
+            user.plan_tier = tier
+            user.plan_tier_next = ""
+        else:
+            tier = ""
+            user.plan_tier = ""
+            user.plan_tier_next = ""
+        points = _grant_plan_points(user, plan_id, period, tier)
         user.plan = plan_id
         user.plan_period = period
-        from datetime import timedelta
         until = _as_utc(user.plan_until)
         base = until if (until and until > now()) else now()
         user.plan_until = base + timedelta(days=_period_days(period))
@@ -3739,6 +4385,72 @@ def _movies_estimate(points: int, scene_cost: int) -> int:
     return int(points) // (scene_cost * CLIP_SCENES)
 
 
+def _volume_breakdown(plan_id: str, points: int) -> dict:
+    """Расшифровка объёма в ЧЕЛОВЕЧЕСКИХ единицах — по каждому движку тарифа.
+
+    Витрина обязана переводить очки в то, что человек понимает: клипы и кадры.
+    Считаем здесь, а не на фронте, — иначе появится третья копия прайса,
+    которая разъедется вслед за LD_PLANS_FALLBACK.
+
+    ВАЖНО про «0 клипов». На дорогом движке объём часто не дотягивает до
+    целого клипа (3400 очков PRO MAX = 20 сцен на Seedance 2.5, две трети
+    песни). Врать нельзя, но и писать «0 клипов» — значит убить карточку
+    собственной рукой: отдаём и clips, и scenes, а витрина показывает сцены
+    там, где клипов меньше одного."""
+    plan = PLANS[plan_id]
+    frames_pair = FRAME_COST.get(plan.get("image_engine") or "chatgpt", FRAMES_COST)
+    one_image = max(2, _points_of_usd(
+        mediagen.image_engine_usd(plan.get("image_engine") or "chatgpt")))
+    rows = []
+    for eid, scene_cost in sorted(_plan_engines(plan_id).items(),
+                                  key=lambda kv: kv[1], reverse=True):
+        spec = mediagen.VIDEO_ENGINES.get(eid) or {}
+        rows.append({
+            "engine": eid,
+            "title": spec.get("title", eid),
+            "scene_cost": scene_cost,
+            "clips": _movies_estimate(points, scene_cost),
+            "scenes": int(points) // scene_cost if scene_cost else 0,
+        })
+    return {
+        "engines": rows,
+        "frames_pair_cost": frames_pair,
+        "image_cost": one_image,
+        # Сколько ОТДЕЛЬНЫХ кадров можно нарисовать, если тратить только на них.
+        "images": int(points) // one_image if one_image else 0,
+        "scene_pairs": int(points) // frames_pair if frames_pair else 0,
+        "clip_scenes": CLIP_SCENES,
+    }
+
+
+def _tier_card(plan_id: str, spec: dict) -> dict:
+    """Ступень объёма для витрины: оба ценника, зачёркнутая цена, скидка и
+    расшифровка «сколько это клипов» по каждому движку тарифа."""
+    pts = int(spec["points"])
+    return {
+        "id": spec["id"],
+        "points": pts,
+        "usd": round(spec["usd_cents"] / 100, 2),
+        "usd_cents": int(spec["usd_cents"]),
+        "usd_year": round(spec["usd_year_cents"] / 100, 2),
+        "usd_year_cents": int(spec["usd_year_cents"]),
+        "usd_year_per_month": round(spec["usd_year_cents"] / 12 / 100, 2),
+        "rub": int(spec["rub_kopeks"]) // 100,
+        "rub_kopeks": int(spec["rub_kopeks"]),
+        "rub_year": int(spec["rub_year_kopeks"]) // 100,
+        "rub_year_kopeks": int(spec["rub_year_kopeks"]),
+        # Зачёркнутая цена = тот же объём по цене очка базовой ступени.
+        "list_usd": round(spec["list_usd_cents"] / 100, 2),
+        "list_usd_cents": int(spec["list_usd_cents"]),
+        "save_pct": int(spec["save_pct"]),
+        # Годовая скидка ИМЕННО ЭТОЙ ступени: после пола цены очка она уже не
+        # YEAR_DISCOUNT_PCT, и обещать −20 % там, где −13 %, нельзя.
+        "year_discount_pct": int(spec["year_discount_pct"]),
+        "usd_per_point": round(spec["usd_cents"] / 100 / pts, 5) if pts else 0.0,
+        "volume": _volume_breakdown(plan_id, pts),
+    }
+
+
 def _plan_card(plan_id: str) -> dict:
     """Карточка тарифа для витрины: оба ценника, оба периода, оценка в клипах.
 
@@ -3768,6 +4480,13 @@ def _plan_card(plan_id: str) -> dict:
         "price": p["price"],  # легаси-поле старого фронта: рубли
         "points": int(p["points"]),
         "points_year": int(p["points"]) * 12,
+        # Ступени объёма (сегодня — только ULTRA). Пустой список = тариф без
+        # шкалы, витрина рисует обычную карточку. Первая ступень по цене и
+        # объёму совпадает с самим тарифом, поэтому старый фронт, который про
+        # ступени ничего не знает, продолжает показывать верный ценник.
+        "tiers": [_tier_card(plan_id, s)
+                  for s in _tiers_of(plan_id, visible_only=True)],
+        "volume": _volume_breakdown(plan_id, int(p["points"])),
         "video": list(p["video"]),
         "engines": engines,               # движок → полная цена сцены на тарифе
         "engine_titles": {eid: mediagen.VIDEO_ENGINES[eid]["title"]
@@ -3832,8 +4551,13 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
     return {
         "current": _plan_of(user) if user else "free",
         "current_period": (user.plan_period or "month") if user else "month",
+        # Ступень объёма: какая куплена и какая запланирована на продление.
+        "current_tier": _tier_of_user(user) if user else "",
+        "next_tier": (user.plan_tier_next or "") if user else "",
         "plan_until": user.plan_until.isoformat() if (user and user.plan_until) else "",
-        "autopay": bool(user and user.autopay and (user.pay_method_id or user.stripe_subscription_id)),
+        "autopay": bool(user and user.autopay and (user.pay_method_id
+                                                   or user.stripe_subscription_id
+                                                   or getattr(user, "stars_sub_charge_id", ""))),
         "points": int(user.gen_points or 0) if user else 0,
         "authorized": bool(user),
         # enabled — легаси-флаг старого фронта: хоть одна платёжка жива.
@@ -3914,8 +4638,11 @@ async def billing_create(request: Request, user: User = Depends(current_user),
                          db: Session = Depends(db_session)):
     """Ссылка на оплату: подписка на тариф или разовая покупка пакета очков.
 
-    body: {kind:"plan"|"topup", plan?, pack?, period?:"month"|"year",
+    body: {kind:"plan"|"topup", plan?, tier?, pack?, period?:"month"|"year",
            provider?:"stripe"|"yookassa", currency?:"usd"|"rub", promo?}
+    tier — ступень объёма для тарифов со шкалой (ULTRA). Неизвестная и
+    скрытая флагом молча понижаются до базовой: обходить ULTRA_TOP_TIERS
+    одной строкой в теле запроса нельзя.
     Провайдер по умолчанию выбирается валютой: доллары — Stripe, рубли — ЮKassa."""
     body = await request.json() if await request.body() else {}
     kind = str(body.get("kind") or "").strip().lower()
@@ -3924,6 +4651,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
     if kind not in ("plan", "topup"):
         kind = "topup" if pack_id else "plan"
     period = _norm_period(body.get("period"))
+    tier = _norm_tier(plan_id, body.get("tier")) if plan_id in PLANS else ""
 
     currency = str(body.get("currency") or "").strip().lower()
     provider = str(body.get("provider") or "").strip().lower()
@@ -3956,9 +4684,13 @@ async def billing_create(request: Request, user: User = Depends(current_user),
         plan = PLANS.get(plan_id)
         if not plan or plan["usd_cents"] <= 0:
             raise ApiError(400, "unknown_plan", f"Unknown plan: {plan_id!r}")
-        amount_cents, amount_kopeks = _plan_price(plan_id, period)
-        title = f"{BRAND} {plan['title']} — {'12 months' if period == 'year' else '1 month'}"
-        points = int(plan["points"])
+        amount_cents, amount_kopeks = _plan_price(plan_id, period, tier)
+        points = _plan_points(plan_id, tier)
+        # В названии платежа — объём, а не только имя тарифа: в выписке по
+        # карте и в письме кассы человек должен узнать, за какую ступень платил.
+        vol = f" {points // 1000}k" if PLAN_TIERS.get(plan_id) else ""
+        title = (f"{BRAND} {plan['title']}{vol} — "
+                 f"{'12 months' if period == 'year' else '1 month'}")
 
     # Промокод партнёрки: если человек ещё ни за кем не закреплён — закрепляем
     # прямо здесь (то же первое касание, что и по ссылке ?ref=). Скидка — один
@@ -3996,7 +4728,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
                 period=period, plan_id=plan_id, pack_id=pack_id, points=points,
                 email=user.email or "", customer_id=user.stripe_customer_id or "",
                 coupon_id=coupon, promo=meta_promo,
-                ambassador_id=amb.id if amb else 0,
+                ambassador_id=amb.id if amb else 0, tier=tier,
             )
         except stripe_pay.StripeError as e:
             raise ApiError(502, "stripe_failed", str(e))
@@ -4010,7 +4742,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
             db.commit()
         return {
             "ok": True, "url": session["url"], "provider": "stripe", "currency": "usd",
-            "kind": kind, "plan": plan_id, "pack": pack_id, "period": period,
+            "kind": kind, "plan": plan_id, "tier": tier, "pack": pack_id, "period": period,
             "payment_id": session["id"],
             "amount_cents": amount_cents - discount_cents, "discount_cents": discount_cents,
             "amount_kopeks": 0, "discount_kopeks": 0,
@@ -4032,7 +4764,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
         # promo и ambassador_id — след для разбора спорных начислений: по
         # платежу в кабинете ЮKassa видно, чей это был реферал.
         "metadata": {"user_id": str(user.id), "plan": plan_id, "kind": kind,
-                     "pack": pack_id, "period": period,
+                     "pack": pack_id, "period": period, "tier": tier,
                      "promo": meta_promo, "ambassador_id": str(amb.id) if amb else ""},
     }
     async with _httpx.AsyncClient(timeout=30) as client:
@@ -4047,7 +4779,7 @@ async def billing_create(request: Request, user: User = Depends(current_user),
         raise ApiError(502, "yookassa_failed", "YooKassa returned no payment URL.")
     return {
         "ok": True, "url": url, "provider": "yookassa", "currency": "rub",
-        "kind": kind, "plan": plan_id, "pack": pack_id, "period": period,
+        "kind": kind, "plan": plan_id, "tier": tier, "pack": pack_id, "period": period,
         "payment_id": data.get("id", ""),
         "amount_kopeks": pay_kopeks, "discount_kopeks": discount_kopeks,
         "amount_cents": 0, "discount_cents": 0,
@@ -4087,6 +4819,7 @@ async def billing_webhook(request: Request, db: Session = Depends(db_session)):
     plan_id = str(meta.get("plan") or "")
     pack_id = str(meta.get("pack") or "")
     period = _norm_period(meta.get("period"))
+    tier = str(meta.get("tier") or "")
     if not user:
         # Платёж без нашей metadata — деньги пришли, а кому выдавать, неясно.
         # Раньше это был тихий 200 в никуда; теперь хотя бы видно в логах.
@@ -4104,7 +4837,7 @@ async def billing_webhook(request: Request, db: Session = Depends(db_session)):
     granted = _grant_payment(db, user, provider="yookassa", payment_id=pay_id, kind=kind,
                              plan_id=plan_id, period=period, pack_id=pack_id,
                              amount_kopeks=paid_kopeks, currency="RUB",
-                             pay_method_id=saved_method)
+                             pay_method_id=saved_method, tier=tier)
     if not granted:
         return {"ok": True}
     _ref_reward(db, user, paid_kopeks, _pay_key("yookassa", pay_id))
@@ -4154,6 +4887,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(db_session)):
             granted = _grant_payment(
                 db, user, provider="stripe", payment_id=pay_id, kind="plan",
                 plan_id=str(meta.get("plan") or ""), period=_norm_period(meta.get("period")),
+                tier=str(meta.get("tier") or ""),
                 amount_cents=amount_cents, currency="USD",
                 stripe_customer=customer, stripe_subscription=sub_id,
                 alt_ids=(inv_id, str(obj.get("id") or "")))
@@ -4189,6 +4923,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(db_session)):
         granted = _grant_payment(
             db, user, provider="stripe", payment_id=pay_id, kind="plan",
             plan_id=str(meta.get("plan") or ""), period=_norm_period(meta.get("period")),
+            tier=str(meta.get("tier") or ""),
             amount_cents=amount_cents, currency="USD",
             stripe_customer=str(obj.get("customer") or ""),
             stripe_subscription=sub_id, alt_ids=(inv_id,) if first_key else ())
@@ -4230,13 +4965,20 @@ async def _charge_subscription(db: Session, user: "User") -> str:
         return "fail"
     if user.stripe_subscription_id:
         return "pending"  # этого продлевает сам Stripe, руками не лезем
-    _, amount_kopeks = _plan_price(user.plan, period)
+    # Ступень: запланированное понижение вступает в силу ровно на продлении,
+    # поэтому и списываем уже по новой цене.
+    tier = ""
+    if PLAN_TIERS.get(user.plan or ""):
+        tier = _tier_spec(user.plan, (user.plan_tier_next or "")
+                          or (user.plan_tier or ""))["id"]
+    _, amount_kopeks = _plan_price(user.plan, period, tier)
     if amount_kopeks <= 0:
         return "fail"
     # Idempotence-Key ДЕТЕРМИНИРОВАННЫЙ: если ЮKassa списала, а ответ до нас не
     # дошёл (таймаут сети), повтор через час вернёт ТОТ ЖЕ платёж, а не спишет
     # с карты второй раз. Раньше тут был свежий uuid на каждый заход.
-    seed = f"sub:{user.id}:{user.plan}:{period}:{_as_utc(user.plan_until) or now():%Y-%m-%d}"
+    seed = (f"sub:{user.id}:{user.plan}:{tier}:{period}:"
+            f"{_as_utc(user.plan_until) or now():%Y-%m-%d}")
     idem = uuid.uuid5(uuid.NAMESPACE_URL, seed).hex
     import httpx as _httpx
     payload = {
@@ -4246,7 +4988,7 @@ async def _charge_subscription(db: Session, user: "User") -> str:
         "payment_method_id": user.pay_method_id,
         "description": f"{BRAND} {plan['title']} — renewal",
         "metadata": {"user_id": str(user.id), "plan": user.plan, "kind": "plan",
-                     "period": period},
+                     "period": period, "tier": tier},
     }
     async with _httpx.AsyncClient(timeout=40) as client:
         r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
@@ -4259,8 +5001,8 @@ async def _charge_subscription(db: Session, user: "User") -> str:
         # Этот же платёж приедет ещё и вебхуком: выдача идемпотентна по id,
         # поэтому неважно, кто из них успеет первым.
         if _grant_payment(db, user, provider="yookassa", payment_id=pay_id, kind="plan",
-                          plan_id=user.plan, period=period, amount_kopeks=amount_kopeks,
-                          currency="RUB"):
+                          plan_id=user.plan, period=period, tier=tier,
+                          amount_kopeks=amount_kopeks, currency="RUB"):
             _ref_reward(db, user, amount_kopeks, _pay_key("yookassa", pay_id))
         return "ok"
     if status in ("pending", "waiting_for_capture"):
@@ -4278,14 +5020,26 @@ def _subscription_pass() -> None:
     и на международном контуре (только Stripe) закончившиеся подписки не
     снимались НИКОГДА: отменил в Stripe, а PRO остаётся навсегда."""
     import asyncio as _asyncio
-    from datetime import timedelta
     db = SessionLocal()
     try:
+        # Сначала капли годовых подписок: они не привязаны к продлению —
+        # годовую никто не продлевает 11 месяцев, и цепляться начислению не за что.
+        try:
+            _points_drip_pass(db)
+        except Exception as e:  # noqa: BLE001 — капля не должна ронять проход продлений
+            db.rollback()
+            log.warning("помесячная выдача очков упала: %s", str(e)[:200])
         due = db.query(User).filter(User.plan != "free", User.plan_until.isnot(None),
                                     User.plan_until <= now()).all()
         for u in due:
             if u.stripe_subscription_id:
                 continue  # продлевает Stripe своим счётом
+            if getattr(u, "stars_sub_charge_id", ""):
+                # Подписку за звёзды продлевает сам Telegram и присылает новый
+                # successful_payment. Карты у такого человека нет и быть не
+                # может, поэтому без этой строки автосписание «проваливалось»,
+                # и через SUB_GRACE_DAYS живой плательщик слетал на free.
+                continue
             res = "fail"
             if _yookassa_enabled() and u.pay_method_id:
                 try:
@@ -4303,6 +5057,12 @@ def _subscription_pass() -> None:
                 continue
             u.plan = "free"
             u.plan_period = "month"
+            # Ступень и график капель принадлежат подписке — вместе с ней и уходят.
+            u.plan_tier = ""
+            u.plan_tier_next = ""
+            u.points_drip_left = 0
+            u.points_drip_size = 0
+            u.points_drip_at = None
             db.commit()
             log.info("подписка юзера %s закончилась — вернули на free (карту сохранили)", u.id)
     finally:
@@ -4322,11 +5082,50 @@ def _subscription_worker() -> None:
         time.sleep(3600)
 
 
+@app.post("/api/billing/tier")
+async def billing_tier(request: Request, user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Сменить ступень объёма внутри купленного тарифа.
+
+    ПОВЫШЕНИЕ — не здесь: за него надо доплатить, и делает его обычный чекаут
+    (/api/billing/create с новым tier). Возвращаем действие "checkout", чтобы
+    фронт увёл человека в кассу, а не делал вид, что объём вырос сам.
+
+    ПОНИЖЕНИЕ — пишем в plan_tier_next и применяем на продлении. Понижать
+    сразу нельзя: за текущий период уже заплачено по старой цене."""
+    body = await request.json() if await request.body() else {}
+    plan_id = _plan_of(user)
+    if not PLAN_TIERS.get(plan_id):
+        raise ApiError(400, "no_tiers", "This plan has no volume steps.")
+    want = _norm_tier(plan_id, body.get("tier"))
+    order = [t["id"] for t in _tiers_of(plan_id)]
+    cur = _tier_of_user(user) or order[0]
+    if want == cur:
+        user.plan_tier_next = ""
+        db.commit()
+        return {"ok": True, "action": "kept", "tier": cur, "next_tier": ""}
+    if order.index(want) > order.index(cur):
+        return {"ok": True, "action": "checkout", "tier": cur, "next_tier": want}
+    user.plan_tier_next = want
+    db.commit()
+    log.info("юзер %s запланировал понижение ступени %s → %s", user.id, cur, want)
+    return {"ok": True, "action": "scheduled", "tier": cur, "next_tier": want,
+            "until": user.plan_until.isoformat() if user.plan_until else ""}
+
+
 @app.post("/api/billing/cancel")
 async def billing_cancel(user: User = Depends(current_user), db: Session = Depends(db_session)):
-    """Отключить автопродление — тариф доработает до конца оплаченного срока."""
+    """Отключить автопродление — тариф доработает до конца оплаченного срока.
+
+    У звёзд отмена делается на стороне Telegram (editUserStarSubscription) и
+    пропорционального возврата не даёт: доступ доживает до конца оплаченного
+    периода. Это надо говорить прямо, а не прятать за словом «отменено»."""
     user.autopay = False
     db.commit()
+    stars_ok, stars_err = True, ""
+    if getattr(user, "stars_sub_charge_id", ""):
+        import stars as stars_mod  # noqa: PLC0415
+        stars_ok, stars_err = await stars_mod.cancel_subscription(db, user)
     stripe_ok = True
     if user.stripe_subscription_id and _stripe_enabled():
         try:
@@ -4336,6 +5135,7 @@ async def billing_cancel(user: User = Depends(current_user), db: Session = Depen
             log.warning("stripe: не отменилась подписка %s: %s",
                         user.stripe_subscription_id, str(e)[:200])
     return {"ok": True, "stripe_cancelled": stripe_ok,
+            "stars_cancelled": stars_ok, "stars_error": stars_err,
             "plan": _plan_of(user), "period": user.plan_period or "month",
             "until": user.plan_until.isoformat() if user.plan_until else ""}
 
@@ -4529,6 +5329,19 @@ async def admin_payout_update(payout_id: int, request: Request,
     return {"ok": True, "payout": _payout_dict(payout)}
 
 
+def _stars_subscription(user: User) -> dict:
+    """Состояние звёздной подписки для кабинета: откуда она, когда следующее
+    списание и как её отменить. Пусто — значит человек платил не звёздами."""
+    if not getattr(user, "stars_sub_charge_id", ""):
+        return {}
+    try:
+        import stars as stars_mod  # noqa: PLC0415
+        return stars_mod.subscription_state(user)
+    except Exception as e:  # noqa: BLE001
+        log.warning("кабинет: не собрал состояние звёздной подписки: %s", str(e)[:150])
+        return {"provider": "stars", "active": True, "state": "active"}
+
+
 @app.get("/api/account")
 def account(user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Личный кабинет: тариф, срок, очки, привязки входа, проекты."""
@@ -4544,10 +5357,21 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
         "plan_note": PLANS[plan]["note"],
         "plan_period": user.plan_period or "month",
         "plan_until": user.plan_until.isoformat() if user.plan_until else "",
-        # Автопродление живёт в двух местах: карта ЮKassa у нас, подписка — у Stripe.
-        "autopay": bool(user.autopay and (user.pay_method_id or user.stripe_subscription_id)),
-        "pay_provider": ("stripe" if user.stripe_subscription_id
-                         else ("yookassa" if user.pay_method_id else "")),
+        # Автопродление живёт в ТРЁХ местах: карта ЮKassa у нас, подписка у
+        # Stripe и подписка Telegram Stars, которую продлевает сам Telegram.
+        # Без звёзд в этой строке кабинет писал бы «автопродление выключено»
+        # человеку, с которого Telegram списывает каждые 30 дней.
+        "autopay": bool(user.autopay and (user.pay_method_id
+                                          or user.stripe_subscription_id
+                                          or getattr(user, "stars_sub_charge_id", ""))),
+        "pay_provider": ("stars" if getattr(user, "stars_sub_charge_id", "")
+                         else ("stripe" if user.stripe_subscription_id
+                               else ("yookassa" if user.pay_method_id else ""))),
+        # Следующее списание = конец оплаченного периода: у всех трёх контуров
+        # это одна и та же дата, и второй правды о ней заводить не надо.
+        "next_charge": user.plan_until.isoformat() if (user.plan_until and user.autopay
+                                                       and plan != "free") else "",
+        "stars_subscription": _stars_subscription(user),
         "points": user.gen_points, "projects": projects,
         # Сколько клипов по 3 минуты ещё выйдет из остатка. Считаем по рабочей
         # лошадке тарифа (самый дешёвый ПЛАТНЫЙ движок): по самому дорогому на
@@ -4639,6 +5463,23 @@ from threading import Thread as _Thread  # noqa: E402
 _Thread(target=_subscription_worker, daemon=True).start()
 # Ретенция медиа чатов: суточный проход, тот же паттерн демон-треда.
 chat_module.start_worker()
+
+
+# ─────────────────────────── телеграм-контур ───────────────────────────
+# Три модуля, ни один из которых не заводит своей авторизации и своей кассы:
+#   bot_api — служебные роуты бота (сессия по tg_id, выдача звёздных оплат);
+#   stars   — прайс в звёздах, счета, подписки, возвраты и сверка платежей;
+#   tg_app  — мини-апп: вход по initData и мосты к аккаунту сайта.
+# ВАЖНО: строго ДО app.mount("/", StaticFiles…) — статика на «/» перехватывает
+# всё, что зарегистрировано после неё, и POST /internal/… начинает отвечать
+# 405 Method Not Allowed, молча и совершенно непонятно.
+import bot_api  # noqa: E402
+import stars  # noqa: E402
+import tg_app  # noqa: E402
+
+bot_api.mount(app)
+stars.mount(app)
+tg_app.mount(app)
 
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")

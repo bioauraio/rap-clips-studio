@@ -279,8 +279,15 @@ async def stars_grant(request: Request):
                 plan_id=plan_id, period=period, amount_cents=amount_cents,
                 currency="USD")
         if granted:
+            import stars as stars_mod  # noqa: PLC0415
             core._ref_reward(db, user, core._reward_kopeks(0, amount_cents),
-                             core._pay_key("stars", charge_id))
+                             core._pay_key("stars", charge_id),
+                             pct=stars_mod.REF_REWARD_PCT_STARS)
+            # Первый платёж ПОДПИСКИ: без его charge_id отменить подписку со
+            # своей стороны нечем — editUserStarSubscription принимает именно
+            # первый charge, а не последний.
+            if kind != "topup" and body.get("subscription"):
+                stars_mod.remember_subscription(db, user, charge_id)
         db.refresh(user)
         return {
             "ok": True, "granted": bool(granted),

@@ -138,6 +138,7 @@ async def create_checkout_session(
     coupon_id: str = "",
     promo: str = "",
     ambassador_id: int = 0,
+    tier: str = "",             # ступень объёма тарифа со шкалой (ULTRA)
     idempotency_key: str = "",
 ) -> dict:
     """Checkout Session: подписка для плана, разовый платёж для пакета очков.
@@ -151,6 +152,9 @@ async def create_checkout_session(
         "plan": plan_id,
         "pack": pack_id,
         "period": period,
+        # Ступень обязана лежать В METADATA ПОДПИСКИ: у продлевающего инвойса
+        # своей metadata нет, и без неё продление начислило бы базовый объём.
+        "tier": tier or "",
         "points": str(int(points or 0)),
         "promo": promo or "",
         "ambassador_id": str(int(ambassador_id or 0)),

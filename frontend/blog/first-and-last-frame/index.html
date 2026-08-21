@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>First and Last Frame: The Control Trick Behind Every Clip That Holds Together</title>
+<meta name="description" content="Give the model where a shot starts and where it ends, and it has to arrive. Here is why first-and-last-frame generation is the difference between 30 pretty clips and one music video." />
+<link rel="canonical" href="https://qlolapp.art/blog/first-and-last-frame/" />
+<link rel="alternate" hreflang="en" href="https://qlolapp.art/blog/first-and-last-frame/" />
+<link rel="alternate" hreflang="ru" href="https://qlolapp.art/ru/blog/pervyy-i-posledniy-kadr/" />
+<link rel="alternate" hreflang="x-default" href="https://qlolapp.art/blog/first-and-last-frame/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" content="First and Last Frame: The Control Trick Behind Every Clip That Holds Together" />
+<meta property="og:description" content="Give the model where a shot starts and where it ends, and it has to arrive. Here is why first-and-last-frame generation is the difference between 30 pretty clips and one music video." />
+<meta property="og:url" content="https://qlolapp.art/blog/first-and-last-frame/" />
+<meta property="og:image" content="https://qlolapp.art/img/shots/step-frames.jpg" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="First and Last Frame: The Control Trick Behind Every Clip That Holds Together" />
+<meta name="twitter:description" content="Give the model where a shot starts and where it ends, and it has to arrive. Here is why first-and-last-frame generation is the difference between 30 pretty clips and one music video." />
+<meta name="twitter:image" content="https://qlolapp.art/img/shots/step-frames.jpg" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/blog.css?v=1" />
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"First and Last Frame: The Control Trick Behind Every Clip That Holds Together","description":"Give the model where a shot starts and where it ends, and it has to arrive. Here is why first-and-last-frame generation is the difference between 30 pretty clips and one music video.","inLanguage":"en","datePublished":"2026-08-21","dateModified":"2026-08-21","image":"https://qlolapp.art/img/shots/step-frames.jpg","mainEntityOfPage":{"@type":"WebPage","@id":"https://qlolapp.art/blog/first-and-last-frame/"},"author":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/"},"publisher":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/","logo":{"@type":"ImageObject","url":"https://qlolapp.art/img/logo-mark.svg"}}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"lolq.ai","item":"https://qlolapp.art/"},{"@type":"ListItem","position":2,"name":"Journal","item":"https://qlolapp.art/blog/"},{"@type":"ListItem","position":3,"name":"First and Last Frame: The Control Trick Behind Every Clip That Holds Together"}]}</script>
+</head>
+<body>
+<header class="bh">
+  <a class="bh-brand" href="/"><img src="/img/logo-mark.svg" width="26" height="26" alt="" /><span>lolq<span class="dot">.</span>ai</span></a>
+  <nav class="bh-nav">
+    <a href="/blog/">Journal</a>
+    <a href="/#ld-how">How it works</a>
+    <a href="/#ld-pricing">Pricing</a>
+    <a class="bh-cta" href="/">Start free</a>
+  </nav>
+</header>
+<main class="bw">
+<article class="bpost">
+<p class="bmeta"><a href="/blog/">← All articles</a> · <time datetime="2026-08-21">2026-08-21</time> <a class="blang" href="/ru/blog/pervyy-i-posledniy-kadr/" hreflang="ru">Читать по-русски</a></p>
+<h1 id="first-and-last-frame">First and Last Frame</h1>
+<nav class="btoc"><ul><li><a href="#three-ways-to-ask-a-model-for-a-shot">Three ways to ask a model for a shot</a></li><li><a href="#why-the-destination-is-the-whole-game-in-a-music-video">Why the destination is the whole game in a music video</a></li><li><a href="#what-it-cannot-do">What it cannot do</a></li><li><a href="#which-engines-actually-support-it">Which engines actually support it</a></li><li><a href="#the-working-method">The working method</a></li><li><a href="#try-it-on-a-real-song">Try it on a real song</a></li></ul></nav>
+<p>There is a specific moment where AI music videos fall apart, and it is not the one people expect. It is not a bad face or a broken hand. It is the cut. Thirty individually decent six-second clips, stitched to a song, that feel like thirty clips instead of one video.</p>
+<p>The fix is a feature most people skip past in the engine dropdown: <strong>generating a scene from two frames instead of one</strong>.</p>
+<h2 id="three-ways-to-ask-a-model-for-a-shot">Three ways to ask a model for a shot</h2>
+<p><strong>Text to video.</strong> You describe the shot, the model invents everything, including the composition you had in your head and did not get. Cheapest to write, most expensive to iterate on: every rejection costs a full video generation.</p>
+<p><strong>Image to video (first frame only).</strong> You draw the opening frame and the model animates away from it. Much better — you control the composition, the character, the palette. But you control only the *departure*. Where the shot lands is the model's decision, and it will be a different decision every run.</p>
+<p><strong>First and last frame.</strong> You give the model both ends. It generates the motion between them, and it has to arrive at your second picture. Technically the reference images are encoded and the model interpolates a temporally consistent path from state A to state B; practically, it means a shot has a destination.</p>
+<p>That third mode is what our pipeline is built on, and it is why every scene in the studio has two frames on its card, not one.</p>
+<h2 id="why-the-destination-is-the-whole-game-in-a-music-video">Why the destination is the whole game in a music video</h2>
+<p>A single AI clip only needs to look good. A music video needs 30 shots that behave like they were filmed by the same person on the same day. Four things follow directly from controlling the last frame:</p>
+<p><strong>1. The cut lands where the song wants it.</strong> You can put the end of a shot on the downbeat by drawing the frame that should be on the downbeat. With first-frame-only generation, the shot ends wherever the model runs out of seconds, and you cut around the model instead of the music.</p>
+<p><strong>2. Continuity across the cut becomes free.</strong> If scene 7 ends on a face turned to camera, scene 8 can open on the same face turned to camera. The two frames are drawn from the same character reference, so the join reads as a cut rather than a jump. Chain that across a song and the video becomes a video.</p>
+<p><strong>3. Motion becomes a decision, not a lottery.</strong> "Camera pushes in past the doorway" is a prompt and the model may or may not take it. Frame A wide at the doorway plus frame B close on the face inside is a *specification*. The push-in happens because there is no other way to get from A to B.</p>
+<p><strong>4. Rejections get cheap.</strong> If the destination frame is wrong, you regenerate one image, not a video. In our pricing that is $0.09 instead of $1.98, and it is the single biggest lever on the cost of finishing a clip (<a href="/blog/ai-music-video-cost/">full cost breakdown</a>).</p>
+<h2 id="what-it-cannot-do">What it cannot do</h2>
+<p>This is where guides usually oversell, so, plainly: <strong>first-and-last-frame is interpolation, not teleportation.</strong></p>
+<p>The model builds a plausible path between your two pictures. If a plausible path exists, you get beautiful controlled motion. If it does not, you get mush — a morph where the subject melts through an impossible in-between.</p>
+<p>The rule that comes out of running this at volume: <strong>change one thing per scene.</strong></p>
+<div class="tw"><table><thead><tr><th>Delta between frames</th><th>Result</th></tr></thead><tbody><tr><td>Camera moves, subject holds</td><td>Excellent — the cleanest push-ins, pans and pull-backs you will get</td></tr><tr><td>Subject moves, camera holds</td><td>Very good — a turn, a step, a head lift, a hand raised</td></tr><tr><td>Light or weather shifts</td><td>Good — a lamp coming on, sun dropping, rain starting</td></tr><tr><td>Subject <strong>and</strong> camera <strong>and</strong> location all change</td><td>Mush. This is two scenes, not one</td></tr><tr><td>Different character in frame B</td><td>Mush. Always</td></tr></tbody></table></div>
+<p>If you catch yourself drawing a second frame that is a whole new idea, you have found a cut. Split it into two scenes. Six seconds is enough for exactly one idea, which is also true of editing in general and has been since long before any of this existed.</p>
+<h2 id="which-engines-actually-support-it">Which engines actually support it</h2>
+<p>Not all of them, and the ones that do wire it up differently.</p>
+<div class="tw"><table><thead><tr><th>Engine</th><th>Last frame</th><th>How it takes it</th></tr></thead><tbody><tr><td>Seedance 2 Mini / 2.0 / 2.5</td><td>yes</td><td><code>first_frame_url</code> + <code>last_frame_url</code></td></tr><tr><td>MiniMax H3</td><td>yes</td><td><code>first_frame_url</code> + <code>last_frame_url</code></td></tr><tr><td>Kling 3.0 / 3.0 Pro</td><td>yes</td><td>array of image URLs, first and last in order</td></tr><tr><td>Grok (our free gateway)</td><td><strong>no</strong></td><td>animates the first frame only</td></tr></tbody></table></div>
+<p>The practical consequence for the free plan is worth stating up front rather than in a footnote: on Grok you get a real clip, but the shots animate away from your frame rather than travelling to a destination. Cuts are looser, and motion is suggested rather than specified. It is the right tool to test whether an idea works — and it is exactly why the free plan exists (<a href="/blog/seedance-vs-kling-vs-grok/">engine-by-engine comparison</a>).</p>
+<h2 id="the-working-method">The working method</h2>
+<p>This is the loop the studio runs, and it works the same way if you are assembling it by hand out of separate tools.</p>
+<p><strong>Storyboard before pixels.</strong> Cut the song into scenes with timecodes first. A shot rejected on a sketch sheet costs nothing; a shot rejected after it has been animated costs a full generation. Our step 2 draws the entire storyboard as one sheet for exactly this reason — you can see whether the story holds before spending anything on it.</p>
+<p><strong>Lock the character once.</strong> A face that has to survive 30 scenes cannot be re-described 30 times in prose; it drifts. It has to come in as reference images — a model sheet with several angles, plus separate attributes (the helmet, the glasses, the jacket) that get pulled in by name when a shot needs them. Modern image models take up to eight separate references, and that is what keeps scene 27 recognisable as the person from scene 3.</p>
+<p><strong>Draw both frames from the same reference.</strong> Frame A and frame B are the same character in the same place, one moment apart. Generate them from the same references and the same style, and the interpolation has almost nothing to fight.</p>
+<p><strong>Keep the delta small, then animate.</strong> One change. Then check the result and, if it is wrong, ask which of the two frames caused it — usually it is B, and usually it is because B was too ambitious.</p>
+<p><strong>Chain the ends.</strong> When you want two scenes to read as continuous, reuse the last frame of one as the starting point of the next.</p>
+<h2 id="try-it-on-a-real-song">Try it on a real song</h2>
+<p>Every scene in the studio is a card with a first frame, a last frame, a redraw button on each, and a per-action credit price shown before you press anything. The free plan gives you a complete three-minute clip — 30 scenes — with no signup and no card, which is enough to feel the difference between a shot that has a destination and one that does not.</p>
+<p><a href="/">Open the studio →</a> · <a href="/#ld-how">How the four steps work</a> · <a href="/#ld-pricing">Plans and prices</a></p>
+<p><strong>Related:</strong> <a href="/blog/ai-music-video-cost/">What an AI music video actually costs</a> · <a href="/blog/seedance-vs-kling-vs-grok/">Seedance vs Kling vs Grok</a> · <a href="/blog/make-music-video-from-your-track-free/">Make a clip from your own track for free</a></p>
+<aside class="bcta">
+  <p>Make a clip from your own track — the first one is free</p>
+  <a class="bbtn" href="/">Open the studio</a>
+</aside>
+</article>
+</main>
+<footer class="bf">
+  <a href="/">lolq.ai</a> · <a href="/blog/">Journal</a> · <a href="/music.html">qlolmusic</a>
+</footer>
+</body>
+</html>

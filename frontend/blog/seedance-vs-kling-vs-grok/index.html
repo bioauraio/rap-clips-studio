@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Seedance 2.5 vs Kling 3.0 vs Grok: Which Engine Should Animate Your Frames</title>
+<meta name="description" content="Not a leaderboard. A working comparison of the video models we run in production — what each one does to a pair of frames, where it breaks, and what it costs per scene." />
+<link rel="canonical" href="https://qlolapp.art/blog/seedance-vs-kling-vs-grok/" />
+<link rel="alternate" hreflang="en" href="https://qlolapp.art/blog/seedance-vs-kling-vs-grok/" />
+<link rel="alternate" hreflang="ru" href="https://qlolapp.art/ru/blog/seedance-kling-grok-sravnenie/" />
+<link rel="alternate" hreflang="x-default" href="https://qlolapp.art/blog/seedance-vs-kling-vs-grok/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" content="Seedance 2.5 vs Kling 3.0 vs Grok: Which Engine Should Animate Your Frames" />
+<meta property="og:description" content="Not a leaderboard. A working comparison of the video models we run in production — what each one does to a pair of frames, where it breaks, and what it costs per scene." />
+<meta property="og:url" content="https://qlolapp.art/blog/seedance-vs-kling-vs-grok/" />
+<meta property="og:image" content="https://qlolapp.art/img/shots/step-frames.jpg" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Seedance 2.5 vs Kling 3.0 vs Grok: Which Engine Should Animate Your Frames" />
+<meta name="twitter:description" content="Not a leaderboard. A working comparison of the video models we run in production — what each one does to a pair of frames, where it breaks, and what it costs per scene." />
+<meta name="twitter:image" content="https://qlolapp.art/img/shots/step-frames.jpg" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/blog.css?v=1" />
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Seedance 2.5 vs Kling 3.0 vs Grok: Which Engine Should Animate Your Frames","description":"Not a leaderboard. A working comparison of the video models we run in production — what each one does to a pair of frames, where it breaks, and what it costs per scene.","inLanguage":"en","datePublished":"2026-08-21","dateModified":"2026-08-21","image":"https://qlolapp.art/img/shots/step-frames.jpg","mainEntityOfPage":{"@type":"WebPage","@id":"https://qlolapp.art/blog/seedance-vs-kling-vs-grok/"},"author":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/"},"publisher":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/","logo":{"@type":"ImageObject","url":"https://qlolapp.art/img/logo-mark.svg"}}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"lolq.ai","item":"https://qlolapp.art/"},{"@type":"ListItem","position":2,"name":"Journal","item":"https://qlolapp.art/blog/"},{"@type":"ListItem","position":3,"name":"Seedance 2.5 vs Kling 3.0 vs Grok: Which Engine Should Animate Your Frames"}]}</script>
+</head>
+<body>
+<header class="bh">
+  <a class="bh-brand" href="/"><img src="/img/logo-mark.svg" width="26" height="26" alt="" /><span>lolq<span class="dot">.</span>ai</span></a>
+  <nav class="bh-nav">
+    <a href="/blog/">Journal</a>
+    <a href="/#ld-how">How it works</a>
+    <a href="/#ld-pricing">Pricing</a>
+    <a class="bh-cta" href="/">Start free</a>
+  </nav>
+</header>
+<main class="bw">
+<article class="bpost">
+<p class="bmeta"><a href="/blog/">← All articles</a> · <time datetime="2026-08-21">2026-08-21</time> <a class="blang" href="/ru/blog/seedance-kling-grok-sravnenie/" hreflang="ru">Читать по-русски</a></p>
+<h1 id="seedance-2-5-vs-kling-3-0-vs-grok">Seedance 2.5 vs Kling 3.0 vs Grok</h1>
+<nav class="btoc"><ul><li><a href="#first-rule-text-to-video-is-the-wrong-mode">First rule: text-to-video is the wrong mode</a></li><li><a href="#the-feature-that-decides-everything-last-frame-support">The feature that decides everything: last frame support</a></li><li><a href="#seedance-2-mini-the-workhorse">Seedance 2 Mini: the workhorse</a></li><li><a href="#seedance-2-5-the-showcase-model-not-the-pipeline-model">Seedance 2.5: the showcase model, not the pipeline model</a></li><li><a href="#kling-3-0-and-3-0-pro-the-value-bracket">Kling 3.0 and 3.0 Pro: the value bracket</a></li><li><a href="#minimax-h3-strong-and-not-on-our-shelf-yet">MiniMax H3: strong, and not on our shelf yet</a></li><li><a href="#grok-free-and-honest-about-what-free-means">Grok: free, and honest about what free means</a></li><li><a href="#picking-in-one-table">Picking, in one table</a></li><li><a href="#three-things-that-will-cost-you-money-on-any-engine">Three things that will cost you money on any engine</a></li><li><a href="#see-it-on-your-own-track">See it on your own track</a></li></ul></nav>
+<p>Most comparisons of AI video models are written from demo reels. This one is written from a production queue: eight models wired into the same pipeline, called with the same storyboard, paid for out of the same account. When you run them all against identical input, the differences that show up are not the ones the benchmarks talk about.</p>
+<p>The task here is narrow and specific: <strong>animate a pair of frames into a six-second vertical scene</strong> that has to cut cleanly into 29 other scenes over a song. That is not the same task as "make a cinematic shot from a text prompt", and the ranking is different.</p>
+<h2 id="first-rule-text-to-video-is-the-wrong-mode">First rule: text-to-video is the wrong mode</h2>
+<p>If you are making a music video, you are not prompting a model for a video. You are drawing the shot first — as an image — and then asking a model to move it.</p>
+<p>Two reasons, and both are decisive:</p>
+<ul><li><strong>Control.</strong> An image is cheap to reject and cheap to redo. A video is not. Getting the composition right at $0.09 beats getting it wrong at $1.89.</li><li><strong>Continuity.</strong> The same character has to appear in scene 3 and scene 27 with the same face and the same jacket. Image models take reference images; video models mostly do not. The character lives in the frames, not in the prompt.</li></ul>
+<p>So the only property that really sorts these models is what they do with the frames you hand them.</p>
+<h2 id="the-feature-that-decides-everything-last-frame-support">The feature that decides everything: last frame support</h2>
+<p>A model that accepts only a first frame animates *away* from your picture and lands wherever it lands. A model that accepts a <strong>first and a last frame</strong> has to arrive at a destination you chose (<a href="/blog/first-and-last-frame/">full explanation here</a>).</p>
+<div class="tw"><table><thead><tr><th>Engine</th><th>Last frame</th><th>Native resolution</th><th>Duration range</th><th>Per 6s scene</th></tr></thead><tbody><tr><td>Grok (gateway)</td><td><strong>no</strong></td><td>—</td><td>—</td><td>$0.00</td></tr><tr><td>Seedance 2 Mini</td><td>yes</td><td>720p</td><td>4–30 s</td><td>$0.246</td></tr><tr><td>Kling 3.0</td><td>yes</td><td>720p</td><td>3–15 s</td><td>$0.42</td></tr><tr><td>MiniMax H3</td><td>yes</td><td>768p</td><td>4–15 s</td><td>$0.48</td></tr><tr><td>Kling 3.0 Pro</td><td>yes</td><td>1080p</td><td>3–15 s</td><td>$0.54</td></tr><tr><td>Seedance 2.5 · 480p</td><td>yes</td><td>480p</td><td>4–30 s</td><td>$0.84</td></tr><tr><td>Seedance 2.0</td><td>yes</td><td>720p</td><td>4–30 s</td><td>$1.23</td></tr><tr><td>Seedance 2.5 · 720p</td><td>yes</td><td>720p</td><td>4–30 s</td><td>$1.89</td></tr></tbody></table></div>
+<p>Grok is the odd one out and we are blunt about it in the interface: on the free plan the pipeline degrades to animating the first frame only. It still produces a real clip — it just cannot honour a destination.</p>
+<h2 id="seedance-2-mini-the-workhorse">Seedance 2 Mini: the workhorse</h2>
+<p>At $0.246 a scene, Mini is the only paid model where a full three-minute clip costs less than a cinema ticket ($7.38). It sits in the top family on blind arenas, it takes both frames, and it handles the long tail of a music video — establishing shots, cutaways, anything where the camera does one clear thing.</p>
+<p>Where it shows its price: dense crowds, hands doing fine work, text in frame, and any shot where the two frames are far apart. Give Mini a small delta and it is startlingly good. Give it a full scene change and it improvises.</p>
+<p>This is the engine behind the PRO plan for exactly that reason: 660 credits, 22 a scene, one complete clip a month.</p>
+<h2 id="seedance-2-5-the-showcase-model-not-the-pipeline-model">Seedance 2.5: the showcase model, not the pipeline model</h2>
+<p>2.5 at 720p is the top of the price list at $1.89 a scene — <strong>7.7× Mini</strong> for the same six seconds. It earns it on motion that stays physically plausible when a lot is happening: fabric, hair, crowds, camera moves with parallax.</p>
+<p>What it does not earn is being your default. Thirty scenes of 2.5 is $56.70 of engine cost before frames. Our own honest arithmetic: on PRO MAX (3,400 credits) a full 2.5 clip <strong>does not fit</strong> — you get 20 scenes of it, two thirds of a song.</p>
+<p>The right use is surgical. Build the clip on a cheap engine, then rerun 2.5 on the three or four shots that carry the track: the hook, the drop, the frame people screenshot. Nobody is grading the B-roll.</p>
+<p><strong>The 480p trick.</strong> Seedance 2.5 at 480p is the identical model at $0.84 — a 56% discount for resolution you largely cannot see on a phone in a vertical feed. If you like 2.5's motion and not its bill, this line is the answer, not a downgrade to a different family.</p>
+<h2 id="kling-3-0-and-3-0-pro-the-value-bracket">Kling 3.0 and 3.0 Pro: the value bracket</h2>
+<p>Kling 3.0 Pro gives you <strong>1080p</strong> at $0.54 — the only model on our list that outputs 1080 natively, and it costs less than a third of Seedance 2.5. Standard Kling 3.0 at $0.42 is the same engine with the polish turned down.</p>
+<p>A full three-minute clip on Kling 3.0 Pro costs <strong>$16.20</strong> of video against $56.70 on Seedance 2.5. For most vertical music videos, that is the sweet spot on the curve, and it is why Kling 3.0 Pro is the default flagship on PRO MAX rather than 2.5.</p>
+<p>Kling has API quirks worth knowing if you are building your own pipeline. Its duration is a <strong>string</strong>, not a number. Its frames go in as an <strong>array</strong> of image URLs rather than named first/last fields. And it has a <code>multi_shots</code> flag that lets the model cut the six seconds into several shots by itself — which sounds free but is not, because it takes the cutting decisions away from your storyboard. We send it as <code>false</code>. Your edit should come from the song's structure, not from the model's mood.</p>
+<h2 id="minimax-h3-strong-and-not-on-our-shelf-yet">MiniMax H3: strong, and not on our shelf yet</h2>
+<p>H3 sits high on the arenas, takes both frames, and lands at $0.48 — between the two Klings. It is wired into the pipeline and available as an explicit pick on the top plans, but it is not a default on any of them. That is a shelf-space decision rather than a quality one: two engines the user can reason about beat five they cannot.</p>
+<h2 id="grok-free-and-honest-about-what-free-means">Grok: free, and honest about what free means</h2>
+<p>Our Grok path runs through a gateway we already pay for, so it costs the service nothing and it costs you 2 credits a scene — 4 with frames. That is what makes the free plan a real plan: 120 credits, 30 scenes, one complete three-minute clip.</p>
+<p>The trade is real and we do not hide it. No last frame, so the motion is "animate this picture" rather than "travel from here to there". Cuts are looser. Complex action does not survive.</p>
+<p>For a first clip, an idea test, or a storyboard dry run, that is the right tool — and it is the reason our advice is always to build the whole video free first and pay only for the shots that survive.</p>
+<h2 id="picking-in-one-table">Picking, in one table</h2>
+<div class="tw"><table><thead><tr><th>If you want</th><th>Use</th><th>Clip cost (video only)</th></tr></thead><tbody><tr><td>To test the idea before spending</td><td>Grok</td><td>$0.00</td></tr><tr><td>A finished clip on a budget</td><td>Seedance 2 Mini</td><td>$7.38</td></tr><tr><td>1080p and good value</td><td>Kling 3.0 Pro</td><td>$16.20</td></tr><tr><td>2.5 motion without the 2.5 bill</td><td>Seedance 2.5 · 480p</td><td>$25.20</td></tr><tr><td>The hardest three shots in the video</td><td>Seedance 2.5 · 720p</td><td>$1.89 each</td></tr></tbody></table></div>
+<p>The mixed answer is almost always the right one. There is no rule that a clip has to be generated on a single engine, and the whole point of a storyboard is that it lets you decide per shot.</p>
+<h2 id="three-things-that-will-cost-you-money-on-any-engine">Three things that will cost you money on any engine</h2>
+<ol><li><strong>Leave generated audio on.</strong> Seedance produces a soundtrack by default. Under your own song it is dead weight, and on some providers it is billed. Turn it off.</li><li><strong>Chase resolution you cannot see.</strong> A vertical feed on a phone does not reward 1080 over 720 the way a benchmark does. Motion quality survives compression; pixel count does not matter much.</li><li><strong>Ask one scene to do two things.</strong> Every engine degrades when the first and last frames are too far apart. One idea per scene, and cut. That is also just better editing.</li></ol>
+<h2 id="see-it-on-your-own-track">See it on your own track</h2>
+<p>Every engine above is in the same interface, on the same storyboard, with the credit cost of each generation shown before you press the button. The free plan gives you a full three-minute clip on Grok with no signup — enough to find out whether your idea holds before any of these price tags apply.</p>
+<p><a href="/">Open the studio →</a> · <a href="/#ld-pricing">Plans and per-scene prices</a></p>
+<p><strong>Related:</strong> <a href="/blog/ai-music-video-cost/">What an AI music video actually costs</a> · <a href="/blog/first-and-last-frame/">First and last frame explained</a> · <a href="/blog/make-music-video-from-your-track-free/">Make a clip from your own track for free</a></p>
+<aside class="bcta">
+  <p>Make a clip from your own track — the first one is free</p>
+  <a class="bbtn" href="/">Open the studio</a>
+</aside>
+</article>
+</main>
+<footer class="bf">
+  <a href="/">lolq.ai</a> · <a href="/blog/">Journal</a> · <a href="/music.html">qlolmusic</a>
+</footer>
+</body>
+</html>

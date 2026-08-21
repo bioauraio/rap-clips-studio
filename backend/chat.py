@@ -185,20 +185,47 @@ def _norm_duration(value) -> int:
     return min(CHAT_VIDEO_DURATIONS, key=lambda d: abs(d - want))
 
 
-def _model_kind(engine: str) -> str:
-    if engine == TEXT_MODEL_ID:
-        return "text"
-    if engine in mediagen.IMAGE_ENGINES:
-        return "image"
-    if engine in mediagen.VIDEO_ENGINES:
-        return "video"
-    return ""
+def _model_id(kind: str, engine: str) -> str:
+    """id позиции селектора = «вид:движок».
+
+    Префикс обязателен, а не украшение: grok и chatgpt живут В ОБОИХ реестрах
+    сразу — и в IMAGE_ENGINES, и в VIDEO_ENGINES. Без префикса «grok» из поля
+    ввода означал бы то картинку, то ролик по порядку проверок, и человек,
+    выбравший видео, молча получал бы картинку за другие деньги."""
+    return f"{kind}:{engine}"
 
 
-def _engine_title(engine: str) -> str:
+def _split_model(model_id: str) -> tuple[str, str]:
+    """«вид:движок» → (вид, движок). Голое имя без префикса тоже принимаем —
+    так старые сохранённые чаты не ломаются."""
+    raw = str(model_id or "").strip()
+    if ":" in raw:
+        kind, _, engine = raw.partition(":")
+        kind = kind.strip()
+        engine = engine.strip()
+        if kind in ("text", "image", "video") and engine:
+            return kind, engine
+        raw = engine or raw
+    if raw == TEXT_MODEL_ID or not raw:
+        return "text", TEXT_MODEL_ID
+    if raw in mediagen.VIDEO_ENGINES and raw not in mediagen.IMAGE_ENGINES:
+        return "video", raw
+    if raw in mediagen.IMAGE_ENGINES:
+        return "image", raw
+    if raw in mediagen.VIDEO_ENGINES:
+        return "video", raw
+    return "", raw
+
+
+def _engine_title(engine: str, kind: str = "") -> str:
     if engine == TEXT_MODEL_ID:
         return "Auto (subscription)"
-    spec = mediagen.IMAGE_ENGINES.get(engine) or mediagen.VIDEO_ENGINES.get(engine) or {}
+    if kind == "video":
+        spec = mediagen.VIDEO_ENGINES.get(engine) or {}
+    elif kind == "image":
+        spec = mediagen.IMAGE_ENGINES.get(engine) or {}
+    else:
+        spec = mediagen.IMAGE_ENGINES.get(engine) or mediagen.VIDEO_ENGINES.get(engine) or {}
     return spec.get("title") or engine
 
 
@@ -210,7 +237,8 @@ def _models_payload(user: User) -> list[dict]:
     работает витриной.
     """
     items: list[dict] = [{
-        "id": TEXT_MODEL_ID, "kind": "text", "title": _engine_title(TEXT_MODEL_ID),
+        "id": _model_id("text", TEXT_MODEL_ID), "kind": "text",
+        "title": _engine_title(TEXT_MODEL_ID),
         "live": True, "points": _text_points(), "allowed": True,
         "needs_image": False, "first_last": False, "max_refs": 0,
         "note": "", "plan": "",
@@ -220,7 +248,7 @@ def _models_payload(user: User) -> list[dict]:
     img_live = mediagen.image_engines_live()
     for eid, spec in mediagen.IMAGE_ENGINES.items():
         items.append({
-            "id": eid, "kind": "image", "title": spec["title"],
+            "id": _model_id("image", eid), "kind": "image", "title": spec["title"],
             "live": eid in img_live,
             "points": _image_points(user, eid),
             "allowed": eid in img_allowed,
@@ -232,7 +260,7 @@ def _models_payload(user: User) -> list[dict]:
     vid_allowed = _allowed_video_engines(user)
     for eid, spec in mediagen.VIDEO_ENGINES.items():
         items.append({
-            "id": eid, "kind": "video", "title": spec["title"],
+            "id": _model_id("video", eid), "kind": "video", "title": spec["title"],
             "live": mediagen.video_engine_live(eid),
             "points": _video_points(eid, 6),
             "allowed": eid in vid_allowed,
@@ -256,22 +284,25 @@ def _cheapest_plan_with(engine: str) -> str:
     return "studio"
 
 
-def _check_allowed(user: User, engine: str) -> str:
-    """Движок → его вид, с проверкой тарифа. Чужой тарифу движок здесь именно
-    ПАДАЕТ, а не понижается молча: в студии тихое понижение спасает кнопку, а
-    в чате человек выбрал модель руками и должен узнать, что она закрыта."""
-    kind = _model_kind(engine)
-    if not kind:
+def _check_allowed(user: User, model_id: str) -> tuple[str, str]:
+    """«вид:движок» → (вид, движок), с проверкой тарифа.
+
+    Чужой тарифу движок здесь именно ПАДАЕТ, а не понижается молча: в студии
+    тихое понижение спасает кнопку, а в чате человек выбрал модель руками и
+    обязан узнать, что она закрыта, — иначе он платит за одно, получая другое."""
+    kind, engine = _split_model(model_id)
+    if not kind or (kind == "image" and engine not in mediagen.IMAGE_ENGINES) \
+            or (kind == "video" and engine not in mediagen.VIDEO_ENGINES):
         raise HTTPException(400, "неизвестная модель")
     if user.is_admin:
-        return kind
+        return kind, engine
     if kind == "image" and engine not in _allowed_image_engines(user):
         raise HTTPException(403, "эта модель картинок закрыта твоим тарифом")
     if kind == "video" and engine not in _allowed_video_engines(user):
         raise HTTPException(403, "эта модель видео закрыта твоим тарифом")
     if kind == "video" and not mediagen.video_engine_live(engine):
         raise HTTPException(400, "движок видео сейчас недоступен")
-    return kind
+    return kind, engine
 
 
 @router.get("/api/chat/models")
@@ -279,9 +310,9 @@ def chat_models(user: User = Depends(current_user)):
     plan_id = _plan_id(user)
     return {
         "models": _models_payload(user),
-        "default_text": TEXT_MODEL_ID,
-        "default_image": _ctx.plan_image_engine(user),
-        "default_video": (_allowed_video_engines(user) or ["grok"])[0],
+        "default_text": _model_id("text", TEXT_MODEL_ID),
+        "default_image": _model_id("image", _ctx.plan_image_engine(user)),
+        "default_video": _model_id("video", (_allowed_video_engines(user) or ["grok"])[0]),
         "durations": list(CHAT_VIDEO_DURATIONS),
         "plan": plan_id,
         "plan_title": _ctx.plans[plan_id]["title"],
@@ -303,7 +334,8 @@ def _msg_dict(m: ChatMessage) -> dict:
         params = {}
     return {
         "id": m.id, "role": m.role, "kind": m.kind, "text": m.text,
-        "engine": m.engine, "engine_title": _engine_title(m.engine) if m.engine else "",
+        "engine": _model_id(m.kind, m.engine) if m.engine else "",
+        "engine_title": _engine_title(m.engine, m.kind) if m.engine else "",
         "points": int(m.points or 0),
         "status": m.status or "done", "error": m.error or "",
         "url": f"/api/media/{media}" if media else "",
@@ -398,12 +430,19 @@ def chat_messages(chat_id: int, before: int = 0, limit: int = 50,
         q = q.filter(ChatMessage.id < int(before))
     rows = q.order_by(ChatMessage.id.desc()).limit(max(1, min(200, int(limit or 50)))).all()
     rows.reverse()
-    total = db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).count()
     spent = sum(int(m.points or 0) for m in chat.messages)
+    # Есть ли что-то РАНЬШЕ показанного куска. Считаем по границе страницы, а
+    # не по общему числу сообщений: при подгрузке вверх (before=…) общее число
+    # ничего не говорит о том, осталось ли что-то ещё выше.
+    older = 0
+    if rows:
+        older = (db.query(ChatMessage)
+                 .filter(ChatMessage.chat_id == chat.id, ChatMessage.id < rows[0].id)
+                 .count())
     return {
         "chat": _chat_dict(chat, spent),
         "messages": [_msg_dict(m) for m in rows],
-        "has_more": bool(rows and total > len(rows) and rows[0].id > 1),
+        "has_more": bool(older),
         "points": None if user.is_admin else int(user.gen_points or 0),
     }
 
@@ -501,8 +540,8 @@ def _source_frame(db: Session, chat: Chat, files: list, from_id) -> str:
 def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
     """Общий путь отправки: и обычная реплика, и «Оживить» приходят сюда."""
     text = str(body.get("text") or "").strip()
-    engine = str(body.get("engine") or chat.model or TEXT_MODEL_ID).strip()
-    kind = _check_allowed(user, engine)
+    model_id = str(body.get("engine") or chat.model or "").strip()
+    kind, engine = _check_allowed(user, model_id)
     files = _take_files(db, user, body.get("file_ids") or [])
     duration = _norm_duration(body.get("duration"))
 
@@ -544,8 +583,10 @@ def _post_message(db: Session, user: User, chat: Chat, body: dict) -> dict:
     )
     db.add(answer)
     if not chat.title:
-        chat.title = _auto_title(text) or _engine_title(engine)
-    chat.model = engine
+        chat.title = _auto_title(text) or _engine_title(engine, kind)
+    # В чате запоминается ИМЕННО позиция селектора (с префиксом вида), а не
+    # голое имя движка: вернувшись, человек должен попасть в тот же режим.
+    chat.model = _model_id(kind, engine)
     chat.updated_at = now()
     db.commit()
     db.refresh(ask)
@@ -586,7 +627,7 @@ async def animate_message(message_id: int, request: Request,
     body = await _body(request)
     body["from_message_id"] = msg.id
     if not str(body.get("engine") or "").strip():
-        body["engine"] = (_allowed_video_engines(user) or ["grok"])[0]
+        body["engine"] = _model_id("video", (_allowed_video_engines(user) or ["grok"])[0])
     if not str(body.get("text") or "").strip():
         # Промпт движения по умолчанию — из промпта самой картинки: пустой
         # motion-prompt Seedance и Kling понимают как «делай что хочешь».
@@ -622,7 +663,7 @@ def retry_message(chat_id: int, message_id: int,
         params = {}
     body = {
         "text": ask.text if ask else msg.text,
-        "engine": msg.engine or chat.model or TEXT_MODEL_ID,
+        "engine": _model_id(msg.kind, msg.engine) if msg.engine else chat.model,
         "duration": params.get("duration"),
     }
     if msg.kind == "video":
@@ -713,13 +754,10 @@ def _run_text(message_id: int) -> None:
         if not msg:
             return
         _mark_running(db, msg)
+        # Свежая реплика человека УЖЕ лежит в базе к этому моменту, поэтому
+        # она приходит последней строкой истории. Дописывать её отдельно
+        # нельзя: вопрос уезжал бы в модель дважды.
         history = _history_messages(db, msg.chat_id, msg.id)
-        ask = (db.query(ChatMessage)
-               .filter(ChatMessage.chat_id == msg.chat_id, ChatMessage.id < msg.id,
-                       ChatMessage.role == "user")
-               .order_by(ChatMessage.id.desc()).first())
-        if ask and (ask.text or "").strip():
-            history.append({"role": "user", "content": ask.text.strip()})
         if not history:
             raise RuntimeError("пустой запрос")
         text, provider = asyncio.run(_ask_gateway(history))

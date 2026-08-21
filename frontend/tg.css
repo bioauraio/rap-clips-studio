@@ -1,0 +1,96 @@
+/* lolq.ai внутри Telegram — только поправки под мини-апп.
+   Всё под html.tg: в обычном вебе этот файл не меняет ни пикселя, даже если
+   его подключить (он подключается только внутри Telegram — см. index.html).
+
+   Переменные --tg-vh / --tg-vh-stable / --tg-top / --tg-bottom выставляет
+   frontend/tg.js по событиям viewportChanged и safeAreaChanged. */
+
+html.tg,
+html.tg body {
+  /* 100vh внутри Telegram неверен: он не знает ни про шапку клиента, ни про
+     то, что вьюпорт «дышит» при жестах. Сетку строим на СТАБИЛЬНОЙ высоте —
+     живая прыгает во время свайпа, и вёрстка дёргалась бы вместе с ней. */
+  min-height: var(--tg-vh-stable, 100vh);
+  background-color: var(--tg-skin-bg, #faf7f2);
+}
+
+/* Лендинг внутри мини-аппа не показывается никогда: человек уже пришёл,
+   продавать ему оффер нечем, а «Старт» и «Войти» там ведут в тупик. */
+html.tg #welcome,
+html.tg #login { display: none !important; }
+
+html.tg .app {
+  padding: 8px 12px calc(28px + var(--tg-bottom, 0px));
+}
+
+/* Шапка студии живёт под шапкой самого Telegram и под чёлкой. Два инсета
+   разные: safeAreaInset — железо, contentSafeAreaInset — интерфейс клиента;
+   tg.js складывает их в --tg-top. */
+html.tg .topbar {
+  top: calc(6px + var(--tg-top, 0px));
+}
+
+/* Липкие нижние панели цепляем к ЖИВОЙ высоте: при открытии клавиатуры
+   меняется именно она, а stable — нет, и на iOS панель уехала бы под
+   клавиатуру. */
+html.tg .tg-bottom {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 0;
+  padding-bottom: calc(8px + var(--tg-bottom, 0px));
+}
+
+/* MainButton Telegram рисуется поверх страницы — оставляем ей место, иначе
+   она накрывает последнюю карточку списка. */
+html.tg.tg-mainbtn .app { padding-bottom: calc(84px + var(--tg-bottom, 0px)); }
+
+/* На слабых Android (класс производительности LOW в User-Agent) liquid glass
+   превращает студию в слайд-шоу. Правила ровно те же, что мы уже держим для
+   prefers-reduced-transparency — просто включаются по классу. */
+html.tg-lowend .topbar,
+html.tg-lowend .panel,
+html.tg-lowend .modal-box {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--inset) !important;
+}
+html.tg-lowend * { animation: none !important; transition: none !important; }
+
+/* ────────── кнопки внешних входов (сайт + мини-апп) ────────── */
+.auth-buttons {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.auth-buttons.auth-column { flex-direction: column; align-items: stretch; }
+.auth-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px 14px; font-size: 13.5px; font-weight: 800; cursor: pointer;
+  border: 2px solid #2d211a; border-radius: 14px; color: var(--text);
+  background: var(--inset);
+  box-shadow: 0 3px 0 #2d211a;
+}
+.auth-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 0 #2d211a; }
+.auth-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #2d211a; }
+.auth-btn[disabled] { opacity: .55; cursor: default; transform: none; }
+.auth-btn .auth-ico { width: 18px; height: 18px; flex: none; }
+.auth-note { font-size: 12px; color: var(--muted); }
+/* Login Widget Telegram рисует свой iframe — держим его на одной линии
+   с нашими кнопками, не растягивая. */
+.auth-widget { display: inline-flex; align-items: center; min-height: 34px; }
+
+/* ────────── витрина звёзд ────────── */
+.stars-grid { display: flex; flex-direction: column; gap: 10px; }
+.stars-card {
+  border: 2px solid #2d211a; border-radius: 18px; padding: 12px 14px;
+  background: var(--card); box-shadow: 0 4px 0 #2d211a;
+}
+.stars-card.on { border-color: var(--accent); }
+.stars-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.stars-top b { font-family: var(--font-head); font-size: 17px; }
+.stars-price { font-weight: 900; white-space: nowrap; }
+.stars-old { color: var(--muted); text-decoration: line-through; margin-right: 6px; font-weight: 700; }
+.stars-note { margin: 6px 0 10px; font-size: 12.5px; color: var(--muted); }
+.stars-buy { width: 100%; }
+.stars-state {
+  margin-top: 10px; font-size: 12.5px; color: var(--muted);
+  border-top: 2px dashed rgba(45,33,26,.16); padding-top: 10px;
+}

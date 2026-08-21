@@ -1,0 +1,21 @@
+# lolq.ai — robots.txt
+# Отдаётся StaticFiles(html=True), смонтированным на "/" в backend/main.py:
+# файл в корне frontend/ автоматически доступен как /robots.txt.
+#
+# noindex с лендинга СНЯТ (frontend/index.html): индексируются главная,
+# журнал /blog, школа /learn и каталог промтов /prompts — по 2 языка каждый.
+
+User-agent: *
+Allow: /
+
+# Приватное: API, служебные страницы, черновики интерфейса.
+Disallow: /api/
+Disallow: /report/
+Disallow: /nav-preview.html
+
+# Дубли редиректных каталогов: обе страницы — 0-секундный редирект на
+# /music.html, в индексе им делать нечего.
+Disallow: /music/
+Disallow: /qlolmusic/
+
+Sitemap: https://qlolapp.art/sitemap.xml

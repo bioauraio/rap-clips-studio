@@ -47,6 +47,25 @@ class User(Base):
     # Период подписки: month | year. Нужен и для витрины (какой вариант
     # оплачен), и для продления — годовую нельзя продлевать на 30 дней.
     plan_period = Column(String, nullable=False, default="month")
+    # Ступень объёма верхнего тарифа (ULTRA): "" | u1..u4. ПУСТАЯ СТРОКА
+    # читается как первая ступень — поэтому все, кто уже купил STUDIO,
+    # остаются валидны без единого UPDATE. Список ступеней — PLAN_TIERS
+    # в main.py, сюда попадает только выбранный id.
+    plan_tier = Column(String, nullable=False, default="")
+    # Запланированное ПОНИЖЕНИЕ ступени: применяется в момент продления.
+    # Понижать сразу нельзя — за текущий месяц уже заплачено.
+    plan_tier_next = Column(String, nullable=False, default="")
+    # Помесячная выдача очков ГОДОВОЙ подписки. Раньше год начислял норму ×12
+    # разом, и годовой ULTRA означал бы $15600 обязательства в день оплаты.
+    # Теперь оплата даёт первый транш, остальные 11 капают раз в PLAN_DAYS.
+    points_drip_left = Column(Integer, nullable=False, default=0)
+    points_drip_size = Column(Integer, nullable=False, default=0)
+    points_drip_at = Column(DateTime, nullable=True)
+    # Онбординг «первый клип»: csv пройденных шагов и момент первого собранного
+    # клипа. СЕРВЕРНОЕ, а не localStorage: человек начинает на десктопе и
+    # продолжает с телефона, и чеклист обязан помнить, где он остановился.
+    onboarding = Column(String, nullable=False, default="")
+    onboarding_done = Column(DateTime, nullable=True)
     # Внешние входы: аккаунт создаётся и опознаётся по Telegram-ID или Яндекс-ID,
     # пароль при этом не нужен. Уникальность проверяется кодом (мягкие миграции
     # не умеют добавлять UNIQUE к существующей таблице).
@@ -64,6 +83,14 @@ class User(Base):
     # поэтому часовой воркер такие подписки не трогает (см. main.py).
     stripe_customer_id = Column(String, nullable=False, default="")
     stripe_subscription_id = Column(String, nullable=False, default="")
+    # Подписка Telegram Stars. Храним charge_id ПЕРВОГО платежа: только им
+    # Telegram даёт отменить подписку (editUserStarSubscription), последний не
+    # подходит. Пока колонки не было, отменить со своей стороны было нечем.
+    # Заодно это признак «продлевает Telegram»: такие подписки часовой воркер
+    # НЕ трогает, иначе он снимал бы с тарифа живых плательщиков.
+    stars_sub_charge_id = Column(String, nullable=False, default="")
+    # '' | active | canceled | failed | expired — приезжает апдейтом subscription.
+    stars_sub_state = Column(String, nullable=False, default="")
     avatar_url = Column(String, nullable=False, default="")
     # Партнёрка «амбассадор». ref_code пустой, пока человек не подключился:
     # так поиск владельца кода не цепляет обычных пользователей.
@@ -272,8 +299,19 @@ class Track(Base):
     title = Column(String, nullable=False, default="")
     lyrics = Column(Text, nullable=False, default="")
     comment = Column(Text, nullable=False, default="")
-    # Визуальный стиль ЭТОГО трека: "3D мультяшный", "аниме", "реализм", своя формулировка.
+    # Визуальный стиль ЭТОГО трека — ПОЛНЫЙ текст промпта, который уходит в
+    # модель. НАРУЖУ НЕ ОТДАЁТСЯ (см. track_dict в main.py): это тот же текст,
+    # что и в закрытом реестре prompts_catalog, и раздача его через /api/tracks
+    # сводила бы на нет перенос реестра на сервер.
     style = Column(String, nullable=False, default="")
+    # Из чего собран стиль: ключи пресетов через запятую, ПЕРВЫЙ — основа.
+    # Это и есть публичная часть: витрина подсвечивает чипы по ключам, а не
+    # ищет подстроки промпта в тексте, как делал старый фронт.
+    style_keys = Column(String, nullable=False, default="")
+    # Приписка, которую человек написал сам. Она его — её и возвращаем наружу.
+    style_extra = Column(Text, nullable=False, default="")
+    # Сюжетный каркас («что снимаем») из prompts_catalog.CLIP_PRESETS.
+    clip_preset_key = Column(String, nullable=False, default="")
     # Режиссёрская заметка от генерации сюжета — ОТДЕЛЬНО от комментария
     # владельца: раньше дописывалась прямо в comment и пачкала его.
     director_note = Column(Text, nullable=False, default="")

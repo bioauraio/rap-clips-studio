@@ -108,11 +108,12 @@ WATCH_POLL = float(os.environ.get("BOT_WATCH_POLL", "8"))
 # внешние платёжные ссылки внутри бота запрещены. Курс покупки звёзд у людей
 # ~50 XTR за доллар, но магазин забирает свою долю, поэтому номинал берём с
 # наценкой — иначе продажа через Telegram идёт в убыток.
-STARS_PER_USD = float(os.environ.get("BOT_STARS_PER_USD", "50"))
-STARS_STORE_CUT = float(os.environ.get("BOT_STARS_STORE_CUT", "30")) / 100
-# Потолок звёздной ПОДПИСКИ — 10000 XTR за период (ограничение Telegram).
-STARS_SUB_CAP = int(os.environ.get("BOT_STARS_SUB_CAP", "10000"))
-STARS_SUB_PERIOD = 2592000  # ровно 30 дней, других периодов у Telegram нет
+# Формула цены и потолки живут в backend/stars.py — ОДНИ на бота и на мини-апп.
+# Своей копии здесь больше нет: два прайса в одном магазине разъезжаются в
+# первый же день, когда кто-то поправит только один из них.
+from stars import (  # noqa: E402
+    STARS_SUB_CAP, STARS_SUB_PERIOD, price_override, stars_price,
+)
 
 MAX_AUDIO_SEC = int(os.environ.get("BOT_MAX_AUDIO_SEC", "480"))
 MIN_AUDIO_SEC = int(os.environ.get("BOT_MIN_AUDIO_SEC", "20"))
@@ -700,10 +701,16 @@ STR = {
         "pay_title": "{n} points", "pay_desc": "{n} generation points for {brand}. Never expire.",
         "plan_pay_title": "{plan} — 1 month",
         "plan_pay_desc": "{points} points every month, {engines}.",
-        "plan_too_big": ("{plan} is above Telegram's 10 000 ⭐ subscription cap. "
-                         "You can take it on the site, or buy a big point pack here."),
+        "plan_too_big": ("{plan} is above Telegram's 10 000 ⭐ subscription cap, "
+                         "so it can't be sold here. A large point pack does the same job."),
         "paid_ok": "⭐ Payment received. {what}\nYou now have <b>{points} points</b>.",
         "paid_topup": "Points added.", "paid_plan": "Plan is now <b>{plan}</b>.",
+        "sub_canceled": ("Auto-renewal is off. The plan keeps working until the end "
+                         "of the period you already paid for — Telegram does not "
+                         "refund the unused part."),
+        "sub_failed": ("Telegram could not renew the plan — not enough Stars on your "
+                       "balance. Top up and the renewal will go through on the next "
+                       "attempt; the plan works until the paid period ends."),
         "paysupport": (
             "<b>Payments</b>\n\n"
             "Inside Telegram everything is paid with Telegram Stars — that's the only "
@@ -906,10 +913,17 @@ STR = {
         "pay_title": "{n} очков", "pay_desc": "{n} очков генерации в {brand}. Не сгорают.",
         "plan_pay_title": "{plan} — 1 месяц",
         "plan_pay_desc": "{points} очков каждый месяц, {engines}.",
-        "plan_too_big": ("{plan} не помещается в лимит подписки Telegram — 10 000 ⭐. "
-                         "Его можно взять на сайте, а здесь — купить большой пакет очков."),
+        "plan_too_big": ("{plan} не помещается в лимит подписки Telegram — 10 000 ⭐, "
+                         "поэтому здесь он не продаётся. Ту же задачу решает большой "
+                         "пакет очков."),
         "paid_ok": "⭐ Оплата прошла. {what}\nТеперь у тебя <b>{points} очков</b>.",
         "paid_topup": "Очки начислены.", "paid_plan": "Тариф теперь <b>{plan}</b>.",
+        "sub_canceled": ("Автопродление отключено. Тариф доработает до конца уже "
+                         "оплаченного периода — неиспользованные дни Telegram "
+                         "не возвращает."),
+        "sub_failed": ("Telegram не смог продлить тариф: на балансе не хватило "
+                       "звёзд. Пополни — следующая попытка пройдёт; до конца "
+                       "оплаченного периода тариф работает."),
         "paysupport": (
             "<b>Оплата</b>\n\n"
             "Внутри Telegram всё оплачивается звёздами — для цифровых товаров "
@@ -1055,21 +1069,6 @@ def btn(text: str, data: str) -> dict:
 
 def url_btn(text: str, url: str) -> dict:
     return {"text": text, "url": url}
-
-
-def stars_price(usd_cents: int) -> int:
-    """Номинал в звёздах. Магазин забирает долю, поэтому считаем от «чистыми»:
-    пересчёт usd×50 в лоб продавал бы через Telegram себе в убыток."""
-    usd = usd_cents / 100
-    raw = usd * STARS_PER_USD / max(0.05, 1 - STARS_STORE_CUT)
-    return max(1, int(math.ceil(raw / 10) * 10))
-
-
-def price_override(kind: str, ident: str, default: int) -> int:
-    env = os.environ.get(f"BOT_STARS_PRICE_{kind}_{ident}".upper(), "").strip()
-    if env.isdigit():
-        return int(env)
-    return default
 
 
 # ═══════════════════════════════ сам бот ═══════════════════════════════
@@ -2000,7 +1999,10 @@ class Bot:
             if pack.get("badge"):
                 label += f" · {pack['badge']}"
             rows.append([btn(label, f"buy:pack:{pack['id']}")])
-        rows.append([url_btn("🌐 " + PUBLIC_BASE_URL.split("//")[-1], f"{PUBLIC_BASE_URL}/")])
+        # Ссылки на сайт в витрине НЕТ намеренно. Сама по себе она безобидна,
+        # но стоящая в списке цен читается как альтернативный способ оплаты —
+        # то есть ровно тот steering, за который Telegram снимает приложение.
+        # Открыть студию можно командой /site.
         await self.send(chat_id, t(lang, "packs_title"), lang, reply_markup=kb(rows))
 
     async def show_plans(self, tg_user: dict, chat_id: int, lang: str) -> None:
@@ -2011,16 +2013,13 @@ class Bot:
                 continue
             xtr = price_override("PLAN", plan["id"], stars_price(plan["usd_cents"]))
             if xtr > STARS_SUB_CAP:
-                # Подписка дороже потолка Telegram физически не создаётся —
-                # честно говорим об этом, а не прячем кнопку молча.
-                rows.append([btn(f"{plan['title']} — {t(lang, 'plans')} 🌐",
-                                 f"big:{plan['id']}")])
+                # Дороже потолка подписки Telegram — счёт физически не создать.
+                # Внутри Telegram такой тариф просто отсутствует: объяснять его
+                # через ссылку на сайт нельзя, это steering.
                 continue
             rows.append([btn(f"{plan['title']} — {xtr} ⭐ / 30 " +
                              ("days" if lang == "en" else "дн."),
                              f"buy:plan:{plan['id']}")])
-        rows.append([url_btn("🌐 " + PUBLIC_BASE_URL.split("//")[-1],
-                             f"{PUBLIC_BASE_URL}/")])
         await self.send(chat_id, t(lang, "plans_title"), lang, reply_markup=kb(rows))
 
     async def invoice_pack(self, tg_user: dict, chat_id: int, lang: str, pack_id: str) -> None:
@@ -2047,9 +2046,7 @@ class Bot:
             return
         xtr = price_override("PLAN", plan_id, stars_price(plan["usd_cents"]))
         if xtr > STARS_SUB_CAP:
-            await self.send(chat_id, t(lang, "plan_too_big", plan=plan["title"]), lang,
-                            reply_markup=kb([[url_btn("🌐 " + PUBLIC_BASE_URL.split("//")[-1],
-                                                      f"{PUBLIC_BASE_URL}/")]]))
+            await self.send(chat_id, t(lang, "plan_too_big", plan=plan["title"]), lang)
             return
         engines = ", ".join((plan.get("engines") or {}).keys())
         try:
@@ -2092,12 +2089,22 @@ class Bot:
         payload = str(sp.get("invoice_payload") or "")
         charge = str(sp.get("telegram_payment_charge_id") or "")
         body = {"tg_id": str(tg_user["id"]), "charge_id": charge}
+        # Фактическая сумма в центах едет в payload: при скидке приглашённого
+        # она отличается от прайса, а доля амбассадора считается от неё.
+        cents = [int(p) for p in payload.split(":")[2:] if p.isdigit()]
+        if cents:
+            body["amount_cents"] = cents[-1]
         if payload.startswith("pack:"):
             body.update({"kind": "topup", "pack": payload.split(":")[1]})
         elif payload.startswith("plan:"):
             parts = payload.split(":")
             body.update({"kind": "plan", "plan": parts[1],
                          "period": parts[2] if len(parts) > 2 else "month"})
+            # Первый платёж ПОДПИСКИ: только его charge_id принимает
+            # editUserStarSubscription, последний не подходит. Раньше он
+            # никуда не сохранялся, и отменить подписку было физически нечем.
+            if sp.get("is_first_recurring") or sp.get("subscription_expiration_date"):
+                body["subscription"] = True
         else:
             log.warning("оплата с непонятным payload %r (charge %s)", payload, charge)
             return
@@ -2117,19 +2124,65 @@ class Bot:
                                    points=res.get("points", 0)), lang)
 
     async def cmd_refund(self, msg: dict, lang: str, args: str) -> None:
-        """Возврат звёзд. Споры по цифровым товарам — на нас, поэтому кнопка
-        возврата должна быть у владельца под рукой."""
+        """Возврат звёзд И ОТКАТ ВЫДАННОГО.
+
+        Раньше здесь был голый refundStarPayment: деньги уходили обратно, а
+        очки и месяц тарифа оставались у человека. Теперь звонок идёт в
+        /internal/stars-refund — он сам зовёт Telegram, списывает выданные
+        очки, откатывает plan_until и отменяет начисление амбассадору."""
         chat_id = msg["chat"]["id"]
         parts = args.split()
         if len(parts) != 2:
             await self.send(chat_id, "usage: /refund &lt;user_tg_id&gt; &lt;charge_id&gt;", lang)
             return
         try:
+            res = await self.api._internal("/internal/stars-refund",
+                                           {"tg_id": parts[0], "charge_id": parts[1]})
+            await self.send(chat_id, f"✅ refunded · points {res.get('points', 0)} · "
+                                     f"plan {esc(str(res.get('plan') or ''))}", lang)
+            return
+        except Exception as e:  # noqa: BLE001
+            log.warning("возврат %s не прошёл через API: %s", parts[1], str(e)[:200])
+        # Служебный контур молчит — возвращаем хотя бы деньги, а расхождение
+        # догонит суточная сверка. Молча не делать ничего здесь нельзя.
+        try:
             await self.tg.call("refundStarPayment", user_id=int(parts[0]),
                                telegram_payment_charge_id=parts[1])
-            await self.send(chat_id, "✅ refunded", lang)
+            await self.send(chat_id, "✅ refunded (звёзды вернул, выданное "
+                                     "откатить не смог — проверь API)", lang)
         except TgError as e:
             await self.send(chat_id, f"⚠️ {esc(e.description)}", lang)
+
+    async def on_subscription(self, upd: dict) -> None:
+        """Апдейт `subscription`: человек отменил подписку, у него не хватило
+        звёзд или он её возобновил.
+
+        Отмену Telegram присылает ТОЛЬКО так. Без этого обработчика мы бы не
+        узнали ни об одной отмене и продолжали считать человека платящим."""
+        sub = upd.get("subscription") or {}
+        who = sub.get("user") or sub.get("from") or {}
+        tg_id = str(who.get("id") or "")
+        state = str(sub.get("state") or sub.get("status") or "").lower()
+        if not tg_id or not state:
+            log.warning("апдейт subscription без tg_id/state: %s", str(upd)[:200])
+            return
+        try:
+            await self.api._internal("/internal/stars-subscription",
+                                     {"tg_id": tg_id, "state": state})
+        except Exception as e:  # noqa: BLE001
+            log.error("подписка %s → %s не записалась: %s", tg_id, state, str(e)[:200])
+            return
+        row = self.store.user(tg_id)
+        chat_id = row["chat_id"] if row else None
+        if not chat_id:
+            return  # человек боту не писал — писать ему некуда
+        lang = self.lang_of(tg_id, "en")
+        if state == "failed":
+            # Не хватило звёзд на продление: об этом человеку надо сказать,
+            # иначе тариф просто исчезнет и это будет выглядеть поломкой.
+            await self.send(chat_id, t(lang, "sub_failed"), lang)
+        elif state in ("canceled", "cancelled"):
+            await self.send(chat_id, t(lang, "sub_canceled"), lang)
 
     # ═══════════════════════ партнёрка ═══════════════════════
 
@@ -2781,12 +2834,12 @@ class Bot:
                 await self.answer_cb(cb["id"])
                 await self.invoice_plan(tg_user, chat_id, lang, data.split(":")[2])
             elif data.startswith("big:"):
+                # Легаси-кнопка старых сообщений: новые витрины её не рисуют.
                 await self.answer_cb(cb["id"])
                 bill = await self.billing()
                 plan = next((p for p in bill.get("plans", []) if p["id"] == data[4:]), {})
                 await self.send(chat_id, t(lang, "plan_too_big",
-                                           plan=plan.get("title", "")), lang,
-                                reply_markup=kb([[url_btn("🌐", f"{PUBLIC_BASE_URL}/")]]))
+                                           plan=plan.get("title", "")), lang)
             elif data == "paysupport":
                 await self.answer_cb(cb["id"])
                 contact = f"\n{SUPPORT_CONTACT}" if SUPPORT_CONTACT else ""
@@ -2961,7 +3014,10 @@ class Bot:
             try:
                 updates = await self.tg.call(
                     "getUpdates", offset=offset or None, timeout=POLL_TIMEOUT,
-                    allowed_updates=["message", "callback_query", "pre_checkout_query"])
+                    allowed_updates=["message", "callback_query", "pre_checkout_query",
+                                     # без "subscription" отмена звёздной подписки
+                                     # не придёт вообще — молча, без ошибки
+                                     "subscription"])
             except TgError as e:
                 if e.code == 409:
                     # Второй экземпляр бота с тем же токеном — апдейты будут
@@ -2983,6 +3039,8 @@ class Bot:
                 if "pre_checkout_query" in upd:
                     # На это Telegram даёт 10 секунд — отвечаем не откладывая.
                     await self.on_pre_checkout(upd["pre_checkout_query"])
+                elif "subscription" in upd:
+                    self.spawn(self.on_subscription(upd), "subscription")
                 elif "message" in upd:
                     self.spawn(self.on_message(upd["message"]), "message")
                 elif "callback_query" in upd:

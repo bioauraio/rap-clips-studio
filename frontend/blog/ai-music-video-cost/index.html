@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>What an AI Music Video Actually Costs: Per-Scene Numbers for 8 Video Models</title>
+<meta name="description" content="A three-minute AI music video is about 30 scenes, not one video. Here is what a scene costs on Seedance, Kling, MiniMax and Grok — in dollars, with the arithmetic shown." />
+<link rel="canonical" href="https://qlolapp.art/blog/ai-music-video-cost/" />
+<link rel="alternate" hreflang="en" href="https://qlolapp.art/blog/ai-music-video-cost/" />
+<link rel="alternate" hreflang="ru" href="https://qlolapp.art/ru/blog/skolko-stoit-klip-neyrosetyu/" />
+<link rel="alternate" hreflang="x-default" href="https://qlolapp.art/blog/ai-music-video-cost/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" content="What an AI Music Video Actually Costs: Per-Scene Numbers for 8 Video Models" />
+<meta property="og:description" content="A three-minute AI music video is about 30 scenes, not one video. Here is what a scene costs on Seedance, Kling, MiniMax and Grok — in dollars, with the arithmetic shown." />
+<meta property="og:url" content="https://qlolapp.art/blog/ai-music-video-cost/" />
+<meta property="og:image" content="https://qlolapp.art/img/shots/step-clip.jpg" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="What an AI Music Video Actually Costs: Per-Scene Numbers for 8 Video Models" />
+<meta name="twitter:description" content="A three-minute AI music video is about 30 scenes, not one video. Here is what a scene costs on Seedance, Kling, MiniMax and Grok — in dollars, with the arithmetic shown." />
+<meta name="twitter:image" content="https://qlolapp.art/img/shots/step-clip.jpg" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/blog.css?v=1" />
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"What an AI Music Video Actually Costs: Per-Scene Numbers for 8 Video Models","description":"A three-minute AI music video is about 30 scenes, not one video. Here is what a scene costs on Seedance, Kling, MiniMax and Grok — in dollars, with the arithmetic shown.","inLanguage":"en","datePublished":"2026-08-21","dateModified":"2026-08-21","image":"https://qlolapp.art/img/shots/step-clip.jpg","mainEntityOfPage":{"@type":"WebPage","@id":"https://qlolapp.art/blog/ai-music-video-cost/"},"author":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/"},"publisher":{"@type":"Organization","name":"lolq.ai","url":"https://qlolapp.art/","logo":{"@type":"ImageObject","url":"https://qlolapp.art/img/logo-mark.svg"}}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"lolq.ai","item":"https://qlolapp.art/"},{"@type":"ListItem","position":2,"name":"Journal","item":"https://qlolapp.art/blog/"},{"@type":"ListItem","position":3,"name":"What an AI Music Video Actually Costs: Per-Scene Numbers for 8 Video Models"}]}</script>
+</head>
+<body>
+<header class="bh">
+  <a class="bh-brand" href="/"><img src="/img/logo-mark.svg" width="26" height="26" alt="" /><span>lolq<span class="dot">.</span>ai</span></a>
+  <nav class="bh-nav">
+    <a href="/blog/">Journal</a>
+    <a href="/#ld-how">How it works</a>
+    <a href="/#ld-pricing">Pricing</a>
+    <a class="bh-cta" href="/">Start free</a>
+  </nav>
+</header>
+<main class="bw">
+<article class="bpost">
+<p class="bmeta"><a href="/blog/">← All articles</a> · <time datetime="2026-08-21">2026-08-21</time> <a class="blang" href="/ru/blog/skolko-stoit-klip-neyrosetyu/" hreflang="ru">Читать по-русски</a></p>
+<h1 id="what-an-ai-music-video-actually-costs">What an AI Music Video Actually Costs</h1>
+<nav class="btoc"><ul><li><a href="#a-music-video-is-30-scenes-not-one-video">A music video is 30 scenes, not one video</a></li><li><a href="#the-price-list-per-scene-and-per-finished-clip">The price list, per scene and per finished clip</a></li><li><a href="#frames-are-a-separate-line-item">Frames are a separate line item</a></li><li><a href="#the-cost-nobody-quotes-retries">The cost nobody quotes: retries</a></li><li><a href="#how-this-becomes-credits-on-lolq-ai">How this becomes credits on lolq.ai</a></li><li><a href="#what-actually-fits-in-a-plan">What actually fits in a plan</a></li><li><a href="#the-cheapest-honest-route-to-a-finished-clip">The cheapest honest route to a finished clip</a></li><li><a href="#try-the-arithmetic-on-your-own-track">Try the arithmetic on your own track</a></li></ul></nav>
+<p>Every AI video platform prices in its own currency. Credits, points, coins, "generations", "seconds of render". This is not an accident — it makes the offers impossible to line up side by side. You cannot tell whether 1,000 credits is a good deal until you know what one finished thing costs in them.</p>
+<p>So here is the same question asked in dollars, for a specific deliverable: <strong>one three-minute vertical music video</strong>. The numbers below are the August 2026 price list we pay our model provider (kie.ai) for a six-second 9:16 scene with audio generation switched off. They are a price list, not a bill — real consumption gets calibrated against provider logs after a run — but they are the same numbers our own pricing is built on, and you can check them against any aggregator.</p>
+<h2 id="a-music-video-is-30-scenes-not-one-video">A music video is 30 scenes, not one video</h2>
+<p>This is the part most pricing guides skip. No current model generates three coherent minutes. Every real pipeline cuts the song into shots and generates them one at a time.</p>
+<p>Our default scene length is <strong>six seconds</strong>, which is roughly where the models stop drifting and where a cut still feels musical. Three minutes at six seconds a scene is <strong>30 scenes</strong>. Every one of them is a separate paid generation.</p>
+<p>That single fact reorders the whole cost conversation. A model that looks cheap at "$0.30 per video" is $9 for a clip. A model at $1.89 a scene is $56.70 for the same clip. Same interface, same two clicks, 6× the invoice.</p>
+<h2 id="the-price-list-per-scene-and-per-finished-clip">The price list, per scene and per finished clip</h2>
+<p>Six-second scene, 9:16 vertical, no generated audio:</p>
+<div class="tw"><table><thead><tr><th>Model</th><th>Per 6-second scene</th><th>Per second</th><th>3-minute clip (30 scenes)</th></tr></thead><tbody><tr><td>Grok (our own gateway)</td><td>$0.00</td><td>$0.00</td><td>$0.00</td></tr><tr><td>Seedance 2 Mini · 720p</td><td>$0.246</td><td>$0.041</td><td><strong>$7.38</strong></td></tr><tr><td>Kling 3.0 · 720p</td><td>$0.42</td><td>$0.070</td><td><strong>$12.60</strong></td></tr><tr><td>MiniMax H3 · 768p</td><td>$0.48</td><td>$0.080</td><td><strong>$14.40</strong></td></tr><tr><td>Kling 3.0 Pro · 1080p</td><td>$0.54</td><td>$0.090</td><td><strong>$16.20</strong></td></tr><tr><td>Seedance 2.5 · 480p</td><td>$0.84</td><td>$0.140</td><td><strong>$25.20</strong></td></tr><tr><td>Seedance 2.0 · 720p</td><td>$1.23</td><td>$0.205</td><td><strong>$36.90</strong></td></tr><tr><td>Seedance 2.5 · 720p</td><td>$1.89</td><td>$0.315</td><td><strong>$56.70</strong></td></tr></tbody></table></div>
+<p>The spread between the cheapest paid model and the most expensive one is <strong>7.7×</strong> for the same 180 seconds of footage. That is the single biggest lever you have over the cost of a clip, and it is a dropdown.</p>
+<p>Two notes that matter more than they look:</p>
+<p><strong>Switch generated audio off.</strong> Seedance will produce a soundtrack by default. On a music video that track is garbage — you are laying your own song over the top — and on some providers it costs extra. Our pipeline sends <code>generate_audio: false</code> on every call for exactly this reason.</p>
+<p><strong>480p is the same model, halved.</strong> Seedance 2.5 at 480p is $0.84 against $1.89 for the same model at 720p. You lose resolution, not the model's motion quality. For a Reel that gets watched on a phone at arm's length, that trade is often free money.</p>
+<h2 id="frames-are-a-separate-line-item">Frames are a separate line item</h2>
+<p>A frame-to-video model does not invent your shot — it animates a picture you give it. Our pipeline gives each scene <strong>two</strong> pictures: the first frame and the last frame, with motion generated between them (<a href="/blog/first-and-last-frame/">why that matters</a>).</p>
+<p>So every scene carries an image bill on top of the video bill:</p>
+<div class="tw"><table><thead><tr><th>Image model</th><th>Per image</th><th>Per scene (2 frames)</th><th>Per 3-minute clip</th></tr></thead><tbody><tr><td>Gateway models (ChatGPT / Grok)</td><td>$0.00</td><td>$0.00</td><td>$0.00</td></tr><tr><td>Nano Banana (edit)</td><td>$0.02</td><td>$0.04</td><td>$1.20</td></tr><tr><td>Nano Banana 2 · 2K</td><td>$0.06</td><td>$0.12</td><td>$3.60</td></tr><tr><td>Nano Banana Pro · 1K–2K</td><td>$0.09</td><td>$0.18</td><td><strong>$5.40</strong></td></tr></tbody></table></div>
+<p>Nano Banana Pro is not on the list because of leaderboard position — blind tests put other image models above it. It is there for engineering reasons: up to 8 separate reference images instead of one glued-together collage, native vertical 1K/2K/4K without an upscale pass, and parallel jobs instead of one browser session queued behind itself. When a character has to survive 30 scenes, references are the whole game.</p>
+<p>So the honest total for a full-quality three-minute clip — Nano Banana Pro frames plus Seedance 2.5 at 720p — is <strong>$62.10</strong>. The same clip on Kling 3.0 Pro is <strong>$21.60</strong>. On Seedance 2 Mini with gateway frames it is <strong>$7.38</strong>. On the free Grok path it is <strong>$0.00</strong>.</p>
+<h2 id="the-cost-nobody-quotes-retries">The cost nobody quotes: retries</h2>
+<p>Every price list assumes each generation is the one you keep. In practice a scene gets rejected because a hand went wrong, a face drifted, or the camera moved the opposite way from what the prompt asked. Budget <strong>20–30% on top</strong> of the numbers above and you will be close.</p>
+<p>This is where architecture beats price. Two things cut the retry bill in half:</p>
+<ol><li><strong>Redraw one frame, not the scene.</strong> If the last frame is wrong, regenerating it costs one image ($0.09), not one image plus a video ($1.98). Our scene cards rebuild a single frame on its own for exactly this reason.</li><li><strong>Fix the storyboard before you draw anything.</strong> Rejecting a shot on the sketch sheet costs nothing. Rejecting it after it has been animated costs the full scene.</li></ol>
+<p>The order of operations is the cost control. A pipeline that jumps straight from a prompt to a finished video gives you nothing to reject cheaply.</p>
+<h2 id="how-this-becomes-credits-on-lolq-ai">How this becomes credits on lolq.ai</h2>
+<p>We use credits too — but ours are pinned to cost, not invented. One credit is <strong>$0.0125 of engine cost</strong>, and every price is computed from the dollar figures above and rounded up. That is a mechanical rule in the code, not a marketing promise: a scene's credit price cannot drift away from what the scene costs us.</p>
+<p>Scene prices in credits, gateway frames (free plan and PRO):</p>
+<div class="tw"><table><thead><tr><th>Engine</th><th>Video</th><th>+ frames</th><th>Scene</th></tr></thead><tbody><tr><td>Grok</td><td>2</td><td>2</td><td><strong>4</strong></td></tr><tr><td>Seedance 2 Mini</td><td>20</td><td>2</td><td><strong>22</strong></td></tr><tr><td>Kling 3.0</td><td>34</td><td>2</td><td><strong>36</strong></td></tr><tr><td>Kling 3.0 Pro</td><td>44</td><td>2</td><td><strong>46</strong></td></tr><tr><td>Seedance 2.5 · 480p</td><td>68</td><td>2</td><td><strong>70</strong></td></tr><tr><td>Seedance 2.0</td><td>99</td><td>2</td><td><strong>101</strong></td></tr><tr><td>Seedance 2.5 · 720p</td><td>152</td><td>2</td><td><strong>154</strong></td></tr></tbody></table></div>
+<p>On plans with Nano Banana Pro frames, add 13 credits to each line (15 instead of 2).</p>
+<h2 id="what-actually-fits-in-a-plan">What actually fits in a plan</h2>
+<p>Multiply and you get the honest answer, which is not always the flattering one:</p>
+<ul><li><strong>FREE — 120 credits.</strong> A Grok scene is 4. Thirty of them is 120: <strong>one complete three-minute clip</strong>, on the house, no card and no signup.</li><li><strong>PRO — $20, 660 credits.</strong> A Seedance 2 Mini scene is 22. Thirty of them is 660: <strong>one full clip a month</strong> with real first-to-last-frame motion.</li><li><strong>PRO MAX — $100, 3,400 credits.</strong> Enough for <strong>about three clips</strong> on Seedance 2 Mini, or <strong>two</strong> on Kling 3.0 Pro. A full clip on Seedance 2.5 at 720p does <strong>not</strong> fit — 3,400 credits buys 20 scenes of it, two thirds of a song. Use 2.5 for the shots that carry the video and a cheaper engine for the rest.</li><li><strong>STUDIO — $299, 10,500 credits.</strong> <strong>Two full clips</strong> on Seedance 2.5 at 720p, or about six on Kling 3.0 Pro.</li></ul>
+<p>We would rather write that down than let you find it out on scene 21.</p>
+<h2 id="the-cheapest-honest-route-to-a-finished-clip">The cheapest honest route to a finished clip</h2>
+<p>If the goal is a finished video and not a benchmark:</p>
+<ol><li>Build the whole thing on the <strong>free Grok path</strong> first. Story, storyboard, all 30 scenes. It costs nothing and it tells you whether the idea works.</li><li>Keep the storyboard, swap the engine, and <strong>regenerate only the shots that carry the song</strong> — the hook, the drop, the two or three frames people will screenshot.</li><li>Leave the connective shots on the cheap engine. In a nine-second-attention-span format, nobody is grading the B-roll.</li></ol>
+<p>A clip built this way lands between $3 and $8 of engine cost instead of $62, and the difference is invisible on a phone.</p>
+<h2 id="try-the-arithmetic-on-your-own-track">Try the arithmetic on your own track</h2>
+<p>The free plan is a real one, not a watermark: 120 credits, one full three-minute clip, no signup for the first one. Upload an mp3, pick a style, and watch the credit counter move on every step — every action shows what it will cost before you press it.</p>
+<p><a href="/">Open the studio →</a> · <a href="/#ld-pricing">See the plans and packs</a> · <a href="/#ld-how">How the four steps work</a></p>
+<p><strong>Related:</strong> <a href="/blog/seedance-vs-kling-vs-grok/">Seedance 2.5 vs Kling 3.0 vs Grok — which engine to animate with</a> · <a href="/blog/first-and-last-frame/">First and last frame explained</a> · <a href="/blog/make-music-video-from-your-track-free/">Make a music video from your own track for free</a></p>
+<aside class="bcta">
+  <p>Make a clip from your own track — the first one is free</p>
+  <a class="bbtn" href="/">Open the studio</a>
+</aside>
+</article>
+</main>
+<footer class="bf">
+  <a href="/">lolq.ai</a> · <a href="/blog/">Journal</a> · <a href="/music.html">qlolmusic</a>
+</footer>
+</body>
+</html>

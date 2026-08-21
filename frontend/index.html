@@ -2,14 +2,74 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex, nofollow" />
-<meta name="description" data-i18n-content="meta.description" content="" />
-<title>lolq.ai</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Индексация ОТКРЫТА. Раньше здесь стояло noindex,nofollow — и весь
+     контент (журнал /blog, школа /learn, каталог /prompts) работал в стол. -->
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<!-- description и title остаются переводимыми (data-i18n-content/-text), но
+     ИМЕЮТ статичное значение прямо в разметке: краулеры Bing и Яндекса не
+     дорендеривают SPA, и пустой тег для них означает пустую страницу. -->
+<meta name="description" data-i18n-content="meta.description"
+      content="Turn your own track into a 3-minute AI music video: story, storyboard, consistent characters, frame-to-frame motion and assembly. First clip free." />
+<title data-i18n="meta.title">AI music video studio for your own track — lolq.ai</title>
+<link rel="canonical" href="https://qlolapp.art/" />
+<link rel="alternate" hreflang="en" href="https://qlolapp.art/" />
+<link rel="alternate" hreflang="x-default" href="https://qlolapp.art/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" data-i18n-content="meta.title"
+      content="AI music video studio for your own track — lolq.ai" />
+<meta property="og:description" data-i18n-content="meta.description"
+      content="Turn your own track into a 3-minute AI music video: story, storyboard, consistent characters, frame-to-frame motion and assembly. First clip free." />
+<meta property="og:url" content="https://qlolapp.art/" />
+<meta property="og:image" content="https://qlolapp.art/img/shots/step-clip.jpg" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" data-i18n-content="meta.title"
+      content="AI music video studio for your own track — lolq.ai" />
+<meta name="twitter:image" content="https://qlolapp.art/img/shots/step-clip.jpg" />
 <link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
 <link rel="apple-touch-icon" href="/img/logo-mark.svg" />
-<link rel="stylesheet" href="/style.css?v=51" />
-<link rel="stylesheet" href="/landing.css?v=51" />
+<!-- Структурированные данные о сервисе и его прайсе. Цены здесь ПРИБИТЫ
+     руками и обязаны совпадать с PLANS в backend/main.py; сторож цен в
+     tools/build_content.py проверяет это на сборке и роняет билд при
+     расхождении — иначе появится третья копия прайса, которая протухнет
+     молча, как уже протухал LD_PLANS_FALLBACK. -->
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"lolq.ai",
+"applicationCategory":"MultimediaApplication","operatingSystem":"Web",
+"url":"https://qlolapp.art/",
+"description":"AI music video studio: story, storyboard, consistent characters, first-and-last-frame motion and assembly for your own track.",
+"offers":[
+{"@type":"Offer","name":"FREE","price":"0","priceCurrency":"USD","description":"120 credits — one three-minute clip on Grok"},
+{"@type":"Offer","name":"PRO","price":"20","priceCurrency":"USD","description":"660 credits a month — Seedance 2 Mini"},
+{"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
+{"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
+</script>
+<link rel="stylesheet" href="/style.css?v=53" />
+<link rel="stylesheet" href="/landing.css?v=53" />
+<link rel="stylesheet" href="/tg.css?v=53" />
+<script>
+/* Мини-апп Telegram — та же страница, но с другой точкой входа.
+   Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
+   поэтому детект не стоит ни одного запроса: обычный посетитель сайта не
+   тянет ни SDK Telegram, ни tg.js вообще.
+   document.write здесь намеренно: SDK обязан выполниться ДО app.js, а он
+   лежит в конце <body> без defer — асинхронная вставка не успела бы. */
+(function () {
+  var inTg = String(location.hash || "").indexOf("tgWebApp") >= 0
+    || Boolean(window.TelegramWebviewProxy)
+    || Boolean(window.TelegramWebview);
+  if (!inTg) return;
+  // Класс html.tg ставит уже tg.js — и ТОЛЬКО когда SDK действительно
+  // поднялся. Ставить его здесь нельзя: если telegram.org не открылся,
+  // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
+  // человек увидел бы пустой экран вместо честного сайта.
+  document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=53"></scr' + 'ipt>');
+})();
+</script>
 </head>
 <body>
 <!-- ─────────────────────────────────────────────────────────────────────────
@@ -33,6 +93,8 @@
         <a href="#ld-how" data-i18n="landing.nav.how"></a>
         <a href="#ld-features" data-i18n="landing.nav.features"></a>
         <a href="#ld-pricing" data-i18n="landing.nav.pricing"></a>
+        <a href="#ld-prompts" data-i18n="landing.nav.prompts"></a>
+        <a href="#ld-learn" data-i18n="landing.nav.learn"></a>
         <a href="#ld-faq" data-i18n="landing.nav.faq"></a>
         <a href="/music" data-i18n="landing.nav.music"></a>
       </nav>
@@ -61,6 +123,7 @@
             <button id="welcome-start" class="primary ld-cta" type="button" data-i18n="landing.hero.ctaStart"></button>
             <button id="welcome-login" class="ld-cta" type="button" data-i18n="landing.hero.ctaLogin"></button>
           </div>
+          <div id="ld-auth" class="auth-buttons"></div>
           <p class="ld-hero-trust" data-i18n="landing.hero.trust"></p>
           <p class="ld-hero-more">
             <a href="#" id="welcome-guide-link" data-i18n="landing.hero.guideLink"></a>
@@ -122,6 +185,9 @@
         <button type="button" data-period="year"></button>
       </div>
       <div class="ld-plans" id="ld-plans"></div>
+      <!-- Приписка мелким с точным расчётом: цена сцены по каждому движку.
+           Рисуется из живого ответа /api/billing/plans, не из вёрстки. -->
+      <p class="ld-fine" id="ld-price-fine"></p>
       <p class="ld-pay-note" id="ld-pay-note"></p>
     </section>
 
@@ -141,6 +207,31 @@
         <div class="ld-readout" id="ld-readout"></div>
       </div>
       <p class="ld-scale-note" data-i18n="landing.topup.note"></p>
+    </section>
+
+    <!-- 5b. Промты: каталог стилей и сюжетных каркасов.
+         Карточки рисует app.js из GET /api/styles — реестр живёт на сервере,
+         и НИ ОДНОГО текста промпта в этот HTML не попадает. -->
+    <section class="ld-sec ld-shell" id="ld-prompts">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.prompts.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.prompts.title"></h2>
+        <p class="ld-lead" data-i18n="landing.prompts.lead"></p>
+      </div>
+      <div class="ld-tabs" id="ld-prompt-tabs" role="tablist"></div>
+      <div class="ld-cards" id="ld-prompt-cards"></div>
+      <p class="ld-scale-note" data-i18n="landing.prompts.note"></p>
+    </section>
+
+    <!-- 5c. Школа: уроки из docs/learn. Список — GET /api/learn, текст урока
+         открывается в модалке и на своей статической странице /learn/<slug>. -->
+    <section class="ld-sec ld-shell" id="ld-learn">
+      <div class="ld-sec-head">
+        <span class="ld-eyebrow" data-i18n="landing.learn.eyebrow"></span>
+        <h2 class="ld-h2" data-i18n="landing.learn.title"></h2>
+        <p class="ld-lead" data-i18n="landing.learn.lead"></p>
+      </div>
+      <div class="ld-learn-list" id="ld-learn-list"></div>
     </section>
 
     <!-- 6. Партнёрская программа -->
@@ -201,6 +292,9 @@
     <input id="login-password" type="password" data-i18n-ph="auth.passwordPh" autofocus autocomplete="current-password" />
     <button type="submit" data-i18n="auth.submit"></button>
     <p id="login-error" class="error hidden"></p>
+    <!-- Внешние входы: рисуются из /api/auth/config. Нет ключей — нет кнопок. -->
+    <p id="login-auth-label" class="auth-note hidden" data-i18n="auth.orWith"></p>
+    <div id="login-auth" class="auth-buttons auth-column"></div>
     <div class="lang-switch lang-switch-center" role="group" data-i18n-aria="lang.aria">
       <button type="button" data-lang="en">EN</button>
       <button type="button" data-lang="ru">RU</button>
@@ -231,11 +325,18 @@
         <button type="button" data-lang="ru">RU</button>
       </div>
       <span id="points-badge" class="kind-badge points-badge hidden" data-i18n-title="top.pointsTitle"></span>
+      <button id="chat-btn" class="account-btn" data-i18n-title="top.chatTitle" data-i18n="top.chat"></button>
       <button id="account-btn" class="account-btn hidden" data-i18n-title="top.accountTitle" data-i18n="top.account"></button>
       <button id="save-account-btn" class="hidden" data-i18n="top.saveAccount"></button>
       <button id="logout-btn" class="ghost" data-i18n="top.logout"></button>
     </div>
   </header>
+
+  <!-- Онбординг «первый клип»: липкая плитка на четыре пункта. Живёт до
+       первого собранного клипа и после него исчезает — чеклист, который
+       висит вечно, перестают читать. Данные — GET /api/onboarding, там же
+       честный прогноз списания. -->
+  <section id="onboarding" class="panel onboarding hidden"></section>
 
   <section class="panel">
     <h2 data-i18n="story.title"></h2>
@@ -275,7 +376,7 @@
         <input name="title" data-i18n-ph="tracks.titlePh" required />
         <label data-i18n="tracks.styleLabel"></label>
         <div class="style-picker"></div>
-        <input type="hidden" name="style" />
+        <input type="hidden" name="style_keys" />
         <textarea name="lyrics" data-i18n-ph="tracks.lyricsPh" rows="4"></textarea>
         <textarea name="comment" data-i18n-ph="tracks.commentPh" rows="3"></textarea>
         <input name="audio" type="file" accept="audio/*" />
@@ -283,6 +384,59 @@
       </form>
     </details>
   </section>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────────────────
+     ЧАТ — третий экран рядом с лендингом (#welcome) и студией (#app).
+     ОДНО окно: переключатель модели живёт ВНУТРИ строки ввода, а не отдельной
+     панелью и не вкладками «Чат / Картинки / Видео». Выбранная модель и есть
+     намерение: текст, картинка или видео из картинки.
+     Ленту, сайдбар и селектор рисует app.js — разметка держит только каркас.
+     ───────────────────────────────────────────────────────────────────── -->
+<div id="chat" class="chat hidden">
+  <aside id="chat-side" class="chat-side">
+    <div class="chat-side-head">
+      <button id="chat-to-studio" class="ghost chat-back" data-i18n="chat.toStudio"></button>
+      <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="ru">RU</button>
+      </div>
+    </div>
+    <button id="chat-new" class="primary chat-new" data-i18n="chat.new"></button>
+    <input id="chat-search" class="chat-search" data-i18n-ph="chat.searchPh" />
+    <div id="chat-list" class="chat-list"></div>
+    <p id="chat-retention" class="chat-retention muted"></p>
+  </aside>
+
+  <main class="chat-main">
+    <header class="chat-head">
+      <button id="chat-side-toggle" class="ghost chat-side-toggle" aria-label="menu">☰</button>
+      <span id="chat-head-title" class="chat-head-title"></span>
+      <span id="chat-points" class="kind-badge points-badge" data-i18n-title="top.pointsTitle"></span>
+    </header>
+
+    <div id="chat-feed" class="chat-feed"></div>
+
+    <div class="chat-compose">
+      <!-- Расход этого разговора виден прямо над полем: человек не должен
+           уходить в кабинет, чтобы понять, во что ему обходится чат. -->
+      <div class="cc-meter"><span id="cc-meter"></span></div>
+      <div id="cc-source" class="cc-source hidden"></div>
+      <div id="cc-files" class="cc-files"></div>
+      <textarea id="cc-text" rows="2" data-i18n-ph="chat.inputPh"></textarea>
+      <div class="cc-bar">
+        <label class="cc-attach" data-i18n-title="chat.attachTitle">
+          <input id="cc-file" type="file" class="hidden" accept="image/jpeg,image/png,image/webp" multiple />
+          <span>+</span>
+        </label>
+        <select id="cc-model" class="cc-model"></select>
+        <select id="cc-duration" class="cc-duration hidden"></select>
+        <span id="cc-price" class="cc-price"></span>
+        <button id="cc-send" type="button" class="primary cc-send"></button>
+      </div>
+      <p class="cc-note muted" id="cc-note"></p>
+    </div>
+  </main>
 </div>
 
 <template id="track-tpl">
@@ -446,7 +600,20 @@
     </div>
     <label data-i18n-title="character.descTitle" data-i18n="character.descLabel"></label>
     <textarea class="c-desc" rows="3"></textarea>
+    <!-- Два ряда вместо одной кучи: загруженные ФОТО (они уходят референсом
+         в разворот) и сгенерированные РАЗВОРОТЫ (их берут кадры сцен).
+         Раньше всё лежало вперемешку, и понять, что на что влияет, было
+         нельзя — а влияло это на похожесть героя во всём клипе. -->
+    <div class="char-row-head">
+      <span class="char-row-title" data-i18n="character.photosTitle"></span>
+      <span class="char-row-hint muted" data-i18n="character.photosHint"></span>
+    </div>
     <div class="char-photos"></div>
+    <div class="char-row-head char-models-head hidden">
+      <span class="char-row-title" data-i18n="character.modelsTitle"></span>
+      <span class="char-row-hint muted" data-i18n="character.modelsHint"></span>
+    </div>
+    <div class="char-models hidden"></div>
     <div class="row">
       <button class="c-save primary" data-i18n="common.save"></button>
       <label class="c-upload-label">
@@ -623,7 +790,7 @@
   </div>
 </div>
 
-<script src="/i18n.js?v=51"></script>
-<script src="/app.js?v=51"></script>
+<script src="/i18n.js?v=53"></script>
+<script src="/app.js?v=53"></script>
 </body>
 </html>
