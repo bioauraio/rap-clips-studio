@@ -28,9 +28,11 @@ from sqlalchemy.orm import Session
 
 import claude
 import formats
+import gate
 import learn
 import mediagen
 import prompts_catalog
+import prompts_library
 import stripe_pay
 import textgen
 from db import (
@@ -752,6 +754,47 @@ def _tier_of_user(user: "User") -> str:
         return ""
     spec = _tier_spec(plan_id, getattr(user, "plan_tier", "") or "")
     return spec["id"] if spec else ""
+
+
+# ───────────────── параллельные генерации: лимит по тарифу ─────────────────
+# Сам ограничитель живёт в backend/gate.py; здесь только перевод «человек →
+# число». Держать сетку в двух местах нельзя: витрина обязана показывать РОВНО
+# то число, которое сервер применяет. У конкурента строка «до 6 видео»
+# захардкожена во фронте отдельно от серверного лимита — и два соседних тарифа
+# показывают одинаковую цифру там, где продаётся разница.
+
+def _parallel_limit(user: "User | None") -> int:
+    if not user:
+        return gate.PLAN_PARALLEL["free"]
+    return gate.limit_for(_plan_of(user), _tier_of_user(user),
+                          is_admin=bool(user.is_admin))
+
+
+def _queue_state(user: "User | None") -> dict:
+    """Что у человека в работе + во что превращается его лимит.
+
+    ОДНО МЕСТО на два роута (/api/gen/queue и /api/billing/plans): собирать
+    этот словарь в двух местах значило бы, что витрина и студия однажды
+    начнут называть разные числа."""
+    limit = _parallel_limit(user)
+    st = gate.status(user.id if user else 0, limit)
+    st["clip_minutes"] = _clip_minutes(limit)
+    return st
+
+
+def _spawn_gen(user: "User", fn, *args, kind: str = "gen") -> None:
+    """Запустить генерацию под лимитом тарифа.
+
+    Полная замена `Thread(target=fn, args=args, daemon=True).start()`. Роут
+    ведёт себя как раньше (отвечает сразу), а поток внутри себя ждёт слота.
+    Токены к этому моменту уже списаны, и это правильно: ОЧЕРЕДЬ НЕ ТЕРЯЕТ
+    ЗАДАЧУ, поэтому инвариант «списано → сделано либо возвращено» цел.
+
+    Вложенности здесь нет и быть не должно: пакетные задачи (_run_all_frames,
+    _run_all_videos, _run_supergen) зовут посценовые ФУНКЦИИ напрямую, а не
+    через _spawn_gen. Иначе пачка занимала бы слот и ждала собственных детей,
+    которым слот уже не достался бы, — на FREE это вечный дедлок."""
+    gate.spawn(user.id, _parallel_limit(user), fn, args, kind=kind)
 
 
 def _plan_image_engine(user: "User | None", want: str = "") -> str:
@@ -2190,14 +2233,31 @@ def api_learn(request: Request, lang: str = "", db: Session = Depends(db_session
     lg = _lang_of(request, lang)
     plan_id = _plan_of(user) if user else "free"
     done = {s.split(":", 1)[1] for s in _learn_done(user)}
-    lessons = learn.index(lg, plan_id=plan_id,
-                          is_admin=bool(user and user.is_admin), done=done)
+    is_adm = bool(user and user.is_admin)
+    lessons = learn.index(lg, plan_id=plan_id, is_admin=is_adm, done=done)
+    courses = learn.program(lg, plan_id=plan_id, is_admin=is_adm, done=done)
+    # Замок академии живёт НЕ на уроке, а на его артефакте: текст открыт всем
+    # (уровни 0–4 — двигатель органики), а набор приёмов упирается в тариф.
+    # learn.py про каталог промтов не знает и знать не должен, поэтому пару
+    # «курс → какие наборы закрыты» сшиваем здесь, в одном месте.
+    for row in courses:
+        packs = [prompts_library.public_pack(k, lang=lg, plan_id=plan_id,
+                                             is_admin=is_adm)
+                 for k in row["packs"]]
+        packs = [x for x in packs if x]
+        row["pack_cards"] = [{"key": x["key"], "label": x["label"],
+                              "tier": x["tier"], "locked": x["locked"],
+                              "shots": len(x.get("shots") or [])}
+                             for x in packs]
+        row["locked_packs"] = len([x for x in packs if x["locked"]])
     return {
         "lang": lg,
         "plan": plan_id,
         "authorized": bool(user),
         "levels": learn.levels(lg),
         "lessons": lessons,
+        "courses": courses,
+        "progress": learn.progress(lg, done),
         "done": sorted(done),
     }
 
@@ -2225,6 +2285,15 @@ def api_lesson(slug: str, request: Request, lang: str = "",
     out["markdown"] = item["body"] if ok else learn.teaser(item["body"])
     out["full"] = ok
     out["lang"] = item["lang"]
+    # АРТЕФАКТ УРОКА едет вместе с уроком, а не отдельным запросом: кнопка
+    # «применить в проект» рисуется в тот же момент, что и текст, и второй
+    # круг за карточкой набора означал бы урок, у которого кнопка появляется
+    # позже самого урока.
+    out["pack_card"] = prompts_library.public_pack(
+        item["pack"], lang=lg, plan_id=plan_id,
+        is_admin=bool(user and user.is_admin)) if item["pack"] else None
+    out["preset_card"] = prompts_catalog.public_preset(item["preset"], lang=lg) \
+        if item["preset"] else None
     return out
 
 
@@ -3433,6 +3502,132 @@ def api_preset(key: str, request: Request, lang: str = ""):
     return card
 
 
+# ───────────────────── приёмы: третий слой каталога ─────────────────────
+# Стиль — «как выглядит клип», каркас — «что снимаем», приём — «как снята ОДНА
+# сцена». Данные в backend/prompts_library.py.
+#
+# ЗДЕСЬ НЕТ ПИШУЩЕГО РОУТА, И ЭТО НЕ НЕДОДЕЛКА. Кнопка «применить» собирается
+# из двух вызовов: POST .../apply СЧИТАЕТ готовое тело (и ничего не меняет), а
+# записывает его обычный PATCH /api/scenes/{id}. Пишущий эндпоинт добавил бы
+# третье место, где надо помнить список полей сцены, — и первым же расхождением
+# сломал бы применение половины карточки. Побочная выгода важнее: человек видит
+# подставленный текст на карточках ДО того, как потратит токены на кадры, и
+# может отказаться, ничего не откатывая.
+
+@app.get("/api/shots")
+def api_shots(request: Request, lang: str = "", category: str = "",
+              tier: str = "", style: str = "", db: Session = Depends(db_session)):
+    """Витрина приёмов. Тексты промптов вкладываются только тем, кому их
+    открывает тариф; остальным карточка приезжает с locked=True и БЕЗ полей
+    first/last/motion."""
+    user = _resolve_user(request, db)
+    lg = _lang_of(request, lang)
+    plan = _plan_of(user) if user else "free"
+    return {
+        "lang": lg,
+        "categories": [
+            {"key": c["key"], "label": c["label"].get(lg, c["label"]["en"]),
+             "hint": c["hint"].get(lg, c["hint"]["en"])}
+            for c in prompts_library.CATEGORIES
+        ],
+        "shots": prompts_library.public_shots(
+            lang=lg, category=category, tier=tier, style=style,
+            plan_id=plan, is_admin=bool(user and user.is_admin)),
+    }
+
+
+@app.get("/api/shots/{key}")
+def api_shot(key: str, request: Request, lang: str = "",
+             db: Session = Depends(db_session)):
+    user = _resolve_user(request, db)
+    card = prompts_library.public_shot(
+        key, lang=_lang_of(request, lang),
+        plan_id=_plan_of(user) if user else "free",
+        is_admin=bool(user and user.is_admin))
+    if not card:
+        raise ApiError(404, "unknown_shot", f"Unknown shot: {key!r}")
+    return card
+
+
+@app.get("/api/packs")
+def api_packs(request: Request, lang: str = "", db: Session = Depends(db_session)):
+    """Наборы приёмов — «артефакт урока», то, что применяется одной кнопкой."""
+    user = _resolve_user(request, db)
+    return {"lang": _lang_of(request, lang),
+            "packs": prompts_library.public_packs(
+                lang=_lang_of(request, lang),
+                plan_id=_plan_of(user) if user else "free",
+                is_admin=bool(user and user.is_admin))}
+
+
+@app.get("/api/packs/{key}")
+def api_pack(key: str, request: Request, lang: str = "",
+             db: Session = Depends(db_session)):
+    user = _resolve_user(request, db)
+    pack = prompts_library.public_pack(
+        key, lang=_lang_of(request, lang),
+        plan_id=_plan_of(user) if user else "free",
+        is_admin=bool(user and user.is_admin))
+    if not pack:
+        raise ApiError(404, "unknown_pack", f"Unknown pack: {key!r}")
+    return pack
+
+
+@app.post("/api/shots/{key}/apply")
+async def api_shot_apply(key: str, request: Request,
+                         user: User = Depends(current_user),
+                         db: Session = Depends(db_session)):
+    """Один приём → готовое тело для PATCH /api/scenes/{id}.
+
+    body: {slots: {"character": "...", ...}}
+
+    Симметрично набору ниже и по той же причине: подстановка слотов живёт в
+    ОДНОМ месте (prompts_library.scene_patch), а не повторяется в браузере.
+    Повтори её на фронте — и первая же правка формулировки приёма разъедется
+    с тем, что применяет урок.
+
+    Замок проверяем здесь же: без него текст платной карточки утёк бы через
+    подстановку в обход витрины."""
+    shot = prompts_library._BY_KEY.get(key)
+    if not shot:
+        raise ApiError(404, "unknown_shot", f"Unknown shot: {key!r}")
+    if not prompts_library.unlocked(shot["tier"], _plan_of(user),
+                                    is_admin=user.is_admin):
+        raise ApiError(403, "plan_required",
+                       f"Shot {key!r} requires the {shot['tier']} plan")
+    body = await request.json() if await request.body() else {}
+    slots = body.get("slots") if isinstance(body.get("slots"), dict) else {}
+    patch = prompts_library.scene_patch(key, slots)
+    return {"shot": key, "scene": patch}
+
+
+@app.post("/api/packs/{key}/apply")
+async def api_pack_apply(key: str, request: Request,
+                         user: User = Depends(current_user),
+                         db: Session = Depends(db_session)):
+    """Подставить слоты и вернуть ГОТОВЫЕ тела для PATCH /api/scenes/{id}.
+
+    body: {slots: {"character": "...", ...}}
+
+    Ничего не меняет — считает и отдаёт. Запись делает фронт, по одному PATCH
+    на сцену, и это осознанно: человек видит применённый текст на карточках
+    ДО того, как потратит очки на кадры, и может отказаться, ничего не откатывая.
+
+    Замок проверяем здесь же: без этого текст платной карточки утёк бы через
+    подстановку, минуя витрину."""
+    pack = prompts_library._PACK_BY_KEY.get(key)
+    if not pack:
+        raise ApiError(404, "unknown_pack", f"Unknown pack: {key!r}")
+    if not prompts_library.unlocked(pack["tier"], _plan_of(user),
+                                    is_admin=user.is_admin):
+        raise ApiError(403, "plan_required",
+                       f"Pack {key!r} requires the {pack['tier']} plan")
+    body = await request.json() if await request.body() else {}
+    slots = body.get("slots") if isinstance(body.get("slots"), dict) else {}
+    return {"pack": key, "preset": pack["preset"], "styles": list(pack["styles"]),
+            "scenes": prompts_library.pack_patches(key, slots)}
+
+
 @app.post("/api/tracks/{track_id}/style")
 async def set_track_style(track_id: int, request: Request,
                           user: User = Depends(current_user),
@@ -4340,7 +4535,6 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
 
 @app.post("/api/tracks/{track_id}/generate-storyboard")
 def generate_storyboard(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
-    from threading import Thread
     _guard_disk()
     track = _own_track(db, user, track_id)
     if not track.scenes:
@@ -4352,7 +4546,7 @@ def generate_storyboard(track_id: int, user: User = Depends(current_user), db: S
             cost_cents=_cost_cents("sheet", sheet_engine))
     track.storyboard_status = "queued"
     db.commit()
-    Thread(target=_run_storyboard, args=(track_id,), daemon=True).start()
+    _spawn_gen(user, _run_storyboard, track_id, kind="storyboard")
     return {"ok": True}
 
 
@@ -5085,7 +5279,6 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
 def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
                           user: User = Depends(current_user),
                           db: Session = Depends(db_session)):
-    from threading import Thread
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
     if not scene.image_prompt.strip():
@@ -5107,7 +5300,7 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
                   f"кадры сцены {scene.id} ({which})", kind="frames", engine=engine)
     scene.image_status = "queued"
     db.commit()
-    Thread(target=_run_scene_frames, args=(scene_id, which, engine), daemon=True).start()
+    _spawn_gen(user, _run_scene_frames, scene_id, which, engine, kind="frames")
     return {"ok": True}
 
 
@@ -5230,7 +5423,6 @@ def _run_midframes(scene_id: int) -> None:
 
 @app.post("/api/scenes/{scene_id}/generate-midframes")
 def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
-    from threading import Thread
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
     total = _midframe_count(scene.duration_sec)
@@ -5249,7 +5441,7 @@ def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Se
                   total * _image_cost(user, eng, scene.track.image_resolution or ""),
                   f"промежуточные кадры сцены {scene.id} ({total} шт.)",
                   kind="frames", engine=eng)
-    Thread(target=_run_midframes, args=(scene_id,), daemon=True).start()
+    _spawn_gen(user, _run_midframes, scene_id, kind="frames")
     return {"ok": True, "count": total}
 
 
@@ -5347,7 +5539,6 @@ def _run_scene_video(scene_id: int) -> None:
 
 @app.post("/api/scenes/{scene_id}/generate-video")
 async def generate_scene_video(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
-    from threading import Thread
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
     if not scene.image_filename:
@@ -5381,7 +5572,7 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
     scene.video_engine = engine
     scene.video_status = "queued"
     db.commit()
-    Thread(target=_run_scene_video, args=(scene_id,), daemon=True).start()
+    _spawn_gen(user, _run_scene_video, scene_id, kind="video")
     return {"ok": True}
 
 
@@ -5644,7 +5835,6 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
 
 @app.post("/api/tracks/{track_id}/supergen")
 def supergen(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
-    from threading import Thread
     _guard_disk()
     track = _own_track(db, user, track_id)
     catalog = _catalog_of(track.project)
@@ -5704,7 +5894,7 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
     track.supergen_status = "queued"
     track.supergen_note = "старт…"
     db.commit()
-    Thread(target=_run_supergen, args=(track_id, per_scene, prepaid), daemon=True).start()
+    _spawn_gen(user, _run_supergen, track_id, per_scene, prepaid, kind="supergen")
     return {"ok": True}
 
 
@@ -7520,7 +7710,6 @@ def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
     """scope: todo (по умолчанию) | dirty | all. force=1 — легаси-синоним
     dirty: та же кнопка «перерисовать кадры», но теперь она платит только за
     сцены, где действительно что-то изменилось."""
-    from threading import Thread
     _guard_disk()
     track = _own_track(db, user, track_id)
     if not track.scenes:
@@ -7543,9 +7732,8 @@ def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
         s.image_status = "queued"
     db.commit()
     redraw = scope in ("dirty", "all")
-    Thread(target=_run_all_frames,
-           args=(track_id, eng, redraw, redraw, [s.id for s in todo]),
-           daemon=True).start()
+    _spawn_gen(user, _run_all_frames, track_id, eng, redraw, redraw,
+               [s.id for s in todo], kind="frames")
     return {"ok": True, "queued": len(todo), "engine": eng, "scope": scope,
             "force": redraw}
 
@@ -7877,7 +8065,6 @@ async def restyle_track(track_id: int, request: Request,
     body: {style_keys: [...], extra?: "", scene_ids?: [...],
            with_video?: false, text_engine?: ""}
     """
-    from threading import Thread
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку")
@@ -7939,12 +8126,10 @@ async def restyle_track(track_id: int, request: Request,
     track.restyle_status = "queued"
     track.restyle_note = f"0 из {len(scene_ids)}"
     db.commit()
-    Thread(target=_run_restyle,
-           args=(track.id, scene_ids, img_engine, with_video,
-                 plan["video"]["engine"], plan["video"]["provider"],
-                 bool(plan["prompts"]["needed"]), plan["prompts"]["engine"],
-                 plan["frames"]["total"]),
-           daemon=True).start()
+    _spawn_gen(user, _run_restyle, track.id, scene_ids, img_engine, with_video,
+               plan["video"]["engine"], plan["video"]["provider"],
+               bool(plan["prompts"]["needed"]), plan["prompts"]["engine"],
+               plan["frames"]["total"], kind="restyle")
     return {"ok": True, "queued": len(scene_ids), "plan": plan}
 
 
@@ -8175,7 +8360,6 @@ def _run_all_videos(track_id: int) -> None:
 def generate_all_videos(track_id: int, provider: str = "", engine: str = "",
                         user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
-    from threading import Thread
     _guard_disk()
     track = _own_track(db, user, track_id)
     todo = [s for s in track.scenes if s.image_filename and not s.video_filename]
@@ -8194,7 +8378,7 @@ def generate_all_videos(track_id: int, provider: str = "", engine: str = "",
         s.video_status = "queued"
         s.video_error = ""
     db.commit()
-    Thread(target=_run_all_videos, args=(track_id,), daemon=True).start()
+    _spawn_gen(user, _run_all_videos, track_id, kind="video")
     return {"ok": True, "queued": len(todo), "provider": prov, "engine": eng}
 
 
@@ -8546,6 +8730,24 @@ def _volume_breakdown(plan_id: str, points: int) -> dict:
     }
 
 
+#: Сколько машинного времени занимает одна сцена — из замеров: кадры около
+#: минуты, видео две-пять. Число нужно ровно для одной строки витрины
+#: («клип за ~11 минут»), и оно обязано быть одним на весь сервис.
+SCENE_WALL_SEC = int(os.environ.get("SCENE_WALL_SEC", "90"))
+
+
+def _clip_minutes(parallel: int) -> int:
+    """Во сколько минут превращается тариф: клип из CLIP_SCENES сцен при
+    заданной параллельности.
+
+    ОБЕЩАЕМ СКОРОСТЬ ГЕНЕРАЦИИ, А НЕ СБОРКИ. Финальная склейка идёт по одной
+    на весь сервис (mediagen.FFMPEG_SLOTS = 1: у машины 3.8 ГБ без свопа и
+    рядом чужие проекты), и витрина обязана говорить это прямо, иначе «клип за
+    3 минуты» станет ложью на последнем шаге."""
+    n = max(1, int(parallel or 1))
+    return max(1, int(round(CLIP_SCENES * SCENE_WALL_SEC / n / 60)))
+
+
 def _tier_card(plan_id: str, spec: dict) -> dict:
     """Ступень объёма для витрины: оба ценника, зачёркнутая цена, скидка и
     расшифровка «сколько это клипов» по каждому движку тарифа."""
@@ -8571,6 +8773,10 @@ def _tier_card(plan_id: str, spec: dict) -> dict:
         "year_discount_pct": int(spec["year_discount_pct"]),
         "usd_per_point": round(spec["usd_cents"] / 100 / pts, 5) if pts else 0.0,
         "volume": _volume_breakdown(plan_id, pts),
+        # Параллельность СТУПЕНИ. Берётся из gate.py — того же места, откуда её
+        # берёт сам ограничитель, а не переписывается в вёрстку.
+        "parallel": gate.limit_for(plan_id, spec["id"]),
+        "clip_minutes": _clip_minutes(gate.limit_for(plan_id, spec["id"])),
     }
 
 
@@ -8633,6 +8839,12 @@ def _plan_card(plan_id: str) -> dict:
         "note": p["note"],
         "priority": bool(p["priority"]),
         "year_discount_pct": YEAR_DISCOUNT_PCT if usd_c > 0 else 0,
+        # ПАРАЛЛЕЛЬНОСТЬ — продаётся как ВРЕМЯ, а не как число потоков.
+        # «до 8 видео одновременно» — механизм; единица нашего продукта клип,
+        # поэтому рядом едет и то, во что это превращается: клип 3 минуты
+        # (CLIP_SCENES сцен) при ~90 секундах машинного времени на сцену.
+        "parallel": gate.limit_for(plan_id),
+        "clip_minutes": _clip_minutes(gate.limit_for(plan_id)),
     }
 
 
@@ -8678,6 +8890,18 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
         "current_tier": _tier_of_user(user) if user else "",
         "next_tier": (user.plan_tier_next or "") if user else "",
         "plan_until": user.plan_until.isoformat() if (user and user.plan_until) else "",
+        # ДВЕ ДАТЫ, А НЕ ОДНА. «Оплачено до» и «токены до» — разные вещи у
+        # годового подписчика: год оплачен целиком, а норма капает раз в месяц
+        # (_points_drip_pass). Пока витрина знала одну дату, человек с годовой
+        # подпиской не понимал, когда придут следующие токены, и читал остаток
+        # как «мне выдали меньше, чем обещали».
+        "points_next_at": (user.points_drip_at.isoformat()
+                           if (user and user.points_drip_at) else ""),
+        "points_next": int(user.points_drip_size or 0) if user else 0,
+        "points_drip_left": int(user.points_drip_left or 0) if user else 0,
+        # Параллельность ЭТОГО человека и что у него в работе прямо сейчас.
+        "parallel": _parallel_limit(user),
+        "queue": _queue_state(user),
         "autopay": bool(user and user.autopay and (user.pay_method_id
                                                    or user.stripe_subscription_id
                                                    or getattr(user, "stars_sub_charge_id", ""))),
@@ -9522,6 +9746,19 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
 # меня тариф». Поэтому здесь считается ТЕМП, а не только остаток: прогноз
 # «при нынешнем расходе хватит до <даты>» — единственная цифра, ради которой
 # человек вообще открывает кабинет.
+
+@app.get("/api/gen/queue")
+def api_gen_queue(user: User = Depends(current_user)):
+    """Сколько задач у человека в работе, сколько ждёт и сколько даёт тариф.
+
+    ЭТО ПОЗИЦИЯ В ОЧЕРЕДИ, А НЕ ТАЙМЕР. Выдуманный обратный отсчёт («осталось
+    2 минуты») врёт при первой же длинной сцене; число «третья в очереди»
+    проверяемо и не устаревает. Так же требует и docs/DESIGN_SYSTEM.md."""
+    st = _queue_state(user)
+    st["plan"] = _plan_of(user)
+    st["tier"] = _tier_of_user(user)
+    return st
+
 
 USAGE_KINDS = ("frames", "video", "chat", "audio", "story", "sheet",
                "model", "assemble", "other")

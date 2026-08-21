@@ -12,12 +12,14 @@
   * /api/learn — тот же текст внутри студии, но с замками по тарифу
     и с отметками пройденного.
 
-ДОСТУП. Уровни 0–2 открыты полностью и без регистрации: это и обучение, и
-двигатель органики. Платные уровни отличаются не «секретным текстом»,
+ДОСТУП. Все уровни, 0–4, открыты полностью и без регистрации: это и обучение,
+и двигатель органики. Платные уровни отличаются не «секретным текстом»,
 которого у нас нет, а применимостью — урок читается всеми, а кнопка
-«применить» упирается в движок, который и так открыт только на тарифе.
+«применить» упирается в тариф.
 Поле `access` во фронтматтере (free|pro|pro_max|studio) — механизм на будущее:
-сегодня все восемь уроков открыты, и врать об этом интерфейс не должен.
+сегодня все шестнадцать уроков открыты, и врать об этом интерфейс не должен.
+Тариф сегодня решает не «покажем ли текст», а «применится ли артефакт»: замок
+живёт на наборе приёмов (prompts_library.PACKS), а не на уроке.
 """
 from __future__ import annotations
 
@@ -161,7 +163,7 @@ def allowed(access: str, plan_id: str, *, is_admin: bool = False) -> bool:
 def card(lesson: dict, *, plan_id: str = "free", is_admin: bool = False,
          done: bool = False) -> dict:
     """Карточка урока для списка — БЕЗ текста. Список грузится на каждом
-    открытии раздела, и таскать в нём девять полных уроков незачем."""
+    открытии раздела, и таскать в нём семнадцать полных уроков незачем."""
     return {
         "slug": lesson["slug"],
         "key": lesson["key"],
@@ -229,3 +231,140 @@ def teaser(body: str, limit: int = 900) -> str:
     cut = plain[:limit]
     stop = cut.rfind("\n\n")
     return (cut[:stop] if stop > 200 else cut).rstrip() + "…"
+
+
+# ─────────────────────────── ПРОГРАММА АКАДЕМИИ ───────────────────────────
+#
+# КУРС = УРОВЕНЬ, а не третья сущность. Соблазн завести отдельный реестр
+# курсов со своим списком уроков велик — и это была бы вторая правда о том,
+# что куда входит: уровень урока лежит во фронтматтере, и любой новый урок
+# попадал бы в уровень сам, а в курс — только руками, через правку реестра.
+# Один забытый слаг = урок, который написан, лежит в образе, индексируется
+# страницей, но в академии не показан вообще. Поэтому курс собирается ИЗ
+# уровня, а реестр ниже добавляет уровню только то, чего в уроке нет:
+# человеческое обещание («что ты будешь уметь») и порядок показа.
+#
+# Это же снимает вопрос «почему у нас курсы длиннее, чем у Higgsfield».
+# У них курс — 5–19 модулей по 5 минут, потому что курс продаёт сертификат.
+# У нас курс продаёт СЛЕДУЮЩИЙ КЛИП, и мерить его надо не модулями, а тем,
+# что человек может сделать в конце. Отсюда outcome — обязательное поле:
+# уровень без внятного «в конце ты…» не имеет права быть курсом.
+COURSES = {
+    0: {
+        "lead": {
+            "en": "The shortest route from a track to a finished file. Nothing here explains why — only what to press.",
+            "ru": "Самый короткий путь от трека до готового файла. Здесь ничего не объясняется «почему» — только что нажимать.",
+        },
+        "outcome": {
+            "en": ["An mp4 of your own, made today",
+                   "A clear idea of what the tokens were spent on"],
+            "ru": ["Свой mp4, собранный сегодня",
+                   "Понимание, за что списались токены"],
+        },
+    },
+    1: {
+        "lead": {
+            "en": "Why the clip came out exactly like that: styles, a character who survives to scene thirty, a storyboard, shots and light.",
+            "ru": "Почему клип получился именно таким: стили, персонаж, доживающий до тридцатой сцены, раскадровка, приёмы и свет.",
+        },
+        "outcome": {
+            "en": ["A second clip that is better on purpose, not by luck",
+                   "A storyboard that reads as a story, not as thirty postcards"],
+            "ru": ["Второй клип, который лучше намеренно, а не случайно",
+                   "Раскадровка, которая читается историей, а не тридцатью открытками"],
+        },
+    },
+    2: {
+        "lead": {
+            "en": "Where the money goes and how the thing gets assembled: engines, motion, cuts, the final file and what to do when a frame comes out wrong.",
+            "ru": "Куда уходят деньги и как это собирается: движки, движение, монтаж, финальный файл и что делать, когда кадр вышел не тот.",
+        },
+        "outcome": {
+            "en": ["The same clip length for half the tokens",
+                   "A published file instead of a folder of frames"],
+            "ru": ["Та же длина клипа за вдвое меньше токенов",
+                   "Опубликованный файл вместо папки с кадрами"],
+        },
+    },
+    3: {
+        "lead": {
+            "en": "When a clip stops being a one-off job: a recurring hero, an asset library, UGC and product shots.",
+            "ru": "Когда клип перестаёт быть разовой работой: возвращающийся герой, библиотека ассетов, UGC и предметная съёмка.",
+        },
+        "outcome": {
+            "en": ["An episode that looks like the previous one on purpose",
+                   "A shooting kit you reuse instead of inventing each time"],
+            "ru": ["Выпуск, похожий на предыдущий намеренно",
+                   "Набор для съёмки, который переиспользуется, а не придумывается заново"],
+        },
+    },
+    4: {
+        "lead": {
+            "en": "One clip that worked, taken apart frame by frame — what exactly holds the attention and what is decoration.",
+            "ru": "Один залетевший клип, разобранный покадрово: что именно держит внимание, а что украшение.",
+        },
+        "outcome": {
+            "en": ["The habit of reading someone else's clip as a set of decisions"],
+            "ru": ["Привычка читать чужой клип как набор решений"],
+        },
+    },
+}
+
+
+def program(lang: str = "en", *, plan_id: str = "free", is_admin: bool = False,
+            done: set | None = None) -> list[dict]:
+    """Академия: уровни с уроками, обещанием и прогрессом.
+
+    Прогресс считается ПО ОТМЕТКАМ, а не по открытым страницам: открыть урок
+    и уйти можно за секунду, и такой процент не значил бы ничего.
+
+    Пустой уровень В СПИСОК НЕ ПОПАДАЕТ. Уровни 3 и 4 были объявлены в LEVELS
+    задолго до того, как в них появились уроки, и витрина всё это время
+    обещала больше, чем есть, — курс без единого урока обязан отсутствовать,
+    а не показываться пустым."""
+    done = done or set()
+    lang = lang if lang in LANGS else "en"
+    out: list[dict] = []
+    for lesson_ in _load(lang):
+        lvl = lesson_["level"]
+        row = next((r for r in out if r["level"] == lvl), None)
+        if row is None:
+            meta = COURSES.get(lvl, {})
+            row = {
+                "level": lvl,
+                "title": LEVELS.get(lvl, {}).get(lang, ""),
+                "lead": (meta.get("lead") or {}).get(lang, ""),
+                "outcome": list((meta.get("outcome") or {}).get(lang, [])),
+                "lessons": [],
+                "minutes": 0,
+                "done": 0,
+                # Артефакты курса — то, что применяется в проект кнопкой.
+                # Считаем здесь же: витрина обещает «с наборами», и цифра
+                # обязана приезжать из тех же уроков, а не из вёрстки.
+                "packs": [],
+            }
+            out.append(row)
+        row["lessons"].append(
+            card(lesson_, plan_id=plan_id, is_admin=is_admin,
+                 done=lesson_["slug"] in done))
+        row["minutes"] += int(lesson_["minutes"] or 0)
+        if lesson_["slug"] in done:
+            row["done"] += 1
+        if lesson_["pack"] and lesson_["pack"] not in row["packs"]:
+            row["packs"].append(lesson_["pack"])
+    for row in out:
+        total = len(row["lessons"])
+        row["total"] = total
+        row["percent"] = int(round(100 * row["done"] / total)) if total else 0
+    return sorted(out, key=lambda r: r["level"])
+
+
+def progress(lang: str = "en", done: set | None = None) -> dict:
+    """Прогресс по академии целиком — одной строкой в шапке кабинета."""
+    done = done or set()
+    lessons = _load(lang if lang in LANGS else "en")
+    total = len(lessons)
+    seen = len([x for x in lessons if x["slug"] in done])
+    return {"total": total, "done": seen,
+            "percent": int(round(100 * seen / total)) if total else 0,
+            "minutes": sum(int(x["minutes"] or 0) for x in lessons)}

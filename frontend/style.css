@@ -1323,7 +1323,11 @@ button.primary:hover:not(:disabled) {
   .project-cover .cover-ph { font-size: 12px; }
 
   .tb-new { flex: none; padding: 5px 8px; font-size: 11.5px; white-space: nowrap; }
-  .points-badge { flex: none; padding: 4px 7px; font-size: 11px; white-space: nowrap; }
+  /* Слева 22px, а не 7px, И ЭТО НЕ ПРИДИРКА: монетка марки рисуется фоном в
+     6px от края (см. .points-badge выше), а короткий padding подсовывал под
+     неё цифры — на телефоне баланс читался как «(o)0 токенов». Сокращать
+     отступ можно у любого бейджа, кроме этого: у него слева живёт картинка. */
+  .points-badge { flex: none; padding: 4px 7px 4px 22px; font-size: 11px; white-space: nowrap; }
   .account-btn, #logout-btn { flex: none; padding: 5px 9px; font-size: 11.5px; white-space: nowrap; }
 }
 
