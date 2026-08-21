@@ -2620,14 +2620,28 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
      С подписью капсула занимала 123px и ужимала поле имени проекта до 22 —
      поле формально было, а пользоваться им было нельзя. */
   .mode-switch .mode-cap { display: none; }
+  /* Список перечисляет кнопки ПОИМЁННО, и это осознанно: безымянное правило
+     на .account-btn погасило бы текст и у кнопки, для которой значка тут нет,
+     то есть новая кнопка стала бы пустым пятном. Пусть лучше незнакомая
+     кнопка останется с подписью — её видно и по ней можно кликнуть.
+     От переполнения страхует не этот список, а flex-shrink у .tb-user ниже. */
   .topbar #music-btn,
   .topbar #chat-btn,
+  .topbar #admin-btn,
   .topbar #account-btn,
   .topbar #logout-btn { font-size: 0; padding: 0 9px; gap: 0; }
   .topbar #music-btn::before   { content: "🎚"; font-size: 13px; line-height: 1; }
   .topbar #chat-btn::before    { content: "💬"; font-size: 13px; line-height: 1; }
+  .topbar #admin-btn::before   { content: "⚙"; font-size: 14px; line-height: 1; }
   .topbar #account-btn::before { content: "👤"; font-size: 13px; line-height: 1; }
   .topbar #logout-btn::before  { content: "⏻"; font-size: 13px; line-height: 1; }
+
+  /* СТРАХОВКА НА БУДУЩЕЕ. За одну сессию в строку добавили «Музыку», седьмой
+     режим и «Админку»; каждый раз правая группа стояла насмерть (flex-shrink:0)
+     и вытесняла группу проекта, а вытесненное ложилось поверх соседей и
+     переставало нажиматься. Пусть теперь уступает и она: незнакомая кнопка
+     ужмётся, но никого не задавит. */
+  .topbar .tb-user { min-width: 0; flex-shrink: 1; }
 }
 
 /* ────────── 375px: строка обязана вместить тумблер ──────────
@@ -2645,6 +2659,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   .topbar .tb-project { gap: 4px; }
   .topbar #music-btn,
   .topbar #chat-btn,
+  .topbar #admin-btn,
   .topbar #account-btn,
   .topbar #logout-btn { padding: 0 6px; }
 }
