@@ -368,8 +368,13 @@ async function ldApplyPending() {
     const body = ldPending.style
       ? { style_keys: [ldPending.style] }
       : { preset: ldPending.preset };
+    const want = ldPending.style || "";
     ldPending = null;
-    await api(`/api/tracks/${tr.id}/style`, { method: "POST", body });
+    const res = await api(`/api/tracks/${tr.id}/style`, { method: "POST", body });
+    if (want && !(res.style_keys || []).includes(want)) {
+      // Сервер выбросил ключ — он закрыт тарифом. Говорим об этом вслух.
+      fail(new Error(LTX("prompts.useLockedNote")));
+    }
     await loadProject();
   } catch (e) {
     ldPending = null;
@@ -3648,6 +3653,21 @@ function ldVolumeLine(row) {
   return tFill(T.volScenes, { n: tNum(row.scenes), engine: row.title });
 }
 
+// Строка-заголовок карточки берётся ИЗ ТОЙ ЖЕ расшифровки, что и список под
+// ней. Раньше она считалась отдельно, по константе LD_SCENE_COST, и на PRO MAX
+// выходило «≈ 1 клип» при честных 20 сценах, а на ULTRA u4 — «22 клипа» при
+// 20: одна карточка спорила сама с собой. Двух источников правды тут быть
+// не должно.
+function ldHeadlineRow(volume, engineKey) {
+  const rows = (volume && volume.engines) || [];
+  if (!rows.length) return null;
+  if (engineKey === "top") return rows[0];                       // флагман тарифа
+  if (engineKey === "grok") return rows.find((r) => r.engine === "grok") || rows[rows.length - 1];
+  // «seedance» в словаре — рабочая лошадка, самая дешёвая модель семейства.
+  const fam = rows.filter((r) => String(r.engine).startsWith("seedance"));
+  return fam.length ? fam[fam.length - 1] : rows[rows.length - 1];
+}
+
 function ldVolumeBlock(volume) {
   if (!volume || !Array.isArray(volume.engines) || !volume.engines.length) return "";
   const T = LT("pricing");
@@ -3713,11 +3733,14 @@ function ldPlanCard(plan) {
     // Зачёркнутая цена — честная: тот же объём по цене очка базовой ступени.
     // Проценты приходят с сервера посчитанными, включая годовой (после пола
     // цены очка он уже не −20 %, и рисовать −20 % там нельзя).
+    // Зачёркнутое — всегда ЧЕСТНАЯ база сравнения, не выдуманный якорь:
+    //   в месячном режиме — тот же объём по цене очка базовой ступени;
+    //   в годовом — месячная цена ЭТОЙ ЖЕ ступени, ведь рядом стоит «в месяц
+    //   при оплате за год», и сравнивать надо именно эти две цифры.
     const pct = yearMode ? tier.yearPct : tier.savePct;
     if (pct > 0) {
-      const listMo = yearMode ? Math.round((tier.usd * 12) / 12) : tier.listUsd;
-      saveBadge = `<div class="ld-plan-was">`
-        + (yearMode ? `<s>${escHtml(ldMoney(listMo))}</s>` : `<s>${escHtml(ldMoney(tier.listUsd))}</s>`)
+      const was = yearMode ? tier.usd : tier.listUsd;
+      saveBadge = `<div class="ld-plan-was"><s>${escHtml(ldMoney(was))}</s>`
         + `<span class="ld-save-badge">${escHtml(tFill(
             yearMode ? T.saveYear : T.saveVolume, { pct }))}</span></div>`;
     }
@@ -3726,8 +3749,8 @@ function ldPlanCard(plan) {
     volume = ldVolumeBlock(plan.volume);
   }
 
-  const clips = (!tier && plan.movies && !copy.engine)
-    ? plan.movies : ldClipsLine(points, engine);
+  const headRow = ldHeadlineRow(tier ? tier.volume : plan.volume, engine);
+  const clips = headRow ? ldVolumeLine(headRow) : ldClipsLine(points, engine);
 
   let action;
   if (isCur) {
@@ -3956,7 +3979,12 @@ function ldStyleCard(s) {
     <div class="ld-card-tags">${tags}</div>
     <div class="ld-card-foot">
       <span class="muted">${escHtml(s.uses ? tFill(T.uses, { n: tNum(s.uses) }) : T.usesNone)}</span>
-      <button type="button" class="ld-card-use" data-style="${escHtml(s.key)}">${escHtml(T.use)}</button>
+      ${s.locked
+        // Закрытый тарифом стиль НЕ прикидывается доступным: сервер такой ключ
+        // молча выбросит, и кнопка «взять» на нём означала бы тихий отказ —
+        // человек нажал, ничего не произошло, объяснения нет.
+        ? `<button type="button" class="ld-card-plans">${escHtml(T.useLocked)}</button>`
+        : `<button type="button" class="ld-card-use" data-style="${escHtml(s.key)}">${escHtml(T.use)}</button>`}
     </div>
   </article>`;
 }
@@ -4006,6 +4034,10 @@ async function ldRenderPrompts() {
   $$(".ld-card-use", cardsBox).forEach((b) => b.addEventListener("click", async () => {
     ldPending = b.dataset.style ? { style: b.dataset.style } : { preset: b.dataset.preset };
     await ldStart();
+  }));
+  $$(".ld-card-plans", cardsBox).forEach((b) => b.addEventListener("click", () => {
+    const el = $("#ld-pricing");
+    if (el) el.scrollIntoView({ behavior: "smooth" });
   }));
 }
 

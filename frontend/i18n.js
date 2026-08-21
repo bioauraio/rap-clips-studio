@@ -881,7 +881,7 @@ const I18N = {
           },
           pro: {
             title: "PRO",
-            note: "Seedance 2.0: motion between the first and the last frame.",
+            note: "Seedance 2 Mini: motion between the first and the last frame.",
             engine: "seedance",
             features: [
               "660 credits every month",
@@ -891,7 +891,7 @@ const I18N = {
           },
           pro_max: {
             title: "PRO MAX",
-            note: "Seedance 2.5 and Kling — the ones that actually look good.",
+            note: "Seedance 2.5 and Kling 3.0 Pro — the ones that actually look good.",
             engine: "top",
             badge: "Most popular",
             hi: true,
@@ -938,6 +938,8 @@ const I18N = {
         note: "Signature presets were reverse-engineered frame by frame from accounts with 640+ videos. We show you what they do and what they are for — the prompt text itself stays ours.",
         tabPresets: "What to film",
         use: "Use this",
+        useLocked: "Opens on PRO",
+        useLockedNote: "This preset opens on a paid plan — the style has not been applied.",
         uses: "{n} clips made",
         usesNone: "new",
         closed: "signature",
@@ -2174,7 +2176,7 @@ const I18N = {
           },
           pro: {
             title: "PRO",
-            note: "Seedance 2.0: движение между первым и последним кадром.",
+            note: "Seedance 2 Mini: движение между первым и последним кадром.",
             engine: "seedance",
             features: [
               "660 очков каждый месяц",
@@ -2184,7 +2186,7 @@ const I18N = {
           },
           pro_max: {
             title: "PRO MAX",
-            note: "Seedance 2.5 и Kling — те самые, которые красиво.",
+            note: "Seedance 2.5 и Kling 3.0 Pro — те самые, которые красиво.",
             engine: "top",
             badge: "Самый ходовой",
             hi: true,
@@ -2231,6 +2233,8 @@ const I18N = {
         note: "Фирменные пресеты сняты покадрово с аккаунтов на 640+ роликов. Мы показываем, что они делают и подо что подходят, — сам текст промпта остаётся нашим.",
         tabPresets: "Что снимаем",
         use: "Взять",
+        useLocked: "Открыть на PRO",
+        useLockedNote: "Этот пресет открывается на платном тарифе — стиль не применён.",
         uses: "{n} клипов собрано",
         usesNone: "новый",
         closed: "фирменный",

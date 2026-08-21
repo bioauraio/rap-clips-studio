@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 
@@ -47,6 +48,8 @@ LEVELS = {
 }
 
 _CACHE: dict[str, list[dict]] = {}
+
+log = logging.getLogger("rapclips")
 
 
 def _parse_front_matter(raw: str) -> tuple[dict, str]:
@@ -114,6 +117,13 @@ def _load(lang: str) -> list[dict]:
                 "tags": list(meta.get("tags") or []),
                 "body": body,
             })
+    if not out:
+        # Пустой раздел — это почти всегда не «уроков нет», а не доехавшие в
+        # образ файлы (см. COPY docs/learn в backend/Dockerfile и исключение
+        # в .dockerignore). Такое обязано быть видно в логе, а не молча
+        # превращаться в пустую витрину.
+        log.warning("школа: в %s нет уроков для языка %r — раздел будет пустым",
+                    folder, lang)
     _CACHE[lang] = out
     return out
 
