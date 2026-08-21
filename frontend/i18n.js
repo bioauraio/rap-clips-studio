@@ -389,6 +389,9 @@ const I18N = {
       lockedIn: "opens on {plan}",
       freeNote: "Runs on the service subscription — free, and it is what writes the story, the bible and the storyboard.",
       paidNote: "{n} tokens per scripting step: story, season bible, episode script, storyboard.",
+      // Выбор пережил даунгрейд: он лежит в проекте и ждёт возврата на
+      // тариф, но пишет сейчас не он. Молчать об этом нельзя.
+      droppedNote: "{model} stays picked for this project, but it needs {plan} — until then the text is written by the line above.",
     },
 
     // ─────────── перерисовка в новом стиле ───────────
@@ -2334,6 +2337,9 @@ const I18N = {
       lockedIn: "открывается на {plan}",
       freeNote: "Идёт через подписку сервиса — бесплатно, и именно она пишет сюжет, библию и раскадровку.",
       paidNote: "{n} токенов за сценарный шаг: сюжет, библия сезона, сценарий серии, раскадровка.",
+      // Выбор пережил даунгрейд: он лежит в проекте и ждёт возврата на
+      // тариф, но пишет сейчас не он. Молчать об этом нельзя.
+      droppedNote: "{model} остаётся выбранным для этого проекта, но нужен {plan} — до тех пор текст пишет позиция выше.",
     },
 
     // ─────────── перерисовка в новом стиле ───────────

@@ -1758,15 +1758,23 @@ def validate() -> list[str]:
     # Главная проверка: ни один публичный дикт не содержит текста промпта.
     # Промпты берём ЭФФЕКТИВНЫЕ — иначе редактор стилей однажды выложит
     # свеженаписанный закрытый текст прямо в поле «описание» на витрине.
-    eff_prompts = {k: style_prompt(k) for k in _STYLE_BY_KEY}
-    eff_prompts.update({k: v for k, v in _PROMPTS.items() if v})
+    # СПИСОК пар, а не словарь: у стиля с наложением промптов ДВА — свой и
+    # заводской, — и проверять надо оба. Словарь по ключу молча оставлял бы
+    # один из них, и именно свежесохранённый (то есть самый интересный для
+    # утечки) терялся бы первым.
+    checks = [(k, style_prompt(k)) for k in _STYLE_BY_KEY]
+    checks += [(k, v) for k, v in _PROMPTS.items() if v]
+    # Порог в 60 символов — не косметика. Ниже него совпадение перестаёт
+    # означать утечку: промпт из одного слова («Ghibli») законно встречается
+    # в подписи стиля, и без порога редактор отказывал бы сохранять честную
+    # карточку. Промпт короче шестидесяти символов и защищать не от кого.
     for key in _STYLE_BY_KEY:
         blob = repr(public_style(key))
-        for pk, prompt in eff_prompts.items():
-            if prompt and prompt[:60] in blob:
+        for pk, prompt in checks:
+            if prompt and len(prompt) >= 60 and prompt[:60] in blob:
                 err.append(f"УТЕЧКА: промпт {pk} виден в публичной карточке {key}")
         base = style_story_base(key)
-        if base and base[:60] in blob:
+        if base and len(base) >= 60 and base[:60] in blob:
             err.append(f"УТЕЧКА: сценарная база {key} видна в публичной карточке")
     for p in CLIP_PRESETS:
         blob = repr(public_preset(p["key"]))

@@ -1,0 +1,154 @@
+/* Админка lolq.ai. Токены — из /style.css («солнечная кузница»): огонь один
+   на весь сервис и он оранжевый (--fire-ink), красного в интерфейсе нет.
+   Здесь только раскладка страницы: два столбца, меню слева, работа справа. */
+
+.adm-body { margin: 0; }
+
+.adm {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+}
+
+/* ── меню ── */
+.adm-side {
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 20px 14px;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  backdrop-filter: blur(16px);
+  position: sticky; top: 0; height: 100vh;
+}
+.adm-brand {
+  font-family: var(--font-mono); font-size: 14px; letter-spacing: .22em;
+  text-transform: uppercase; text-decoration: none; color: var(--text);
+  font-weight: 800;
+}
+.adm-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.adm-tab {
+  display: flex; align-items: center; gap: 9px;
+  /* Контролы одной высоты: 38px здесь и у кнопок/полей ниже. */
+  height: 38px; padding: 0 12px;
+  border: 1px solid transparent; border-radius: 11px;
+  background: none; color: var(--text); cursor: pointer;
+  font-size: 13.5px; font-weight: 600; text-align: left; width: 100%;
+}
+.adm-tab:hover { border-color: var(--border); background: var(--inset); }
+.adm-tab.on { color: var(--on-accent); background: var(--fire-ink); border-color: transparent; }
+.adm-tab-ico { font-size: 15px; }
+.adm-side-foot { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.adm-back { color: var(--accent-2-ink); text-decoration: none; font-weight: 600; }
+
+/* ── рабочая область ── */
+.adm-main { padding: 26px 28px 60px; max-width: 1180px; }
+.adm-head { margin-bottom: 18px; }
+.adm-title { margin: 0 0 4px; font-size: 22px; font-family: var(--font-head); }
+.adm-sub { margin: 0; font-size: 13px; line-height: 1.5; max-width: 70ch; }
+
+.adm-card {
+  border: 1px solid var(--border); border-radius: 16px;
+  background: var(--card); padding: 16px; margin-bottom: 14px;
+}
+.adm-card h3 { margin: 0 0 10px; font-size: 15px; }
+
+.adm-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.adm-stat {
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--inset); padding: 12px 14px;
+}
+.adm-stat b { display: block; font-size: 22px; font-family: var(--font-head); }
+.adm-stat span { font-size: 12px; color: var(--muted); }
+
+.adm-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.adm-row + .adm-row { margin-top: 10px; }
+
+.adm input[type="text"], .adm input[type="number"], .adm select {
+  height: 38px; padding: 0 12px; border-radius: 11px;
+  border: 1px solid var(--border); background: var(--inset);
+  color: var(--text); font-size: 13.5px;
+}
+.adm textarea {
+  width: 100%; padding: 10px 12px; border-radius: 11px;
+  border: 1px solid var(--border); background: var(--inset);
+  color: var(--text); font-size: 13px; line-height: 1.5;
+  font-family: var(--font-mono); resize: vertical;
+}
+.adm input:focus, .adm select:focus, .adm textarea:focus {
+  outline: none; border-color: var(--border-bright);
+  box-shadow: 0 0 0 3px rgba(255, 122, 41, .16);
+}
+.adm button {
+  height: 38px; padding: 0 14px; border-radius: 11px;
+  border: 1px solid var(--border); background: var(--inset);
+  color: var(--text); font-size: 13.5px; font-weight: 600; cursor: pointer;
+}
+.adm button:hover:not(:disabled) { border-color: var(--border-bright); }
+.adm button:disabled { opacity: .5; cursor: default; }
+/* ОДНА огненная кнопка на экран — главное действие. */
+.adm button.primary {
+  color: var(--on-accent); background: var(--fire-ink); border-color: transparent;
+}
+.adm button.ghost { background: none; }
+
+.adm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.adm-table th {
+  text-align: left; font-weight: 600; color: var(--muted);
+  padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.adm-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.adm-table tr:last-child td { border-bottom: none; }
+.adm-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.adm-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--inset);
+}
+.adm-pill.on { color: var(--ok); border-color: rgba(20, 160, 107, .4); }
+/* «Нет ключа» — не ошибка, а недостающая настройка: приглушённо, не тревожно. */
+.adm-pill.off { color: var(--muted); }
+.adm-pill.warn { color: var(--accent-2-ink); border-color: var(--border-bright); }
+
+.adm-split { display: grid; grid-template-columns: 260px 1fr; gap: 14px; align-items: start; }
+.adm-list { display: flex; flex-direction: column; gap: 3px; max-height: 70vh; overflow: auto; }
+.adm-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  height: 38px; padding: 0 11px; border-radius: 10px; cursor: pointer;
+  border: 1px solid transparent; font-size: 13px; text-align: left; width: 100%;
+  background: none; color: var(--text);
+}
+.adm-item:hover { background: var(--inset); border-color: var(--border); }
+.adm-item.on { border-color: var(--border-bright); background: var(--inset); }
+.adm-mark { font-size: 11px; color: var(--accent-2-ink); font-weight: 700; }
+
+.adm-fields { display: flex; flex-direction: column; gap: 12px; }
+.adm-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.adm-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 6px 0 0; }
+.adm-count { font-size: 11.5px; color: var(--muted); }
+
+.adm-assets { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+.adm-asset {
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--inset); display: flex; flex-direction: column;
+}
+.adm-asset img, .adm-asset video { width: 100%; height: 104px; object-fit: cover; display: block; }
+.adm-asset-body { padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; }
+.adm-asset-file { padding: 26px 8px; text-align: center; font-size: 12px; color: var(--muted); }
+
+.adm-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 12px; }
+.adm-tabs button { height: 34px; padding: 0 12px; font-size: 13px; }
+.adm-tabs button.on { color: var(--on-accent); background: var(--fire-ink); border-color: transparent; }
+
+.adm-err { color: var(--danger); font-size: 13px; }
+.adm-ok { color: var(--ok); font-size: 13px; }
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+
+@media (max-width: 860px) {
+  .adm { grid-template-columns: 1fr; }
+  .adm-side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .adm-nav { flex-direction: row; flex-wrap: wrap; }
+  .adm-tab { width: auto; }
+  .adm-main { padding: 18px 14px 50px; }
+  .adm-split { grid-template-columns: 1fr; }
+}

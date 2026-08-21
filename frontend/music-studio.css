@@ -184,7 +184,7 @@
   letter-spacing: .06em; text-transform: uppercase;
   border: 1.5px solid #2d211a; background: var(--inset); box-shadow: 0 2px 0 #2d211a;
 }
-.mus-tab.on { color: var(--on-accent); background: var(--fire-ink); }
+.mus-tab.on { color: var(--on-fire); background: var(--fire-ink); }
 .mus-pane { display: none; }
 .mus-pane.on { display: block; }
 
@@ -224,7 +224,7 @@
   white-space: nowrap;
 }
 .mus-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
-.mus-chip.on { color: var(--on-accent); background: var(--fire-ink); }
+.mus-chip.on { color: var(--on-fire); background: var(--fire-ink); }
 .mus-chip:disabled { opacity: .45; box-shadow: none; cursor: default; }
 .mus-chip em { font-style: normal; font-family: var(--font-mono); font-size: 10px; opacity: .72; }
 /* Цена активного чипа белым по огню не читается (2.4:1) — она уезжает

@@ -34,7 +34,7 @@
 
 ДЕНЬГИ. Списание — до обращения к внешнему сервису, возврат — при отказе
 (закон §6.9 дизайн-системы). Мастеринг своим движком стоит символические
-очки, облачный — ровно себестоимость.
+токены, облачный — ровно себестоимость.
 
 Модуль не импортирует main на верхнем уровне: он подключается ИЗ main.py,
 и импорт наверху дал бы цикл. Всё, что нужно от студии (сессия, деньги,
@@ -62,7 +62,7 @@ from sqlalchemy.orm import Session
 import audio
 import audio_analysis
 import mastering
-from db import MusicLead, MusicTrack, SessionLocal, User, now
+from db import FileOwner, MusicLead, MusicTrack, SessionLocal, User, now
 
 log = logging.getLogger("rapclips.music")
 router = APIRouter()
@@ -73,7 +73,7 @@ FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ─────────────────────────── границы приёма файла ───────────────────────────
-# Проверяются ДО списания очков и до любой обработки (дизайн-система §4.12).
+# Проверяются ДО списания токенов и до любой обработки (дизайн-система §4.12).
 MAX_UPLOAD_MB = float(os.environ.get("MUSIC_MAX_UPLOAD_MB", "200"))
 MAX_DURATION_S = float(os.environ.get("MUSIC_MAX_DURATION_S", "1200"))   # 20 минут
 MIN_DURATION_S = float(os.environ.get("MUSIC_MIN_DURATION_S", "3"))
@@ -94,8 +94,8 @@ COVER_MIN = 1400
 # а не выдуманный список жанров, за которым ничего нет.
 REF_DIR = os.environ.get("MUSIC_REF_DIR", "/data/references")
 
-# ─────────────────────────────── цены в очках ───────────────────────────────
-# Считаны по худшему для нас курсу очка (1.13 ¢, пакет p15000) — см. шапку
+# ────────────────────────────── цены в токенах ──────────────────────────────
+# Считаны по худшему для нас курсу токена (1.13 ¢, пакет p15000) — см. шапку
 # backend/audio_patch.md, там же полный расчёт.
 COST_MUSIC_PER_30S = int(os.environ.get("MUSIC_COST_PER_30S", "12"))
 COST_MASTER_LOCAL = int(os.environ.get("MUSIC_COST_MASTER", "6"))
@@ -216,6 +216,20 @@ async def _save_upload(file: UploadFile, dest_path: str, max_mb: float) -> int:
             pass
         raise
     return size
+
+
+def _drop_file(db: Session, fname: str) -> None:
+    """Убрать файл с диска И пометить строку архива удалённой.
+
+    Одного `_remove_media` мало: суточный проход архива переспрашивает диск
+    только у строк без размера, а у наших он проставлен. Без этой пометки
+    удалённый мастер остался бы в «Файлах» битой плиткой — вечно."""
+    if not fname:
+        return
+    _core()._remove_media(fname)
+    row = db.get(FileOwner, os.path.basename(fname))
+    if row is not None and row.deleted_at is None:
+        row.deleted_at = now()
 
 
 def _probe_duration(path: str) -> float:
@@ -521,16 +535,14 @@ async def update_track(track_id: int, request: Request,
 @router.delete("/api/music/tracks/{track_id}")
 def delete_track(track_id: int, user: User = Depends(current_user),
                  db: Session = Depends(db_session)):
-    """Мягкое удаление: строка остаётся ради истории очков, файлы уносим.
+    """Мягкое удаление: строка остаётся ради истории токенов, файлы уносим.
 
     Оригинал удаляем ПОСЛЕДНИМ и только вместе со всем остальным — «удалил
     релиз, а мастер остался жить в архиве» выглядит как утечка."""
     t = _own(db, user, track_id)
-    core = _core()
     for f in (t.master_filename, t.video_filename, t.package_filename,
               t.cover_filename, t.master_ref_filename, t.source_filename):
-        if f:
-            core._remove_media(f)
+        _drop_file(db, f)
     t.deleted_at = now()
     db.commit()
     return {"ok": True, "id": t.id}
@@ -724,9 +736,10 @@ def _run_master(track_id: int, engine: str, target: str, style: str,
         if owner and not core._take_points(db, owner, cost, f"мастеринг трека {track_id}",
                                            kind="audio", ref_type="music",
                                            ref_id=track_id, engine=res["engine"]):
-            log.warning("музыка %s: мастер готов, но очков на списание не хватило", track_id)
+            log.warning("музыка %s: мастер готов, но токенов на списание не хватило", track_id)
         if old:
-            core._remove_media(old)
+            _drop_file(db, old)
+            db.commit()
         log.info("музыка %s: мастер готов (%s, %s → %s LUFS)", track_id,
                  res["engine"], res["before"]["lufs"], res["after"]["lufs"])
     except Exception as e:  # noqa: BLE001
@@ -859,9 +872,9 @@ async def upload_cover(track_id: int, file: UploadFile | None = None,
     t.cover_filename, t.cover_w, t.cover_h = fname, w, h
     t.updated_at = now()
     core._reg_file(db, fname, user.id, kind="cover")
-    db.commit()
     if old:
-        core._remove_media(old)
+        _drop_file(db, old)
+    db.commit()
     return {"ok": True, "cover_url": _media(fname), "w": w, "h": h,
             "square": w == h, "target": COVER_TARGET, "min": COVER_MIN}
 
@@ -951,7 +964,9 @@ def _metadata_rows(t: MusicTrack) -> list:
         ("featuring", t.feat), ("genre", t.genre), ("language", t.language),
         ("release_date", t.release_date), ("isrc", t.isrc), ("upc", t.upc),
         ("explicit", "yes" if t.explicit else "no"),
-        ("ai_disclosure", t.ai_disclosure or "none"),
+        # Пустое поле — это «не сказано», а не «без ИИ». Подставить здесь
+        # «none» значило бы заявить дистрибьютору то, чего автор не заявлял.
+        ("ai_disclosure", t.ai_disclosure or "not_stated"),
         ("duration", f"{dur // 60}:{dur % 60:02d}"),
         ("bpm", str(t.bpm or "")),
         ("master_loudness_lufs", str(t.master_lufs or "")),
@@ -1034,9 +1049,9 @@ def build_package(track_id: int, user: User = Depends(current_user),
     t.package_filename = fname
     t.package_at = now()
     core._reg_file(db, fname, user.id, kind="other")
-    db.commit()
     if old:
-        core._remove_media(old)
+        _drop_file(db, old)
+    db.commit()
     return {"ok": True, "url": _media(fname), "filename": fname,
             "size": os.path.getsize(path), "has_master": bool(t.master_filename)}
 
@@ -1288,9 +1303,10 @@ def _run_video(track_id: int, shape: str, seconds: int, wave: bool,
         owner = db.get(User, owner_id) if owner_id else None
         if owner and not core._take_points(db, owner, cost, f"видео для соцсетей {track_id}",
                                            kind="video", ref_type="music", ref_id=track_id):
-            log.warning("музыка %s: видео готово, но очков на списание не хватило", track_id)
+            log.warning("музыка %s: видео готово, но токенов на списание не хватило", track_id)
         if old:
-            core._remove_media(old)
+            _drop_file(db, old)
+            db.commit()
         log.info("музыка %s: видео %sx%s собрано (%s с)", track_id, w, h, dur)
     except Exception as e:  # noqa: BLE001
         db.rollback()

@@ -4149,7 +4149,22 @@ function msTextModels(card, isFirst) {
   const tabs = $(".t-text-models", card);
   const note = $(".ms-text-note", card);
   tabs.innerHTML = "";
-  const chosen = textModels.chosen || textModels.current || "gateway";
+  // ПОДСВЕЧИВАЕМ ТО, ЧТО РЕАЛЬНО ПОЕДЕТ, а не то, что человек когда-то
+  // выбрал. Это не одно и то же: выбор хранится на проекте и переживает
+  // смену тарифа (стирать его при даунгрейде нельзя), поэтому у упавшего
+  // с PRO на FREE в проекте так и лежит claude-opus — а сервер уже
+  // опустил работу до шлюза и вернул это в current.
+  // Раньше здесь стояло `textModels.chosen || textModels.current`, и
+  // закрытый замком чип горел «выбран», а подпись обещала списать 32
+  // токена, которых никто не спишет. Ровно то враньё ярлыка, против
+  // которого написан textgen.py.
+  const chosen = textModels.current || "gateway";
+  // Выбор, до которого тариф не дотягивает, — не ошибка и не «сбросился»:
+  // он ждёт возврата на тариф. Но человек должен видеть, что пишет сейчас
+  // не он, иначе «я же выбрал Opus» превращается в претензию.
+  const dropped = textModels.chosen && textModels.chosen !== chosen
+    ? list.find((e) => e.id === textModels.chosen && e.locked)
+    : null;
   list.forEach((e) => {
     const chip = document.createElement("button");
     chip.type = "button";
@@ -4185,9 +4200,11 @@ function msTextModels(card, isFirst) {
     tabs.appendChild(chip);
   });
   const cur = list.find((e) => e.id === chosen);
-  note.textContent = cur && cur.points
+  note.textContent = (cur && cur.points
     ? t("textModel.paidNote", { n: tNum(cur.points) })
-    : t("textModel.freeNote");
+    : t("textModel.freeNote"))
+    + (dropped ? " " + t("textModel.droppedNote", {
+      model: dropped.title, plan: planTitle(dropped.min_plan) }) : "");
 }
 
 /* Подпись тарифа по его id — для замка «в PRO». Берём из словаря плана,

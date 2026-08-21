@@ -47,13 +47,13 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=61" />
-<link rel="stylesheet" href="/landing.css?v=61" />
-<link rel="stylesheet" href="/tg.css?v=61" />
+<link rel="stylesheet" href="/style.css?v=62" />
+<link rel="stylesheet" href="/landing.css?v=62" />
+<link rel="stylesheet" href="/tg.css?v=62" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=61" />
+<link rel="stylesheet" href="/music-studio.css?v=62" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -71,7 +71,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=61"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=62"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -1163,15 +1163,15 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=61"></script>
-<script src="/i18n.js?v=61"></script>
-<script src="/app.js?v=61"></script>
+<script src="/modes.js?v=62"></script>
+<script src="/i18n.js?v=62"></script>
+<script src="/app.js?v=62"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=61"></script>
+<script src="/music-studio.js?v=62"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=61"></script>
+<script src="/mode-menu.js?v=62"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1195,10 +1195,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=61";
+  css.href = "/nav.css?v=62";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=61";
+  js.src = "/nav.js?v=62";
   document.body.appendChild(js);
 })();
 </script>

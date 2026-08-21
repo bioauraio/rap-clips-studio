@@ -114,7 +114,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   font-family: var(--font-head); font-weight: 800; font-size: var(--fs-lg);
   letter-spacing: var(--ls-head); color: var(--text);
 }
-.ld-brand-word .brand-dot { color: var(--accent-2); }
+.ld-brand-word .brand-dot { color: var(--accent-2-ink); }
 
 .ld-menu { display: flex; align-items: center; gap: var(--s-1); margin-left: auto; }
 .ld-menu a {
@@ -137,7 +137,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .landing button:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
 .landing button.primary,
 .landing button.primary:hover:not(:disabled) {
-  color: var(--on-accent); background: var(--fire-ink);
+  color: var(--on-fire); background: var(--fire-ink);
   border-width: var(--bw-hero); box-shadow: var(--lift-3), var(--glow-cta);
 }
 .landing button.primary:hover:not(:disabled) { filter: brightness(1.06); }
@@ -362,7 +362,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   border-radius: var(--r-2); padding: var(--s-3) 0;
 }
 .ld-pay-note { margin: var(--s-4) 0 0; font-size: var(--fs-sm); color: var(--ink-muted); }
-.ld-pay-note.error { color: var(--danger); }
+.ld-pay-note.error { color: var(--danger-ink); }
 
 /* ────────── докупка очков: шкала ────────── */
 .ld-scale-box {
@@ -396,7 +396,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 }
 .landing .ld-ticks button:hover:not(:disabled) { background: rgba(45,33,26,.05); color: var(--text); }
 .landing .ld-ticks button.on { color: var(--accent-ink); font-weight: 700; background: var(--accent-wash); }
-.ld-tick-sub { font-size: 9px; letter-spacing: 0; opacity: .8; }
+.ld-tick-sub { font-size: var(--fs-meta); letter-spacing: 0; }
 
 .ld-readout {
   display: flex; flex-direction: column; gap: var(--s-2);
@@ -539,7 +539,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-6); align-items: baseline;
 }
 .landing .made-with {
-  position: static; margin-left: auto; opacity: .55; pointer-events: none;
+  position: static; margin-left: auto; pointer-events: none;
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: .12em;
   color: var(--ink-muted); text-shadow: none;
 }
@@ -610,7 +610,7 @@ body:has(#welcome:not(.hidden)) {
    (min-height 40px, офсет), которая иначе раздувает капсулу в шапке. */
 .landing .lang-switch {
   padding: 2px; border-radius: 999px; gap: 2px;
-  border: var(--bw-edge) solid var(--edge); background: var(--surface);
+  border: var(--bw-edge) solid var(--edge); background: var(--surface-2);
   box-shadow: var(--lift-1);
 }
 .landing .lang-switch button {
@@ -623,7 +623,8 @@ body:has(#welcome:not(.hidden)) {
 .landing .lang-switch button:active:not(:disabled) { transform: none; box-shadow: none; }
 .landing .lang-switch button.on,
 .landing .lang-switch button.on:hover:not(:disabled) {
-  color: var(--on-accent); background: var(--accent-ink);
+  background: var(--surface); color: var(--text); font-weight: 800;
+  border: var(--bw-edge) solid var(--edge); box-shadow: var(--lift-1);
 }
 .ld-foot-about .lang-switch { margin-top: var(--s-4); }
 

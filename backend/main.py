@@ -69,6 +69,25 @@ def db_session():
         session.close()
 
 
+def _err_text(e: BaseException, limit: int = 400) -> str:
+    """Человеческий текст ошибки, который НИКОГДА не пуст.
+
+    Прямой str(e) на это не годится: у httpx.ConnectTimeout и половины
+    сетевых исключений он равен пустой строке. А именно эти ошибки у нас
+    самые частые — шлюз на 172.18.0.1:8765 и движки картинок отваливаются
+    по таймауту. Пустой текст уезжал в scenes_error / restyle_note и далее
+    в карточку, и человек видел «ошибка» без единого слова о причине —
+    ровно тот молчаливый сбой, против которого написан весь остальной код.
+
+    Поэтому: сначала сообщение, а если его нет — имя класса исключения.
+    «ConnectTimeout» — плохая надпись, но она отвечает на вопрос «что
+    случилось», а пустая строка не отвечает ни на что."""
+    msg = str(e).strip()
+    if not msg:
+        msg = type(e).__name__
+    return msg[:limit]
+
+
 # ─────────────────── пользователи: пароли и сессии ───────────────────
 
 def _hash_password(password: str) -> str:
@@ -2384,7 +2403,7 @@ def _run_story_generation(project_id: int) -> None:
         project = db.get(Project, project_id)
         if project:
             project.story_status = "error"
-            project.story_error = str(e)[:500]
+            project.story_error = _err_text(e, 500)
             db.commit()
             _text_refund(db, project, engine, "возврат: сюжет не написался",
                          ref_type="project", ref_id=project.id)
@@ -2622,7 +2641,7 @@ def _run_series_bible(project_id: int, idea: str, episodes: int) -> None:
         log.info("библия сезона готова для проекта %s", project_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        _doc_status(project_id, _BIBLE_DOCS, "error", str(e)[:500])
+        _doc_status(project_id, _BIBLE_DOCS, "error", _err_text(e, 500))
         _text_refund(db, db.get(Project, project_id), engine,
                      "возврат: библия сезона не написалась")
         log.warning("библия сезона проекта %s упала: %s", project_id, e)
@@ -2656,7 +2675,7 @@ def _run_ugc_persona(project_id: int, idea: str) -> None:
         log.info("персона блогера готова для проекта %s", project_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        _doc_status(project_id, ("persona", "location"), "error", str(e)[:500])
+        _doc_status(project_id, ("persona", "location"), "error", _err_text(e, 500))
         _text_refund(db, db.get(Project, project_id), engine,
                      "возврат: блогер не собрался")
         log.warning("персона блогера проекта %s упала: %s", project_id, e)
@@ -2682,7 +2701,7 @@ def _run_mockup_brandbook(project_id: int, idea: str) -> None:
         log.info("фирменный мир готов для проекта %s", project_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        _doc_status(project_id, ("brandbook",), "error", str(e)[:500])
+        _doc_status(project_id, ("brandbook",), "error", _err_text(e, 500))
         _text_refund(db, db.get(Project, project_id), engine,
                      "возврат: фирменный мир не написался")
         log.warning("фирменный мир проекта %s упал: %s", project_id, e)
@@ -2776,7 +2795,7 @@ def _run_beatsheet(project_id: int, episodes: int) -> None:
         log.info("поэпизодный план готов для проекта %s (%s серий)", project_id, len(rows))
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        _doc_status(project_id, ("beatsheet",), "error", str(e)[:500])
+        _doc_status(project_id, ("beatsheet",), "error", _err_text(e, 500))
         _text_refund(db, db.get(Project, project_id), engine,
                      "возврат: поэпизодный план не написался")
         log.warning("поэпизодный план проекта %s упал: %s", project_id, e)
@@ -2915,10 +2934,10 @@ def _run_episode_script(track_id: int) -> None:
         db.rollback()
         tr = db.get(Track, track_id)
         if tr:
-            _doc_status(tr.project_id, ("script",), "error", str(e)[:500], track_id)
+            _doc_status(tr.project_id, ("script",), "error", _err_text(e, 500), track_id)
             _text_refund(db, tr.project, engine, "возврат: сценарий серии не написался",
                          ref_type="track", ref_id=tr.id)
-        log.warning("сценарий серии %s упал: %s", track_id, e)
+        log.warning("сценарий серии %s упал: %s", track_id, _err_text(e))
     finally:
         db.close()
 
@@ -3676,7 +3695,7 @@ def _run_scene_generation(track_id: int) -> None:
         track = db.get(Track, track_id)
         if track:
             track.scenes_status = "error"
-            track.scenes_error = str(e)[:500]
+            track.scenes_error = _err_text(e, 500)
             db.commit()
             _text_refund(db, track.project, engine,
                          "возврат: раскадровка не написалась",
@@ -3911,9 +3930,9 @@ def _run_storyboard(track_id: int) -> None:
         track = db.get(Track, track_id)
         if track:
             track.storyboard_status = "error"
-            track.storyboard_error = str(e)[:500]
+            track.storyboard_error = _err_text(e, 500)
             db.commit()
-        log.warning("лист раскадровки трека %s упал: %s", track_id, e)
+        log.warning("лист раскадровки трека %s упал: %s", track_id, _err_text(e))
     finally:
         db.close()
 
@@ -4611,7 +4630,7 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
         scene = db.get(Scene, scene_id)
         if scene:
             scene.image_status = "error"
-            scene.image_error = str(e)[:500]
+            scene.image_error = _err_text(e, 500)
             db.commit()
         log.warning("генерация кадров сцены %s упала: %s", scene_id, e)
     finally:
@@ -4768,7 +4787,7 @@ def _run_scene_video(scene_id: int) -> None:
         scene = db.get(Scene, scene_id)
         if scene:
             scene.video_status = "error"
-            scene.video_error = str(e)[:500]
+            scene.video_error = _err_text(e, 500)
             db.commit()
         log.warning("видео сцены %s упало: %s", scene_id, e)
     finally:
@@ -4857,7 +4876,7 @@ def _run_assemble(track_id: int) -> None:
         track = db.get(Track, track_id)
         if track:
             track.clip_status = "error"
-            track.clip_error = str(e)[:500]
+            track.clip_error = _err_text(e, 500)
             db.commit()
         log.warning("сборка клипа трека %s упала: %s", track_id, e)
     finally:
@@ -5052,7 +5071,7 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
         note(f"готово: клип собран из {total} сцен", "done")
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        note(f"супергенерация упала: {str(e)[:200]}", "error")
+        note(f"супергенерация упала: {_err_text(e, 200)}", "error")
         log.warning("супергенерация трека %s упала: %s", track_id, e)
     finally:
         db.close()
@@ -6002,7 +6021,7 @@ def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
         for sid in scene_ids:
             _run_scene_frames(sid, engine=engine, keep_version=keep_version)
     except Exception as e:  # noqa: BLE001
-        log.warning("пакет кадров трека %s упал: %s", track_id, e)
+        log.warning("пакет кадров трека %s упал: %s", track_id, _err_text(e))
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
@@ -6170,7 +6189,8 @@ async def restyle_quote(track_id: int, request: Request,
 
 def _run_restyle(track_id: int, scene_ids: list[int], img_engine: str,
                  with_video: bool, vid_engine: str, provider: str,
-                 need_prompts: bool, text_engine: str) -> None:
+                 need_prompts: bool, text_engine: str,
+                 frames_points: int = 0) -> None:
     """Очередь рестайла: переписать промпты (если надо) → кадры → видео.
 
     Последовательно, как _run_all_frames, и по той же причине: шлюзы
@@ -6185,8 +6205,43 @@ def _run_restyle(track_id: int, scene_ids: list[int], img_engine: str,
         track.restyle_note = f"0 из {total}"
         db.commit()
         if need_prompts:
-            _rewrite_scene_prompts(db, track, scene_ids, text_engine)
-            db.commit()
+            try:
+                _rewrite_scene_prompts(db, track, scene_ids, text_engine)
+                db.commit()
+            except Exception as e:  # noqa: BLE001
+                # Платный текстовый шаг не состоялся — возвращаем токены и
+                # останавливаемся. Перерисовывать кадры со старыми промптами
+                # нельзя: в кадр уедут два стиля сразу, и человек заплатит за
+                # ровно ту картинку, от которой уходил.
+                db.rollback()
+                _text_refund(db, track.project, text_engine,
+                             "возврат: промпты не переписались",
+                             ref_type="track", ref_id=track.id)
+                # И за кадры тоже: до движка картинок дело не дошло, ни один
+                # кадр не нарисован. Списание, за которым не последовало
+                # работы, — это не «цена попытки», это просто пропавшие
+                # деньги человека.
+                owner = (db.get(User, track.project.owner_id)
+                         if track.project.owner_id else None)
+                if owner and frames_points > 0:
+                    _refund(db, owner, frames_points,
+                            f"возврат: перерисовка трека {track.id} не началась",
+                            ref_type="track", ref_id=track.id,
+                            track_id=track.id, project_id=track.project_id)
+                todo = set(scene_ids)
+                for sc in track.scenes:
+                    if sc.id not in todo or sc.image_status != "queued":
+                        continue
+                    sc.image_status = ""
+                    if owner:
+                        # Счётчик оплаченного по сцене откатываем вместе с
+                        # деньгами: иначе следующая генерация решит, что
+                        # сцена уже оплачена, и мы отдадим её даром.
+                        sc.charged_points = max(
+                            0, int(sc.charged_points or 0)
+                            - _frames_cost(owner, sc, img_engine))
+                db.commit()
+                raise
         db.close()
         for i, sid in enumerate(scene_ids, start=1):
             _run_scene_frames(sid, engine=img_engine, keep_version=True)
@@ -6237,11 +6292,16 @@ def _run_restyle(track_id: int, scene_ids: list[int], img_engine: str,
             tr = db2.get(Track, track_id)
             if tr:
                 tr.restyle_status = "error"
-                tr.restyle_note = str(e)[:400]
+                tr.restyle_note = _err_text(e)
+                # Сцены, до которых очередь не дошла, не должны остаться в
+                # «queued» навсегда: иначе кнопка вечно показывает «рисую».
+                for sc in tr.scenes:
+                    if sc.id in set(scene_ids) and sc.image_status == "queued":
+                        sc.image_status = ""
                 db2.commit()
         finally:
             db2.close()
-        log.warning("рестайл трека %s упал: %s", track_id, e)
+        log.warning("рестайл трека %s упал: %s", track_id, _err_text(e))
     finally:
         try:
             db.close()
@@ -6366,7 +6426,8 @@ async def restyle_track(track_id: int, request: Request,
     Thread(target=_run_restyle,
            args=(track.id, scene_ids, img_engine, with_video,
                  plan["video"]["engine"], plan["video"]["provider"],
-                 bool(plan["prompts"]["needed"]), plan["prompts"]["engine"]),
+                 bool(plan["prompts"]["needed"]), plan["prompts"]["engine"],
+                 plan["frames"]["total"]),
            daemon=True).start()
     return {"ok": True, "queued": len(scene_ids), "plan": plan}
 

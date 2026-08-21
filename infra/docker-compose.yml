@@ -22,6 +22,12 @@ services:
       # не в докере) должен уметь ОТКРЫТЬ файл картинки по реальному пути.
       HOST_DATA_DIR: /opt/rapclips/data
       ORGANISM_UPLOADS_DIR: /organism-uploads
+      # Мост внешнего выхода организма для платных текстовых моделей:
+      # напрямую с этого адреса api.anthropic.com отвечает 403.
+      # Значение можно переопределить в infra/.env.
+      EGRESS_PROXY: ${EGRESS_PROXY:-socks5://172.18.0.1:1081}
+      # Файлы стилей из админки — в том, а не в образе.
+      STYLE_ASSETS_DIR: /data/styles
     ports:
       - "127.0.0.1:8930:8000"
     volumes:

@@ -255,10 +255,9 @@ body.glass-quiet .wb-next {
   font-size: 12.5px; font-weight: 800; letter-spacing: .18em;
   text-transform: uppercase;
   text-decoration: none;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--gold));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  color: var(--text);
 }
-.wb-brand b { font-size: 17px; -webkit-text-fill-color: initial; color: var(--accent); }
+.wb-brand b { font-size: 17px; -webkit-text-fill-color: initial; color: var(--accent-ink); }
 
 /* ── режимы: картонные пилюли внутри стекла ── */
 .wb-modes {
@@ -293,7 +292,7 @@ body.glass-quiet .wb-next {
 .wb-mode:focus-visible { outline: none; box-shadow: var(--glass-ring); }
 .wb-mode .wb-mode-ico { font-size: 15px; line-height: 1; }
 .wb-mode.on {
-  color: #fff;
+  color: var(--on-fire);
   background: var(--fire-ink);
   border-color: var(--edge);
   box-shadow: var(--lift-btn);
@@ -304,7 +303,7 @@ body.glass-quiet .wb-next {
   margin-left: 6px;
   font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--gold);
+  color: var(--gold-ink);
   vertical-align: 1px;
 }
 .wb-mode.on.is-soon .wb-mode-cap::after { color: rgba(255,255,255,.85); }
@@ -335,7 +334,7 @@ body.glass-quiet .wb-next {
 }
 .wb-plan {
   min-height: 36px; padding: 0 14px; border-radius: 999px;
-  color: #fff; border: 2px solid var(--edge);
+  color: var(--on-fire); border: 2px solid var(--edge);
   background: var(--fire-ink);
   box-shadow: var(--lift-btn-lg), 0 10px 24px rgba(255,90,40,.30);
   font-size: 12.5px; font-weight: 800; cursor: pointer;
@@ -446,7 +445,7 @@ body.glass-quiet .wb-next {
 .wb-stage:focus-visible { outline: none; box-shadow: var(--glass-ring); }
 .wb-stage:disabled { opacity: .40; cursor: not-allowed; }
 .wb-stage.on {
-  color: #fff;
+  color: var(--on-fire);
   background: var(--fire-ink);
   border-color: var(--edge);
   box-shadow: var(--lift-btn);
@@ -494,7 +493,7 @@ body.glass-quiet .wb-next {
   display: inline-flex; align-items: center; gap: 8px;
   min-height: 34px; padding: 0 13px;
   border-radius: 11px;
-  color: #fff; border: 2px solid var(--edge);
+  color: var(--on-fire); border: 2px solid var(--edge);
   background: var(--fire-ink);
   box-shadow: var(--lift-btn), 0 8px 20px rgba(255,90,40,.28);
   font-size: 12px; font-weight: 800; white-space: nowrap;
@@ -510,7 +509,7 @@ body.glass-quiet .wb-next {
   background: rgba(0,0,0,.20);
 }
 .wb-shelf-next.is-done {
-  background: none; color: var(--ok); border-color: var(--ok);
+  background: none; color: var(--ok-ink); border-color: var(--ok);
   box-shadow: 0 3px 0 rgba(20,160,107,.45);
 }
 .wb-shelf-next.is-busy { background: var(--gold); color: var(--edge); }
@@ -559,7 +558,7 @@ body.glass-quiet .wb-next {
 }
 .wb-obj:active { transform: translateY(2px); box-shadow: 0 0 0 var(--edge); }
 .wb-obj:focus-visible { outline: none; box-shadow: 0 2px 0 var(--edge), var(--glass-ring); }
-.wb-obj.on { color: #fff; background: var(--fire-ink); }
+.wb-obj.on { color: var(--on-fire); background: var(--fire-ink); }
 .wb-obj-cover {
   width: 22px; height: 22px; flex: none;
   border-radius: 5px; object-fit: cover;
@@ -690,7 +689,7 @@ body.glass-quiet .wb-next {
   cursor: pointer;
 }
 .wb-drawer-seg.on {
-  color: #fff; background: var(--fire-ink);
+  color: var(--on-fire); background: var(--fire-ink);
   border-color: var(--edge); box-shadow: var(--lift-btn);
 }
 
@@ -707,7 +706,7 @@ body.glass-quiet .wb-next {
 }
 .wb-drawer-new {
   width: 100%; margin-bottom: 12px; min-height: 40px;
-  color: #fff; border: 2px solid var(--edge);
+  color: var(--on-fire); border: 2px solid var(--edge);
   background: var(--fire-ink); box-shadow: var(--lift-btn-lg);
   font-weight: 800; border-radius: 12px; cursor: pointer;
 }
@@ -799,7 +798,7 @@ body.glass-quiet .wb-next {
   font-family: var(--font-mono); font-size: 9.5px;
   color: var(--ink-muted); text-transform: uppercase; letter-spacing: .08em;
 }
-.wb-pop-item.danger { color: var(--danger); }
+.wb-pop-item.danger { color: var(--danger-ink); }
 .wb-pop-sep { height: 1.5px; background: rgba(45,33,26,.14); margin: 6px 4px; }
 
 /* ──────────────── 9. ШТОРКА (мобильная) ──────────────── */
@@ -829,7 +828,7 @@ body.glass-quiet .wb-next {
 }
 .wb-sheet-title {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .2em;
-  text-transform: uppercase; color: var(--accent-2);
+  text-transform: uppercase; color: var(--accent-2-ink);
   margin: 0 0 12px; flex: none;
 }
 .wb-sheet-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
@@ -873,7 +872,7 @@ body.glass-quiet .wb-next {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .wb-dock-item.on {
-  color: #fff; background: var(--fire-ink);
+  color: var(--on-fire); background: var(--fire-ink);
   border-color: var(--edge); box-shadow: 0 2px 0 var(--edge);
 }
 .wb-dock-item:focus-visible { outline: none; box-shadow: var(--glass-ring); }
@@ -918,13 +917,13 @@ body.glass-quiet .wb-next {
 .wb-plan:hover:not(:disabled),
 .wb-drawer-new:hover:not(:disabled) {
   background: var(--fire-ink);
-  color: #fff;
+  color: var(--on-fire);
 }
-.wb-shelf-next:hover:not(:disabled) { background: var(--fire-ink); color: #fff; }
+.wb-shelf-next:hover:not(:disabled) { background: var(--fire-ink); color: var(--on-fire); }
 .wb-shelf-next.is-busy,
 .wb-shelf-next.is-busy:hover:not(:disabled) { background: var(--gold); color: var(--edge); }
 .wb-shelf-next.is-done,
-.wb-shelf-next.is-done:hover:not(:disabled) { background: none; color: var(--ok); }
+.wb-shelf-next.is-done:hover:not(:disabled) { background: none; color: var(--ok-ink); }
 
 .wb-mode:not(.on):hover:not(:disabled) { background: rgba(255,255,255,.62); color: var(--text); }
 .wb-dock-item:not(.on):hover:not(:disabled) { background: rgba(255,255,255,.55); color: var(--text); }

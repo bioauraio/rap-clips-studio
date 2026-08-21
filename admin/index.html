@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>lolq.ai — админка</title>
+<!-- Токены и примитивы берём из общей таблицы стилей студии: второй палитры
+     в сервисе быть не должно. Файл публичный (это витринная статика), а вот
+     admin.js ниже отдаёт только защищённый роут /admin/*. -->
+<link rel="stylesheet" href="/style.css?v=62" />
+<link rel="stylesheet" href="/admin/admin.css?v=62" />
+</head>
+<body class="adm-body">
+<div class="adm">
+  <aside class="adm-side">
+    <a class="adm-brand" href="/">lolq.ai</a>
+    <nav class="adm-nav"></nav>
+    <div class="adm-side-foot">
+      <span class="adm-who muted"></span>
+      <a class="adm-back" href="/">← в студию</a>
+    </div>
+  </aside>
+  <main class="adm-main">
+    <header class="adm-head">
+      <h1 class="adm-title"></h1>
+      <p class="adm-sub muted"></p>
+    </header>
+    <div class="adm-pane"></div>
+  </main>
+</div>
+<script src="/admin/admin.js?v=62"></script>
+</body>
+</html>
