@@ -4569,6 +4569,40 @@ function renderTrack(tr) {
   genBtn.title = scenesReady ? "" : scenesWhy;
   genBtn.addEventListener("click", () => genScenes(tr.id));
 
+  // ПОКРЫТИЕ ДОРОЖКИ. Раскадровка на 30 секунд при треке на две минуты —
+  // это не «так задумано», а недоработавшая модель. Показываем цифрой и
+  // даём дописать хвост, не трогая уже готовые кадры.
+  const cov = tr.coverage;
+  const covBox = $(".scenes-coverage", card);
+  if (covBox && cov && cov.total_sec) {
+    const short = !cov.full && cov.left_sec > 0 && (tr.scenes_count || 0) > 0;
+    covBox.classList.toggle("hidden", !short);
+    if (short) {
+      covBox.innerHTML = "";
+      const txt = document.createElement("span");
+      txt.className = "muted";
+      txt.textContent = t("track.coverageShort", {
+        covered: fmtTime(cov.covered_sec),
+        total: fmtTime(cov.total_sec),
+      });
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "primary";
+      btn.textContent = t("track.extendScenes", { n: cov.suggest });
+      btn.disabled = busy;
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/tracks/${tr.id}/scenes/extend`, {
+            method: "POST", body: { count: cov.suggest },
+          });
+        } catch (e) { fail(e); btn.disabled = false; return; }
+        await loadProject();
+      });
+      covBox.append(txt, btn);
+    }
+  }
+
   // ⚡ Супергенерация: весь конвейер одним нажатием (кнопка живёт в шапке).
   const superBtn = $(".s-supergen", card);
   const superBusy = ["queued", "running"].includes(tr.supergen_status);

@@ -271,7 +271,9 @@ const I18N = {
         note: "Logline, season arc, beat sheet, an act-by-act script for each episode.",
       },
       object: {
-        track: { one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
+        track: {
+      coverageShort: "Scenes cover {covered} of {total} — the rest of the track has no picture yet.",
+      extendScenes: "Add {n} more scenes", one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
                  save: "Save track", style: "Clip style", chars: "Album characters" },
         reel: { one: "video", many: "Videos", add: "+ add video", empty: "no videos yet",
                 save: "Save video", style: "Video style", chars: "Channel characters" },
@@ -2619,6 +2621,8 @@ const I18N = {
     },
 
     track: {
+      coverageShort: "Кадры покрывают {covered} из {total} — остаток трека пока без картинки.",
+      extendScenes: "Дописать ещё {n} кадров",
       coverTitle: "обложка трека — клик, чтобы заменить",
       titlePh: "Название",
       supergen: "⚡ Супергенерация",

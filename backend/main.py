@@ -1984,6 +1984,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "audio_duration_sec": t.audio_duration_sec,
         "scenes_status": t.scenes_status, "scenes_error": t.scenes_error,
         "scenes_count": len(t.scenes),
+        "coverage": _scenes_coverage(t),
         "approved_count": sum(1 for s in t.scenes if s.approved),
         "storyboard_url": f"/api/media/{t.storyboard_filename}" if t.storyboard_filename else "",
         "storyboard_status": t.storyboard_status, "storyboard_error": t.storyboard_error,
@@ -2330,6 +2331,7 @@ def project_status(project_id: int | None = None, user: User = Depends(current_u
             "restyle_status": t.restyle_status or "",
             "restyle_note": t.restyle_note or "",
             "scenes_count": len(t.scenes),
+            "coverage": _scenes_coverage(t),
             "approved_count": sum(1 for s in t.scenes if s.approved),
             "scenes": [{
                 "id": s.id,
@@ -3503,6 +3505,30 @@ def _track_duration(track: Track) -> int:
     mode = _mode_of(track.project)
     lo, hi = mode["scenes"]["slot"]
     return int(mode["scenes"]["typ"] * (lo + hi) / 2)
+
+
+def _scenes_coverage(track: Track) -> dict:
+    """Сколько секунд трека реально покрыто раскадровкой.
+
+    Частая и незаметная беда: дорожка на две минуты, а сцен сгенерировалось
+    на тридцать секунд — модель отдала меньше, чем просили, или человек
+    удалил лишние. Клип при этом собирается коротким, и понять почему
+    неоткуда. Считаем честно и отдаём наверх."""
+    total = int(_track_duration(track) or 0)
+    covered = sum(int(s.duration_sec or 0) for s in track.scenes)
+    left = max(0, total - covered)
+    # Средняя длина сцены этого объекта — по ней прикидываем, сколько ещё нужно.
+    mode = _mode_of(track.project)
+    lo, hi = mode["scenes"]["slot"]
+    slot = max(1, int(round((lo + hi) / 2)))
+    return {
+        "total_sec": total,
+        "covered_sec": covered,
+        "left_sec": left,
+        "slot_sec": slot,
+        "suggest": int(-(-left // slot)) if left > 0 else 0,
+        "full": left <= max(2, slot // 2),
+    }
 
 
 def _episode_previously(db: Session, track: Track) -> str:
@@ -6025,6 +6051,96 @@ def _renumber_scenes(track: Track) -> None:
         s.position = i
         s.start_sec = cursor
         cursor += s.duration_sec
+
+
+@app.post("/api/tracks/{track_id}/scenes/extend")
+async def extend_scenes(track_id: int, request: Request,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    """Дописать раскадровку до конца дорожки.
+
+    Дорожка на две минуты, а сцен на тридцать секунд — модель отдала меньше,
+    чем просили, или лишние удалили руками. Клип собирался коротким, и понять
+    причину было неоткуда. Здесь досочиняем НЕДОСТАЮЩИЙ хвост: существующие
+    сцены не трогаем, генерируем только то, что не покрыто, и ставим в конец.
+
+    body: {"count": N} — сколько сцен добавить; не передан = сколько нужно
+    до конца дорожки."""
+    track = _own_track(db, user, track_id)
+    body = await request.json() if await request.body() else {}
+    cov = _scenes_coverage(track)
+    want = int(body.get("count") or 0) or cov["suggest"]
+    if want <= 0:
+        raise HTTPException(400, "раскадровка уже покрывает всю дорожку")
+    want = max(1, min(40, want))
+    if track.scenes_status in ("queued", "running"):
+        raise HTTPException(409, "раскадровка уже собирается")
+    track.scenes_status = "queued"
+    track.scenes_error = ""
+    db.commit()
+    from threading import Thread
+    Thread(target=_run_scenes_extend, args=(track_id, want), daemon=True).start()
+    return {"ok": True, "queued": want, "coverage": cov}
+
+
+def _run_scenes_extend(track_id: int, count: int) -> None:
+    """Досочинение хвоста раскадровки. Уже готовые сцены не трогаем."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        track.scenes_status = "running"
+        db.commit()
+        engine = _text_engine_for(db, track.project, track)
+        existing = sorted(track.scenes, key=lambda s: s.position)
+        tail = [{
+            "position": s.position, "shot_note": s.shot_note,
+            "lyric_line": s.lyric_line, "characters": s.characters,
+        } for s in existing[-6:]]
+        cov = _scenes_coverage(track)
+        import asyncio
+        result = asyncio.run(claude.extend_scenes(
+            style=track.style, story=track.project.story or "",
+            characters=characters_payload(track.project),
+            existing_tail=tail, count=count,
+            seconds_left=cov["left_sec"], slot=cov["slot_sec"],
+            lyrics=track.lyrics or "", comment=track.comment or "",
+            engine=engine,
+        ))
+        pos = max((s.position for s in track.scenes), default=0)
+        start = sum(int(s.duration_sec or 0) for s in track.scenes)
+        for sc in (result.get("scenes") or [])[:count]:
+            pos += 1
+            dur = max(2, min(12, int(sc.get("duration_sec") or cov["slot_sec"])))
+            db.add(Scene(
+                track_id=track.id, position=pos, duration_sec=dur,
+                lyric_line=str(sc.get("lyric_line") or ""),
+                characters=str(sc.get("characters") or ""),
+                shot_size=str(sc.get("shot_size") or ""),
+                camera_move=str(sc.get("camera_move") or ""),
+                shot_note=str(sc.get("shot_note") or ""),
+                image_prompt=str(sc.get("image_prompt") or ""),
+                image_prompt_last=str(sc.get("image_prompt_last") or ""),
+                motion_prompt=str(sc.get("motion_prompt") or ""),
+                video_provider="seedance" if mediagen.seedance_available() else "grok",
+            ))
+            start += dur
+        # Лист раскадровки собран под прежний набор — помечаем устаревшим.
+        if track.storyboard_filename:
+            track.storyboard_grid = ""
+        track.scenes_status = "done"
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — причину показываем в карточке
+        db.rollback()
+        tr = db.get(Track, track_id)
+        if tr:
+            tr.scenes_status = "error"
+            tr.scenes_error = str(e)[:400]
+            db.commit()
+        log.warning("дописать раскадровку не вышло: %s", e)
+    finally:
+        db.close()
 
 
 @app.post("/api/tracks/{track_id}/scenes")
