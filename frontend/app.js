@@ -5065,6 +5065,26 @@ function renderScene(s, audioEl, mode = "board") {
   $(".s-lyric", card).value = s.lyric_line;
   $(".s-note", card).value = s.shot_note;
   $(".s-image", card).value = s.image_prompt;
+
+  // Написать промпт кадра по контексту раскадровки. Нужна прежде всего для
+  // кадров, добавленных руками: у них поля пустые, и видео на них падало.
+  const genPromptBtn = $(".s-gen-prompt", card);
+  if (genPromptBtn) {
+    genPromptBtn.addEventListener("click", async () => {
+      const was = genPromptBtn.textContent;
+      genPromptBtn.disabled = true;
+      genPromptBtn.textContent = t("scene.genPromptBusy") || "пишу…";
+      try {
+        await api(`/api/scenes/${s.id}/generate-prompt`, { method: "POST" });
+      } catch (e) {
+        fail(e);
+        genPromptBtn.textContent = was;
+        genPromptBtn.disabled = false;
+        return;
+      }
+      await loadProject();
+    });
+  }
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));

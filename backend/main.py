@@ -4360,6 +4360,7 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
 @app.post("/api/tracks/{track_id}/generate-storyboard")
 def generate_storyboard(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку трека")
@@ -5232,6 +5233,7 @@ def _run_midframes(scene_id: int) -> None:
 @app.post("/api/scenes/{scene_id}/generate-midframes")
 def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     scene = _own_scene(db, user, scene_id)
     total = _midframe_count(scene.duration_sec)
     if total <= 0:
@@ -5348,6 +5350,7 @@ def _run_scene_video(scene_id: int) -> None:
 @app.post("/api/scenes/{scene_id}/generate-video")
 async def generate_scene_video(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     scene = _own_scene(db, user, scene_id)
     if not scene.image_filename:
         raise HTTPException(400, "сначала сгенерируй кадры сцены")
@@ -5449,6 +5452,7 @@ def _run_assemble(track_id: int) -> None:
 @app.post("/api/tracks/{track_id}/assemble")
 def assemble_track_clip(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     track = _own_track(db, user, track_id)
     approved = [s for s in track.scenes if s.approved and s.video_filename]
     if not approved:
@@ -5643,6 +5647,7 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
 @app.post("/api/tracks/{track_id}/supergen")
 def supergen(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     track = _own_track(db, user, track_id)
     catalog = _catalog_of(track.project)
     # Дорожка обязательна только там, где она ЗАДАЁТ ритм. У ролика и серии
@@ -6642,6 +6647,48 @@ def _run_scenes_extend(track_id: int, count: int) -> None:
         log.warning("дописать раскадровку не вышло: %s", e)
     finally:
         db.close()
+
+
+@app.post("/api/scenes/{scene_id}/generate-prompt")
+async def generate_scene_prompt(scene_id: int, user: User = Depends(current_user),
+                                db: Session = Depends(db_session)):
+    """Дописать промпты одного кадра по контексту раскадровки.
+
+    Кадр, добавленный руками, приходит с пустыми полями: генерация видео на нём
+    падала («input.prompt is required»), а кадры выходили случайными. Здесь
+    модель видит стиль, сюжет, героев и соседние кадры и пишет ровно этот кадр,
+    не трогая остальные."""
+    scene = _own_scene(db, user, scene_id)
+    track = scene.track
+    project = track.project
+    near = [
+        {"position": x.position, "shot_note": x.shot_note, "image_prompt": x.image_prompt}
+        for x in sorted(track.scenes, key=lambda y: y.position)
+        if abs(x.position - scene.position) <= 2 and x.id != scene.id
+    ]
+    import asyncio
+    try:
+        res = asyncio.run(claude.generate_scene_prompt(
+            style=track.style, story=project.story or "",
+            characters=characters_payload(project), neighbours=near,
+            scene={
+                "position": scene.position, "duration_sec": scene.duration_sec,
+                "shot_size": scene.shot_size, "camera_move": scene.camera_move,
+                "characters": scene.characters, "shot_note": scene.shot_note,
+            },
+            lyrics_line=scene.lyric_line or "", comment=track.comment or "",
+            engine=_text_engine_for(db, project, track),
+        ))
+    except Exception as e:  # noqa: BLE001 — причину показываем в карточке
+        raise HTTPException(502, f"не вышло написать промпт: {str(e)[:200]}")
+    scene.image_prompt = str(res.get("image_prompt") or "").strip() or scene.image_prompt
+    scene.image_prompt_last = str(res.get("image_prompt_last") or "").strip() or scene.image_prompt_last
+    scene.motion_prompt = str(res.get("motion_prompt") or "").strip() or scene.motion_prompt
+    if not (scene.shot_note or "").strip():
+        scene.shot_note = str(res.get("shot_note") or "").strip()
+    db.commit()
+    db.refresh(scene)
+    return scene_dict(scene)
 
 
 @app.post("/api/tracks/{track_id}/scenes")
@@ -7839,6 +7886,7 @@ def _version_dict(v: SceneVersion) -> dict:
     return {
         "id": v.id, "scene_id": v.scene_id,
         "at": (_as_utc(v.created_at) or now()).isoformat(),
+        "kind": v.kind or "frames",
         "style_keys": [k for k in (v.style_keys or "").split(",") if k],
         "style_label": v.style_label or "",
         "image_url": f"/api/media/{v.image_filename}" if v.image_filename else "",
@@ -7847,7 +7895,16 @@ def _version_dict(v: SceneVersion) -> dict:
         "image_last_thumb_url": (f"/api/thumb/{v.image_last_filename}"
                                  if v.image_last_filename else ""),
         "video_url": f"/api/media/{v.video_filename}" if v.video_filename else "",
+        # ПОСТЕР, А НЕ <video>. Тяжёлые файлы в сетке браузер просто
+        # перестаёт грузить, упершись в лимит одновременных медиа, — это
+        # уже проходили на архиве файлов.
+        "video_poster_url": (f"/api/thumb/{v.video_filename}"
+                             if v.video_filename else ""),
         "image_engine": v.image_engine or "", "video_engine": v.video_engine or "",
+        "cost_points": int(v.cost_points or 0),
+        "bytes": int(v.bytes or 0),
+        "pinned": bool(v.pinned),
+        "project_id": int(v.project_id or 0), "track_id": int(v.track_id or 0),
         "note": v.note or "",
     }
 
@@ -7860,19 +7917,121 @@ def scene_versions(scene_id: int, user: User = Depends(current_user),
             .filter(SceneVersion.scene_id == scene.id)
             .order_by(SceneVersion.id.desc()).all())
     return {"versions": [_version_dict(v) for v in rows],
-            "keep": SCENE_VERSIONS_KEEP}
+            "keep": _versions_keep(user), "days": _versions_days(user),
+            "plan": _plan_of(user)}
 
 
-@app.post("/api/scenes/{scene_id}/versions/{version_id}/restore")
-def restore_scene_version(scene_id: int, version_id: int,
-                          user: User = Depends(current_user),
-                          db: Session = Depends(db_session)):
-    """Вернуть кадры из снимка. Это ОБМЕН, а не перезапись: нынешние кадры
-    сами становятся версией, поэтому откат откатывается."""
+@app.post("/api/scenes/{scene_id}/versions/{version_id}/pin")
+async def pin_scene_version(scene_id: int, version_id: int, request: Request,
+                            user: User = Depends(current_user),
+                            db: Session = Depends(db_session)):
+    """Закрепить вариант: ретенция его не вытеснит и срок его не тронет.
+
+    Место в квоте он при этом занимает — «не удаляйте это» законное
+    желание, «храните вечно и бесплатно» уже нет."""
     scene = _own_scene(db, user, scene_id)
     ver = db.get(SceneVersion, version_id)
     if not ver or ver.scene_id != scene.id:
         raise HTTPException(404, "версия не найдена")
+    body = await request.json() if await request.body() else {}
+    ver.pinned = bool(body.get("pinned", not ver.pinned))
+    db.commit()
+    return {"ok": True, "pinned": bool(ver.pinned)}
+
+
+# ─────────────── история вариантов КРЕАТОРА (лента кабинета) ───────────────
+
+@app.get("/api/account/versions")
+def account_versions(project_id: int = 0, track_id: int = 0, kind: str = "",
+                     pinned: int = 0, cursor: str = "", limit: int = 60,
+                     user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Все варианты, сделанные ЭТИМ человеком, — лентой по времени.
+
+    Курсорная пагинация по паре (дата, id), как в архиве файлов: пока
+    человек листает, генерации продолжают писать новые варианты, и OFFSET
+    начал бы повторять и пропускать строки.
+
+    Денормализованные user_id/project_id/track_id в scene_versions нужны
+    ровно здесь: без них каждая плитка требовала бы join'а до проекта."""
+    limit = max(1, min(200, int(limit or 60)))
+    q = db.query(SceneVersion).filter(SceneVersion.user_id == user.id)
+    if project_id:
+        q = q.filter(SceneVersion.project_id == int(project_id))
+    if track_id:
+        q = q.filter(SceneVersion.track_id == int(track_id))
+    if kind:
+        q = q.filter(SceneVersion.kind.in_([k for k in kind.split(",") if k]))
+    if pinned:
+        q = q.filter(SceneVersion.pinned.is_(True))
+    totals = q.with_entities(func.count(SceneVersion.id),
+                             func.coalesce(func.sum(SceneVersion.bytes), 0)).first()
+    if cursor:
+        c_at, _, c_id = cursor.partition("|")
+        dt = _as_utc(_parse_iso(c_at))
+        if dt:
+            q = q.filter((SceneVersion.created_at < dt)
+                         | ((SceneVersion.created_at == dt)
+                            & (SceneVersion.id < int(c_id or 0))))
+    rows = (q.order_by(SceneVersion.created_at.desc(), SceneVersion.id.desc())
+            .limit(limit + 1).all())
+    more = len(rows) > limit
+    rows = rows[:limit]
+    nxt = ""
+    if more and rows:
+        last = rows[-1]
+        nxt = f"{(_as_utc(last.created_at) or now()).isoformat()}|{last.id}"
+    # Позиция кадра — чтобы плитка называлась «кадр 7», а не «сцена 412».
+    sids = {r.scene_id for r in rows}
+    pos = {sid: p for sid, p in db.query(Scene.id, Scene.position)
+           .filter(Scene.id.in_(sids)).all()} if sids else {}
+    items = []
+    for r in rows:
+        d = _version_dict(r)
+        d["scene_position"] = int(pos.get(r.scene_id) or 0)
+        items.append(d)
+    return {
+        "items": items, "next_cursor": nxt,
+        "totals": {"count": int(totals[0] or 0), "bytes": int(totals[1] or 0)},
+        "keep": _versions_keep(user), "days": _versions_days(user),
+        "kinds": ["frames", "video", "restyle", "midframes", "extend", "manual"],
+        "projects": [{"id": p.id, "name": p.name, "kind": p.kind}
+                     for p in db.query(Project).filter(Project.owner_id == user.id)
+                     .order_by(Project.id.desc()).limit(100).all()],
+    }
+
+
+@app.post("/api/scenes/{scene_id}/versions/{version_id}/restore")
+def restore_scene_version(scene_id: int, version_id: int, only: str = "all",
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """Вернуть вариант в сцену. Это ОБМЕН, а не перезапись: нынешнее
+    состояние само становится вариантом, поэтому откат откатывается.
+
+    only=video — вернуть ТОЛЬКО видео. Без этого возврат дубля видео тащил
+    бы за собой и кадры, к которым он был снят, — а человек, скорее всего,
+    хочет обратно именно тот дубль, оставив нынешние кадры на месте."""
+    scene = _own_scene(db, user, scene_id)
+    ver = db.get(SceneVersion, version_id)
+    if not ver or ver.scene_id != scene.id:
+        raise HTTPException(404, "версия не найдена")
+    if only == "video":
+        if not ver.video_filename:
+            raise HTTPException(400, "в этом варианте нет видео")
+        cur_video, cur_audio = scene.video_filename, scene.audio_filename
+        cur_engine = scene.video_engine or ""
+        scene.video_filename = ver.video_filename
+        scene.audio_filename = ver.audio_filename or scene.audio_filename
+        scene.video_engine = ver.video_engine or scene.video_engine
+        scene.video_status = "done"
+        scene.video_error = ""
+        scene.video_stale = False
+        scene.approved = False
+        ver.video_filename, ver.audio_filename = cur_video, cur_audio
+        ver.video_engine = cur_engine
+        db.commit()
+        db.refresh(scene)
+        return scene_dict(scene)
     cur = {
         "image_filename": scene.image_filename,
         "image_last_filename": scene.image_last_filename,
@@ -7904,8 +8063,9 @@ def restore_scene_version(scene_id: int, version_id: int,
     scene.approved = False
     # Промежуточные кадры относились к ТОЙ паре, которой больше нет.
     for m in _midframes(scene):
-        _remove_media(m.get("filename", ""))
+        _remove_media(m.get("filename", ""), db)
     scene.midframes_json = ""
+    scene.video_stale = False
     ver.image_filename = cur["image_filename"]
     ver.image_last_filename = cur["image_last_filename"]
     ver.image_prompt = cur["image_prompt"]
@@ -7948,6 +8108,7 @@ def generate_all_videos(track_id: int, provider: str = "", engine: str = "",
                         user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     track = _own_track(db, user, track_id)
     todo = [s for s in track.scenes if s.image_filename and not s.video_filename]
     if not todo:
@@ -9587,6 +9748,29 @@ def _file_in_use(db: Session, fname: str) -> str:
     return ""
 
 
+def _storage_used_bytes(db: Session, user_id: int) -> int:
+    """Сколько человек реально занимает на диске.
+
+    Группировка по phys_key обязательна: копия проекта — это жёсткие
+    ссылки, у одного куска диска несколько имён и несколько строк. Сумма
+    size_bytes «в лоб» посчитала бы копию второй раз, и человек упёрся бы в
+    квоту, не заняв ни байта. Легаси-строки без phys_key считаем по имени —
+    для них это ровно прежнее поведение."""
+    from sqlalchemy import text as _sqltext
+    try:
+        row = db.execute(_sqltext(
+            "SELECT COALESCE(SUM(sz), 0) FROM ("
+            "  SELECT MAX(size_bytes) AS sz FROM file_owners"
+            "  WHERE user_id = :u AND deleted_at IS NULL"
+            "  GROUP BY CASE WHEN phys_key = '' OR phys_key IS NULL"
+            "                THEN filename ELSE phys_key END)"),
+            {"u": int(user_id)}).first()
+        return int((row or [0])[0] or 0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("квота диска: не посчиталась (%s)", str(e)[:150])
+        return 0
+
+
 @app.get("/api/files")
 def list_files(kind: str = "", project_id: int = 0, track_id: int = 0,
                days: int = 0, sort: str = "date", cursor: str = "",
@@ -9650,12 +9834,22 @@ def list_files(kind: str = "", project_id: int = 0, track_id: int = 0,
     projects = [{"id": p.id, "name": p.name, "kind": p.kind}
                 for p in db.query(Project).filter(Project.owner_id == owner_id)
                 .order_by(Project.id.desc()).limit(100).all()]
+    owner = db.get(User, owner_id) if owner_id != user.id else user
+    used = _storage_used_bytes(db, owner_id)
+    quota = _storage_quota_bytes(owner)
     return {
         "items": [_file_dict(f) for f in rows],
         "next_cursor": nxt,
         "totals": {"count": sum(r["count"] for r in by_kind),
                    "bytes": sum(r["bytes"] for r in by_kind),
                    "by_kind": sorted(by_kind, key=lambda r: -r["bytes"])},
+        # МЕСТО. Показываем честно и по физическим файлам: «занято 1.2 из 15
+        # ГБ» объясняет, почему копировать проекты можно смело (копия не
+        # занимает ничего), и заранее говорит, когда пора прибираться.
+        "quota": {"used_bytes": used, "limit_bytes": quota,
+                  "pct": round(100.0 * used / quota, 1) if quota else 0.0,
+                  "plan": _plan_of(owner) if owner else "free",
+                  "clip_keep_days": CLIP_KEEP_DAYS},
         "projects": projects,
         "kinds": list(FILE_KINDS),
     }

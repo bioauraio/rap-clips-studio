@@ -2836,3 +2836,8 @@ details.s-engine-override { border-top: 1px dashed rgba(45,33,26,.14); padding-t
   font-size: 12.5px;
 }
 .scenes-coverage button { flex: none; font-size: 12px; padding: 6px 12px; }
+
+/* «Написать промпт» — вторичное действие внутри раскрытого промпта кадра. */
+.s-gen-prompt {
+  margin-top: 6px; font-size: 11.5px; padding: 5px 10px;
+}

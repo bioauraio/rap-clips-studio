@@ -47,13 +47,13 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=63" />
-<link rel="stylesheet" href="/landing.css?v=63" />
-<link rel="stylesheet" href="/tg.css?v=63" />
+<link rel="stylesheet" href="/style.css?v=64" />
+<link rel="stylesheet" href="/landing.css?v=64" />
+<link rel="stylesheet" href="/tg.css?v=64" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=63" />
+<link rel="stylesheet" href="/music-studio.css?v=64" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -71,7 +71,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=63"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=64"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -352,6 +352,10 @@
       <button type="button" id="project-mode" class="mode-badge mode-switch hidden"
               aria-haspopup="dialog" aria-expanded="false"
               data-i18n-title="modes.menu.title"></button>
+      <!-- Копия проекта. Стоит рядом с «новым проектом» намеренно: копия —
+           это тоже способ завести проект, только начиная не с нуля. -->
+      <button type="button" id="copy-project-btn" class="tb-copy ghost"
+              data-i18n-title="copy.projectTitle">⧉</button>
       <button id="new-project-btn" class="tb-new" data-i18n="top.newProject"></button>
     </div>
     <!-- Лента режимов. Стоит между проектом и правым краем: тумблер отвечает
@@ -608,6 +612,7 @@
       <div class="order-btns">
         <button class="up ghost" data-i18n-title="common.moveUp">↑</button>
         <button class="down ghost" data-i18n-title="common.moveDown">↓</button>
+        <button class="t-copy ghost" data-i18n-title="copy.trackTitle">⧉</button>
         <button class="del ghost danger" data-i18n-title="track.delTitle">✕</button>
       </div>
     </div>
@@ -843,6 +848,9 @@
               <span class="sb-empty muted" data-i18n="track.sheetEmpty"></span>
             </div>
           </div>
+          <!-- Лист нарисован под другое число кадров: резать его нельзя,
+               куски поедут мимо панелей. Говорим об этом у самого листа. -->
+          <p class="sb-stale warn hidden"></p>
         </div>
         <!-- Кадры идут лентой: под музыку с подсветкой текущего кадра
              горизонтальная прокрутка удобнее, а переключатель вида владелец
@@ -998,6 +1006,8 @@
       <span class="s-time"></span>
       <span class="s-act"></span>
       <span class="s-speaker"></span>
+      <button class="s-extend ghost board-only" data-i18n-title="extend.title">⟶</button>
+      <button class="s-copy ghost board-only" data-i18n-title="copy.sceneTitle">⧉</button>
       <button class="s-edit-toggle ghost board-only" data-i18n-title="scene.editTitle">✎</button>
       <button class="s-del ghost danger board-only" data-i18n-title="scene.delTitle">✕</button>
     </div>
@@ -1039,6 +1049,10 @@
           <details class="s-prompt-details">
             <summary data-i18n="scene.prompt"></summary>
             <textarea class="s-image" rows="4" data-i18n-title="scene.promptTitle"></textarea>
+            <!-- Кадр, добавленный руками, приходит пустым: пусть модель напишет
+                 его по сюжету, стилю и соседним кадрам. -->
+            <button type="button" class="s-gen-prompt" data-i18n="scene.genPrompt"
+                    data-i18n-title="scene.genPromptTitle"></button>
           </details>
         </div>
       </div>
@@ -1165,15 +1179,15 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=63"></script>
-<script src="/i18n.js?v=63"></script>
-<script src="/app.js?v=63"></script>
+<script src="/modes.js?v=64"></script>
+<script src="/i18n.js?v=64"></script>
+<script src="/app.js?v=64"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=63"></script>
+<script src="/music-studio.js?v=64"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=63"></script>
+<script src="/mode-menu.js?v=64"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1197,10 +1211,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=63";
+  css.href = "/nav.css?v=64";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=63";
+  js.src = "/nav.js?v=64";
   document.body.appendChild(js);
 })();
 </script>

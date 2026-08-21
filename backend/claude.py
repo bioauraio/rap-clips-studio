@@ -304,6 +304,62 @@ async def generate_storyboard_sheet_prompt(
     return await _ask(prompt, STORYBOARD_SHEET_SYSTEM, engine)
 
 
+SCENE_PROMPT_SYSTEM = """Ты — режиссёр-постановщик. Тебе дают ОДИН кадр из уже
+существующей раскадровки и весь её контекст: стиль, сюжет, героев, соседние кадры,
+строку текста. Твоя задача — написать для этого кадра три поля.
+
+Верни СТРОГО JSON без пояснений:
+{"image_prompt":"...","image_prompt_last":"...","motion_prompt":"...","shot_note":"..."}
+
+image_prompt — первый кадр сцены: что мы видим в первый момент. По-английски,
+подробно: кто в кадре, где, что делает, крупность, ракурс, свет по смыслу сцены.
+Стиль НЕ описывай — его подставляет рендер, и дублирование ломает картинку.
+
+image_prompt_last — последний кадр той же сцены: ДРУГАЯ фаза того же действия
+(замах → удар, разгон → прыжок, вход → поворот). Не другая сцена и не тот же кадр
+другими словами: между первым и последним должно быть видимое движение, из него
+движок и строит анимацию.
+
+motion_prompt — что происходит МЕЖДУ этими кадрами: движение героя, движение
+камеры, физика (вес, инерция, дым, ткань). По-английски, одна-две фразы.
+
+shot_note — короткий русский заголовок кадра для человека (3-6 слов).
+
+ПРАВИЛА: кадр обязан продолжать соседние по смыслу и не повторять их; герои
+названы теми же именами, что в контексте; никаких надписей и текста в кадре."""
+
+
+async def generate_scene_prompt(
+    *, style: str, story: str, characters: list[dict] | None,
+    neighbours: list[dict], scene: dict, lyrics_line: str = "",
+    comment: str = "", engine: str = "",
+) -> dict:
+    """Промпты для ОДНОГО кадра по контексту раскадровки.
+
+    Нужна для кадров, добавленных руками: у них поля пустые, и генерация
+    либо падала («input.prompt is required»), либо рисовала случайное."""
+    chars = _characters_block(characters or [])
+    near = "\n".join(
+        f"  {n['position']}. {n.get('shot_note') or ''} — {(n.get('image_prompt') or '')[:160]}"
+        for n in neighbours
+    ) or "  (соседних кадров нет)"
+    prompt = (
+        (chars + "\n\n" if chars else "")
+        + (f"Сюжет клипа:\n{story}\n\n" if (story or "").strip() else "")
+        + f"Стиль ролика (для понимания мира, в промпт его НЕ переписывай):\n{style}\n\n"
+        + f"Соседние кадры:\n{near}\n\n"
+        + f"ЭТОТ КАДР — позиция {scene.get('position')}, длительность "
+          f"{scene.get('duration_sec')} сек.\n"
+        + (f"Крупность: {scene['shot_size']}\n" if scene.get("shot_size") else "")
+        + (f"Движение камеры: {scene['camera_move']}\n" if scene.get("camera_move") else "")
+        + (f"В кадре: {scene['characters']}\n" if scene.get("characters") else "")
+        + (f"Заметка режиссёра: {scene['shot_note']}\n" if scene.get("shot_note") else "")
+        + (f"Строка текста на этом кадре: {lyrics_line}\n" if (lyrics_line or "").strip() else "")
+        + (f"Комментарий автора к ролику: {comment}\n" if (comment or "").strip() else "")
+    )
+    return await _ask(prompt, SCENE_PROMPT_SYSTEM, engine)
+
+
 async def extend_scenes(
     *, style: str, story: str, characters: list[dict] | None,
     existing_tail: list[dict], count: int, seconds_left: int, slot: int,

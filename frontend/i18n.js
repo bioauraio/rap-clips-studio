@@ -745,6 +745,9 @@ const I18N = {
     },
 
     scene: {
+      genPrompt: "Write the prompt",
+      genPromptTitle: "Model writes this shot from the story, style and neighbouring shots",
+      genPromptBusy: "writing…",
       pos: "Scene {n}",
       modalTitle: "Scene {n}",
       playTitle: "play this scene",
@@ -2691,6 +2694,9 @@ const I18N = {
     },
 
     scene: {
+      genPrompt: "Написать промпт",
+      genPromptTitle: "Модель напишет этот кадр по сюжету, стилю и соседним кадрам",
+      genPromptBusy: "пишу…",
       pos: "Кадр {n}",
       modalTitle: "Кадр {n}",
       playTitle: "прослушать этот кадр",
