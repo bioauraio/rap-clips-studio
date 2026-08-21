@@ -497,6 +497,70 @@ UGC_SCENES_SYSTEM = """Ты — режиссёр вертикальных UGC-р
 "image_prompt_last":"...","motion_prompt":"..."}]}"""
 
 
+MOCKUP_BRANDBOOK_SYSTEM = """Ты — арт-директор предметной съёмки. Тебе дают
+описание бренда или товарной линейки. Твоя задача — собрать ФИРМЕННЫЙ МИР:
+дословный набор правил, по которым потом снимается КАЖДЫЙ кадр каждого
+товара линейки.
+
+Это не текст для сайта. Это инструкция, которую вставят в промпт кадра слово
+в слово, поэтому она конкретная и неизменная.
+
+ЧТО ОБЯЗАНО ПОЛУЧИТЬСЯ:
+1. СВЕТ — тип источника, направление, жёсткость, есть ли контровой, какая
+   тень под предметом. Не «красивый свет», а воспроизводимая схема.
+2. ПАЛИТРА — три-четыре цвета фонов и реквизита с внятными названиями.
+   Цвета, которых в кадре не бывает никогда, назови отдельно.
+3. ПОВЕРХНОСТИ И РЕКВИЗИТ — на чём стоит товар и что рядом лежит. Перечисли
+   допустимое; всё, чего в списке нет, в кадр не попадает.
+4. ЗАПРЕТЫ — что не появляется в кадре ни при каких условиях. Люди, руки,
+   чужие логотипы, рекламный текст, ценники, водяные знаки — базовый минимум,
+   допиши специфику линейки.
+
+Выведи СТРОГО один JSON без markdown-обёртки:
+{"brandbook":"<свет, палитра, поверхности, реквизит и запреты — по-русски,
+одним связным блоком, который можно вставить в промпт>",
+ "name":"<короткое имя фирменного мира>"}"""
+
+
+MOCKUP_SHOTS_SYSTEM = """Ты — фотограф предметной съёмки. Ты раскладываешь
+съёмку ОДНОГО товара на набор кадров для генератора картинок.
+
+Тебе дают: фирменный мир бренда, бриф товара, набор сцен с ракурсами и
+визуальный стиль. Референсное фото упаковки уходит в генератор ОТДЕЛЬНО —
+ты его не видишь, но обязан писать промпты так, будто товар с этого фото
+нельзя менять ни на пиксель.
+
+{RULES}
+
+СКОЛЬКО КАДРОВ: {SHOTS}. Один кадр — один ракурс из набора, в том же порядке.
+
+ПОЛЯ КАЖДОГО КАДРА:
+- "beat": ключ кадра из набора сцен.
+- "duration_sec": 3-5 (нужно, только если кадр потом оживляют).
+- "shot_size": крупность из набора.
+- "camera_move": короткая фраза по-английски; для статичного кадра "static".
+- "shot_note": по-русски — что в кадре, на чём стоит, что рядом.
+- "image_prompt": на английском. Собирай СТРОГО в этом порядке:
+  1) "Professional product photography, square 1:1 composition,"
+  2) крупность и ракурс,
+  3) фраза "the product from the reference image, identical silhouette,
+     cap, proportions, label layout, logo, typography, colours and every
+     readable word — do not redraw, translate or invent any text",
+  4) ДОСЛОВНЫЕ правила фирменного мира: свет, фон, поверхность, реквизит,
+  5) что именно происходит в этом кадре.
+  Закончи запретами: "no people, no hands, no third-party logos, no
+  advertising copy, no price tags, no watermark, no invented text".
+- "image_prompt_last": тот же кадр после лёгкого движения (поворот на
+  несколько градусов, блик сместился). Товар и надписи те же.
+- "motion_prompt": декоративное движение внутри кадра, на английском,
+  self-contained. Товар не меняет форму и не раскрывается сам.
+
+Выведи СТРОГО один JSON без markdown-обёртки:
+{"scenes":[{"beat":"front","duration_sec":4,"shot_size":"medium",
+"camera_move":"static","shot_note":"...","image_prompt":"...",
+"image_prompt_last":"...","motion_prompt":"..."}]}"""
+
+
 async def generate_series_bible(*, idea: str, format_label: str, season_beats: str,
                                 format_note: str, episodes: int,
                                 character_bible: str = "",
@@ -577,6 +641,33 @@ async def generate_ugc_persona(*, idea: str, character_bible: str = "",
         f"{character_bible or '(пусто — напиши с нуля)'}"
     )
     return await _ask(prompt, UGC_PERSONA_SYSTEM)
+
+
+async def generate_brandbook(*, idea: str, brand_note: str = "") -> dict:
+    prompt = (
+        f"Бренд или линейка: {idea or '(пусто — придумай нейтральный аккуратный мир)'}\n\n"
+        f"Уже заданные правила (могут быть пустыми):\n"
+        f"{brand_note or '(пусто — напиши с нуля)'}"
+    )
+    return await _ask(prompt, MOCKUP_BRANDBOOK_SYSTEM)
+
+
+async def generate_mockup_shots(*, brandbook: str, brief: str, shots_block: str,
+                                set_note: str, style: str, shots: int,
+                                rules: str, comment: str = "") -> dict:
+    system = (MOCKUP_SHOTS_SYSTEM
+              .replace("{RULES}", rules)
+              .replace("{SHOTS}", str(shots)))
+    prompt = (
+        f"Фирменный мир (вставляй эти правила в промпты кадров ДОСЛОВНО):\n"
+        f"{brandbook or '(не задан — держи чистый студийный свет и нейтральный фон)'}\n\n"
+        f"Визуальный стиль: {style or '(чистая коммерческая предметная съёмка)'}\n"
+        f"Установка набора: {set_note}\n\n"
+        f"Набор сцен (по кадру на строку, в этом порядке):\n{shots_block}\n\n"
+        f"Бриф товара:\n{brief or '(пусто — снимай по набору сцен и фирменному миру)'}\n\n"
+        f"Пожелание владельца: {comment or '(нет)'}"
+    )
+    return await _ask(prompt, system)
 
 
 async def generate_ugc_scenes(*, persona: str, character_bible: str,

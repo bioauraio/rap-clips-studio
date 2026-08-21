@@ -390,6 +390,15 @@ class Track(Base):
     # (пусто = наследует трек).
     video_engine = Column(String, nullable=False, default="")
     image_engine = Column(String, nullable=False, default="")
+    # ГЕОМЕТРИЯ КАДРА. До режима мокапов аспект был константой 9:16 в шести
+    # местах mediagen — клип, ролик и серия все вертикальные, и спорить было
+    # не с чем. Карточка маркетплейса живёт в квадрате, и вертикаль там
+    # обрезается по краям ровно по упаковке. Пусто = аспект режима.
+    aspect = Column(String, nullable=False, default="")          # '' | 9:16 | 1:1 | 4:5
+    # Разрешение картинки (1K|2K|4K) у движков семейства Nano Banana. У клипа
+    # его решает тариф, у мокапа оно важнее всего остального: этикетку читают
+    # с экрана телефона, и 1K её замыливает.
+    image_resolution = Column(String, nullable=False, default="")
     # Режиссёрская заметка от генерации сюжета — ОТДЕЛЬНО от комментария
     # владельца: раньше дописывалась прямо в comment и пачкала его.
     director_note = Column(Text, nullable=False, default="")
@@ -436,6 +445,31 @@ class Track(Base):
     project = relationship("Project", back_populates="tracks")
     scenes = relationship("Scene", back_populates="track", cascade="all, delete-orphan",
                            order_by="Scene.position")
+    # Фото товара (режим мокапов). Каскад обязателен: без него удаление трека
+    # оставляло бы висячие строки с именами уже удалённых файлов.
+    photos = relationship("TrackPhoto", cascade="all, delete-orphan",
+                          order_by="TrackPhoto.position")
+
+
+class TrackPhoto(Base):
+    """Фото ТОВАРА для режима мокапов: точная копия механики CharacterPhoto,
+    но привязанная к объекту второго уровня, а не к персонажу.
+
+    Почему не персонаж: в мокап-проекте объект второго уровня И ЕСТЬ товар
+    (Track = SKU), а персонажей нет вовсе — роль «узнаваемого лица» играет
+    сама упаковка. Заводить персонажа на каждый артикул значило бы держать
+    два параллельных списка одного и того же.
+
+    Правило то же, что у персонажа: в разворот идут фото kind="photo",
+    в кадры — последний kind="model", если он есть."""
+    __tablename__ = "track_photos"
+    id = Column(Integer, primary_key=True)
+    track_id = Column(Integer, ForeignKey("tracks.id"), nullable=False, index=True)
+    position = Column(Integer, nullable=False, default=0)
+    filename = Column(String, nullable=False)
+    kind = Column(String, nullable=False, default="photo")   # photo | model
+    from_photos = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=now)
 
 
 class Scene(Base):

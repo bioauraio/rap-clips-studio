@@ -35,7 +35,7 @@ import stripe_pay
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene, SceneRef,
-    SessionLocal, Track, User, init_db, now,
+    SessionLocal, Track, TrackPhoto, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -788,6 +788,16 @@ def _format_key(track: "Track") -> str:
     if key and formats.format_spec(catalog, key):
         return key
     return formats.default_format(catalog)
+
+
+def _track_aspect(track: "Track") -> str:
+    """Геометрия кадра объекта: явный выбор владельца → аспект режима →
+    вертикаль. Раньше «9:16» было константой в шести местах mediagen; у
+    мокапа кадр квадратный, и в вертикаль он влезает только с полями."""
+    want = (getattr(track, "aspect", "") or "").strip()
+    if want in mediagen.ASPECTS:
+        return want
+    return _mode_of(track.project).get("aspect") or mediagen.DEFAULT_ASPECT
 
 
 # ══════════════ ДВИЖКИ: один выбор на объект, а не на каждый кадр ══════════════
@@ -1871,6 +1881,15 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         # Режимы «сериалы» и «UGC».
         "season_no": t.season_no or 0, "episode_no": t.episode_no or 0,
         "format_key": t.format_key or "", "location_bible": t.location_bible or "",
+        # Геометрия и разрешение кадра. Пусто = «как у режима»: у клипа,
+        # ролика и серии это вертикаль, у мокапа квадрат.
+        "aspect": t.aspect or "", "eff_aspect": _track_aspect(t),
+        "image_resolution": t.image_resolution or "",
+        # Фото товара (режим мокапов): референс, по которому упаковка обязана
+        # совпасть до последней буквы на этикетке.
+        "photos": [{"id": ph.id, "position": ph.position, "kind": ph.kind or "photo",
+                    "url": f"/api/media/{ph.filename}"}
+                   for ph in sorted(t.photos, key=lambda x: (x.position, x.id))],
     }
     if with_scenes:
         d["scenes"] = [scene_dict(s) for s in t.scenes]
@@ -2270,7 +2289,12 @@ def api_modes(request: Request, lang: str = ""):
     (modes.<id>.*). Иначе перевод расползся бы между сервером и i18n.js, и
     третий язык пришлось бы заводить в двух местах."""
     lg = _lang_of(request, lang)
-    return {"modes": formats.public_modes(lang=lg), "kinds": formats.PROJECT_KINDS}
+    # shortcuts — ОТДЕЛЬНЫМ полем, а не строкой в modes: ярлык («3D Pixar»)
+    # выглядит в тумблере как режим, но режимом не является — у него нет ни
+    # своего объекта, ни шагов, ни каркаса. Форма ответа сама это проговаривает.
+    return {"modes": formats.public_modes(lang=lg),
+            "shortcuts": formats.public_shortcuts(),
+            "kinds": formats.PROJECT_KINDS}
 
 
 def _own_doc(db: Session, user: User, doc_id: int) -> Doc:
@@ -2496,6 +2520,28 @@ def _run_ugc_persona(project_id: int, idea: str) -> None:
         db.close()
 
 
+def _run_mockup_brandbook(project_id: int, idea: str) -> None:
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if not project:
+            return
+        prev = _find_doc(db, project_id, "brandbook")
+        import asyncio
+        res = asyncio.run(claude.generate_brandbook(
+            idea=idea, brand_note=prev.body if prev else "",
+        ))
+        _put_doc(db, project_id, "brandbook", title=str(res.get("name") or ""),
+                 body=str(res.get("brandbook") or ""), status="", error="", position=1)
+        log.info("фирменный мир готов для проекта %s", project_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _doc_status(project_id, ("brandbook",), "error", str(e)[:500])
+        log.warning("фирменный мир проекта %s упал: %s", project_id, e)
+    finally:
+        db.close()
+
+
 @app.post("/api/projects/{project_id}/generate-bible")
 async def generate_bible(project_id: int, request: Request,
                          user: User = Depends(current_user),
@@ -2522,6 +2568,13 @@ async def generate_bible(project_id: int, request: Request,
                 project_id=project.id)
         _doc_status(project.id, ("persona", "location"), "queued")
         Thread(target=_run_ugc_persona, args=(project.id, idea), daemon=True).start()
+        return {"ok": True}
+    if catalog == "mockup":
+        _charge(db, user, COST_STORY, f"фирменный мир проекта {project.id}",
+                kind="story", ref_type="project", ref_id=project.id,
+                project_id=project.id)
+        _doc_status(project.id, ("brandbook",), "queued")
+        Thread(target=_run_mockup_brandbook, args=(project.id, idea), daemon=True).start()
         return {"ok": True}
     raise HTTPException(400, "у клипа сюжет генерится кнопкой «сюжет проекта»")
 
@@ -2856,6 +2909,14 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     if "image_engine" in body:
         want = str(body["image_engine"] or "").strip()
         track.image_engine = want if want in mediagen.IMAGE_ENGINES else ""
+    # ГЕОМЕТРИЯ КАДРА. Пустая строка валидна и означает «как у режима» —
+    # снять свой выбор так же можно, как и сделать.
+    if "aspect" in body:
+        want = str(body["aspect"] or "").strip()
+        track.aspect = want if want in mediagen.ASPECTS else ""
+    if "image_resolution" in body:
+        want = str(body["image_resolution"] or "").strip().upper()
+        track.image_resolution = want if want in ("1K", "2K", "4K") else ""
     db.commit()
     return track_dict(track)
 
@@ -3052,6 +3113,9 @@ def delete_track(track_id: int, user: User = Depends(current_user), db: Session 
         for r in s.refs:
             _remove_media(r.filename)
     _remove_media(track.cover_filename)
+    # Каскад БД снесёт строки, но не файлы на диске — их убираем сами.
+    for ph in track.photos:
+        _remove_media(ph.filename)
     db.delete(track)
     db.commit()
     return {"ok": True}
@@ -3222,6 +3286,32 @@ def _scenes_for_ugc(db: Session, track: Track) -> dict:
     ))
 
 
+def _scenes_for_mockup(db: Session, track: Track) -> dict:
+    """Кадры съёмки товара. Бриф необязателен: набор сцен сам по себе план,
+    а фирменный мир проекта задаёт всё остальное."""
+    import asyncio
+    project = track.project
+    catalog = "mockup"
+    key = _format_key(track)
+    spec = formats.format_spec(catalog, key) or {}
+    brief_doc = (db.query(Doc)
+                 .filter(Doc.track_id == track.id, Doc.kind == "brief").first())
+    brand_doc = (db.query(Doc)
+                 .filter(Doc.project_id == project.id, Doc.track_id.is_(None),
+                         Doc.kind == "brandbook").first())
+    shots = len(spec.get("shot_list") or []) or int((spec.get("shots") or {}).get("typ") or 6)
+    return asyncio.run(claude.generate_mockup_shots(
+        brandbook=brand_doc.body if brand_doc else "",
+        brief=(brief_doc.body if brief_doc else "") or track.comment,
+        shots_block=formats.shots_block(key),
+        set_note=formats.seed(key).get("note", ""),
+        style=track.style,
+        shots=shots,
+        rules=formats.rules(catalog),
+        comment=track.comment,
+    ))
+
+
 def _run_scene_generation(track_id: int) -> None:
     db = SessionLocal()
     try:
@@ -3244,6 +3334,8 @@ def _run_scene_generation(track_id: int) -> None:
             result = _scenes_for_series(db, track)
         elif catalog == "ugc":
             result = _scenes_for_ugc(db, track)
+        elif catalog == "mockup":
+            result = _scenes_for_mockup(db, track)
         else:
             result = asyncio.run(claude.generate_scenes(
                 story="" if track.no_story else project.story,
@@ -3319,6 +3411,12 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
             Doc.body != "").count()
         if not has_script:
             raise HTTPException(400, "сначала сгенерируй сценарий серии")
+    elif catalog == "mockup":
+        # Мокап без фото упаковки — это не съёмка, а фантазия: генератор
+        # нарисует «похожую» банку с выдуманной этикеткой, и это выяснится
+        # только после списания очков за все шесть кадров.
+        if not _track_photo_paths(track, 1):
+            raise HTTPException(400, "сначала загрузи фото упаковки — по нему совпадает товар")
     _charge(db, user, COST_SCENES, f"раскадровка трека {track.id}",
             kind="story", ref_type="track", ref_id=track.id,
             track_id=track.id, project_id=track.project_id)
@@ -3415,13 +3513,16 @@ def _mime_ext(mime: str) -> str:
     return ".jpg" if "jpeg" in mime else ".png"
 
 
-def _save_image(data: bytes, mime: str, *, upscale: bool = True) -> str:
+def _save_image(data: bytes, mime: str, *, upscale: bool = True,
+                aspect: str = "") -> str:
     fname = f"scene_{uuid.uuid4().hex}{_mime_ext(mime)}"
     path = os.path.join(UPLOAD_DIR, fname)
     with open(path, "wb") as f:
         f.write(data)
     if upscale:
-        mediagen.upscale_to_4k(path)
+        # Аспект обязателен: квадратный кадр, прогнанный через вертикальный
+        # апскейл, приезжает с чёрными полями сверху и снизу.
+        mediagen.upscale_to_4k(path, aspect or mediagen.DEFAULT_ASPECT)
     return fname
 
 
@@ -3809,6 +3910,22 @@ def _character_model_paths(chars: list[Character], limit: int,
     return paths
 
 
+def _track_photo_paths(track: Track, limit: int = 4) -> list[str]:
+    """Живые фото товара по порядку. Правило то же, что у персонажа: если
+    разворот (kind="model") сделан — он идёт первым, иначе загруженные фото."""
+    rows = sorted(track.photos, key=lambda x: (x.position, x.id))
+    models = [p for p in rows if (p.kind or "photo") == "model"]
+    plain = [p for p in rows if (p.kind or "photo") != "model"]
+    out: list[str] = []
+    for p in (models[-1:] + plain):
+        path = os.path.join(UPLOAD_DIR, p.filename)
+        if os.path.exists(path) and path not in out:
+            out.append(path)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str | None:
     """Референс генерации кадра.
 
@@ -3822,6 +3939,16 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     героя, когда персонажи кадра не указаны)."""
     chars = _scene_characters(scene, project)
     scene_refs = _scene_ref_paths(scene)
+    # МОКАПЫ: узнаваемое здесь — упаковка, а не лицо. Фото товара главнее
+    # всего остального: по нему совпадают силуэт, раскладка этикетки и
+    # каждое читаемое слово, а перерисованная моделька героя тут не нужна.
+    if formats.mode_of_kind(project.kind)["id"] == "mockup":
+        item = _track_photo_paths(scene.track, 3) if scene.track else []
+        if scene_refs and item:
+            return _ref_collage(db, [item[0], scene_refs[0]], project.owner_id) or item[0]
+        if item:
+            return item[0]
+        return scene_refs[0] if scene_refs else None
     if scene_refs:
         models = _character_model_paths(
             chars or [c for c in project.characters if c.is_main], 2, prefer_photo=True)
@@ -3852,6 +3979,15 @@ def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[
     chars = _scene_characters(scene, project)
     out: list[str] = []
     scene_refs = _scene_ref_paths(scene)
+    if formats.mode_of_kind(project.kind)["id"] == "mockup":
+        # Фото упаковки ПЕРВЫМИ и все: Nano Banana берёт до восьми отдельных
+        # картинок, и чем больше ракурсов товара он видит, тем меньше
+        # додумывает форму крышки и надписи.
+        out += _track_photo_paths(scene.track, 5) if scene.track else []
+        out += scene_refs[:3]
+        seen: set[str] = set()
+        uniq = [x for x in out if not (x in seen or seen.add(x))]
+        return uniq[:8]
     if scene_refs:
         out += scene_refs[:3]
         out += _character_model_paths(
@@ -3899,14 +4035,34 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
     scene_chars = _scene_characters(scene, project)
     if scene_chars:
         for c in scene_chars:
-            parts.append(
-                f"Character '{c.name}' (must stay identical across every shot"
-                f" of the whole album): {c.description}"
-            )
+            desc = (c.description or "").strip()
+            if desc:
+                parts.append(
+                    f"Character '{c.name}' (must stay identical across every shot"
+                    f" of the whole album): {desc}"
+                )
+            else:
+                # Описание пустое — раньше в промпт уходило «Character 'Артём': »
+                # с пустым хвостом, и модель лепила случайного человека, потому
+                # что словами о нём не сказано НИЧЕГО. Опираемся на референс явно.
+                parts.append(
+                    f"Character '{c.name}': take the face, hair, body type and "
+                    f"clothing STRICTLY from the reference photo of this person. "
+                    f"Same face in every shot — do not invent another person, "
+                    f"do not beautify, do not change age, ethnicity or hairstyle."
+                )
     else:
-        parts.append(
-            f"Main character reference (must stay identical across every shot): {project.character_bible}"
-        )
+        bible = (project.character_bible or "").strip()
+        if bible:
+            parts.append(
+                f"Main character reference (must stay identical across every shot): {bible}"
+            )
+        else:
+            parts.append(
+                "Main character: take the face, hair, body type and clothing STRICTLY "
+                "from the reference photo. Same person in every shot — do not invent "
+                "another face, do not beautify, do not change age or ethnicity."
+            )
     # 4. Анти-требования: ровно те грабли, из-за которых кадры выходили
     # одинаковыми тёмными портретами на сером фоне.
     parts.append(
@@ -3927,6 +4083,15 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "environment. Absolutely no multi-panel grids, no split screens, no side-by-side views, "
         "no contact sheets, no turnarounds, no character sheets, no collage, no white or grey "
         "studio cyclorama, no repeated figures of the same character within the frame."
+    )
+    # 4c. Идентичность важнее красоты: генераторы склонны «улучшать» лицо и
+    # подменять человека похожим типажом — для сквозного героя альбома это
+    # разрушает всю затею.
+    parts.append(
+        "IDENTITY IS THE HIGHEST PRIORITY after the style: the person in this frame must be "
+        "recognisably the SAME human as in the reference photo — same facial structure, same "
+        "hair, same skin tone, same age. Keep their real face; never replace them with a "
+        "generic model or a better-looking lookalike."
     )
     # 5. Динамика: кадр клипа — момент действия, а не позирование в камеру.
     parts.append(
@@ -3977,17 +4142,23 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
         first_data = last_data = None
         first_mime = last_mime = ""
         native_4k = False
+        aspect = _track_aspect(track)
+        # Разрешение просит объект (у мокапа этикетку читают с экрана
+        # телефона), иначе решает движок по своему дефолту.
+        img_res = (track.image_resolution or "").strip()
         if which in ("both", "first"):
             res = asyncio.run(mediagen.generate_image_ex(
                 _frame_prompt(scene, track, "first"), reference,
-                reference_paths=ref_list, engine=engine))
+                reference_paths=ref_list, engine=engine,
+                resolution=img_res, aspect=aspect))
             first_data, first_mime = res["data"], res["mime"]
             native_4k = res["native_4k"]
             scene.image_engine = res["engine"]
         if which in ("both", "last"):
             res = asyncio.run(mediagen.generate_image_ex(
                 _frame_prompt(scene, track, "last"), reference,
-                reference_paths=ref_list, engine=engine))
+                reference_paths=ref_list, engine=engine,
+                resolution=img_res, aspect=aspect))
             last_data, last_mime = res["data"], res["mime"]
             native_4k = native_4k or res["native_4k"]
             scene.image_engine = res["engine"]
@@ -3997,13 +4168,15 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "") -> N
         old_video, old_audio = scene.video_filename, scene.audio_filename
         old_mids = [m.get("filename", "") for m in _midframes(scene)]
         if first_data is not None:
-            scene.image_filename = _save_image(first_data, first_mime, upscale=not native_4k)
+            scene.image_filename = _save_image(first_data, first_mime,
+                                               upscale=not native_4k, aspect=aspect)
             _reg_file(db, scene.image_filename, track.project.owner_id, kind="frame",
                       project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         else:
             old_first = ""  # первый кадр не пересобирали — оставляем как есть
         if last_data is not None:
-            scene.image_last_filename = _save_image(last_data, last_mime, upscale=not native_4k)
+            scene.image_last_filename = _save_image(last_data, last_mime,
+                                                    upscale=not native_4k, aspect=aspect)
             _reg_file(db, scene.image_last_filename, track.project.owner_id,
                       kind="frame_last", project_id=track.project_id,
                       track_id=track.id, scene_id=scene.id)
@@ -4151,7 +4324,7 @@ def _run_scene_video(scene_id: int) -> None:
             prompt=scene.motion_prompt, first_path=first_path, last_path=last_path,
             duration_sec=scene.duration_sec, provider=scene.video_provider,
             seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
-            engine=engine,
+            engine=engine, aspect=_track_aspect(track),
         ))
         # Задача внешнего движка — в строку списания: «списали 154 очка →
         # задача kie abc123». Без неё спорную генерацию разобрать нечем.
@@ -4257,7 +4430,8 @@ def _run_assemble(track_id: int) -> None:
         videos = [s.video_filename for s in track.scenes if s.approved and s.video_filename]
         old = track.clip_filename
         track.clip_filename = mediagen.assemble_clip(
-            videos, _track_audio_path(track), film_grain=track.film_grain)
+            videos, _track_audio_path(track), film_grain=track.film_grain,
+            aspect=_track_aspect(track))
         _reg_file(db, track.clip_filename, track.project.owner_id, kind="clip",
                   project_id=track.project_id, track_id=track.id)
         track.clip_status = "done"
@@ -4880,6 +5054,51 @@ async def add_character_photo(char_id: int, photo: UploadFile, user: User = Depe
     # ch.photos загружен ДО вставки — без refresh ответ отстаёт на одно фото.
     db.refresh(ch)
     return character_dict(ch)
+
+
+# ─────────────── ФОТО ТОВАРА (режим мокапов) ───────────────
+# Тот же механизм, что у фото персонажа, но на объекте второго уровня: в
+# мокап-проекте Track — это артикул, и «узнаваемое лицо» здесь сама упаковка.
+# Заводить на каждый артикул персонажа значило бы держать два параллельных
+# списка одного и того же.
+
+
+@app.post("/api/tracks/{track_id}/photos")
+async def add_track_photo(track_id: int, photo: UploadFile,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    track = _own_track(db, user, track_id)
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"item_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(await photo.read())
+    # Без записи владельца /api/media прячет файл от всех, кроме админа.
+    _reg_file(db, fname, track.project.owner_id, kind="photo",
+              project_id=track.project_id, track_id=track.id)
+    max_pos = max((p.position for p in track.photos), default=0)
+    db.add(TrackPhoto(track_id=track.id, position=max_pos + 1, filename=fname,
+                      kind="photo"))
+    db.commit()
+    db.refresh(track)
+    return track_dict(track)
+
+
+@app.delete("/api/track-photos/{photo_id}")
+def del_track_photo(photo_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    ph = db.get(TrackPhoto, photo_id)
+    if not ph:
+        raise HTTPException(404, "фото не найдено")
+    track = db.get(Track, ph.track_id)
+    if not track or not _owned(user, track.project):
+        raise HTTPException(404, "фото не найдено")
+    _remove_media(ph.filename)
+    db.delete(ph)
+    db.commit()
+    db.refresh(track)
+    return track_dict(track)
 
 
 # Как человек подписал ракурс своего фото. Классификатора ракурса у нас нет и

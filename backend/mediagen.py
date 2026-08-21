@@ -134,6 +134,40 @@ FRAME_H = int(os.environ.get("FRAME_H", "3840"))
 CLIP_W = int(os.environ.get("CLIP_W", "1080"))
 CLIP_H = int(os.environ.get("CLIP_H", "1920"))
 
+# Аспекты, которые умеем: вертикаль (клип, ролик, серия), квадрат (карточка
+# маркетплейса) и 4:5 (лента). До режима мокапов «9:16» было ВПИСАНО
+# константой в шесть мест этого файла — спорить было не с чем, все режимы
+# вертикальные. Как только появился квадрат, каждое из этих мест начало бы
+# молча дописывать чёрные поля или возвращать вертикаль вместо квадрата.
+ASPECTS = {"9:16": (9, 16), "1:1": (1, 1), "4:5": (4, 5)}
+DEFAULT_ASPECT = "9:16"
+
+
+def norm_aspect(aspect: str) -> str:
+    a = str(aspect or "").strip()
+    return a if a in ASPECTS else DEFAULT_ASPECT
+
+
+def _fit(long_side: int, aspect: str) -> tuple[int, int]:
+    """Размер кадра под аспект при заданной ДЛИННОЙ стороне. Чётные значения:
+    libx264 с нечётной стороной не соберётся."""
+    w, h = ASPECTS[norm_aspect(aspect)]
+    if h >= w:
+        out_h, out_w = long_side, int(round(long_side * w / h))
+    else:
+        out_w, out_h = long_side, int(round(long_side * h / w))
+    return out_w - (out_w % 2), out_h - (out_h % 2)
+
+
+def frame_size(aspect: str = DEFAULT_ASPECT) -> tuple[int, int]:
+    """Размер апскейла кадра. Длинная сторона — прежняя FRAME_H (4K по высоте),
+    поэтому у вертикали ничего не меняется вообще."""
+    return _fit(FRAME_H, aspect)
+
+
+def clip_size(aspect: str = DEFAULT_ASPECT) -> tuple[int, int]:
+    return _fit(CLIP_H, aspect)
+
 
 log = logging.getLogger("rapclips.media")
 
@@ -364,7 +398,7 @@ async def _nano_banana(prompt: str, ref_paths: list[str], engine: str,
             res = spec["resolutions"][0]
         inp["resolution"] = res
     if spec.get("aspect"):
-        inp["aspect_ratio"] = aspect or "9:16"
+        inp["aspect_ratio"] = norm_aspect(aspect)
     out = await _kie_result_urls(spec["model"], inp, timeout_s=KIE_TIMEOUT_S,
                                  poll_s=KIE_POLL_IMAGE_S)
     async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0),
@@ -385,7 +419,7 @@ async def generate_image_ex(
     reference_paths: list[str] | None = None,
     engine: str = "",
     resolution: str = "",
-    aspect: str = "9:16",
+    aspect: str = DEFAULT_ASPECT,
 ) -> dict:
     """Кадр + честный ответ, ЧЕМ он нарисован.
 
@@ -494,13 +528,17 @@ async def generate_image(prompt: str, reference_path: str | None = None,
     return res["data"], res["mime"]
 
 
-def upscale_to_4k(path: str) -> None:
-    """Апскейл кадра до вертикального 4К на месте (генераторы столько не дают)."""
+def upscale_to_4k(path: str, aspect: str = DEFAULT_ASPECT) -> None:
+    """Апскейл кадра до 4К по длинной стороне, на месте (генераторы столько
+    не дают). Аспект обязателен параметром: квадрат, пропущенный через
+    вертикальный pad, приезжает с чёрными полями сверху и снизу — и именно
+    в таком виде уходит в карточку товара."""
+    fw, fh = frame_size(aspect)
     tmp = path + ".up.png"
     cmd = [
         FFMPEG, "-y", "-i", path,
-        "-vf", f"scale={FRAME_W}:{FRAME_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
-               f"pad={FRAME_W}:{FRAME_H}:(ow-iw)/2:(oh-ih)/2:color=black",
+        "-vf", f"scale={fw}:{fh}:force_original_aspect_ratio=decrease:flags=lanczos,"
+               f"pad={fw}:{fh}:(ow-iw)/2:(oh-ih)/2:color=black",
         tmp,
     ]
     r = subprocess.run(cmd, capture_output=True, timeout=180)
@@ -798,13 +836,13 @@ def _kling_jwt() -> str:
 # деградирует до «оживления первого кадра», и это надо честно показывать.
 
 def _body_seedance(prompt: str, first: str, last: str | None, dur: int,
-                   spec: dict) -> dict:
+                   spec: dict, aspect: str = DEFAULT_ASPECT) -> dict:
     inp = {
         "prompt": prompt,
         "first_frame_url": first,
         "duration": max(4, min(30, int(round(dur)))),
         "resolution": spec.get("resolution", "720p"),
-        "aspect_ratio": "9:16",
+        "aspect_ratio": norm_aspect(aspect),
         # По умолчанию Seedance генерит звук — это и лишние деньги, и мусорная
         # дорожка под наш трек.
         "generate_audio": False,
@@ -815,7 +853,7 @@ def _body_seedance(prompt: str, first: str, last: str | None, dur: int,
 
 
 def _body_kling(prompt: str, first: str, last: str | None, dur: int,
-                spec: dict) -> dict:
+                spec: dict, aspect: str = DEFAULT_ASPECT) -> dict:
     # У Kling 3.0 duration — СТРОКА, кадры лежат массивом [первый, последний],
     # а multi_shots обязателен: с ним модель режет ролик на планы сама.
     urls = [first] + ([last] if last else [])
@@ -824,13 +862,13 @@ def _body_kling(prompt: str, first: str, last: str | None, dur: int,
         "image_urls": urls,
         "duration": str(max(3, min(15, int(round(dur))))),
         "mode": spec.get("mode", "std"),
-        "aspect_ratio": "9:16",
+        "aspect_ratio": norm_aspect(aspect),
         "multi_shots": False,
     }
 
 
 def _body_minimax(prompt: str, first: str, last: str | None, dur: int,
-                  spec: dict) -> dict:
+                  spec: dict, aspect: str = DEFAULT_ASPECT) -> dict:
     inp = {
         "prompt": prompt,
         "first_frame_url": first,
@@ -923,7 +961,8 @@ def video_engines_live() -> list[str]:
 
 
 async def _animate_via_kie(engine: str, prompt: str, first_path: str,
-                           last_path: str | None, duration_sec: int) -> str:
+                           last_path: str | None, duration_sec: int,
+                           aspect: str = DEFAULT_ASPECT) -> str:
     """Единый путь через агрегатор kie.ai — там живут и Seedance, и Kling.
 
     Один ключ, один баланс и одинаковый протокол задач. Кадры уходят
@@ -941,7 +980,8 @@ async def _animate_via_kie(engine: str, prompt: str, first_path: str,
         # либо игнорируется, либо ломает валидацию запроса.
         if spec.get("first_last") and last_path and os.path.exists(last_path):
             last_url = await _kie_upload(client, last_path)
-    inp = spec["body"](prompt, first_url, last_url or None, duration_sec, spec)
+    inp = spec["body"](prompt, first_url, last_url or None, duration_sec, spec,
+                       norm_aspect(aspect))
     urls = await _kie_result_urls(spec["model"], inp, timeout_s=KIE_TIMEOUT_S)
     return await _fetch_video(urls[0], duration_sec)
 
@@ -971,7 +1011,8 @@ async def _fetch_video(video_url: str, duration_sec: int) -> str:
 
 
 async def _animate_kling_official(prompt: str, first_path: str, last_path: str | None,
-                                  duration_sec: int) -> str:
+                                  duration_sec: int,
+                                  aspect: str = DEFAULT_ASPECT) -> str:
     """АВАРИЙНЫЙ канал Kling: официальный API klingai.com по паре ключей.
 
     Основной путь — kie.ai: там та же модель дешевле на 17-21 %, и это один
@@ -993,7 +1034,7 @@ async def _animate_kling_official(prompt: str, first_path: str, last_path: str |
         headers = {"Authorization": f"Bearer {_kling_jwt()}"}
         payload: dict = {
             "model_name": KLING_MODEL, "prompt": prompt, "image": first_url,
-            "duration": str(dur), "aspect_ratio": "9:16", "mode": "std",
+            "duration": str(dur), "aspect_ratio": norm_aspect(aspect), "mode": "std",
         }
         if tail_url:
             payload["image_tail"] = tail_url
@@ -1072,6 +1113,7 @@ def resolve_video_engine(provider: str, engine: str = "") -> str:
 async def animate_scene(
     *, prompt: str, first_path: str, last_path: str | None,
     duration_sec: int, provider: str, seedance_model: str = "", engine: str = "",
+    aspect: str = DEFAULT_ASPECT,
 ) -> str:
     """Возвращает имя mp4 в UPLOAD_DIR.
 
@@ -1095,7 +1137,8 @@ async def animate_scene(
     # 1. Основной канал — kie.ai.
     if KIE_API_KEY:
         try:
-            return await _animate_via_kie(engine_id, prompt, first_path, last_path, duration_sec)
+            return await _animate_via_kie(engine_id, prompt, first_path, last_path,
+                                          duration_sec, aspect)
         except MediaError as e:
             log.warning("kie.ai не смог (%s): %s", engine_id, str(e)[:200])
             kie_error = e
@@ -1114,7 +1157,8 @@ async def animate_scene(
             return await _animate_grok(prompt, first_path)
     if spec["family"] == "kling" and KLING_ACCESS_KEY and KLING_SECRET_KEY:
         try:
-            return await _animate_kling_official(prompt, first_path, last_path, duration_sec)
+            return await _animate_kling_official(prompt, first_path, last_path,
+                                                 duration_sec, aspect)
         except MediaError as e:
             if not _no_credits(e):
                 raise
@@ -1132,13 +1176,14 @@ async def animate_scene(
 # ──────────────────────────── сборка клипа ────────────────────────────
 
 def assemble_clip(scene_videos: list[str], track_audio_path: str | None,
-                  film_grain: bool = False) -> str:
+                  film_grain: bool = False, aspect: str = DEFAULT_ASPECT) -> str:
     """Склеивает видео утверждённых сцен подряд и кладёт поверх дорожку трека.
 
     Каждая сцена приводится к единому размеру/фпс — иначе concat рассыпается
     на разных источниках (Seedance и Grok отдают разные размеры)."""
     if not scene_videos:
         raise MediaError("нет утверждённых сцен для сборки")
+    cw, ch = clip_size(aspect)
     work = os.path.join(UPLOAD_DIR, f"build_{uuid.uuid4().hex}")
     os.makedirs(work, exist_ok=True)
     try:
@@ -1148,8 +1193,8 @@ def assemble_clip(scene_videos: list[str], track_audio_path: str | None,
             dst = os.path.join(work, f"n{i:03d}.mp4")
             cmd = [
                 FFMPEG, "-y", "-i", src,
-                "-vf", f"scale={CLIP_W}:{CLIP_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                       f"pad={CLIP_W}:{CLIP_H}:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+                "-vf", f"scale={cw}:{ch}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                       f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
                        # Плёнка: живое зерно + лёгкий прижим контраста, как 16мм скан.
                        + (",noise=alls=11:allf=t+u,eq=contrast=1.04:saturation=0.93" if film_grain else ""),
                 "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",

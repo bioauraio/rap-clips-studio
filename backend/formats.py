@@ -89,6 +89,38 @@ MODES = [
         ],
     },
     {
+        # МОКАПЫ — предметная съёмка. Отдельный режим, а не пресет клипа:
+        # у него другой объект второго уровня (товар, а не дорожка), другой
+        # ритм (ракурс, а не такт), другие документы (фирменный мир и бриф
+        # товара вместо сюжета) и другой каркас (набор сцен, а не биты).
+        # Совпадения по всем четырём и делают запись пресетом; здесь не
+        # совпадает ни одно.
+        #
+        # Кадр КВАДРАТНЫЙ: карточка маркетплейса живёт в 1:1, и вертикаль
+        # там обрезается по краям — ровно по упаковке.
+        "id": "mockup",
+        "icon": "📦",
+        "kinds": ["mockup"],
+        "default_kind": "mockup",
+        "object": "item",             # ключ i18n: modes.object.item
+        "needs_audio": False,
+        "needs_lyrics": False,
+        "format_catalog": "mockup",
+        "aspect": "1:1",
+        # Кадров мало и они дорогие: у мокапа ценность в точности, а не в
+        # количестве. Шесть ракурсов закрывают карточку целиком.
+        "scenes": {"min": 3, "typ": 6, "max": 12, "slot": [3, 5]},
+        "docs": ["brandbook"],
+        "track_docs": ["brief"],
+        "group_by": "",
+        "steps": [
+            {"id": "brand", "num": 1, "icon": "📐", "scope": "project", "panel": "docs"},
+            {"id": "items", "num": 2, "icon": "📦", "scope": "project", "panel": "tracks", "pane": "setup"},
+            {"id": "board", "num": 3, "icon": "🎞", "scope": "track",   "panel": "tracks", "pane": "board"},
+            {"id": "anim",  "num": 4, "icon": "▶",  "scope": "track",   "panel": "tracks", "pane": "anim"},
+        ],
+    },
+    {
         "id": "series",
         "icon": "📺",
         "kinds": ["series"],
@@ -120,12 +152,51 @@ _MODE_BY_ID = {m["id"]: m for m in MODES}
 _MODE_BY_KIND = {k: m for m in MODES for k in m["kinds"]}
 
 # Виды проектов для окна «новый проект»: kind → режим.
-PROJECT_KINDS = ["album", "single", "ugc", "series"]
+PROJECT_KINDS = ["album", "single", "ugc", "series", "mockup"]
 
 # Все виды документов, которые вообще бывают. Валидатор роутов сверяется с
 # этим множеством, чтобы в docs.kind не приезжала произвольная строка.
 DOC_KINDS = ("logline", "synopsis", "arc", "beatsheet", "script",
-             "recap", "brief", "persona", "location")
+             "recap", "brief", "persona", "location", "brandbook")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ЯРЛЫКИ РЕЖИМОВ. Третий тип записи реестра — и он намеренно НЕ режим.
+#
+# «3D Pixar» владелец называет вместе с режимами, и для него это вид продукта.
+# По инженерии это СТИЛЬ (prompts_catalog.STYLES[key="pixar"]): у него нет ни
+# своего объекта второго уровня, ни своего ритма, ни своих документов, ни
+# своего каркаса — то есть ни одного из четырёх признаков режима. Завести под
+# него Project.kind значило бы получить вид проекта, отличающийся от album
+# одной строкой стиля, и потом объяснять, почему его нельзя смешать с
+# пластилином, хотя mix_with у pixar именно пластилин и flat-2D.
+#
+# Поэтому ярлык: в тумблере выглядит как режим, ведёт в rap clips с уже
+# выбранным стилем. Форма данных сама говорит «это не режим» — отдельный
+# список, отдельное поле ответа /api/modes, третьего реестра не появляется.
+# Любой из пятнадцати стилей выносится ярлыком одной строкой.
+# ─────────────────────────────────────────────────────────────────────────────
+
+MODE_SHORTCUTS = [
+    {
+        "id": "pixar",
+        "icon": "🧸",
+        "mode": "clip",             # куда ведёт
+        "style": "pixar",           # ключ prompts_catalog.STYLES
+        "default_kind": "album",    # если проекта такого вида ещё нет
+    },
+]
+
+_SHORTCUT_BY_ID = {s["id"]: s for s in MODE_SHORTCUTS}
+
+
+def shortcut(shortcut_id: str) -> dict | None:
+    return _SHORTCUT_BY_ID.get(str(shortcut_id or "").strip())
+
+
+def public_shortcuts() -> list[dict]:
+    """Ярлыки наружу. Подписей здесь нет — они i18n-ключи фронта
+    (modes.<id>.*), как и у режимов."""
+    return [dict(s) for s in MODE_SHORTCUTS]
 
 # Акты серии. Порядок значим: по нему сортируются сцены и рисуются подписи.
 ACTS = ("cold_open", "act1", "act2", "act3", "tag")
@@ -543,12 +614,147 @@ UGC_FORMATS = [
     },
 ]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# НАБОРЫ СЦЕН ДЛЯ МОКАПОВ. У сериала и UGC каркас режет ХРОНОМЕТРАЖ, поэтому
+# там `share` и доли, складывающиеся в единицу. У мокапа хронометража нет
+# вовсе: делить нечего, кадры не идут подряд во времени — это набор ракурсов
+# одного товара. Поэтому здесь `shots` списком, без долей, и валидатор долей
+# на них не распространяется.
+#
+# Матрица «товар × сцена», а не уникальный промпт на каждый кадр: один набор
+# переиспользуется на весь ассортимент, и карточки в выдаче выглядят одной
+# съёмкой, а не пятнадцатью разными.
+# ─────────────────────────────────────────────────────────────────────────────
+
+MOCKUP_SETS = [
+    {
+        "key": "catalog",
+        "label": {"en": "Marketplace card", "ru": "Карточка маркетплейса"},
+        "logline": {
+            "en": "Six shots that close a product card: front, angle, label, scale, contents, set.",
+            "ru": "Шесть кадров, закрывающих карточку товара: фронт, ракурс, этикетка, масштаб, состав, комплект.",
+        },
+        "shots": {"min": 4, "typ": 6, "max": 8},
+        "styles_fit": ["cinema", "munir", "flat2d"],
+        # Здесь `engines` — движки КАДРА, а не видео: у мокапа главный
+        # результат картинка. В списке только те, у кого в mediagen
+        # "aspect": True — остальные молча вернут вертикаль вместо квадрата.
+        "engines": ["nano-banana-pro", "nano-banana-2"],
+        "shot_list": [
+            {"key": "front", "shot": "medium",
+             "en": "Front view on plain white, dead centre, even shadowless light.",
+             "ru": "Фронтальный вид на чистом белом, строго по центру, ровный бестеневой свет."},
+            {"key": "angle", "shot": "medium",
+             "en": "Three-quarter turn with a soft contact shadow: the shot that gives it volume.",
+             "ru": "Разворот в три четверти с мягкой контактной тенью: кадр, который даёт объём."},
+            {"key": "label", "shot": "extreme close-up",
+             "en": "Macro on the label: every line must stay readable and unchanged.",
+             "ru": "Макро по этикетке: каждая строка обязана остаться читаемой и неизменной."},
+            {"key": "scale", "shot": "close-up",
+             "en": "Next to an everyday object of known size, so the size stops being a guess.",
+             "ru": "Рядом с бытовым предметом известного размера, чтобы размер перестал быть догадкой."},
+            {"key": "inside", "shot": "close-up",
+             "en": "What is inside, spilled beside the pack: form, texture, colour.",
+             "ru": "Что внутри, высыпано рядом с упаковкой: форма, фактура, цвет."},
+            {"key": "set", "shot": "wide",
+             "en": "The full set as it ships: pack, contents, insert.",
+             "ru": "Комплект целиком, как он приезжает: упаковка, содержимое, вкладыш."},
+        ],
+    },
+    {
+        "key": "nature",
+        "label": {"en": "Nature set", "ru": "Природная сцена"},
+        "logline": {
+            "en": "The pack outdoors: wet stone, dew, raw ingredients around it.",
+            "ru": "Упаковка на природе: мокрый камень, роса, сырьё вокруг.",
+        },
+        "shots": {"min": 3, "typ": 5, "max": 8},
+        "styles_fit": ["cinema", "ghibli", "dreamclad"],
+        "engines": ["nano-banana-pro", "nano-banana-2"],
+        "shot_list": [
+            {"key": "dew", "shot": "close-up",
+             "en": "On a stone in morning light, droplets on the surface.",
+             "ru": "На камне в утреннем свете, капли на поверхности."},
+            {"key": "source", "shot": "extreme close-up",
+             "en": "Macro of the raw material it is made from, beside the pack.",
+             "ru": "Макро сырья, из которого он сделан, рядом с упаковкой."},
+            {"key": "water", "shot": "medium",
+             "en": "By running water, the stone dark and wet.",
+             "ru": "У бегущей воды, камень тёмный и мокрый."},
+            {"key": "wood", "shot": "medium",
+             "en": "On a wooden pedestal, glass vessels around it.",
+             "ru": "На деревянном пьедестале, вокруг стеклянные сосуды."},
+            {"key": "hero", "shot": "wide",
+             "en": "Hero shot in mist: the landscape behind, the pack in focus.",
+             "ru": "Герой-кадр в тумане: пейзаж позади, упаковка в фокусе."},
+        ],
+    },
+    {
+        "key": "studio",
+        "label": {"en": "Studio", "ru": "Студия"},
+        "logline": {
+            "en": "Coloured seamless, hard light, levitation and reflections — an ad frame.",
+            "ru": "Цветной циклорама-фон, жёсткий свет, левитация и отражения — рекламный кадр.",
+        },
+        "shots": {"min": 3, "typ": 5, "max": 8},
+        "styles_fit": ["munir", "fanuel", "flat2d"],
+        "engines": ["nano-banana-pro", "nano-banana-2"],
+        "shot_list": [
+            {"key": "seamless", "shot": "medium",
+             "en": "On a saturated seamless background, one hard light, sharp shadow.",
+             "ru": "На насыщенном однотонном фоне, один жёсткий источник, резкая тень."},
+            {"key": "gradient", "shot": "medium",
+             "en": "Gradient backdrop, soft rim light along the edge of the pack.",
+             "ru": "Градиентный фон, мягкий контровой по краю упаковки."},
+            {"key": "reflect", "shot": "close-up",
+             "en": "On a mirror plane with a clean reflection underneath.",
+             "ru": "На зеркальной плоскости с чистым отражением снизу."},
+            {"key": "float", "shot": "medium",
+             "en": "Levitating mid-frame, shadow on the floor below.",
+             "ru": "Левитирует в центре кадра, тень на полу под ним."},
+            {"key": "back", "shot": "close-up",
+             "en": "Backlit against darkness, only the silhouette and the logo lit.",
+             "ru": "Контровой в темноте, светятся только силуэт и логотип."},
+        ],
+    },
+    {
+        "key": "lifestyle",
+        "label": {"en": "In use", "ru": "В быту"},
+        "logline": {
+            "en": "The pack where it actually lives: a desk, a bag, a shelf, an interior.",
+            "ru": "Упаковка там, где она реально живёт: стол, сумка, полка, интерьер.",
+        },
+        "shots": {"min": 3, "typ": 5, "max": 8},
+        "styles_fit": ["cinema", "ghibli", "katsumi"],
+        "engines": ["nano-banana-pro", "nano-banana-2"],
+        "shot_list": [
+            {"key": "desk", "shot": "medium",
+             "en": "On a working desk among ordinary objects, morning light.",
+             "ru": "На рабочем столе среди обычных вещей, утренний свет."},
+            {"key": "bag", "shot": "close-up",
+             "en": "Half out of an open bag, as if on the way somewhere.",
+             "ru": "Наполовину из открытой сумки, будто по дороге куда-то."},
+            {"key": "shelf", "shot": "medium",
+             "en": "On a bathroom or kitchen shelf, neighbours out of focus.",
+             "ru": "На полке в ванной или на кухне, соседи не в фокусе."},
+            {"key": "table", "shot": "close-up",
+             "en": "On a table with what it is used together with.",
+             "ru": "На столе рядом с тем, с чем его используют."},
+            {"key": "room", "shot": "wide",
+             "en": "Wide interior shot: the pack small in frame but in focus.",
+             "ru": "Общий план интерьера: упаковка мелкая в кадре, но в фокусе."},
+        ],
+    },
+]
+
 _SERIES_BY_KEY = {f["key"]: f for f in SERIES_FORMATS}
 _UGC_BY_KEY = {f["key"]: f for f in UGC_FORMATS}
+_MOCKUP_BY_KEY = {f["key"]: f for f in MOCKUP_SETS}
 
 PUBLIC_SERIES_FIELDS = ("key", "label", "logline", "episodes",
                         "styles_fit", "engines", "needs_recap")
 PUBLIC_UGC_FIELDS = ("key", "label", "logline", "slots", "engines")
+PUBLIC_MOCKUP_FIELDS = ("key", "label", "logline", "shots", "styles_fit", "engines")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -604,6 +810,34 @@ _SERIES_RULES = """ЖЁСТКИЕ ПРАВИЛА СЕРИИ (ограничен�
    (same, again, continues, previous) быть не может.
 8. Серия обязана заканчиваться так, чтобы следующая была нужна."""
 
+_MOCKUP_RULES = """ЖЁСТКИЕ ПРАВИЛА ПРЕДМЕТНОЙ СЪЁМКИ (нарушение = кадр нельзя ставить в карточку):
+
+1. РЕФЕРЕНС — ЗАКОН. Приложенное фото упаковки задаёт силуэт, форму крышки,
+   пропорции, раскладку этикетки, логотип, типографику, цвета и КАЖДОЕ
+   читаемое слово. Ничего из этого не перерисовывается, не переводится и не
+   выдумывается. Нет уверенности в надписи — снимай ракурс, где её не видно,
+   а не сочиняй текст.
+2. ОДИН ТОВАР В КАДРЕ, если набор явно не просит иного. Второй экземпляр
+   модель нарисует «похожим», и различие будет видно сразу.
+3. НОВЫЙ РАКУРС В КАЖДОМ КАДРЕ. Два одинаковых плана подряд в наборе
+   запрещены: набор существует ради того, чтобы показать разное.
+4. МАТЕРИАЛ ЧЕСТНЫЙ. Стекло отражает и преломляет, пластик даёт мягкий блик,
+   картон матовый и мнётся на рёбрах. Универсальный «глянец» выдаёт рендер.
+5. КОНТАКТНАЯ ТЕНЬ ОБЯЗАТЕЛЬНА, если предмет стоит на поверхности. Без неё он
+   висит в воздухе, и кадр читается как вырезанный.
+6. БЕЗ ЛЮДЕЙ И РУК, если кадр прямо не про использование. Лицо и кисть
+   перетягивают внимание с товара и добавляют артефакты.
+7. НИ ОДНОГО ЧУЖОГО ЛОГОТИПА, рекламного слогана, ценника, водяного знака и
+   выдуманного текста на фоне и на соседних предметах.
+8. СОСТАВ АНАТОМИЧЕСКИ ДОСТОВЕРНЫЙ. Сырьё в кадре — настоящее растение,
+   зерно, смола, а не фантазийная форма похожего цвета.
+9. КВАДРАТ 1:1, товар в центральной безопасной зоне с полями по краям:
+   карточка маркетплейса режет края, и упаковка не должна в них попадать.
+10. MOTION SELF-CONTAINED. Если кадр оживляют, движение декоративное —
+   медленный облёт, поворот, блик по этикетке. Товар не меняет форму, не
+   раскрывается сам и не превращается ни во что другое."""
+
+
 # Режиссёрский seed каркаса: он же ответ на «что мы вообще снимаем».
 _SEEDS: dict[str, dict] = {
     "procedural": {
@@ -638,6 +872,15 @@ _SEEDS: dict[str, dict] = {
                        "без наблюдаемой детали."},
     "street": {"note": "Главный кадр — лицо незнакомца. Ведущий в кадре "
                        "нужен ровно дважды: в начале и в конце."},
+    "catalog": {"note": "Кадры закрывают возражения покупателя по порядку: "
+                        "что это — как выглядит вживую — что написано — "
+                        "какого размера — что внутри — что приедет."},
+    "nature": {"note": "Природа тут доказательство состава, а не украшение: "
+                       "в кадре ровно то сырьё, из которого товар сделан."},
+    "studio": {"note": "Свет — главный герой сцены. Фон однотонный и не спорит "
+                       "с упаковкой: цвет фона выбирается контрастным к ней."},
+    "lifestyle": {"note": "Показываем место в жизни, а не сцену из рекламы: "
+                          "вокруг обычные потрёпанные вещи, без витринного порядка."},
 }
 
 
@@ -687,11 +930,39 @@ def public_ugc_format(key: str, *, lang: str = "") -> dict | None:
     return out
 
 
+def _shots(rows: list, lang: str) -> list:
+    """Кадры набора мокапов. Долей нет намеренно: делить нечего — это не
+    хронометраж, а список ракурсов."""
+    out = []
+    for b in rows:
+        item = {"key": b["key"]}
+        if b.get("shot"):
+            item["shot"] = b["shot"]
+        item["text"] = b.get(lang, b.get("en", "")) if lang in ("en", "ru") else \
+            {"en": b.get("en", ""), "ru": b.get("ru", "")}
+        out.append(item)
+    return out
+
+
+def public_mockup_set(key: str, *, lang: str = "") -> dict | None:
+    f = _MOCKUP_BY_KEY.get(key)
+    if not f:
+        return None
+    out = _localize({k: f[k] for k in PUBLIC_MOCKUP_FIELDS if k in f},
+                    ("label", "logline"), lang)
+    # Ключ намеренно `beats`: фронт рисует каркасы одной функцией на все
+    # режимы, и второе имя того же списка означало бы вторую ветку в UI.
+    out["beats"] = _shots(f["shot_list"], lang)
+    return out
+
+
 def public_formats(catalog: str, *, lang: str = "") -> list[dict]:
     if catalog == "series":
         return [public_series_format(f["key"], lang=lang) for f in SERIES_FORMATS]
     if catalog == "ugc":
         return [public_ugc_format(f["key"], lang=lang) for f in UGC_FORMATS]
+    if catalog == "mockup":
+        return [public_mockup_set(f["key"], lang=lang) for f in MOCKUP_SETS]
     return []
 
 
@@ -705,6 +976,11 @@ def public_modes(*, lang: str = "") -> list[dict]:
                ("id", "icon", "kinds", "default_kind", "object", "needs_audio",
                 "needs_lyrics", "format_catalog", "scenes", "docs",
                 "track_docs", "group_by", "steps")}
+        # Аспект кадра — свойство режима, а не глобальная константа: у мокапа
+        # квадрат, у остальных вертикаль. Пишем только там, где он задан,
+        # чтобы старые режимы не обрастали полем «на всякий случай».
+        if m.get("aspect"):
+            row["aspect"] = m["aspect"]
         row["formats"] = public_formats(m["format_catalog"], lang=lang)
         out.append(row)
     return out
@@ -718,6 +994,8 @@ def format_spec(catalog: str, key: str) -> dict | None:
         return _SERIES_BY_KEY.get(key)
     if catalog == "ugc":
         return _UGC_BY_KEY.get(key)
+    if catalog == "mockup":
+        return _MOCKUP_BY_KEY.get(key)
     return None
 
 
@@ -726,12 +1004,15 @@ def default_format(catalog: str) -> str:
         return "mockumentary"
     if catalog == "ugc":
         return "review"
+    if catalog == "mockup":
+        return "catalog"
     return ""
 
 
 def rules(catalog: str) -> str:
     """Правила режима, которые уходят в системный промпт."""
-    return {"ugc": _UGC_RULES, "series": _SERIES_RULES}.get(catalog, "")
+    return {"ugc": _UGC_RULES, "series": _SERIES_RULES,
+            "mockup": _MOCKUP_RULES}.get(catalog, "")
 
 
 def seed(key: str) -> dict:
@@ -753,6 +1034,17 @@ def beats_block(catalog: str, key: str, which: str, lang: str = "ru") -> str:
     return "\n".join(lines)
 
 
+def shots_block(key: str, lang: str = "ru") -> str:
+    """Набор ракурсов строкой для промпта. Отдельно от beats_block намеренно:
+    там доли хронометража, здесь их нет и быть не может."""
+    spec = _MOCKUP_BY_KEY.get(key)
+    if not spec:
+        return ""
+    return "\n".join(
+        f"- {b['key']} ({b['shot']}): {b.get(lang) or b.get('en', '')}"
+        for b in spec["shot_list"])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # САМОПРОВЕРКА. Гоняется тестом и вручную: каркас с долями, которые не
 # складываются в единицу, молча растянет или обрежет серию.
@@ -765,7 +1057,7 @@ def validate() -> list[str]:
     err: list[str] = []
     panels = {"story", "chars", "tracks", "docs"}
     for m in MODES:
-        if m["format_catalog"] not in ("clip", "series", "ugc"):
+        if m["format_catalog"] not in ("clip", "series", "ugc", "mockup"):
             err.append(f"режим {m['id']}: неизвестный каталог каркасов")
         for s in m["steps"]:
             if s["panel"] not in panels:
@@ -793,6 +1085,26 @@ def validate() -> list[str]:
         if f["key"] not in _SEEDS:
             err.append(f"{f['key']}: нет seed")
 
+    for f in MOCKUP_SETS:
+        if not f["shot_list"]:
+            err.append(f"{f['key']}: пустой набор кадров")
+        for b in f["shot_list"]:
+            if b.get("shot") not in SHOT_SIZES:
+                err.append(f"{f['key']}/{b['key']}: крупность {b.get('shot')} вне словаря")
+        keys = [b["key"] for b in f["shot_list"]]
+        if len(keys) != len(set(keys)):
+            err.append(f"{f['key']}: два кадра с одним ключом")
+        if f["key"] not in _SEEDS:
+            err.append(f"{f['key']}: нет seed")
+
+    # Ярлык — не режим: его id не имеет права совпасть с id режима, иначе
+    # роутер и тумблер получат две записи на один адрес.
+    for sc in MODE_SHORTCUTS:
+        if sc["id"] in _MODE_BY_ID:
+            err.append(f"ярлык {sc['id']}: такой режим уже есть")
+        if sc["mode"] not in _MODE_BY_ID:
+            err.append(f"ярлык {sc['id']}: ведёт в несуществующий режим {sc['mode']}")
+
     for f in UGC_FORMATS:
         total = round(sum(b["share"] for b in f["beats"]), 6)
         if total != 1.0:
@@ -805,7 +1117,8 @@ def validate() -> list[str]:
 
     # Главная проверка: закрытые правила не видны в публичной выдаче.
     blob = repr(public_modes())
-    for name, text in (("ugc", _UGC_RULES), ("series", _SERIES_RULES)):
+    for name, text in (("ugc", _UGC_RULES), ("series", _SERIES_RULES),
+                       ("mockup", _MOCKUP_RULES)):
         if text[:60] in blob:
             err.append(f"УТЕЧКА: правила {name} видны в публичном реестре")
     return err
@@ -814,5 +1127,6 @@ def validate() -> list[str]:
 if __name__ == "__main__":
     problems = validate()
     print("\n".join(problems) if problems else
-          f"реестр цел: {len(MODES)} режима, {len(SERIES_FORMATS)} каркасов "
-          f"сериала, {len(UGC_FORMATS)} форматов UGC")
+          f"реестр цел: {len(MODES)} режима, {len(MODE_SHORTCUTS)} ярлык, "
+          f"{len(SERIES_FORMATS)} каркасов сериала, {len(UGC_FORMATS)} форматов "
+          f"UGC, {len(MOCKUP_SETS)} наборов мокапов")
