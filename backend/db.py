@@ -457,6 +457,13 @@ class Track(Base):
     # раньше покадровой генерации — по ней видно, целостно ли выглядит клип,
     # и она же идёт контекстом в промпты отдельных кадров.
     storyboard_filename = Column(String, nullable=False, default="")
+    # СКОЛЬКО СЦЕН БЫЛО В МОМЕНТ ЗАКАЗА ЛИСТА. Сетка листа считается от числа
+    # сцен (sheet_grid), поэтому «продлить кадр», копия кадра и любое ручное
+    # добавление делают уже нарисованный лист неправильным: нарезка порежет
+    # мимо панелей. Отдельного флага «лист устарел» не заводим — флаг можно
+    # забыть выставить в одном из пяти мест; расхождение ЧИСЕЛ забыть нельзя.
+    # 0 = лист рисовали до появления этого поля, состояние неизвестно.
+    storyboard_scenes = Column(Integer, nullable=False, default=0)
     storyboard_status = Column(String, nullable=False, default="")
     # Сетка листа «столбцыxстроки», зафиксированная В МОМЕНТ генерации.
     # Без неё нарезка считала сетку заново от текущего числа сцен и резала
@@ -468,6 +475,11 @@ class Track(Base):
     clip_filename = Column(String, nullable=False, default="")
     clip_status = Column(String, nullable=False, default="")
     clip_error = Column(Text, nullable=False, default="")
+    # КОГДА КЛИП В ПОСЛЕДНИЙ РАЗ СМОТРЕЛИ ИЛИ СКАЧИВАЛИ. Клип — единственный
+    # крупный артефакт, который восстанавливается ЗА НОЛЬ ТОКЕНОВ (ffmpeg
+    # склеит его заново из тех же видео). Поэтому именно он уезжает первым,
+    # когда на диске тесно, — но только тот, к которому давно не возвращались.
+    clip_seen_at = Column(DateTime, nullable=True)
 
     # Плёночное зерно на весь собранный клип (ffmpeg-фильтр при склейке).
     film_grain = Column(Boolean, nullable=False, default=False)
@@ -498,6 +510,8 @@ class Track(Base):
     # показываем — выбор живёт на проекте; поле есть, чтобы порядок
     # разрешения совпадал с движками картинок (запрос → объект → проект).
     text_engine = Column(String, nullable=False, default="")
+    # Из какого объекта скопирован (0 = оригинал). См. Project.copied_from_id.
+    copied_from_id = Column(Integer, nullable=False, default=0)
 
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
@@ -607,6 +621,24 @@ class Scene(Base):
     # состояние, но оно обязано быть видимым: карточка сравнивает это поле
     # со стилем трека и честно помечает кадр «снят в прежнем стиле».
     style_keys = Column(String, nullable=False, default="")
+    # ОТПЕЧАТОК ТОГО, ПОД ЧТО СНЯТЫ НЫНЕШНИЕ КАДРЫ: промпты + стиль. По нему
+    # «перерисовать все кадры» отличает сцены, которые реально изменились, от
+    # тех, где не поменялось ничего. Без него кнопка брала деньги за весь
+    # трек всегда — включая тридцать сцен, к которым никто не притрагивался.
+    frames_sig = Column(String, nullable=False, default="")
+
+    # ПРОИСХОЖДЕНИЕ КАДРА. copied_from_id — копия (тот же момент времени),
+    # continued_from_id — ПРОДОЛЖЕНИЕ: сцена начинается там, где предыдущая
+    # закончилась, её первый кадр физически и есть последний кадр той сцены.
+    # Разные вещи: продолжение карточка показывает стрелкой и подмешивает в
+    # промпт анимации «continues the previous shot», копия — нет.
+    copied_from_id = Column(Integer, nullable=False, default=0)
+    continued_from_id = Column(Integer, nullable=False, default=0)
+    # ВИДЕО СНЯТО НЕ ПОД ЭТОТ СЛОТ. Пересчёт таймингов (вставка кадра рядом)
+    # меняет длительность соседей, и уже оплаченное видео перестаёт совпадать
+    # со слотом. Удалять его нельзя — это до 152 токенов чужих денег; сборка
+    # подрежет по слоту, а карточка обязана сказать об этом вслух.
+    video_stale = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
@@ -620,7 +652,21 @@ class Scene(Base):
 
 
 class SceneVersion(Base):
-    """Снимок кадров сцены ПЕРЕД перерисовкой в новом стиле.
+    """ИСТОРИЯ ВАРИАНТОВ КАДРА. Снимок кадров и видео сцены перед тем, как
+    на их место лягут новые.
+
+    Изначально это был снимок ТОЛЬКО под рестайл, а во всех остальных
+    случаях старое просто стиралось: перерисовка кадра сносила оплаченное
+    видео сцены, повторная генерация видео молча затирала предыдущий дубль.
+    Человек платил за работу, которую сервис выбрасывал у него на глазах.
+    Теперь снимок делается ВСЕГДА, и это одновременно две вещи: история
+    вариантов проекта и защита денег.
+
+    Вторую таблицу под «историю креатора» не заводим: эта уже знает про
+    файлы (уборщик видит их через _file_in_use), уже проиндексирована по
+    сцене и времени и уже показывается в карточке. Ленте кабинета не хватало
+    только денормализованных user_id/project_id/track_id — их и добавили,
+    ровно тем же приёмом, что в PointEvent.
 
     Отдельная таблица, а не JSON-колонка в сцене, по двум причинам. Первая:
     у версии есть ФАЙЛЫ на диске, и уборщик (_files_worker) обязан уметь их
@@ -637,6 +683,28 @@ class SceneVersion(Base):
     id = Column(Integer, primary_key=True)
     scene_id = Column(Integer, ForeignKey("scenes.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=now, index=True)
+    # Денормализация ради ленты «история креатора»: иначе на каждой плитке
+    # кабинета нужен join scenes→tracks→projects, а лента листается курсором
+    # по времени и обязана быть одним индексным проходом.
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    project_id = Column(Integer, nullable=False, default=0, index=True)
+    track_id = Column(Integer, nullable=False, default=0)
+    # Что именно сменилось: frames | video | midframes | restyle | extend | manual.
+    # Нужно и человеку (фильтр в ленте), и вытеснению: видео стоит до 152
+    # токенов и держится дольше кадров.
+    kind = Column(String, nullable=False, default="")
+    # Во сколько обошёлся ЭТОТ вариант и какой строкой журнала он оплачен.
+    # Галерея говорит «этот дубль стоил 152 токена → задача kie abc123»:
+    # без этого спорную генерацию нечем разобрать.
+    cost_points = Column(Integer, nullable=False, default=0)
+    point_event_id = Column(Integer, nullable=False, default=0)
+    # ЗАКРЕПЛЁННЫЙ вариант не вытесняется ретенцией и не протухает по сроку.
+    # Место в квоте он при этом занимает: «не удаляйте это» — законное
+    # желание, «храните это бесплатно и вечно» — нет.
+    pinned = Column(Boolean, nullable=False, default=False)
+    # Сколько весит вариант. Считается в момент снимка, чтобы «сколько
+    # занимает история» отвечалось из базы, а не обходом диска.
+    bytes = Column(Integer, nullable=False, default=0)
     # Чем снято: ключи стилей и человеческая подпись микса на момент съёмки.
     style_keys = Column(String, nullable=False, default="")
     style_label = Column(String, nullable=False, default="")
@@ -1139,6 +1207,15 @@ def init_db() -> None:
             # Версии кадров: лента версий у сцены и вытеснение самой старой
             # (SCENE_VERSIONS_KEEP) — оба запроса идут по scene_id + времени.
             ("ix_sv_scene_time", "scene_versions(scene_id, created_at DESC)"),
+            # Лента истории в кабинете: курсор по (время, id) у одного
+            # человека и та же лента, прибитая к проекту.
+            ("ix_sv_user_time", "scene_versions(user_id, created_at DESC)"),
+            ("ix_sv_proj", "scene_versions(project_id, id DESC)"),
+            # Кэш кадров: попадание ищется по паре «человек + отпечаток».
+            ("ix_fc_user_key", "frame_cache(user_id, key_hash)"),
+            # Сумма занятого места по физическим файлам: жёсткие ссылки
+            # схлопываются по этому ключу, иначе копия проекта «весит» второй раз.
+            ("ix_fo_phys", "file_owners(phys_key)"),
             ("ix_sa_style_kind", "style_assets(style_key, kind, position)"),
         ):
             try:

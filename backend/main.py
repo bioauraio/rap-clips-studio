@@ -35,9 +35,9 @@ import stripe_pay
 import textgen
 from db import (
     AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
-    Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene, SceneRef,
-    SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track, TrackPhoto,
-    User, init_db, now,
+    FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
+    SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
+    TrackPhoto, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -276,9 +276,23 @@ def _reset_orphan_jobs() -> None:
 _reset_orphan_jobs()
 
 
+def _phys_key(path: str) -> str:
+    """«устройство:инод» — физический ключ файла.
+
+    Копия проекта делает ЖЁСТКУЮ ССЫЛКУ: у одного куска диска появляется
+    несколько имён и несколько строк в file_owners. Без этого ключа сумма
+    size_bytes считала бы такой файл столько раз, сколько у него имён, —
+    и квота с архивом врали бы тем сильнее, чем активнее человек копирует."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return f"{st.st_dev}:{st.st_ino}"
+
+
 def _reg_file(db: Session, filename: str, owner_id: int | None, *,
               kind: str = "", project_id: int = 0, track_id: int = 0,
-              scene_id: int = 0) -> None:
+              scene_id: int = 0, src_filename: str = "") -> None:
     """Каждый создаваемый файл приписывается владельцу: без записи в FileOwner
     файл из /api/media увидит только админ.
 
@@ -306,12 +320,17 @@ def _reg_file(db: Session, filename: str, owner_id: int | None, *,
         row.track_id = int(track_id)
     if scene_id:
         row.scene_id = int(scene_id)
+    if src_filename:
+        row.src_filename = os.path.basename(src_filename)[:200]
     row.deleted_at = None
+    path = os.path.join(UPLOAD_DIR, fname)
     if not row.size_bytes:
         try:
-            row.size_bytes = os.path.getsize(os.path.join(UPLOAD_DIR, fname))
+            row.size_bytes = os.path.getsize(path)
         except OSError:
             row.size_bytes = 0
+    if not row.phys_key:
+        row.phys_key = _phys_key(path)
 
 
 def _check_file_owner(db: Session, user: User, fname: str) -> None:
@@ -615,10 +634,61 @@ TEXT_COST = {
     eid: (0 if textgen.is_gateway(eid) else _points_of_usd(textgen.text_engine_usd(eid)))
     for eid in textgen.TEXT_ENGINES
 }
-# Сколько снимков кадров держим у сцены. Пара 4К-кадров ≈ 30 МБ, трек на 30
-# сцен = около гигабайта на ОДИН рестайл: это окно «вернуть как было», а не
-# архив навсегда.
+# ═════════════════════ ИСТОРИЯ ВАРИАНТОВ: СКОЛЬКО ХРАНИМ ═════════════════════
+#
+# Владелец просил две вещи разом: «варианты сохранялись в истории» и «памяти
+# серверов хватало». Это одно требование, а не два: у машины, где живёт
+# сервис, 48 ГБ на всё И ЧУЖИЕ ПРОЕКТЫ на том же разделе. История без
+# ретенции — это способ уронить соседей, а не функция.
+#
+# Поэтому глубина истории — ТАРИФНАЯ ВЕЛИЧИНА, как и всё остальное здесь.
+# Второй шкалы «сколько дней» не заводим: срок идёт той же строкой.
 SCENE_VERSIONS_KEEP = max(1, int(os.environ.get("SCENE_VERSIONS_KEEP", "2")))
+#: план → (сколько вариантов на сцену, сколько дней их держим)
+VERSIONS_BY_PLAN = {
+    "free": (SCENE_VERSIONS_KEEP, 7),
+    "pro": (3, 30),
+    "pro_max": (5, 60),
+    "studio": (8, 180),
+}
+#: план → квота диска в гигабайтах. Считается по ФИЗИЧЕСКИМ файлам (жёсткие
+#: ссылки схлопываются по phys_key), иначе копия проекта съедала бы квоту,
+#: не занимая ни байта.
+PLAN_STORAGE_GB = {"free": 3, "pro": 15, "pro_max": 50, "studio": 150}
+# Собранный клип живёт после последнего просмотра столько дней. Он —
+# ЕДИНСТВЕННЫЙ крупный артефакт, который восстанавливается за НОЛЬ токенов
+# (ffmpeg склеит его заново из тех же видео за минуту-другую), поэтому под
+# нехватку места он уезжает первым.
+CLIP_KEEP_DAYS = int(os.environ.get("CLIP_KEEP_DAYS", "14"))
+# Порог, ниже которого генерации отвечают 507 вместо того, чтобы дописать
+# 700-мегабайтный клип в два свободных гигабайта.
+DISK_MIN_FREE_PCT = float(os.environ.get("DISK_MIN_FREE_PCT", "10"))
+DISK_WARN_FREE_PCT = float(os.environ.get("DISK_WARN_FREE_PCT", "20"))
+
+
+def _versions_keep(user: "User | None") -> int:
+    return VERSIONS_BY_PLAN.get(_plan_of(user) if user else "free",
+                                (SCENE_VERSIONS_KEEP, 7))[0]
+
+
+def _versions_days(user: "User | None") -> int:
+    return VERSIONS_BY_PLAN.get(_plan_of(user) if user else "free",
+                                (SCENE_VERSIONS_KEEP, 7))[1]
+
+
+def _storage_quota_bytes(user: "User | None") -> int:
+    """Квота диска человека в байтах. У ULTRA она растёт со ступенью объёма:
+    альбом на десять треков и должен занимать в десять раз больше."""
+    if not user:
+        return PLAN_STORAGE_GB["free"] * 1024 ** 3
+    plan = _plan_of(user)
+    gb = PLAN_STORAGE_GB.get(plan, PLAN_STORAGE_GB["free"])
+    if plan == "studio":
+        base = _plan_points("studio") or 1
+        gb = int(gb * max(1.0, (_plan_points(plan, _tier_of_user(user)) or base) / base))
+    return int(gb) * 1024 ** 3
+
+
 COST_STORYBOARD = 2        # лист раскадровки — картинка
 COST_CHARACTER_MODEL = 2   # разворот персонажа — картинка
 CLIP_SCENES = int(os.environ.get("CLIP_SCENES", "30"))  # клип 3 минуты ≈ 30 сцен по 6 сек
@@ -1926,6 +1996,15 @@ def scene_dict(s: Scene) -> dict:
         # состояние, но человек обязан его видеть, а не гадать.
         "style_keys": [k for k in (s.style_keys or "").split(",") if k],
         "versions": len(s.versions or []),
+        # ПРОИСХОЖДЕНИЕ КАДРА. continued_from — «этот план продолжает тот»:
+        # карточка рисует стрелку, а генерация видео знает, что склейка
+        # встык. copied_from — просто копия.
+        "continued_from_id": int(s.continued_from_id or 0),
+        "copied_from_id": int(s.copied_from_id or 0),
+        # Видео снято под ДРУГУЮ длительность (рядом вставили кадр, слоты
+        # пересчитались). Не ошибка и не повод стирать оплаченную работу —
+        # но человек обязан это видеть до сборки.
+        "video_stale": bool(s.video_stale and s.video_filename),
         # Режимы «сериалы» и «UGC»: акт серии и кто говорит в кадре.
         "act": s.act or "", "speaker": s.speaker or "",
     }
@@ -1988,6 +2067,14 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "approved_count": sum(1 for s in t.scenes if s.approved),
         "storyboard_url": f"/api/media/{t.storyboard_filename}" if t.storyboard_filename else "",
         "storyboard_status": t.storyboard_status, "storyboard_error": t.storyboard_error,
+        # ЛИСТ УСТАРЕЛ: сцен стало больше или меньше, чем было в момент его
+        # заказа, значит сетка листа не совпадает с сеткой нарезки и
+        # «разложить по кадрам» порежет мимо панелей. Отдельного флага нет
+        # намеренно — флаг можно забыть выставить, расхождение чисел нельзя.
+        # 0 в storyboard_scenes = лист старый, состояние неизвестно, молчим.
+        "storyboard_stale": bool(t.storyboard_filename and t.storyboard_scenes
+                                 and t.storyboard_scenes != len(t.scenes)),
+        "storyboard_scenes": int(t.storyboard_scenes or 0),
         "clip_url": f"/api/media/{t.clip_filename}" if t.clip_filename else "",
         "clip_status": t.clip_status, "clip_error": t.clip_error,
         "cover_url": f"/api/media/{t.cover_filename}" if t.cover_filename else "",
@@ -2006,6 +2093,14 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "scenes_stale": sum(
             1 for s in t.scenes
             if s.image_filename and (s.style_keys or "") != (t.style_keys or "")),
+        # Сколько сцен несут видео, снятое под другой слот (рядом вставили
+        # кадр). Сборка подрежет их по слоту — сказать об этом надо ДО неё.
+        "video_stale_count": sum(1 for s in t.scenes if s.video_stale and s.video_filename),
+        # Раскадровка длиннее дорожки: сборка вешает звук с -shortest, и
+        # лишние секунды молча обрежутся по музыке. Молчать об этом нельзя.
+        "timing_over_sec": max(0, sum(int(s.duration_sec or 0) for s in t.scenes)
+                               - int(t.audio_duration_sec or 0)) if t.audio_duration_sec else 0,
+        "copied_from_id": int(t.copied_from_id or 0),
         "film_grain": t.film_grain, "no_story": t.no_story,
         # Один выбор движков на весь объект. Пусто = «как решит тариф»;
         # карточка кадра показывает это наследование, а не пустой чип.
@@ -2050,6 +2145,9 @@ def project_dict(p: Project, with_scenes: bool = False, docs: list | None = None
     mode = _mode_of(p)
     return {
         "id": p.id, "name": p.name, "kind": p.kind, "character_bible": p.character_bible,
+        # Копия проекта — не «новый проект с похожим именем»: карточка
+        # обязана уметь сказать, из чего она сделана.
+        "copied_from_id": int(p.copied_from_id or 0),
         # Текстовая модель конвейера. Пусто = «как решит тариф»; блок
         # сценария показывает это наследование, а не пустой чип.
         "text_engine": p.text_engine or "",
@@ -3876,15 +3974,81 @@ def delete_scene_ref(ref_id: int, user: User = Depends(current_user), db: Sessio
 
 # ───────── лист раскадровки → кадры сцены → видео → сборка клипа ─────────
 
-def _remove_media(filename: str) -> None:
+def _remove_media(filename: str, db: Session | None = None) -> None:
+    """Стереть файл с диска (и его миниатюру).
+
+    db — по возможности передавать. Раньше эта функция трогала ТОЛЬКО диск,
+    а строка в file_owners оставалась жить: на живом проде 171 запись
+    (3.87 ГБ по индексу) указывала в никуда, и архив завышал занятое на
+    59 %. Любая квота и любой мониторинг, построенные на таких данных, —
+    это не мониторинг. Пропущенные места добирает _files_verify_pass, но
+    пропускать их без нужды не надо."""
     if not filename:
         return
-    path = os.path.join(UPLOAD_DIR, filename)
+    fname = os.path.basename(filename)
+    path = os.path.join(UPLOAD_DIR, fname)
     if os.path.exists(path):
         try:
             os.remove(path)
         except OSError:
             pass
+    thumb = os.path.join(THUMB_DIR, fname + ".jpg")
+    if os.path.exists(thumb):
+        try:
+            os.remove(thumb)
+        except OSError:
+            pass
+    if db is not None:
+        try:
+            row = db.get(FileOwner, fname)
+            if row is not None and row.deleted_at is None:
+                row.deleted_at = now()
+        except Exception:  # noqa: BLE001 — учёт не должен ронять генерацию
+            pass
+
+
+# ─────────────────── копия файла: имя новое, байты те же ───────────────────
+# ГЛАВНОЕ ЧИСЛО ВСЕЙ ЗАТЕИ С КОПИРОВАНИЕМ: копия проекта стоит НОЛЬ БАЙТ.
+#
+# Это не оптимизация, а следствие устройства сервиса: каждый файл здесь
+# пишется РОВНО ОДИН РАЗ под свежим uuid-именем, ни одна функция не открывает
+# существующий файл на запись. Значит второе имя тому же иноду безопасно, а
+# копия трёхминутного клипа перестаёт стоить полтора гигабайта.
+#
+# Единственная мутация файла на месте была в upscale_to_4k (os.replace) — она
+# ссылок не ломает (replace меняет ИМЯ, а не инод), и с переходом на нативное
+# разрешение её на этом пути больше нет вовсе.
+
+def _clone_media(db: Session, src_name: str, *, owner_id: int | None,
+                 kind: str = "", project_id: int = 0, track_id: int = 0,
+                 scene_id: int = 0, prefix: str = "") -> str:
+    """Новое имя тому же файлу. Возвращает имя копии («» — копировать нечего).
+
+    os.link, а не shutil.copyfile: жёсткая ссылка занимает ноль байт и
+    создаётся мгновенно. Фолбэк на копирование остаётся на случай, когда
+    ссылку сделать нельзя (другая файловая система, tmpfs, EPERM): функция
+    обязана работать всегда, просто иногда дороже."""
+    src = os.path.basename(src_name or "")
+    if not src:
+        return ""
+    src_path = os.path.join(UPLOAD_DIR, src)
+    if not os.path.exists(src_path):
+        return ""   # битую ссылку на пропавший файл не тиражируем
+    stem, ext = os.path.splitext(src)
+    pre = prefix or (stem.split("_", 1)[0] if "_" in stem else "copy")
+    dst = f"{pre}_{uuid.uuid4().hex}{ext}"
+    dst_path = os.path.join(UPLOAD_DIR, dst)
+    try:
+        os.link(src_path, dst_path)
+    except OSError:
+        try:
+            shutil.copyfile(src_path, dst_path)
+        except OSError as e:
+            log.warning("копия файла %s не сделалась: %s", src, str(e)[:150])
+            return ""
+    _reg_file(db, dst, owner_id, kind=kind, project_id=project_id,
+              track_id=track_id, scene_id=scene_id, src_filename=src)
+    return dst
 
 
 def _mime_ext(mime: str) -> str:
@@ -3892,16 +4056,21 @@ def _mime_ext(mime: str) -> str:
 
 
 def _save_image(data: bytes, mime: str, *, upscale: bool = True,
-                aspect: str = "") -> str:
-    fname = f"scene_{uuid.uuid4().hex}{_mime_ext(mime)}"
-    path = os.path.join(UPLOAD_DIR, fname)
-    with open(path, "wb") as f:
-        f.write(data)
-    if upscale:
-        # Аспект обязателен: квадратный кадр, прогнанный через вертикальный
-        # апскейл, приезжает с чёрными полями сверху и снизу.
-        mediagen.upscale_to_4k(path, aspect or mediagen.DEFAULT_ASPECT)
-    return fname
+                aspect: str = "", hi_quality: bool = False) -> str:
+    """Кадр на диск — в НАТИВНОМ разрешении движка и в WebP.
+
+    Апскейл до 4К отсюда убран намеренно. Он не добавлял информации
+    (движки отдают 1–2K), но превращал кадр в PNG на 12.5 МБ: 183 кадра на
+    проде весили 2.29 ГБ, те же кадры в WebP q92 — около 0.2 ГБ. Большой
+    файл собирается на лету при экспорте (/api/export/frame), то есть
+    ровно тогда, когда он кому-то понадобился.
+
+    Параметр upscale сохранён в сигнатуре: его передают четыре места, и
+    менять их ради одного слова незачем — теперь он значит «кадр, а не
+    служебная картинка», то есть влияет только на качество сжатия."""
+    del aspect  # апскейла больше нет — аспекту здесь нечего делать
+    return mediagen.encode_frame(data, mime, UPLOAD_DIR,
+                                 hi_quality=hi_quality or not upscale)
 
 
 def _track_audio_path(track: Track) -> str | None:
@@ -3923,9 +4092,20 @@ def _run_storyboard(track_id: int) -> None:
         track.storyboard_status = "running"
         track.storyboard_error = ""
         db.commit()
+        # Листу нужен КАДР, а не его заголовок. Раньше уходили только shot_size
+        # и shot_note («Сигарета и приземление»), а всё действие лежало в
+        # image_prompt и терялось: на листе героиня просто стояла в кадре за
+        # кадром, потому что модель не знала, что она делает.
         scenes = [
-            {"position": s.position, "shot_size": s.shot_size, "shot_note": s.shot_note}
-            for s in track.scenes
+            {
+                "position": s.position,
+                "shot_size": s.shot_size,
+                "shot_note": s.shot_note,
+                "camera_move": s.camera_move,
+                "image_prompt": s.image_prompt,
+                "characters": s.characters,
+            }
+            for s in sorted(track.scenes, key=lambda x: x.position)
         ]
         import asyncio
         built = asyncio.run(claude.generate_storyboard_sheet_prompt(
@@ -3980,6 +4160,12 @@ def _run_storyboard(track_id: int) -> None:
         # ровно по ней, а не пересчитывать заново.
         _c, _r = sheet_grid(len(track.scenes))
         track.storyboard_grid = f"{_c}x{_r}"
+        # СКОЛЬКО СЦЕН БЫЛО В МОМЕНТ ЗАКАЗА. Как только их станет больше или
+        # меньше (вставили кадр, продлили, удалили), лист перестанет
+        # соответствовать сетке нарезки — и «разложить по кадрам» порежет
+        # мимо панелей. Флаг «устарел» тут не годится: его пришлось бы
+        # выставлять в пяти местах и в одном из них однажды забыть.
+        track.storyboard_scenes = len(track.scenes)
         _reg_file(db, track.storyboard_filename, track.project.owner_id,
                   kind="storyboard", project_id=track.project_id, track_id=track.id)
         track.storyboard_status = "done"
@@ -4023,6 +4209,22 @@ def track_grid(track) -> tuple[int, int]:
     return sheet_grid(len(track.scenes))
 
 
+def _guard_sheet_fresh(track: Track) -> None:
+    """Лист нарисован под ДРУГОЕ число сцен — резать его нельзя.
+
+    Сетка листа зафиксирована в момент генерации (storyboard_grid), а
+    нарезка идёт по позициям сцен. Разошлись — куски поедут со сдвигом и
+    захватят соседние панели: человек получит мешанину вместо кадров и
+    потеряет уже отрисованное. Отказ здесь честнее молчаливой порчи."""
+    if track.storyboard_scenes and track.storyboard_filename \
+            and track.storyboard_scenes != len(track.scenes):
+        raise ApiError(409, "sheet_stale",
+                       f"лист раскадровки нарисован на {track.storyboard_scenes} "
+                       f"кадров, а сейчас их {len(track.scenes)} — пересобери лист",
+                       sheet_scenes=int(track.storyboard_scenes),
+                       scenes=len(track.scenes))
+
+
 @app.post("/api/tracks/{track_id}/storyboard-cells")
 def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Режет лист на ячейки и отдаёт их превью — БЕЗ записи в сцены.
@@ -4031,6 +4233,7 @@ def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Sess
     track = _own_track(db, user, track_id)
     if not track.storyboard_filename:
         raise HTTPException(400, "сначала сгенерируй лист раскадровки")
+    _guard_sheet_fresh(track)
     src = os.path.join(UPLOAD_DIR, track.storyboard_filename)
     if not os.path.exists(src):
         raise HTTPException(404, "файл листа не найден")
@@ -4112,6 +4315,7 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
     track = _own_track(db, user, track_id)
     if not track.storyboard_filename:
         raise HTTPException(400, "сначала сгенерируй лист раскадровки")
+    _guard_sheet_fresh(track)
     scenes = sorted(track.scenes, key=lambda x: x.position)
     if not scenes:
         raise HTTPException(400, "у трека нет сцен")
@@ -4602,18 +4806,114 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
     return "\n".join(p for p in parts if p.strip())
 
 
-def _keep_scene_version(db: Session, scene: Scene, track: Track, note: str = "") -> None:
-    """Снять текущие кадры (и видео) сцены в версию вместо мусорки.
+def _media_bytes(*names: str) -> int:
+    """Сколько весит набор файлов. Дубликаты имён считаем один раз."""
+    total = 0
+    for f in {n for n in names if n}:
+        try:
+            total += os.path.getsize(os.path.join(UPLOAD_DIR, f))
+        except OSError:
+            pass
+    return total
 
-    Зовётся ПЕРЕД тем, как в сцену лягут новые файлы. Здесь нет ни одного
-    _remove_media: смысл функции ровно в том, чтобы файлы остались на
-    диске и на них появилась вторая ссылка."""
+
+# ═══════════════════ КЭШ КАДРОВ: не платить дважды за одно ═══════════════════
+#
+# По журналу прода у одной сцены встречались шесть прогонов кадров подряд.
+# Часть из них — буквально «то же самое ещё раз»: человек нажал кнопку, не
+# дождался, нажал снова; вернулся к сцене и перерисовал, ничего не поменяв.
+# Каждый такой прогон стоил ему токенов, нам — денег на kie.ai, а диску —
+# ещё одного файла.
+#
+# Ключ — отпечаток ВСЕГО, от чего зависит картинка: текст промпта, движок,
+# разрешение, аспект и список референсов. Совпало всё — картинка будет та
+# же самая, и честнее отдать её жёсткой ссылкой за ноль.
+FRAME_CACHE_DAYS = int(os.environ.get("FRAME_CACHE_DAYS", "30"))
+
+
+def _frames_sig(scene: Scene, track: Track) -> str:
+    """Отпечаток «под что сняты кадры сцены»: промпты + стиль."""
+    raw = "\x1f".join([
+        (scene.image_prompt or "").strip(),
+        (scene.image_prompt_last or "").strip(),
+        ",".join(_track_style_keys(track)),
+    ])
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:20]
+
+
+def _frame_cache_key(db: Session, scene: Scene, track: Track, which: str,
+                     engine: str, resolution: str, aspect: str) -> str:
+    """Отпечаток одного кадра. Референсы входят ИМЕНАМИ ФАЙЛОВ: имена у нас
+    уникальные (uuid), поэтому смена реферса гарантированно меняет ключ."""
+    try:
+        refs = [os.path.basename(p)
+                for p in _scene_reference_paths(db, scene, track.project)]
+    except Exception:  # noqa: BLE001 — кэш не должен ронять генерацию
+        refs = ["?"]
+    raw = "\x1f".join([
+        _frame_prompt(scene, track, which),
+        engine or "", (resolution or "").upper(), aspect or "", ",".join(refs),
+    ])
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+
+
+def _frame_cache_get(db: Session, user: "User | None", key: str) -> str:
+    """Имя уже нарисованного файла или «». СТРОГО в пределах одного
+    пользователя: общий кэш означал бы «совпал промпт — увидел чужой кадр»."""
+    if not user or not key:
+        return ""
+    row = (db.query(FrameCache)
+           .filter(FrameCache.user_id == user.id, FrameCache.key_hash == key,
+                   FrameCache.created_at >= now() - timedelta(days=FRAME_CACHE_DAYS))
+           .order_by(FrameCache.id.desc()).first())
+    if not row:
+        return ""
+    if not os.path.exists(os.path.join(UPLOAD_DIR, row.filename)):
+        db.delete(row)          # файл убрали — запись мусорная
+        db.commit()
+        return ""
+    return row.filename
+
+
+def _frame_cache_put(db: Session, user: "User | None", key: str, engine: str,
+                     filename: str) -> None:
+    if not user or not key or not filename:
+        return
+    try:
+        db.add(FrameCache(user_id=user.id, key_hash=key, engine=engine or "",
+                          filename=filename, created_at=now()))
+        db.flush()
+    except Exception as e:  # noqa: BLE001
+        log.warning("кэш кадров: не записался (%s)", str(e)[:120])
+
+
+def _keep_scene_version(db: Session, scene: Scene, track: Track, note: str = "",
+                        *, kind: str = "frames", cost_points: int = 0) -> None:
+    """Снять текущие кадры (и видео) сцены в историю вариантов.
+
+    Зовётся ПЕРЕД тем, как в сцену лягут новые файлы, и зовётся ВСЕГДА —
+    это и есть «варианты сохраняются в истории проекта и в истории
+    креатора». Раньше снимок делал только рестайл, а обычная перерисовка
+    кадра шла через _remove_media(old_video): человек нажимал «перерисовать
+    кадр» и терял видео сцены за 152 токена, о которых его не спросили.
+
+    Здесь нет ни одного _remove_media: смысл функции ровно в том, чтобы
+    файлы остались на диске и на них появилась вторая ссылка. Место
+    ограничивает ретенция (_trim_scene_versions), а не потеря данных."""
     if not (scene.image_filename or scene.image_last_filename or scene.video_filename):
         return
     keys = [k for k in (scene.style_keys or "").split(",") if k.strip()] \
         or _track_style_keys(track)
+    owner_id = track.project.owner_id if track.project else 0
     db.add(SceneVersion(
         scene_id=scene.id,
+        user_id=int(owner_id or 0),
+        project_id=int(track.project_id or 0),
+        track_id=int(track.id or 0),
+        kind=kind or "frames",
+        cost_points=int(cost_points or 0),
+        bytes=_media_bytes(scene.image_filename, scene.image_last_filename,
+                           scene.video_filename, scene.audio_filename),
         style_keys=",".join(keys),
         style_label=prompts_catalog.labels(keys, "ru"),
         image_filename=scene.image_filename,
@@ -4627,17 +4927,32 @@ def _keep_scene_version(db: Session, scene: Scene, track: Track, note: str = "")
         note=str(note or "")[:200],
     ))
     db.flush()
-    _trim_scene_versions(db, scene.id)
+    owner = db.get(User, owner_id) if owner_id else None
+    _trim_scene_versions(db, scene.id, owner)
 
 
-def _trim_scene_versions(db: Session, scene_id: int) -> None:
-    """Оставить SCENE_VERSIONS_KEEP последних снимков, лишние стереть
-    вместе с файлами. Это окно «вернуть как было», а не архив: гигабайт на
-    один рестайл трека — не та цена, которую диск платит вечно."""
+def _trim_scene_versions(db: Session, scene_id: int, user: "User | None" = None) -> None:
+    """Ретенция истории вариантов одной сцены: тарифная глубина и тарифный срок.
+
+    Два правила поверх «оставить последние N»:
+      * ЗАКРЕПЛЁННЫЕ (pinned) не считаются в лимите и не протухают. «Не
+        удаляйте это» — законное желание; место в квоте они при этом
+        занимают, потому что «храните вечно и бесплатно» — уже нет.
+      * Протухшие по сроку уезжают, даже если их меньше лимита: на FREE
+        история живёт неделю, у ULTRA — полгода."""
+    keep = _versions_keep(user)
+    days = _versions_days(user)
     rows = (db.query(SceneVersion)
             .filter(SceneVersion.scene_id == int(scene_id))
             .order_by(SceneVersion.id.desc()).all())
-    if len(rows) <= SCENE_VERSIONS_KEEP:
+    rest = [r for r in rows if not r.pinned]   # закреплённые не трогаем вовсе
+    edge = now() - timedelta(days=days)
+    doomed = list(rest[keep:])
+    for r in rest[:keep]:
+        at = _as_utc(r.created_at)
+        if at and at < edge:
+            doomed.append(r)
+    if not doomed:
         return
     # ЖИВЫЕ ССЫЛКИ. Один и тот же файл может лежать и в сцене, и в снимке:
     # при перерисовке только первого кадра последний остаётся прежним, и
@@ -4647,14 +4962,17 @@ def _trim_scene_versions(db: Session, scene_id: int) -> None:
     scene = db.get(Scene, int(scene_id))
     alive = {scene.image_filename, scene.image_last_filename,
              scene.video_filename, scene.audio_filename} if scene else set()
-    for keep in rows[:SCENE_VERSIONS_KEEP]:
-        alive |= {keep.image_filename, keep.image_last_filename,
-                  keep.video_filename, keep.audio_filename}
-    for old in rows[SCENE_VERSIONS_KEEP:]:
+    doomed_ids = {r.id for r in doomed}
+    for keeper in rows:
+        if keeper.id in doomed_ids:
+            continue
+        alive |= {keeper.image_filename, keeper.image_last_filename,
+                  keeper.video_filename, keeper.audio_filename}
+    for old in doomed:
         for f in (old.image_filename, old.image_last_filename,
                   old.video_filename, old.audio_filename):
             if f and f not in alive:
-                _remove_media(f)
+                _remove_media(f, db)
         db.delete(old)
 
 
@@ -4720,48 +5038,53 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
             scene.image_engine = res["engine"]
 
         _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "frames")
-        if keep_version:
-            _keep_scene_version(db, scene, track)
-        old_first, old_last = scene.image_filename, scene.image_last_filename
-        old_video, old_audio = scene.video_filename, scene.audio_filename
+        # СНИМОК ДЕЛАЕТСЯ ВСЕГДА. Раньше — только при keep_version (рестайл),
+        # а в обычной перерисовке ниже стоял _remove_media(old_video): человек
+        # жал «перерисовать кадр» и терял видео сцены за 152 токена. Ветки
+        # «с версией / без версии» больше нет — есть история и ретенция.
+        _keep_scene_version(db, scene, track,
+                            kind="restyle" if keep_version else "frames")
         old_mids = [m.get("filename", "") for m in _midframes(scene)]
         if first_data is not None:
             scene.image_filename = _save_image(first_data, first_mime,
                                                upscale=not native_4k, aspect=aspect)
             _reg_file(db, scene.image_filename, track.project.owner_id, kind="frame",
                       project_id=track.project_id, track_id=track.id, scene_id=scene.id)
-        else:
-            old_first = ""  # первый кадр не пересобирали — оставляем как есть
+            _frame_cache_put(db, owner, _frame_cache_key(db, scene, track, "first",
+                                                         engine, img_res, aspect),
+                             scene.image_engine or engine, scene.image_filename)
         if last_data is not None:
             scene.image_last_filename = _save_image(last_data, last_mime,
                                                     upscale=not native_4k, aspect=aspect)
             _reg_file(db, scene.image_last_filename, track.project.owner_id,
                       kind="frame_last", project_id=track.project_id,
                       track_id=track.id, scene_id=scene.id)
-        else:
-            old_last = ""
+            _frame_cache_put(db, owner, _frame_cache_key(db, scene, track, "last",
+                                                         engine, img_res, aspect),
+                             scene.image_engine or engine, scene.image_last_filename)
         scene.image_status = "done"
         # Кадры переснялись — старое видео, утверждение и промежуточные
-        # кадры (интерполяция СТАРОЙ пары) к ним не относятся.
+        # кадры (интерполяция СТАРОЙ пары) к ним не относятся. Видео при этом
+        # НЕ СТИРАЕТСЯ с диска: оно уехало в версию строчкой выше, и его
+        # можно вернуть кнопкой «Вернуть только видео».
         scene.approved = False
         scene.video_filename = ""
         scene.video_status = ""
         scene.video_error = ""
+        scene.video_stale = False
         scene.audio_filename = ""
         scene.midframes_json = ""
         # Чем снята эта пара кадров. По этому полю карточка отличает сцену,
         # оставшуюся в прежнем стиле, от перерисованной.
         scene.style_keys = ",".join(_track_style_keys(track))
-        if keep_version:
-            # Файлы остаются на диске — на них теперь смотрит версия.
-            # Промежуточные кадры удаляем всегда: это интерполяция СТАРОЙ
-            # пары, в снимке она бессмысленна.
-            for f in old_mids:
-                _remove_media(f)
+        # Отпечаток «под что сняты нынешние кадры»: по нему пакетная
+        # перерисовка отличает изменившиеся сцены от нетронутых.
+        scene.frames_sig = _frames_sig(scene, track)
+        # Промежуточные кадры удаляем всегда: это интерполяция СТАРОЙ пары,
+        # и в снимке она бессмысленна.
+        for f in old_mids:
+            _remove_media(f, db)
         db.commit()
-        if not keep_version:
-            for f in (old_first, old_last, old_video, old_audio, *old_mids):
-                _remove_media(f)
         log.info("кадры сцены %s готовы", scene_id)
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -4781,6 +5104,7 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
                           user: User = Depends(current_user),
                           db: Session = Depends(db_session)):
     from threading import Thread
+    _guard_disk()
     scene = _own_scene(db, user, scene_id)
     if not scene.image_prompt.strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
@@ -4791,12 +5115,65 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
     # выбор из карточки кадра доезжал сюда и молча затирался внутри
     # _run_scene_frames дефолтом тарифа.
     engine = _resolve_image_engine(user, scene.track, engine)
+    # КЭШ. Проверяем ДО списания — иначе экономия была бы только для нас, а
+    # человек всё равно платил бы за уже нарисованное. Ключ считается из
+    # всего, от чего зависит картинка: промпт, движок, разрешение, аспект,
+    # референсы. Совпало всё — картинка будет та же самая.
+    if _apply_frame_cache(db, user, scene, which, engine):
+        return {"ok": True, "cached": True, "charged": 0}
     _scene_charge(db, user, scene, _frames_cost(user, scene, engine),
                   f"кадры сцены {scene.id} ({which})", kind="frames", engine=engine)
     scene.image_status = "queued"
     db.commit()
     Thread(target=_run_scene_frames, args=(scene_id, which, engine), daemon=True).start()
     return {"ok": True}
+
+
+def _apply_frame_cache(db: Session, user: User, scene: Scene, which: str,
+                       engine: str) -> bool:
+    """Если ВСЕ запрошенные кадры уже рисовались этим человеком с тем же
+    отпечатком — поставить их ссылками и не списывать ничего.
+
+    Возвращает True, когда генерация не нужна. Половинчатого попадания не
+    бывает намеренно: «первый из кэша, последний рисуем» усложнило бы
+    списание вдвое ради экономии одной картинки."""
+    track = scene.track
+    aspect = _track_aspect(track)
+    res = (track.image_resolution or "").strip()
+    want = ["first", "last"] if which == "both" else [which]
+    hits = {}
+    for w in want:
+        key = _frame_cache_key(db, scene, track, w, engine, res, aspect)
+        name = _frame_cache_get(db, user, key)
+        if not name:
+            return False
+        hits[w] = name
+    owner_id = track.project.owner_id
+    _keep_scene_version(db, scene, track, kind="frames")
+    for w, name in hits.items():
+        clone = _clone_media(db, name, owner_id=owner_id,
+                             kind="frame" if w == "first" else "frame_last",
+                             project_id=track.project_id, track_id=track.id,
+                             scene_id=scene.id)
+        if not clone:
+            return False
+        if w == "first":
+            scene.image_filename = clone
+        else:
+            scene.image_last_filename = clone
+    scene.image_status = "done"
+    scene.image_error = ""
+    scene.image_engine = engine
+    scene.approved = False
+    scene.video_filename = ""
+    scene.video_status = ""
+    scene.video_stale = False
+    scene.midframes_json = ""
+    scene.style_keys = ",".join(_track_style_keys(track))
+    scene.frames_sig = _frames_sig(scene, track)
+    db.commit()
+    log.info("кадры сцены %s взяты из кэша — 0 токенов", scene.id)
+    return True
 
 
 # ─────────────────── промежуточные кадры сцены ───────────────────
@@ -4830,7 +5207,14 @@ def _run_midframes(scene_id: int) -> None:
         for n in range(1, total + 1):
             prompt = (f"Frame {n} of {total} between these two moments: "
                       f"{first} → {last}, style unchanged")
-            data, mime = asyncio.run(mediagen.generate_image(prompt, reference_path=ref))
+            # ТЕМ ЖЕ ДВИЖКОМ, ЧТО И ПАРА КАДРОВ. Иначе середина сцены
+            # выпадает из стиля её краёв — и, что важнее, платим мы за один
+            # движок, а рисуем другим: цена в /generate-midframes считается
+            # именно по scene.image_engine.
+            data, mime = asyncio.run(mediagen.generate_image(
+                prompt, reference_path=ref, engine=scene.image_engine or "",
+                resolution=(track.image_resolution or ""),
+                aspect=_track_aspect(track)))
             fname = _save_image(data, mime)
             _reg_file(db, fname, track.project.owner_id, kind="midframe",
                       project_id=track.project_id, track_id=track.id, scene_id=scene.id)
@@ -4856,10 +5240,15 @@ def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Se
         raise HTTPException(400, "сначала сгенерируй кадры сцены — референсом идёт первый кадр")
     if not (scene.image_prompt or "").strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
-    # Промежуточные кадры — тоже кадры этой сцены: входят в её цену.
-    _scene_charge(db, user, scene, _frames_cost(user, scene),
-                  f"промежуточные кадры сцены {scene.id}",
-                  kind="frames", engine=scene.image_engine or _plan_image_engine(user))
+    # ЦЕНА ПО ФАКТУ. Раньше здесь стояла цена ПАРЫ кадров (15 токенов на
+    # Nano Banana Pro), а рисовалось до ЧЕТЫРЁХ картинок — то есть $0.36
+    # себестоимости против 15 токенов выручки. Считаем по числу картинок тем
+    # же движком, каким их и рисуем.
+    eng = scene.image_engine or _plan_image_engine(user)
+    _scene_charge(db, user, scene,
+                  total * _image_cost(user, eng, scene.track.image_resolution or ""),
+                  f"промежуточные кадры сцены {scene.id} ({total} шт.)",
+                  kind="frames", engine=eng)
     Thread(target=_run_midframes, args=(scene_id,), daemon=True).start()
     return {"ok": True, "count": total}
 
@@ -4888,8 +5277,21 @@ def _run_scene_video(scene_id: int) -> None:
         # уже записана на сцене при списании, чтобы движок не «переехал»
         # между оплатой и генерацией.
         engine = scene.video_engine or _plan_video_engine(owner, scene.video_provider)
+        # Пустой motion_prompt валит генерацию на стороне движка
+        # («input.prompt is required»), а сцена при этом выглядит готовой.
+        # Собираем осмысленный запасной из того, что о кадре известно.
+        motion = (scene.motion_prompt or "").strip()
+        if not motion:
+            bits = [b for b in (
+                (scene.shot_note or "").strip(),
+                (scene.camera_move or "").strip(),
+            ) if b]
+            base = (scene.image_prompt or "").strip()
+            if base:
+                bits.append(" ".join(base.split())[:220])
+            motion = "; ".join(bits) or "subtle natural motion, slow camera drift, alive frame"
         fname = asyncio.run(mediagen.animate_scene(
-            prompt=scene.motion_prompt, first_path=first_path, last_path=last_path,
+            prompt=motion, first_path=first_path, last_path=last_path,
             duration_sec=scene.duration_sec, provider=scene.video_provider,
             seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
             engine=engine, aspect=_track_aspect(track),
@@ -4897,14 +5299,22 @@ def _run_scene_video(scene_id: int) -> None:
         # Задача внешнего движка — в строку списания: «списали 154 токена →
         # задача kie abc123». Без неё спорную генерацию разобрать нечем.
         _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "video")
-        old_video = scene.video_filename
+        # ПРЕДЫДУЩИЙ ДУБЛЬ УЕЗЖАЕТ В ИСТОРИЮ. Раньше здесь стояло
+        # _remove_media(old_video): человек нажимал «перерендерить», получал
+        # вариант хуже прежнего и обнаруживал, что прежнего больше нет. При
+        # цене сцены до 152 токенов это не «перегенерация», а потеря денег.
+        had_video = bool(scene.video_filename)
+        if had_video:
+            _keep_scene_version(db, scene, track, kind="video",
+                                cost_points=int(scene.charged_points or 0))
+        old_audio_only = "" if had_video else scene.audio_filename
         scene.video_filename = fname
         _reg_file(db, fname, track.project.owner_id, kind="video",
                   project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         scene.video_status = "done"
 
+        scene.video_stale = False    # видео снято под нынешний слот
         # Отрезок трека ровно под эту сцену — слушаем видео с его музыкой.
-        old_audio = scene.audio_filename
         audio_src = _track_audio_path(track)
         if audio_src:
             try:
@@ -4915,10 +5325,13 @@ def _run_scene_video(scene_id: int) -> None:
                           track_id=track.id, scene_id=scene.id)
             except Exception as e:  # noqa: BLE001
                 log.warning("нарезка аудио сцены %s не удалась: %s", scene_id, e)
-                old_audio = ""  # старый отрезок не трогаем, если новый не вышел
+                old_audio_only = ""  # старый отрезок не трогаем, если новый не вышел
         db.commit()
-        _remove_media(old_video)
-        _remove_media(old_audio)
+        # Старый видеофайл НЕ стираем: на него смотрит версия. Убираем только
+        # прежнюю нарезку дорожки, когда снимка не делали — она стоит ноль и
+        # режется заново.
+        _remove_media(old_audio_only, db)
+        db.commit()
         log.info("видео сцены %s готово (%s)", scene_id, scene.video_provider)
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -4995,19 +5408,31 @@ def _run_assemble(track_id: int) -> None:
         track.clip_status = "running"
         track.clip_error = ""
         db.commit()
-        videos = [s.video_filename for s in track.scenes if s.approved and s.video_filename]
+        approved = [s for s in sorted(track.scenes, key=lambda x: (x.position, x.id))
+                    if s.approved and s.video_filename]
+        videos = [s.video_filename for s in approved]
+        # СЛОТЫ РАСКАДРОВКИ. Движок отдаёт ролик своей длины (seevio, скажем,
+        # не умеет короче четырёх секунд), и без этого списка собранный клип
+        # шёл не по сетке раскадровки, а по тому, сколько кому захотелось
+        # отдать: тайминги кадров переставали что-либо значить, а хвост молча
+        # обрезался музыкой через -shortest.
+        durations = [int(s.duration_sec or 0) for s in approved]
         old = track.clip_filename
         track.clip_filename = mediagen.assemble_clip(
             videos, _track_audio_path(track), film_grain=track.film_grain,
-            aspect=_track_aspect(track))
+            aspect=_track_aspect(track), durations=durations)
         _reg_file(db, track.clip_filename, track.project.owner_id, kind="clip",
                   project_id=track.project_id, track_id=track.id)
         track.clip_status = "done"
         # Свежая склейка — по нынешним кадрам: метка «снят в прежнем стиле»
         # снимается ровно здесь и больше нигде.
         track.clip_stale = False
+        # Отсчёт ретенции идёт от последнего обращения, а свежесобранный клип
+        # человек как раз и собирался посмотреть.
+        track.clip_seen_at = now()
         db.commit()
-        _remove_media(old)
+        _remove_media(old, db)
+        db.commit()
         log.info("клип трека %s собран из %s сцен", track_id, len(videos))
     except Exception as e:  # noqa: BLE001
         db.rollback()
@@ -5367,7 +5792,50 @@ def get_media(filename: str, request: Request, user: User = Depends(current_user
     if not os.path.exists(path):
         raise HTTPException(404, "файл не найден")
     _check_file_owner(db, user, fname)
+    # Отметка «клип смотрели». Ретенция снимает с диска только те склейки, к
+    # которым давно не возвращались, — а «давно» надо чем-то мерить. Запрос
+    # делается ТОЛЬКО для клипов (имя начинается с clip_), то есть на
+    # единицы обращений, а не на каждую миниатюру.
+    if fname.startswith("clip_"):
+        try:
+            tr = db.query(Track).filter(Track.clip_filename == fname).first()
+            if tr is not None:
+                tr.clip_seen_at = now()
+                db.commit()
+        except Exception:  # noqa: BLE001 — отметка не стоит отказа в файле
+            db.rollback()
     return _media_response(path, request)
+
+
+# ───────────────────── экспорт кадра в большом размере ─────────────────────
+# Кадры хранятся в НАТИВНОМ разрешении движка (см. _save_image): 4К-апскейл
+# не добавлял информации, но стоил 12 МБ на кадр — 2.29 ГБ на проде за 183
+# картинки. Большой файл нужен изредка и поштучно, поэтому собирается на лету
+# и не хранится вовсе.
+EXPORT_DIR = os.environ.get("EXPORT_DIR", "/data/exports")
+os.makedirs(EXPORT_DIR, exist_ok=True)
+
+
+@app.get("/api/export/frame/{filename}")
+def export_frame(filename: str, res: str = "4k", aspect: str = "",
+                 user: User = Depends(current_user),
+                 db: Session = Depends(db_session)):
+    """Кадр в большом размере одним файлом. Ничего не хранит: собранная копия
+    живёт в каталоге экспорта и убирается уборщиком через час."""
+    fname = os.path.basename(filename)
+    src = os.path.join(UPLOAD_DIR, fname)
+    if not os.path.exists(src):
+        raise HTTPException(404, "файл не найден")
+    _check_file_owner(db, user, fname)
+    stem = os.path.splitext(fname)[0]
+    out_name = f"exp_{stem}_{str(res).lower()}.png"
+    out = os.path.join(EXPORT_DIR, out_name)
+    if not os.path.exists(out):
+        if not mediagen.export_frame(src, out, aspect=aspect or mediagen.DEFAULT_ASPECT,
+                                     res=res):
+            # Не собралось — отдаём оригинал: он меньше, но он есть.
+            return FileResponse(src)
+    return FileResponse(out, filename=out_name)
 
 
 # ───────────────────── файлы стилей (админка стилей) ─────────────────────
@@ -5576,15 +6044,13 @@ def characters_library(user: User = Depends(current_user), db: Session = Depends
     return out
 
 
-@app.post("/api/characters/clone")
-async def clone_character(request: Request, project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
-    """Клонирование персонажа из библиотеки в проект. Копия полностью
-    самостоятельная: удаление оригинала (или его фото) не ломает клона."""
-    body = await request.json()
-    source = db.get(Character, int(body.get("source_id") or 0))
-    if not source or not _owned(user, source.project):
-        raise HTTPException(404, "исходный персонаж не найден")
-    project = get_or_create_project(db, user, project_id)
+def _clone_character_into(db: Session, source: Character, project: Project) -> Character:
+    """Копия персонажа в проект — вместе с фото, разворотами и атрибутами.
+
+    Копия самостоятельная: удаление оригинала (или его фото) клона не ломает.
+    Раньше фото копировались БАЙТАМИ ровно ради этой самостоятельности, но
+    жёсткая ссылка даёт её тоже и стоит ноль: файл живёт, пока на него
+    смотрит хоть одно имя, а _remove_media снимает ровно одно имя."""
     max_pos = max((c.position for c in project.characters), default=0)
     # Главный герой в проекте один (см. update_character): статус переносится
     # только если место главного в целевом проекте ещё свободно.
@@ -5592,27 +6058,22 @@ async def clone_character(request: Request, project_id: int | None = None, user:
     clone = Character(
         project_id=project.id, position=max_pos + 1,
         name=source.name, description=source.description,
+        voice_id=source.voice_id or "",
         is_main=bool(source.is_main and not has_main),
     )
     db.add(clone)
     db.flush()
-    # Фото копируем БАЙТАМИ под новыми именами, а не ссылкой на тот же файл:
-    # иначе удаление фото у оригинала снесло бы файл и у клона.
     for i, ph in enumerate(source.photos, start=1):
-        src_path = os.path.join(UPLOAD_DIR, ph.filename)
-        if not os.path.exists(src_path):
-            continue  # битую ссылку на пропавший файл не тиражируем
-        ext = os.path.splitext(ph.filename)[1] or ".jpg"
-        fname = f"char_{uuid.uuid4().hex}{ext}"
-        shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
-        _reg_file(db, fname, project.owner_id, kind="photo", project_id=project.id)
+        fname = _clone_media(db, ph.filename, owner_id=project.owner_id,
+                             kind="photo", project_id=project.id, prefix="char")
+        if not fname:
+            continue    # битую ссылку на пропавший файл не тиражируем
         # kind переносим вместе с файлом: иначе клон терял свой разворот и
         # его кадры снова опирались бы на селфи.
         db.add(CharacterPhoto(character_id=clone.id, position=i, filename=fname,
                               kind=ph.kind or "photo", pose_kind=ph.pose_kind or "",
                               from_photos=int(ph.from_photos or 0)))
-    # Атрибуты — часть образа персонажа: клон получает их вместе с фото
-    # (тоже байтами под новыми именами — по той же причине, что и лица).
+    # Атрибуты — часть образа персонажа: клон получает их вместе с фото.
     for attr in source.attributes:
         attr_clone = CharacterAttribute(
             character_id=clone.id, position=attr.position,
@@ -5621,14 +6082,23 @@ async def clone_character(request: Request, project_id: int | None = None, user:
         db.add(attr_clone)
         db.flush()
         for i, ph in enumerate(attr.photos, start=1):
-            src_path = os.path.join(UPLOAD_DIR, ph.filename)
-            if not os.path.exists(src_path):
+            fname = _clone_media(db, ph.filename, owner_id=project.owner_id,
+                                 kind="attr", project_id=project.id, prefix="attr")
+            if not fname:
                 continue
-            ext = os.path.splitext(ph.filename)[1] or ".jpg"
-            fname = f"attr_{uuid.uuid4().hex}{ext}"
-            shutil.copyfile(src_path, os.path.join(UPLOAD_DIR, fname))
-            _reg_file(db, fname, project.owner_id, kind="attr", project_id=project.id)
             db.add(AttributePhoto(attribute_id=attr_clone.id, position=i, filename=fname))
+    return clone
+
+
+@app.post("/api/characters/clone")
+async def clone_character(request: Request, project_id: int | None = None, user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Клонирование персонажа из библиотеки в проект."""
+    body = await request.json()
+    source = db.get(Character, int(body.get("source_id") or 0))
+    if not source or not _owned(user, source.project):
+        raise HTTPException(404, "исходный персонаж не найден")
+    project = get_or_create_project(db, user, project_id)
+    clone = _clone_character_into(db, source, project)
     db.commit()
     # clone.photos закэширован ДО вставки фото — без refresh ответ уйдёт пустым.
     db.refresh(clone)
@@ -6211,73 +6681,776 @@ async def add_scene(track_id: int, request: Request, user: User = Depends(curren
 
 
 
-def _frames_todo(track: Track, force: bool = False) -> list:
-    """Сцены, которым нужны кадры. force=1 — ВСЕ сцены с промптом, включая
-    уже отрисованные.
+# ═════════════════════════════════════════════════════════════════════════════
+# ТАЙМИНГИ: одно место правды
+#
+# Как только в раскадровку можно вставить кадр (копией или продлением), длина
+# клипа перестаёт совпадать с длиной дорожки — и это НЕ мелочь. Сборка вешает
+# звук с -shortest, поэтому лишние секунды раскадровки молча обрезаются по
+# музыке: последние кадры просто исчезают из клипа, а человек видит «сервис
+# потерял мою работу».
+#
+# Поэтому вставка кадра ВСЕГДА спрашивает, что делать с таймингом, и считает
+# ответ ОДНОЙ функцией — _retime_plan. Смету и применение считает она же:
+# второй арифметики в сервисе быть не должно.
+# ═════════════════════════════════════════════════════════════════════════════
 
-    Без force кнопка «все кадры» на треке с готовыми кадрами отвечала 400
-    «у всех сцен кадры уже готовы» — то есть после смены стиля становилась
-    тупиком: перерисовать уже нарисованное сервису было нечем."""
+#: Границы длительности кадра — общие с движками видео (2–12 секунд).
+SCENE_MIN_SEC, SCENE_MAX_SEC = 2, 12
+#: Как поступить с таймлайном при вставке кадра.
+RETIME_POLICIES = ("squeeze", "spread", "tail")
+
+
+def _clamp_dur(v) -> int:
+    return max(SCENE_MIN_SEC, min(SCENE_MAX_SEC, int(v or SCENE_MIN_SEC)))
+
+
+def _retime_plan(track: Track, policy: str, at_position: int, new_dur: int) -> dict:
+    """Что произойдёт с таймингами, если вставить кадр длиной new_dur сразу
+    ПОСЛЕ позиции at_position. Ничего не меняет.
+
+      squeeze — слот исходного кадра делится пополам (6 с → 3 + 3). Сумма не
+                меняется, дорожка не разъезжается, соседи не тронуты.
+      spread  — новый кадр берёт полную длину, а лишние секунды
+                пропорционально снимаются с ПОСЛЕДУЮЩИХ кадров (никто не
+                короче двух секунд).
+      tail    — клип просто становится длиннее.
+
+    Политика, которая не может выполниться (кадр короче четырёх секунд для
+    squeeze, все соседи уже по две секунды для spread), честно вырождается
+    в tail и говорит об этом в смете — а не делает вид, что справилась."""
+    scenes = sorted(track.scenes, key=lambda x: (x.position, x.id))
+    new_dur = _clamp_dur(new_dur)
+    changes: dict[int, int] = {}
+    used = policy if policy in RETIME_POLICIES else "tail"
+    fell_back = ""
+    src = next((s for s in scenes if s.position == at_position), None)
+
+    if used == "squeeze":
+        if src is None or int(src.duration_sec or 0) < SCENE_MIN_SEC * 2:
+            used, fell_back = "tail", "squeeze"
+        else:
+            total = int(src.duration_sec)
+            half = max(SCENE_MIN_SEC, total // 2)
+            changes[src.id] = total - half if total - half >= SCENE_MIN_SEC else half
+            new_dur = total - changes[src.id]
+
+    if used == "spread":
+        after = [s for s in scenes if s.position > at_position]
+        room = sum(max(0, int(s.duration_sec or 0) - SCENE_MIN_SEC) for s in after)
+        if room <= 0:
+            used, fell_back = "tail", "spread"
+        else:
+            need = min(new_dur, room)
+            left = need
+            for i, s in enumerate(after):
+                have = max(0, int(s.duration_sec or 0) - SCENE_MIN_SEC)
+                if have <= 0:
+                    continue
+                take = have if i == len(after) - 1 else int(round(need * have / room))
+                take = min(have, max(0, take), left)
+                if take:
+                    changes[s.id] = int(s.duration_sec) - take
+                    left -= take
+            if left > 0:
+                fell_back = "spread_partial"
+
+    old_total = sum(int(s.duration_sec or 0) for s in scenes)
+    new_total = old_total + new_dur
+    for sid, dur in changes.items():
+        was = next(int(s.duration_sec or 0) for s in scenes if s.id == sid)
+        new_total -= (was - dur)
+    audio = int(track.audio_duration_sec or 0)
+    return {
+        "policy": used,
+        "requested": policy,
+        "fell_back": fell_back,
+        "new_duration": new_dur,
+        "changes": changes,
+        "track_delta_sec": new_total - old_total,
+        "track_total_sec": new_total,
+        "audio_sec": audio,
+        "over_sec": max(0, new_total - audio) if audio else 0,
+        # Видео этих кадров снято под ДРУГОЙ слот. Оно не пропадает (это до
+        # 152 токенов чужих денег), но карточка обязана сказать об этом.
+        "video_stale_ids": [sid for sid in changes
+                            if next((s.video_filename for s in scenes if s.id == sid), "")],
+    }
+
+
+def _retime_apply(db: Session, track: Track, plan: dict) -> None:
+    """Применить смету. Дальше — единая перенумерация: позиции подряд,
+    start_sec пересчитан от нуля."""
+    by_id = {s.id: s for s in track.scenes}
+    for sid, dur in (plan.get("changes") or {}).items():
+        s = by_id.get(sid)
+        if not s or int(s.duration_sec or 0) == int(dur):
+            continue
+        s.duration_sec = _clamp_dur(dur)
+        # Нарезка дорожки под сцену больше не соответствует слоту. Она стоит
+        # ноль токенов и режется заново при следующей генерации видео —
+        # поэтому её честнее убрать, чем оставить врать.
+        if s.audio_filename:
+            _remove_media(s.audio_filename, db)
+            s.audio_filename = ""
+        if s.video_filename:
+            s.video_stale = True
+    _renumber_scenes(track)
+
+
+def _default_policy(track: Track, scene: Scene) -> str:
+    """Что предложить по умолчанию. У клипа есть дорожка, и её длина —
+    закон: там сумма слотов меняться не должна. У ролика и серии дорожки нет
+    (см. _track_duration), и удлинить их — законное действие."""
+    if not int(track.audio_duration_sec or 0):
+        return "tail"
+    return "squeeze" if int(scene.duration_sec or 0) >= SCENE_MIN_SEC * 2 else "spread"
+
+
+def _retime_quote(track: Track, scene: Scene, new_dur: int) -> dict:
+    """Смета по всем политикам разом — для окна выбора."""
+    return {
+        "scene_id": scene.id,
+        "position": scene.position,
+        "duration_sec": int(scene.duration_sec or 0),
+        "default": _default_policy(track, scene),
+        "policies": [
+            _retime_plan(track, p, scene.position, new_dur) for p in RETIME_POLICIES
+        ],
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# КОПИИ: проект, объект, кадр
+#
+# Копия стоит НОЛЬ БАЙТ и НОЛЬ ТОКЕНОВ. Ноль байт — потому что медиа
+# переезжает жёсткими ссылками (_clone_media): каждый файл здесь пишется
+# ровно один раз под uuid-именем, никто не открывает существующий файл на
+# запись, и второе имя тому же иноду абсолютно безопасно. Ноль токенов —
+# потому что копирование не зовёт ни один движок.
+#
+# ЧЕГО В КОПИИ НЕТ И ПОЧЕМУ:
+#   * живых статусов задач — иначе копия рождается с вечным «рисую лист…»
+#     (ровно та болезнь, которую лечит _reset_orphan_jobs при старте);
+#   * утверждения сцен — утверждают то, что посмотрели;
+#   * истории вариантов — она остаётся у оригинала;
+#   * журнала токенов — он принадлежит событиям, а не объектам.
+#
+# А ВОТ charged_points ПЕРЕНОСИТСЯ, и это важно: это отметка «за эту работу
+# уже заплачено». Без неё супергенерация (_settle_supergen: unpaid = charged
+# < per_scene) выставила бы счёт второй раз за готовые сцены. Бесплатных
+# генераций это не даёт — _scene_charge берёт деньги за ВЫЗОВ движка.
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: Режимы копирования медиа: link — жёсткие ссылки (0 байт), none — только
+#: структура (шаблон). Третьего режима нет намеренно: копирование байтами
+#: даёт ровно то же поведение, что link, только дороже.
+COPY_MEDIA_MODES = ("link", "none")
+
+
+def _copy_scene_into(db: Session, src: Scene, track: Track, *, position: int,
+                     media: str = "link", owner_id: int | None = None) -> Scene:
+    """Копия кадра в объект. Возвращает новую сцену (уже во flush)."""
+    with_media = media == "link"
+    dst = Scene(
+        track_id=track.id, position=position,
+        duration_sec=_clamp_dur(src.duration_sec),
+        lyric_line=src.lyric_line, characters=src.characters,
+        attribute_ids=src.attribute_ids, shot_size=src.shot_size,
+        camera_move=src.camera_move, act=src.act, speaker=src.speaker,
+        image_prompt=src.image_prompt, image_prompt_last=src.image_prompt_last,
+        motion_prompt=src.motion_prompt, shot_note=src.shot_note,
+        style_keys=src.style_keys if with_media else "",
+        frames_sig=src.frames_sig if with_media else "",
+        image_engine=src.image_engine or "", video_engine=src.video_engine or "",
+        video_provider=src.video_provider or "seedance",
+        # «За эту работу уже заплачено» — см. комментарий к блоку.
+        charged_points=int(src.charged_points or 0) if with_media else 0,
+        copied_from_id=src.id,
+        # Утверждение НЕ переносится: дубль, уехавший в сборку молча, — это
+        # клип, которого человек не видел.
+        approved=False,
+    )
+    db.add(dst)
+    db.flush()
+    if with_media:
+        dst.image_filename = _clone_media(
+            db, src.image_filename, owner_id=owner_id, kind="frame",
+            project_id=track.project_id, track_id=track.id, scene_id=dst.id)
+        dst.image_last_filename = _clone_media(
+            db, src.image_last_filename, owner_id=owner_id, kind="frame_last",
+            project_id=track.project_id, track_id=track.id, scene_id=dst.id)
+        dst.video_filename = _clone_media(
+            db, src.video_filename, owner_id=owner_id, kind="video",
+            project_id=track.project_id, track_id=track.id, scene_id=dst.id)
+        dst.image_status = "done" if dst.image_filename else ""
+        dst.video_status = "done" if dst.video_filename else ""
+        mids = []
+        for m in _midframes(src):
+            fname = _clone_media(db, m.get("filename", ""), owner_id=owner_id,
+                                 kind="midframe", project_id=track.project_id,
+                                 track_id=track.id, scene_id=dst.id)
+            if fname:
+                mids.append({"filename": fname, "prompt": m.get("prompt", "")})
+        dst.midframes_json = json.dumps(mids, ensure_ascii=False) if mids else ""
+    # Референсы кадра — часть постановки задачи, а не результата: их копируем
+    # даже в «шаблон», иначе кадр придётся объяснять движку заново.
+    for r in sorted(src.refs, key=lambda x: (x.position, x.id)):
+        fname = _clone_media(db, r.filename, owner_id=owner_id, kind="ref",
+                             project_id=track.project_id, track_id=track.id,
+                             scene_id=dst.id, prefix="sref")
+        if fname:
+            db.add(SceneRef(scene_id=dst.id, position=r.position,
+                            filename=fname, kind=r.kind or "vibe"))
+    return dst
+
+
+def _copy_track_into(db: Session, src: Track, project: Project, *,
+                     media: str = "link", position: int = 0) -> tuple:
+    """Копия объекта в проект. Возвращает (новый трек, имена доклонированных
+    персонажей).
+
+    ЛОВУШКА, которую здесь и закрываем: Scene.characters — это ТЕКСТ с
+    именами, а описания и модельки берутся из characters ЦЕЛЕВОГО проекта.
+    Скопированный в чужой проект объект выглядит целым, но генерация в нём
+    молча теряет героя: в промпт не уедет ни описание, ни фото-моделька.
+    Поэтому недостающих героев доклонируем по именам и говорим об этом."""
+    with_media = media == "link"
+    owner_id = project.owner_id
+    pos = position or (max((t.position for t in project.tracks), default=0) + 1)
+    dst = Track(
+        project_id=project.id, position=pos,
+        title=(src.title or "").strip() + " (копия)",
+        lyrics=src.lyrics, comment=src.comment,
+        style=src.style, style_keys=src.style_keys, style_extra=src.style_extra,
+        clip_preset_key=src.clip_preset_key,
+        season_no=src.season_no, episode_no=src.episode_no,
+        format_key=src.format_key, location_bible=src.location_bible,
+        video_engine=src.video_engine, image_engine=src.image_engine,
+        aspect=src.aspect, image_resolution=src.image_resolution,
+        director_note=src.director_note,
+        audio_profile=src.audio_profile,
+        audio_duration_sec=src.audio_duration_sec,
+        film_grain=src.film_grain, no_story=src.no_story,
+        prompts_style_keys=src.prompts_style_keys,
+        text_engine=src.text_engine or "",
+        copied_from_id=src.id,
+    )
+    db.add(dst)
+    db.flush()
+    if with_media:
+        dst.audio_filename = _clone_media(db, src.audio_filename, owner_id=owner_id,
+                                          kind="audio", project_id=project.id,
+                                          track_id=dst.id)
+        dst.cover_filename = _clone_media(db, src.cover_filename, owner_id=owner_id,
+                                          kind="cover", project_id=project.id,
+                                          track_id=dst.id)
+        dst.storyboard_filename = _clone_media(db, src.storyboard_filename,
+                                               owner_id=owner_id, kind="storyboard",
+                                               project_id=project.id, track_id=dst.id)
+        dst.storyboard_grid = src.storyboard_grid
+        dst.storyboard_scenes = src.storyboard_scenes
+        dst.storyboard_status = "done" if dst.storyboard_filename else ""
+    else:
+        # Дорожка нужна даже «шаблону»: без неё у клипа нет ни хронометража,
+        # ни сетки таймингов, и раскадровка теряет смысл.
+        dst.audio_filename = _clone_media(db, src.audio_filename, owner_id=owner_id,
+                                          kind="audio", project_id=project.id,
+                                          track_id=dst.id)
+    # Фото товара (режим мокапов) — это ВХОДНЫЕ данные, а не результат.
+    for ph in sorted(src.photos, key=lambda x: (x.position, x.id)):
+        fname = _clone_media(db, ph.filename, owner_id=owner_id, kind="photo",
+                             project_id=project.id, track_id=dst.id, prefix="char")
+        if fname:
+            db.add(TrackPhoto(track_id=dst.id, position=ph.position, filename=fname,
+                              kind=ph.kind or "photo",
+                              from_photos=int(ph.from_photos or 0)))
+    for sc in sorted(src.scenes, key=lambda x: (x.position, x.id)):
+        _copy_scene_into(db, sc, dst, position=sc.position, media=media,
+                         owner_id=owner_id)
+    # Документы объекта (сценарий серии, бриф ролика) — часть его смысла.
+    for doc in (db.query(Doc).filter(Doc.track_id == src.id).all()):
+        db.add(Doc(project_id=project.id, track_id=dst.id, kind=doc.kind,
+                   position=doc.position, title=doc.title, body=doc.body,
+                   body_json=doc.body_json))
+    brought = _bring_characters(db, src, project)
+    db.flush()
+    return dst, brought
+
+
+def _bring_characters(db: Session, src: Track, project: Project) -> list:
+    """Доклонировать в целевой проект героев, которых в нём нет, но которых
+    объект называет по именам. Возвращает список имён."""
+    if src.project_id == project.id:
+        return []
+    have = {(c.name or "").strip().lower() for c in project.characters}
+    wanted: list[str] = []
+    for sc in src.scenes:
+        for name in (sc.characters or "").split(","):
+            n = name.strip()
+            if n and n.lower() not in have and n.lower() not in [w.lower() for w in wanted]:
+                wanted.append(n)
+    brought = []
+    for n in wanted:
+        source = next((c for c in src.project.characters
+                       if (c.name or "").strip().lower() == n.lower()), None)
+        if not source:
+            continue
+        _clone_character_into(db, source, project)
+        brought.append(source.name)
+    return brought
+
+
+def _copy_media_bytes(track_ids: list, project_id: int, db: Session) -> dict:
+    """Сколько медиа поедет в копию и сколько это стоит НА ДИСКЕ.
+
+    Второе число — ноль, и это надо показывать вслух: «копия 4.1 ГБ,
+    на диске займёт 0 байт» объясняет человеку, почему копировать можно
+    смело, лучше любой подсказки."""
+    q = db.query(func.coalesce(func.sum(FileOwner.size_bytes), 0),
+                 func.count(FileOwner.filename)).filter(
+        FileOwner.deleted_at.is_(None))
+    if track_ids:
+        q = q.filter(FileOwner.track_id.in_(track_ids))
+    else:
+        q = q.filter(FileOwner.project_id == int(project_id))
+    total, count = q.first() or (0, 0)
+    return {"media_files": int(count or 0), "media_bytes": int(total or 0),
+            "disk_bytes": 0}
+
+
+@app.get("/api/projects/{project_id}/copy/plan")
+def copy_project_plan(project_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Что войдёт в копию проекта и сколько она займёт на диске."""
+    project = _own_project(db, user, project_id)
+    scenes = sum(len(t.scenes) for t in project.tracks)
+    out = _copy_media_bytes([], project.id, db)
+    out.update({
+        "name": project.name, "kind": project.kind,
+        "tracks": len(project.tracks), "scenes": scenes,
+        "characters": len(project.characters),
+        "modes": list(COPY_MEDIA_MODES),
+        "points": 0,
+    })
+    return out
+
+
+@app.post("/api/projects/{project_id}/copy")
+async def copy_project(project_id: int, request: Request,
+                       user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Копия проекта целиком. Ноль токенов, ноль байт на диске."""
+    src = _own_project(db, user, project_id)
+    body = await request.json() if await request.body() else {}
+    media = str(body.get("media") or "link")
+    if media not in COPY_MEDIA_MODES:
+        media = "link"
+    name = str(body.get("name") or "").strip() or f"{src.name} (копия)"
+    dst = Project(
+        owner_id=user.id, name=name[:200], kind=src.kind,
+        character_bible=src.character_bible, story=src.story,
+        text_engine=src.text_engine or "", copied_from_id=src.id,
+    )
+    db.add(dst)
+    db.flush()
+    dst.cover_filename = _clone_media(db, src.cover_filename, owner_id=user.id,
+                                      kind="cover", project_id=dst.id)
+    for c in sorted(src.characters, key=lambda x: x.position):
+        _clone_character_into(db, c, dst)
+    db.flush()
+    for t in sorted(src.tracks, key=lambda x: (x.position, x.id)):
+        _copy_track_into(db, t, dst, media=media, position=t.position)
+    # Документы ПРОЕКТА (логлайн, синопсис, арка, поэпизодный план).
+    for doc in db.query(Doc).filter(Doc.project_id == src.id,
+                                    Doc.track_id.is_(None)).all():
+        db.add(Doc(project_id=dst.id, kind=doc.kind, position=doc.position,
+                   title=doc.title, body=doc.body, body_json=doc.body_json))
+    db.commit()
+    db.refresh(dst)
+    log.info("проект %s скопирован в %s (media=%s)", src.id, dst.id, media)
+    return {"ok": True, "project_id": dst.id, "media": media,
+            "project": project_dict(dst, with_scenes=True,
+                                    docs=_project_docs(db, dst))}
+
+
+@app.get("/api/tracks/{track_id}/copy/plan")
+def copy_track_plan(track_id: int, target_project_id: int = 0,
+                    user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Что войдёт в копию объекта и каких героев придётся принести с собой."""
+    track = _own_track(db, user, track_id)
+    target = (_own_project(db, user, target_project_id) if target_project_id
+              else track.project)
+    out = _copy_media_bytes([track.id], track.project_id, db)
+    out.update({
+        "title": track.title, "scenes": len(track.scenes),
+        "target_project_id": target.id, "target_project_name": target.name,
+        "same_project": target.id == track.project_id,
+        "bring_characters": _missing_character_names(track, target),
+        "projects": [{"id": p.id, "name": p.name, "kind": p.kind}
+                     for p in db.query(Project).filter(Project.owner_id == user.id)
+                     .order_by(Project.id.desc()).limit(100).all()],
+        "modes": list(COPY_MEDIA_MODES),
+        "points": 0,
+    })
+    return out
+
+
+def _missing_character_names(track: Track, project: Project) -> list:
+    """Имена героев, которых объект называет, а в целевом проекте их нет."""
+    if track.project_id == project.id:
+        return []
+    have = {(c.name or "").strip().lower() for c in project.characters}
+    out: list[str] = []
+    for sc in track.scenes:
+        for name in (sc.characters or "").split(","):
+            n = name.strip()
+            if n and n.lower() not in have and n not in out:
+                out.append(n)
+    return out
+
+
+@app.post("/api/tracks/{track_id}/copy")
+async def copy_track(track_id: int, request: Request,
+                     user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Копия объекта — в свой проект или в чужой (свой же, другой)."""
+    src = _own_track(db, user, track_id)
+    body = await request.json() if await request.body() else {}
+    media = str(body.get("media") or "link")
+    if media not in COPY_MEDIA_MODES:
+        media = "link"
+    target_id = int(body.get("target_project_id") or 0)
+    target = _own_project(db, user, target_id) if target_id else src.project
+    dst, brought = _copy_track_into(db, src, target, media=media)
+    db.commit()
+    db.refresh(dst)
+    log.info("объект %s скопирован в проект %s (media=%s)", src.id, target.id, media)
+    return {"ok": True, "track_id": dst.id, "project_id": target.id,
+            "brought_characters": brought, "media": media,
+            "track": track_dict(dst, with_scenes=True)}
+
+
+@app.get("/api/scenes/{scene_id}/copy/plan")
+def copy_scene_plan(scene_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Копия кадра удлиняет раскадровку ровно так же, как продление, и
+    пользуется той же сметой таймингов."""
+    scene = _own_scene(db, user, scene_id)
+    quote = _retime_quote(scene.track, scene, scene.duration_sec)
+    quote["has_frames"] = bool(scene.image_filename or scene.image_last_filename)
+    quote["has_video"] = bool(scene.video_filename)
+    quote["points"] = 0
+    return quote
+
+
+@app.post("/api/scenes/{scene_id}/copy")
+async def copy_scene(scene_id: int, request: Request,
+                     user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Копия кадра сразу ПОСЛЕ исходного. Ноль токенов, ноль байт."""
+    scene = _own_scene(db, user, scene_id)
+    track = scene.track
+    body = await request.json() if await request.body() else {}
+    media = str(body.get("media") or "link")
+    if media not in COPY_MEDIA_MODES:
+        media = "link"
+    policy = str(body.get("policy") or _default_policy(track, scene))
+    plan = _retime_plan(track, policy, scene.position, scene.duration_sec)
+    for s in track.scenes:
+        if s.position > scene.position:
+            s.position += 1
+    dst = _copy_scene_into(db, scene, track, position=scene.position + 1,
+                           media=media, owner_id=track.project.owner_id)
+    dst.duration_sec = _clamp_dur(plan["new_duration"])
+    db.flush()
+    db.expire(track, ["scenes"])
+    _retime_apply(db, track, plan)
+    db.commit()
+    db.refresh(dst)
+    return {"ok": True, "scene": scene_dict(dst), "retime": _plan_public(plan),
+            "track": track_dict(track, with_scenes=True)}
+
+
+def _plan_public(plan: dict) -> dict:
+    """Смета наружу: словарь changes с ключами-int json не переживёт."""
+    out = dict(plan)
+    out["changes"] = [{"scene_id": k, "duration_sec": v}
+                      for k, v in (plan.get("changes") or {}).items()]
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ПРОДЛИТЬ КАДР
+#
+# Владелец просил дословно: «продлить кадр чтобы генерировался следующий
+# множился именно кадр и раскадровка пересобиралась».
+#
+# Это НЕ копия. Из кадра N рождается N+1, который НАЧИНАЕТСЯ ТАМ, ГДЕ
+# ПРЕДЫДУЩИЙ ЗАКОНЧИЛСЯ: первым кадром новой сцены становится последний кадр
+# исходной — тот же самый файл, второе имя, ноль байт. Дальше модель
+# дописывает, чем этот план закончится (claude.continue_scene), а тайминги и
+# нумерация пересобираются той же _retime_plan, что и у копии.
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/scenes/{scene_id}/extend/plan")
+def extend_scene_plan(scene_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Смета продления: тайминги, цена текстового шага, что устареет."""
+    scene = _own_scene(db, user, scene_id)
+    track = scene.track
+    engine = _resolve_text_engine(user, track.project, track)
+    quote = _retime_quote(track, scene, scene.duration_sec)
+    quote.update({
+        "has_frames": bool(scene.image_filename or scene.image_last_filename),
+        "text_engine": engine,
+        # Текстовый шаг на шлюзе стоит НОЛЬ — это надо говорить прямо, иначе
+        # человек не нажмёт кнопку, за которую с него ничего не возьмут.
+        "points": TEXT_COST.get(engine, 0),
+        "balance": int(user.gen_points or 0),
+        "storyboard_stale_after": bool(track.storyboard_filename),
+    })
+    return quote
+
+
+@app.post("/api/scenes/{scene_id}/extend")
+async def extend_scene(scene_id: int, request: Request,
+                       user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Продлить кадр: следующий начинается там, где этот закончился."""
+    scene = _own_scene(db, user, scene_id)
+    track = scene.track
+    body = await request.json() if await request.body() else {}
+    seed = scene.image_last_filename or scene.image_filename
+    if not seed:
+        raise HTTPException(400, "сначала сгенерируй кадры этого кадра — "
+                                 "продолжать пока не от чего")
+    policy = str(body.get("policy") or _default_policy(track, scene))
+    plan = _retime_plan(track, policy, scene.position, scene.duration_sec)
+    engine = _resolve_text_engine(user, track.project, track,
+                                  str(body.get("text_engine") or ""))
+    ev = _text_charge(db, user, engine, f"продолжение кадра {scene.position}",
+                      ref_type="scene", ref_id=scene.id,
+                      track_id=track.id, project_id=track.project_id)
+
+    owner_id = track.project.owner_id
+    for s in track.scenes:
+        if s.position > scene.position:
+            s.position += 1
+    dst = Scene(
+        track_id=track.id, position=scene.position + 1,
+        duration_sec=_clamp_dur(plan["new_duration"]),
+        characters=scene.characters, attribute_ids=scene.attribute_ids,
+        shot_size=scene.shot_size, camera_move=scene.camera_move,
+        act=scene.act, speaker=scene.speaker,
+        # Первый кадр нового плана И ЕСТЬ последний кадр старого: его промпт
+        # переносим ДОСЛОВНО. Перерисовка первого кадра тогда даст ту же
+        # картинку, а не что-то новое — это и значит «начинается там же».
+        image_prompt=(scene.image_prompt_last or scene.image_prompt),
+        image_prompt_last="", motion_prompt=scene.motion_prompt,
+        shot_note=scene.shot_note,
+        # Стиль наследуется: первый кадр физически снят прежним стилем, и
+        # написать иное значило бы солгать метке «снят в прежнем стиле».
+        style_keys=scene.style_keys,
+        image_engine=scene.image_engine or "", video_engine=scene.video_engine or "",
+        video_provider=scene.video_provider or "seedance",
+        continued_from_id=scene.id,
+        charged_points=0,          # это НОВАЯ работа, за неё ещё не платили
+        approved=False,
+    )
+    db.add(dst)
+    db.flush()
+    dst.image_filename = _clone_media(db, seed, owner_id=owner_id, kind="frame",
+                                      project_id=track.project_id,
+                                      track_id=track.id, scene_id=dst.id)
+    dst.image_status = "done" if dst.image_filename else ""
+    for r in sorted(scene.refs, key=lambda x: (x.position, x.id)):
+        fname = _clone_media(db, r.filename, owner_id=owner_id, kind="ref",
+                             project_id=track.project_id, track_id=track.id,
+                             scene_id=dst.id, prefix="sref")
+        if fname:
+            db.add(SceneRef(scene_id=dst.id, position=r.position,
+                            filename=fname, kind=r.kind or "vibe"))
+
+    # Чем закончится новый план — пишет модель. Не вышло (шлюз лёг, ключа
+    # нет) — кнопка ВСЁ РАВНО работает: продолжение по смыслу уже собрано,
+    # модель добавляет только конец плана.
+    written = False
+    try:
+        import asyncio
+        nxt = _next_lyric_line(track, scene)
+        res = asyncio.run(claude.continue_scene(
+            image_prompt_first=dst.image_prompt,
+            prev_motion=scene.motion_prompt, prev_note=scene.shot_note,
+            characters=characters_payload(track.project),
+            character_bible=track.project.character_bible or "",
+            location_bible=track.location_bible or "",
+            next_line=nxt, shot_size=scene.shot_size,
+            camera_move=scene.camera_move, engine=engine,
+        ))
+        dst.image_prompt_last = str(res.get("image_prompt_last") or "").strip()
+        dst.motion_prompt = str(res.get("motion_prompt") or "").strip() or dst.motion_prompt
+        dst.shot_note = str(res.get("shot_note") or "").strip() or dst.shot_note
+        dst.camera_move = str(res.get("camera_move") or "").strip() or dst.camera_move
+        dst.lyric_line = nxt
+        written = bool(dst.image_prompt_last)
+    except Exception as e:  # noqa: BLE001 — модель необязательна для действия
+        log.warning("продолжение кадра %s: модель не ответила (%s)", scene.id, str(e)[:200])
+        _text_refund(db, track.project, engine, "возврат: продолжение кадра",
+                     ref_type="scene", ref_id=scene.id)
+        ev = 0
+    if not written:
+        dst.image_prompt_last = dst.image_prompt
+        dst.motion_prompt = ("continues the previous shot: "
+                             + (scene.motion_prompt or "")).strip()
+        dst.shot_note = f"продолжение кадра {scene.position}"
+    db.flush()
+    db.expire(track, ["scenes"])
+    _retime_apply(db, track, plan)
+    db.commit()
+    db.refresh(dst)
+    return {"ok": True, "scene": scene_dict(dst), "retime": _plan_public(plan),
+            "written_by_model": written, "charged": bool(ev),
+            "track": track_dict(track, with_scenes=True)}
+
+
+def _next_lyric_line(track: Track, scene: Scene) -> str:
+    """Строка текста, которая звучит СЛЕДУЮЩЕЙ. Нужна модели, чтобы
+    продолжение попадало в трек, а не жило само по себе."""
+    lines = [ln.strip() for ln in (track.lyrics or "").splitlines() if ln.strip()]
+    if not lines or not (scene.lyric_line or "").strip():
+        return ""
+    try:
+        i = lines.index(scene.lyric_line.strip())
+    except ValueError:
+        return ""
+    return lines[i + 1] if i + 1 < len(lines) else ""
+
+
+#: Что перерисовывать пакетной кнопкой.
+#:   todo  — только те, у кого кадров ещё нет;
+#:   dirty — плюс те, у кого С МОМЕНТА ОТРИСОВКИ изменился промпт или стиль;
+#:   all   — все подряд, включая нетронутые.
+FRAMES_SCOPES = ("todo", "dirty", "all")
+
+
+def _frames_todo(track: Track, force: bool = False, scope: str = "") -> list:
+    """Сцены, которым нужны кадры.
+
+    ПОЧЕМУ ПО УМОЛЧАНИЮ НЕ «ВСЕ». Кнопка «перерисовать кадры» брала деньги
+    за весь трек всегда — включая тридцать сцен, к которым никто не
+    притрагивался. На Nano Banana Pro это $0.09 за картинку живых денег и
+    столько же лишних файлов на диске. Теперь «грязная» сцена определяется
+    честно: отпечаток промптов и стиля (frames_sig) разошёлся с тем, под
+    что сняты нынешние кадры. «Все подряд» осталось — но отдельным выбором
+    и со сметой, а не молча."""
+    scope = scope if scope in FRAMES_SCOPES else ("dirty" if force else "todo")
     out = []
     for s in track.scenes:
         if not (s.image_prompt or "").strip():
             continue
         if s.image_prompt.startswith("(готовый кадр"):
             continue
-        if force or not (s.image_filename and s.image_last_filename):
+        missing = not (s.image_filename and s.image_last_filename)
+        if scope == "all" or missing:
             out.append(s)
+            continue
+        if scope == "dirty":
+            # Пустой frames_sig = кадры сняты до появления отпечатка. Тогда
+            # опираемся на прежний признак — стиль кадра против стиля трека.
+            if not (s.frames_sig or ""):
+                if (s.style_keys or "") != (track.style_keys or ""):
+                    out.append(s)
+            elif s.frames_sig != _frames_sig(s, track):
+                out.append(s)
     return out
 
 
 def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
-                    keep_version: bool = False) -> None:
-    """Пакетная генерация: кадры ВСЕХ сцен трека подряд, одна за другой.
+                    keep_version: bool = False, scene_ids: list | None = None) -> None:
+    """Пакетная генерация: кадры сцен трека подряд, одна за другой.
 
     Последовательно, а не парал­лельно: шлюзы картинок обслуживают один
     браузер, и залп из 25 сцен просто выстроится в ту же очередь, но с
-    таймаутами. Без force сцены с уже готовыми кадрами пропускаются."""
-    db = SessionLocal()
-    try:
-        track = db.get(Track, track_id)
-        if not track:
-            return
-        scene_ids = [s.id for s in _frames_todo(track, force)]
-        db.close()
-        log.info("пакет кадров трека %s: %s сцен движком %s%s",
-                 track_id, len(scene_ids), engine or "(по тарифу)",
-                 " (перерисовка)" if force else "")
-        for sid in scene_ids:
+    таймаутами.
+
+    scene_ids приходит СПИСКОМ из роута, а не пересчитывается здесь. Иначе
+    касса и работа считали бы набор сцен по-разному: роут списал за
+    «изменившиеся», а тред перерисовал бы «все подряд» — и разницу человек
+    получил бы бесплатно за наш счёт."""
+    ids = [int(x) for x in (scene_ids or [])]
+    if not ids:
+        db = SessionLocal()
+        try:
+            track = db.get(Track, track_id)
+            ids = [s.id for s in _frames_todo(
+                track, scope="all" if force else "todo")] if track else []
+        finally:
+            db.close()
+    log.info("пакет кадров трека %s: %s сцен движком %s%s",
+             track_id, len(ids), engine or "(по тарифу)",
+             " (перерисовка)" if force else "")
+    for sid in ids:
+        try:
             _run_scene_frames(sid, engine=engine, keep_version=keep_version)
-    except Exception as e:  # noqa: BLE001
-        log.warning("пакет кадров трека %s упал: %s", track_id, _err_text(e))
+        except Exception as e:  # noqa: BLE001 — одна упавшая сцена не роняет пакет
+            log.warning("кадры сцены %s в пакете упали: %s", sid, _err_text(e))
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
 def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
-                        user: User = Depends(current_user),
+                        scope: str = "", user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
+    """scope: todo (по умолчанию) | dirty | all. force=1 — легаси-синоним
+    dirty: та же кнопка «перерисовать кадры», но теперь она платит только за
+    сцены, где действительно что-то изменилось."""
     from threading import Thread
+    _guard_disk()
     track = _own_track(db, user, track_id)
     if not track.scenes:
         raise HTTPException(400, "сначала сгенерируй раскадровку")
-    todo = _frames_todo(track, bool(force))
+    scope = scope if scope in FRAMES_SCOPES else ("dirty" if force else "todo")
+    todo = _frames_todo(track, scope=scope)
     if not todo:
-        raise HTTPException(400, "у всех сцен кадры уже готовы")
+        raise HTTPException(400, "перерисовывать нечего: у всех сцен кадры "
+                                 "сняты под нынешние промпты и стиль")
     # Списываем за весь пакет вперёд — до того, как сцены встанут в очередь.
     # Кадры берут аванс в счёт цены сцены; уже оплаченные сцены не платят снова.
     # Движок выбираем ДО списания: цена кадров зависит именно от него, а сам
     # выбор берётся с ТРЕКА, а не молча падает в дефолт тарифа, как раньше.
     eng = _resolve_image_engine(user, track, engine)
     _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng),
-                   f"кадры всех сцен трека {track.id} ({eng})",
+                   f"кадры сцен трека {track.id} ({eng}, {scope})",
                    kind="frames", engine=eng, track_id=track.id,
                    project_id=track.project_id)
     for s in todo:
         s.image_status = "queued"
     db.commit()
-    Thread(target=_run_all_frames, args=(track_id, eng, bool(force), bool(force)),
+    redraw = scope in ("dirty", "all")
+    Thread(target=_run_all_frames,
+           args=(track_id, eng, redraw, redraw, [s.id for s in todo]),
            daemon=True).start()
-    return {"ok": True, "queued": len(todo), "engine": eng, "force": bool(force)}
+    return {"ok": True, "queued": len(todo), "engine": eng, "scope": scope,
+            "force": redraw}
+
+
+@app.get("/api/tracks/{track_id}/frames/quote")
+def frames_quote(track_id: int, engine: str = "",
+                 user: User = Depends(current_user),
+                 db: Session = Depends(db_session)):
+    """Сколько стоит каждый вариант пакетной отрисовки. Ничего не списывает.
+
+    Считается ТЕМИ ЖЕ функциями, что и списание: второй кассы в сервисе нет."""
+    track = _own_track(db, user, track_id)
+    eng = _resolve_image_engine(user, track, engine)
+    per = _frames_cost(user, None, eng)
+    out = {"engine": eng, "per_scene": per, "balance": int(user.gen_points or 0),
+           "scopes": []}
+    for sc in FRAMES_SCOPES:
+        n = len(_frames_todo(track, scope=sc))
+        out["scopes"].append({"scope": sc, "scenes": n, "total": per * n})
+    return out
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -8652,6 +9825,264 @@ def _files_stat_pass(limit: int = 20000) -> int:
     return done
 
 
+def _files_verify_pass(limit: int = 4000) -> int:
+    """Сверить ВЕСЬ индекс архива с диском и пометить пропавшее удалённым.
+
+    Не то же, что _files_stat_pass: тот трогает только строки без размера и
+    сам себя исчерпывает. А врали строки С размером — те, чей файл удалили
+    через _remove_media, который в file_owners не заглядывал вовсе. На живом
+    проде таких набралось 171 штука на 3.87 ГБ по индексу: архив показывал
+    занятое на 59 % больше реального. Квота, посчитанная по таким данным, —
+    это не квота, а генератор ложных отказов.
+
+    Проход курсорный по имени: полный обход раскладывается на несколько
+    заходов и не держит базу."""
+    from sqlalchemy import text as _sqltext
+    from db import engine as _engine
+    global _VERIFY_CURSOR
+    gone = 0
+    try:
+        with _engine.begin() as conn:
+            rows = conn.execute(_sqltext(
+                "SELECT filename FROM file_owners WHERE deleted_at IS NULL "
+                "AND filename > :c ORDER BY filename LIMIT :n"),
+                {"c": _VERIFY_CURSOR, "n": int(limit)}).fetchall()
+            if not rows:
+                _VERIFY_CURSOR = ""      # круг закончен — начинаем сначала
+                return 0
+            for (fname,) in rows:
+                _VERIFY_CURSOR = fname
+                if os.path.exists(os.path.join(UPLOAD_DIR, fname)):
+                    continue
+                conn.execute(_sqltext(
+                    "UPDATE file_owners SET deleted_at = :t WHERE filename = :f"),
+                    {"t": now(), "f": fname})
+                gone += 1
+        if gone:
+            log.info("архив файлов: %s записей указывали в никуда — помечены", gone)
+    except Exception as e:  # noqa: BLE001
+        log.warning("архив файлов: сверка с диском не прошла: %s", str(e)[:200])
+    return gone
+
+
+_VERIFY_CURSOR = ""
+
+
+# ═════════════════════ МЕСТО НА ДИСКЕ: смотреть и убирать ═════════════════════
+#
+# У машины 48 ГБ на ВСЁ, и на том же разделе живут чужие проекты. Значит
+# «кончилось место» здесь — это не наша неудобная ошибка, а упавшая чужая
+# база. Поэтому свободное место — такой же первоклассный ресурс, как токены:
+# его видно в /api/health, его стережёт демон, и при нехватке генерации
+# отвечают отказом ДО того, как начнут писать.
+
+def _disk_stat() -> dict:
+    """Свободное место по РАЗДЕЛУ, а не по нашей папке: соседи стоят на том
+    же /dev/sda1, и упрёмся мы вместе."""
+    try:
+        st = os.statvfs(UPLOAD_DIR)
+    except OSError:
+        return {"total": 0, "free": 0, "used": 0, "free_pct": 100.0}
+    total = st.f_blocks * st.f_frsize
+    free = st.f_bavail * st.f_frsize
+    return {
+        "total": int(total), "free": int(free), "used": int(total - free),
+        "free_pct": round(100.0 * free / total, 2) if total else 100.0,
+    }
+
+
+def _mem_available() -> int:
+    """Свободная память хоста в байтах (0 — не смогли узнать). Свопа на
+    машине нет, поэтому это единственный запас, который у нас есть."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def _sweep_dir(path: str, older_than_s: int, prefixes: tuple = ()) -> int:
+    """Стереть временные файлы старше N секунд. Возвращает освобождённые байты."""
+    freed = 0
+    edge = time.time() - older_than_s
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return 0
+    for name in names:
+        if prefixes and not name.startswith(prefixes):
+            continue
+        full = os.path.join(path, name)
+        try:
+            st = os.stat(full)
+            if st.st_mtime > edge:
+                continue
+            size = st.st_size
+            if os.path.isdir(full):
+                shutil.rmtree(full, ignore_errors=True)
+            else:
+                os.remove(full)
+            freed += size
+        except OSError:
+            continue
+    return freed
+
+
+def _reclaim(need_bytes: int = 0) -> dict:
+    """Убрать лишнее. Порядок — по ЦЕНЕ ВОССТАНОВЛЕНИЯ, а не по размеру:
+    первым уходит то, что вернётся само и бесплатно.
+
+      1. миниатюры        — 0 токенов, пересоберутся лениво;
+      2. outbox/сборки    — 0, это мусор незавершённых задач;
+      3. фантомные строки — 0 байт, но чинит учёт (см. _files_verify_pass);
+      4. собранные клипы старше CLIP_KEEP_DAYS — 0 токенов, ffmpeg склеит
+         заново; на проде это 64 % всего индексированного объёма;
+      5. варианты сверх тарифного лимита — сначала промежуточные кадры,
+         потом кадры, видео последним: оно стоит до 152 токенов.
+
+    НИКОГДА автоматически: живые кадры и видео сцены, дорожки треков, фото
+    персонажей, закреплённые варианты. Это чужая оплаченная работа."""
+    freed = 0
+    steps: list[str] = []
+    freed_now = _sweep_dir(THUMB_DIR, 3 * 24 * 3600)
+    if freed_now:
+        steps.append(f"миниатюры {freed_now // 1024 // 1024} МБ")
+    freed += freed_now
+    freed_now = _sweep_dir(mediagen.OUTBOX_DIR, 3600)
+    freed_now += _sweep_dir(EXPORT_DIR, 3600)
+    freed_now += _sweep_dir(UPLOAD_DIR, 3600, prefixes=("build_", "refjoin_", "gw_", "raw_"))
+    if freed_now:
+        steps.append(f"временные {freed_now // 1024 // 1024} МБ")
+    freed += freed_now
+    # Сверка индекса с диском и физическое удаление помеченного: байты сюда
+    # не приплюсовываем — они уже посчитаны там, где файл удаляли.
+    _files_verify_pass(limit=20000)
+    _files_purge_pass()
+    if need_bytes and freed >= need_bytes:
+        return {"freed": freed, "steps": steps}
+    freed += _reclaim_clips()
+    if _disk_stat()["free_pct"] < DISK_WARN_FREE_PCT:
+        freed += _reclaim_versions()
+        steps.append("варианты сверх лимита")
+    return {"freed": freed, "steps": steps}
+
+
+def _reclaim_clips() -> int:
+    """Собранные клипы, к которым давно не возвращались. Ноль токенов на
+    восстановление — единственный крупный артефакт с таким свойством."""
+    db = SessionLocal()
+    freed = 0
+    try:
+        edge = now() - timedelta(days=CLIP_KEEP_DAYS)
+        rows = (db.query(Track)
+                .filter(Track.clip_filename != "",
+                        Track.clip_status != "running")
+                .all())
+        for tr in rows:
+            seen = _as_utc(tr.clip_seen_at) or _as_utc(tr.updated_at)
+            if seen and seen > edge:
+                continue
+            freed += _media_bytes(tr.clip_filename)
+            _remove_media(tr.clip_filename, db)
+            tr.clip_filename = ""
+            tr.clip_status = ""
+        if freed:
+            db.commit()
+            log.info("уборка: снято %s МБ собранных клипов старше %s дней",
+                     freed // 1024 // 1024, CLIP_KEEP_DAYS)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("уборка клипов не прошла: %s", str(e)[:200])
+    finally:
+        db.close()
+    return freed
+
+
+def _reclaim_versions() -> int:
+    """Прогнать тарифную ретенцию по всем сценам, у которых история переросла
+    лимит. Обычно это делает сам снимок, но у человека, который перестал
+    генерить, срок истекает без единой генерации."""
+    db = SessionLocal()
+    freed = 0
+    try:
+        ids = [r[0] for r in db.query(SceneVersion.scene_id)
+               .group_by(SceneVersion.scene_id).limit(2000).all()]
+        for sid in ids:
+            scene = db.get(Scene, sid)
+            owner = None
+            if scene and scene.track and scene.track.project:
+                oid = scene.track.project.owner_id
+                owner = db.get(User, oid) if oid else None
+            before = sum(int(v.bytes or 0) for v in
+                         db.query(SceneVersion).filter(SceneVersion.scene_id == sid).all())
+            _trim_scene_versions(db, sid, owner)
+            after = sum(int(v.bytes or 0) for v in
+                        db.query(SceneVersion).filter(SceneVersion.scene_id == sid).all())
+            freed += max(0, before - after)
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("уборка вариантов не прошла: %s", str(e)[:200])
+    finally:
+        db.close()
+    return freed
+
+
+#: Взведён, когда места мало: генерации отвечают 507 вместо того, чтобы
+#: дописать 700-мегабайтный клип в два свободных гигабайта и уронить соседей.
+_DISK_LOW = {"on": False, "free_pct": 100.0}
+
+
+def _guard_disk() -> None:
+    """Дверь перед каждой генерацией. Отказ ЧЕСТНЕЕ молчаливой порчи: клип,
+    оборванный на полпути кончившимся местом, выглядит как «сервис сломался»
+    и стоит человеку токенов."""
+    if not _DISK_LOW["on"]:
+        return
+    raise ApiError(507, "disk_low",
+                   "на сервере кончается место — идёт уборка, попробуй через "
+                   "несколько минут",
+                   free_pct=_DISK_LOW["free_pct"])
+
+
+def _disk_guard_pass() -> dict:
+    st = _disk_stat()
+    _DISK_LOW["free_pct"] = st["free_pct"]
+    if st["free_pct"] < DISK_MIN_FREE_PCT:
+        _DISK_LOW["on"] = True
+        log.error("МЕСТО НА ДИСКЕ: свободно %s%% — генерации закрыты, убираю",
+                  st["free_pct"])
+        _reclaim(need_bytes=int(st["total"] * 0.15))
+        st = _disk_stat()
+        _DISK_LOW["free_pct"] = st["free_pct"]
+        _DISK_LOW["on"] = st["free_pct"] < DISK_MIN_FREE_PCT
+    elif st["free_pct"] < DISK_WARN_FREE_PCT:
+        _DISK_LOW["on"] = False
+        log.warning("место на диске: свободно %s%% — прибираюсь заранее",
+                    st["free_pct"])
+        _reclaim()
+    else:
+        _DISK_LOW["on"] = False
+    return st
+
+
+def _disk_guard() -> None:
+    """Демон-сторож. Тот же паттерн, что у подписок и архива: своего
+    планировщика в проекте нет."""
+    while True:
+        try:
+            time.sleep(DISK_GUARD_S)
+            _disk_guard_pass()
+        except Exception as e:  # noqa: BLE001
+            log.warning("сторож диска: проход упал: %s", str(e)[:200])
+
+
+DISK_GUARD_S = int(os.environ.get("DISK_GUARD_S", "600"))
+
+
 def _files_purge_pass() -> int:
     """Физически стереть то, что помечено удалённым больше суток назад.
     Сутки — окно на «ой, не то нажал»."""
@@ -8744,21 +10175,181 @@ _files_sweep()
 
 
 def _files_worker() -> None:
-    """Суточный проход архива: дочитать размеры новых файлов и физически
-    стереть то, что удалено больше суток назад. Тот же паттерн демон-треда,
-    что у подписок и ретенции чата — своего планировщика в проекте нет."""
+    """Суточный проход архива: дочитать размеры новых файлов, сверить индекс
+    с диском и физически стереть то, что удалено больше суток назад. Тот же
+    паттерн демон-треда, что у подписок и ретенции чата — своего
+    планировщика в проекте нет."""
     while True:
         try:
             time.sleep(6 * 3600)
             _files_stat_pass(limit=5000)
+            _files_verify_pass(limit=20000)
             _files_purge_pass()
+            _frame_cache_sweep()
         except Exception as e:  # noqa: BLE001
             log.warning("архив файлов: суточный проход упал: %s", str(e)[:200])
 
 
+# ═══════════ разовая конверсия старых кадров: PNG 12 МБ → WebP 1 МБ ═══════════
+#
+# Новые кадры сохраняются в WebP сразу (см. _save_image), но на диске уже
+# лежат старые: на проде это 183 файла на 2.29 ГБ при среднем 12.5 МБ. Ровно
+# те же картинки в WebP q92 весят около 0.2 ГБ.
+#
+# Переименование файла — рискованная операция: ссылку на кадр держат восемь
+# разных колонок. Поэтому переименование идёт ОДНОЙ транзакцией по ВСЕМ
+# местам сразу, и только после её успеха стирается старый файл. Пропущенная
+# ссылка означала бы пустое место вместо оплаченного кадра, а этого делать
+# нельзя ни при каких обстоятельствах.
+#: (таблица, колонка) — все места, где может лежать имя файла-картинки
+_FNAME_COLUMNS = (
+    ("scenes", "image_filename"), ("scenes", "image_last_filename"),
+    ("scene_versions", "image_filename"), ("scene_versions", "image_last_filename"),
+    ("tracks", "storyboard_filename"), ("tracks", "cover_filename"),
+    ("projects", "cover_filename"),
+    ("character_photos", "filename"), ("attribute_photos", "filename"),
+    ("track_photos", "filename"), ("scene_refs", "filename"),
+    ("frame_cache", "filename"),
+)
+FRAMES_CONVERT = os.environ.get("FRAMES_CONVERT", "1") not in ("0", "", "no")
+#: Файлы, которые ffmpeg отказался пережать. В памяти, а не в базе: после
+#: рестарта попробовать ещё раз дешевле, чем держать колонку под неудачи.
+_CONVERT_SKIP: set = set()
+
+
+def _rename_media_everywhere(conn, old: str, new: str) -> None:
+    """Переписать имя файла во всех колонках, где оно может лежать."""
+    from sqlalchemy import text as _sqltext
+    for table, col in _FNAME_COLUMNS:
+        try:
+            conn.execute(_sqltext(f"UPDATE {table} SET {col} = :new WHERE {col} = :old"),
+                         {"new": new, "old": old})
+        except Exception:  # noqa: BLE001 — таблицы style_assets может не быть
+            continue
+    # Промежуточные кадры лежат JSON-строкой: правим подстроку.
+    conn.execute(_sqltext(
+        "UPDATE scenes SET midframes_json = REPLACE(midframes_json, :old, :new) "
+        "WHERE midframes_json LIKE :like"),
+        {"old": old, "new": new, "like": f"%{old}%"})
+    conn.execute(_sqltext(
+        "UPDATE file_owners SET filename = :new, size_bytes = 0, phys_key = '' "
+        "WHERE filename = :old"), {"new": new, "old": old})
+
+
+def _frames_convert_pass(limit: int = 40) -> int:
+    """Батч конверсии. Возвращает, сколько файлов переведено."""
+    from sqlalchemy import text as _sqltext
+    from db import engine as _engine
+    if not FRAMES_CONVERT or mediagen.FRAME_FORMAT != "webp":
+        return 0
+    done = 0
+    try:
+        with _engine.begin() as conn:
+            rows = conn.execute(_sqltext(
+                "SELECT filename FROM file_owners "
+                "WHERE deleted_at IS NULL AND filename LIKE 'scene\\_%' ESCAPE '\\' "
+                "AND (filename LIKE '%.png' OR filename LIKE '%.jpg') LIMIT :n"),
+                {"n": int(limit) + len(_CONVERT_SKIP)}).fetchall()
+        for (old,) in rows:
+            if old in _CONVERT_SKIP or done >= limit:
+                continue
+            src = os.path.join(UPLOAD_DIR, old)
+            if not os.path.exists(src):
+                continue
+            new = os.path.splitext(old)[0] + ".webp"
+            dst = os.path.join(UPLOAD_DIR, new)
+            try:
+                with mediagen.ffmpeg_slot():
+                    r = subprocess.run(
+                        ["ffmpeg", "-y", "-i", src, "-c:v", "libwebp", "-quality",
+                         str(mediagen.FRAME_WEBP_Q), "-compression_level", "5", dst],
+                        capture_output=True, timeout=300)
+            except (OSError, subprocess.SubprocessError) as e:
+                log.warning("конверсия кадров остановлена: %s", str(e)[:150])
+                return done
+            if r.returncode != 0 or not os.path.exists(dst) or os.path.getsize(dst) < 1000:
+                if os.path.exists(dst):
+                    try:
+                        os.remove(dst)
+                    except OSError:
+                        pass
+                _CONVERT_SKIP.add(old)   # не долбиться в тот же файл вечно
+                continue
+            with _engine.begin() as conn:
+                _rename_media_everywhere(conn, old, new)
+            _remove_media(old)      # старое имя больше никому не нужно
+            done += 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("конверсия кадров не прошла: %s", str(e)[:200])
+    return done
+
+
+def _frames_convert_worker() -> None:
+    """Тянет конверсию фоном, малыми батчами и с паузами: это уборка, а не
+    работа человека, и ffmpeg она занимать надолго не должна."""
+    time.sleep(90)      # дать сервису подняться и обслужить первые запросы
+    while True:
+        try:
+            done = _frames_convert_pass()
+            if done:
+                log.info("кадры: переведено в webp %s файлов", done)
+                time.sleep(30)
+            else:
+                time.sleep(6 * 3600)
+        except Exception as e:  # noqa: BLE001
+            log.warning("конверсия кадров: проход упал: %s", str(e)[:200])
+            time.sleep(3600)
+
+
+def _frame_cache_sweep() -> None:
+    """Просроченные записи кэша кадров. Файлы при этом НЕ трогаем: на них
+    смотрят живые сцены и варианты, а кэш — только указатель."""
+    db = SessionLocal()
+    try:
+        gone = (db.query(FrameCache)
+                .filter(FrameCache.created_at < now() - timedelta(days=FRAME_CACHE_DAYS))
+                .delete(synchronize_session=False))
+        if gone:
+            db.commit()
+            log.info("кэш кадров: снято %s просроченных записей", gone)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("кэш кадров: уборка не прошла: %s", str(e)[:150])
+    finally:
+        db.close()
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ts": int(time.time())}
+    """Здоровье сервиса — вместе с МЕСТОМ И ПАМЯТЬЮ.
+
+    Раньше здесь было {ok, ts}: по такому health нельзя было узнать, что
+    диск заканчивается, пока он не заканчивался. А на этой машине место
+    общее с чужими проектами, и первым от нехватки падает не lolq."""
+    disk = _disk_stat()
+    db = SessionLocal()
+    try:
+        uploads = int(db.query(func.coalesce(func.sum(FileOwner.size_bytes), 0))
+                      .filter(FileOwner.deleted_at.is_(None)).scalar() or 0)
+        versions = int(db.query(func.coalesce(func.sum(SceneVersion.bytes), 0))
+                       .scalar() or 0)
+        phantom = int(db.query(func.count(FileOwner.filename))
+                      .filter(FileOwner.deleted_at.isnot(None)).scalar() or 0)
+    except Exception:  # noqa: BLE001
+        uploads = versions = phantom = 0
+    finally:
+        db.close()
+    return {
+        "ok": True, "ts": int(time.time()),
+        "disk": disk,
+        "disk_low": bool(_DISK_LOW["on"]),
+        "uploads_bytes": uploads,
+        "versions_bytes": versions,
+        "phantom_rows": phantom,
+        "mem_available": _mem_available(),
+        "frame_format": mediagen.FRAME_FORMAT,
+        "clip_keep_days": CLIP_KEEP_DAYS,
+    }
 
 
 def _backfill_scene_ledger() -> None:
@@ -8827,6 +10418,13 @@ from threading import Thread as _Thread  # noqa: E402
 _Thread(target=_subscription_worker, daemon=True).start()
 # Архив файлов: размеры новых файлов и уборка удалённых.
 _Thread(target=_files_worker, daemon=True).start()
+# СТОРОЖ ДИСКА. Раньше о нехватке места сервис узнавал ровно в тот момент,
+# когда ffmpeg падал на середине сборки. На машине с 48 ГБ и чужими
+# проектами на том же разделе это означало «мы уронили соседа».
+_Thread(target=_disk_guard, daemon=True).start()
+# Разовая конверсия старых кадров в WebP: тянется фоном, батчами, с
+# приоритетом ниже генераций (см. _frames_convert_worker).
+_Thread(target=_frames_convert_worker, daemon=True).start()
 # Ретенция медиа чатов: суточный проход, тот же паттерн демон-треда.
 chat_module.start_worker()
 

@@ -142,6 +142,56 @@ CLIP_H = int(os.environ.get("CLIP_H", "1920"))
 ASPECTS = {"9:16": (9, 16), "1:1": (1, 1), "4:5": (4, 5)}
 DEFAULT_ASPECT = "9:16"
 
+# ─────────────────────── ffmpeg: два слота, а не один ───────────────────────
+# У сервера 3.8 ГБ и НЕТ свопа, а на том же диске живут чужие проекты. Два
+# параллельных апскейла 4К-картинки — ровно тот сценарий, где OOM-killer
+# убивает не нас, а соседнюю базу. Поэтому тяжёлые операции (сборка клипа,
+# апскейл на экспорт, конверсия кадров) идут строго по одной.
+#
+# Слотов ДВА, а не один общий: миниатюра и нарезка аудио стоят миллисекунды и
+# памяти почти не едят, а сборка клипа держит слот минутами. Один общий
+# семафор означал бы, что вкладка «Файлы» висит пустой всё время сборки, —
+# и человек читал бы это как «сервис умер».
+FFMPEG_SLOTS = max(1, int(os.environ.get("FFMPEG_SLOTS", "1")))
+FFMPEG_LIGHT_SLOTS = max(1, int(os.environ.get("FFMPEG_LIGHT_SLOTS", "2")))
+_ffmpeg_heavy = threading.Semaphore(FFMPEG_SLOTS)
+_ffmpeg_light = threading.Semaphore(FFMPEG_LIGHT_SLOTS)
+
+
+class _Slot:
+    """Очередь к ffmpeg. Ждём молча: очередь честнее отказа — работа уже
+    оплачена токенами."""
+
+    def __init__(self, sem):
+        self._sem = sem
+
+    def __enter__(self):
+        self._sem.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._sem.release()
+        return False
+
+
+def ffmpeg_slot(heavy: bool = True) -> _Slot:
+    return _Slot(_ffmpeg_heavy if heavy else _ffmpeg_light)
+
+
+# ─────────────────────── формат хранения кадров ───────────────────────
+# Замер на живом проде: 183 кадра scene_*.png = 2290 МБ, средний 12.5 МБ,
+# максимум 18.6 МБ (3840×3840). Тот же кадр в WebP q92 весит 1.05 МБ — минус
+# 94 %. При этом апскейл до 4К НЕ ДОБАВЛЯЕТ ИНФОРМАЦИИ: движки отдают 1–2K, а
+# lanczos просто раздувает файл. Поэтому кадр хранится в нативном разрешении
+# движка и в WebP, а 4К собирается на лету при экспорте (/api/export/frame).
+#
+# Переключается одной переменной без пересборки: FRAME_FORMAT=png возвращает
+# прежнее поведение целиком, если у какого-то движка найдётся проблема с WebP.
+FRAME_FORMAT = (os.environ.get("FRAME_FORMAT", "webp") or "webp").strip().lower()
+FRAME_WEBP_Q = int(os.environ.get("FRAME_WEBP_Q", "92"))
+# Мокапы: этикетку читают с экрана телефона, ей качество важнее места.
+FRAME_WEBP_Q_HI = int(os.environ.get("FRAME_WEBP_Q_HI", "95"))
+
 
 def norm_aspect(aspect: str) -> str:
     a = str(aspect or "").strip()
@@ -304,6 +354,16 @@ async def _kie_upload(client: httpx.AsyncClient, path: str) -> str:
         raise MediaError(
             "kie: не задан публичный адрес сервиса (PUBLIC_BASE_URL) — "
             "движку неоткуда скачать кадр")
+    if fname.lower().endswith(".webp"):
+        # ЕДИНСТВЕННОЕ место, где формат хранения встречается с внешним
+        # миром. Гарантий, что kie примет webp, у нас нет, а платить за
+        # упавшую задачу будет человек — поэтому наружу всегда едет JPEG.
+        # Копия временная: лежит в публичном outbox, как кадры для seevio,
+        # и убирается уборщиком через час.
+        tmp = f"ob_{uuid.uuid4().hex}.jpg"
+        if to_jpeg_copy(path, os.path.join(OUTBOX_DIR, tmp)):
+            return f"{base}/api/outbox/{tmp}"
+        raise MediaError("kie: не смог подготовить кадр (jpeg-копия не собралась)")
     try:
         from main import pub_file_url  # локальный импорт: mediagen грузится раньше main
         url = pub_file_url(fname)
@@ -529,10 +589,15 @@ async def generate_image(prompt: str, reference_path: str | None = None,
 
 
 def upscale_to_4k(path: str, aspect: str = DEFAULT_ASPECT) -> None:
-    """Апскейл кадра до 4К по длинной стороне, на месте (генераторы столько
-    не дают). Аспект обязателен параметром: квадрат, пропущенный через
-    вертикальный pad, приезжает с чёрными полями сверху и снизу — и именно
-    в таком виде уходит в карточку товара."""
+    """Апскейл кадра до 4К по длинной стороне, НА МЕСТЕ.
+
+    Больше не зовётся при сохранении кадра: 4К lanczos'ом не добавляет
+    информации (движки отдают 1–2K), зато превращает картинку в 12 МБ PNG.
+    Осталось ровно одно применение — экспорт (см. export_frame), где человек
+    осознанно просит большой файл.
+
+    Аспект обязателен параметром: квадрат, пропущенный через вертикальный
+    pad, приезжает с чёрными полями сверху и снизу."""
     fw, fh = frame_size(aspect)
     tmp = path + ".up.png"
     cmd = [
@@ -541,12 +606,112 @@ def upscale_to_4k(path: str, aspect: str = DEFAULT_ASPECT) -> None:
                f"pad={fw}:{fh}:(ow-iw)/2:(oh-ih)/2:color=black",
         tmp,
     ]
-    r = subprocess.run(cmd, capture_output=True, timeout=180)
+    with ffmpeg_slot():
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
     if r.returncode == 0 and os.path.exists(tmp):
         os.replace(tmp, path)
     else:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+def export_frame(src_path: str, dst_path: str, *, aspect: str = DEFAULT_ASPECT,
+                 res: str = "4k") -> bool:
+    """Разовая большая копия кадра для скачивания. НИЧЕГО не хранит: файл
+    собирается в каталог экспорта и убирается уборщиком.
+
+    Именно так 4К перестало стоить нам 12 МБ на каждый кадр навсегда: за
+    экспортом приходят единицы кадров, а платили мы за все."""
+    fw, fh = frame_size(aspect)
+    if str(res).lower() in ("2k", "half"):
+        fw, fh = fw // 2 - (fw // 2) % 2, fh // 2 - (fh // 2) % 2
+    cmd = [
+        FFMPEG, "-y", "-i", src_path,
+        "-vf", f"scale={fw}:{fh}:force_original_aspect_ratio=decrease:flags=lanczos,"
+               f"pad={fw}:{fh}:(ow-iw)/2:(oh-ih)/2:color=black",
+        dst_path,
+    ]
+    try:
+        with ffmpeg_slot():
+            r = subprocess.run(cmd, capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("экспорт кадра не собрался: %s", str(e)[:200])
+        return False
+    return r.returncode == 0 and os.path.exists(dst_path)
+
+
+def frame_ext(hi_quality: bool = False) -> str:
+    """Расширение, под которым сохраняется новый кадр."""
+    return ".webp" if FRAME_FORMAT == "webp" else (".png" if hi_quality else ".jpg")
+
+
+def encode_frame(data: bytes, mime: str, dst_dir: str, *, name_prefix: str = "scene",
+                 hi_quality: bool = False) -> str:
+    """Сырые байты движка → файл кадра на диске. Возвращает ИМЯ файла.
+
+    WebP q92 вместо PNG — это минус 94 % места на кадрах при неотличимой на
+    глаз картинке. Если ffmpeg собран без libwebp (или FRAME_FORMAT=png),
+    честно падаем обратно на исходный формат: потерять кадр из-за кодека
+    нельзя, он уже оплачен."""
+    raw_ext = ".jpg" if "jpeg" in (mime or "") else ".png"
+    if FRAME_FORMAT != "webp":
+        fname = f"{name_prefix}_{uuid.uuid4().hex}{raw_ext}"
+        with open(os.path.join(dst_dir, fname), "wb") as f:
+            f.write(data)
+        return fname
+    stem = uuid.uuid4().hex
+    tmp = os.path.join(dst_dir, f"raw_{stem}{raw_ext}")
+    with open(tmp, "wb") as f:
+        f.write(data)
+    fname = f"{name_prefix}_{stem}.webp"
+    out = os.path.join(dst_dir, fname)
+    q = FRAME_WEBP_Q_HI if hi_quality else FRAME_WEBP_Q
+    try:
+        with ffmpeg_slot(heavy=False):
+            r = subprocess.run([FFMPEG, "-y", "-i", tmp, "-c:v", "libwebp",
+                                "-quality", str(q), "-compression_level", "5", out],
+                               capture_output=True, timeout=180)
+        ok = r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1000
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("кадр не сжался в webp (%s) — оставляю как есть", str(e)[:150])
+        ok = False
+    if ok:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return fname
+    if os.path.exists(out):
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+    keep = f"{name_prefix}_{stem}{raw_ext}"
+    os.replace(tmp, os.path.join(dst_dir, keep))
+    return keep
+
+
+def to_jpeg_copy(src_path: str, dst_path: str, max_side: int = 0) -> bool:
+    """JPEG-копия картинки для того, кто WebP может не принять.
+
+    Единственное место, где формат хранения встречается с внешним миром:
+    kie.ai скачивает наши кадры по ссылке, и гарантий про webp у нас нет.
+    Копия временная, живёт минуты."""
+    vf = []
+    if max_side:
+        vf.append(f"scale='min({max_side},iw)':'min({max_side},ih)':"
+                  "force_original_aspect_ratio=decrease:flags=lanczos")
+    cmd = [FFMPEG, "-y", "-i", src_path]
+    if vf:
+        cmd += ["-vf", ",".join(vf)]
+    cmd += ["-q:v", "2", dst_path]
+    try:
+        with ffmpeg_slot(heavy=False):
+            r = subprocess.run(cmd, capture_output=True, timeout=180)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("jpeg-копия не собралась: %s", str(e)[:150])
+        return False
+    return r.returncode == 0 and os.path.exists(dst_path)
 
 
 # ──────────────────────────── аудио сцены ────────────────────────────
@@ -561,7 +726,8 @@ def slice_audio(track_audio_path: str, start_sec: float, duration_sec: float) ->
         FFMPEG, "-y", "-ss", str(start_sec), "-t", str(duration_sec),
         "-i", track_audio_path, "-vn", "-c:a", "aac", "-b:a", "192k", out_path,
     ]
-    r = subprocess.run(cmd, capture_output=True, timeout=180)
+    with ffmpeg_slot(heavy=False):
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
     if r.returncode != 0 or not os.path.exists(out_path):
         raise MediaError(f"ffmpeg не нарезал аудио: {r.stderr.decode()[-200:]}")
     return out_name
@@ -576,8 +742,17 @@ def _data_url(path: str) -> str:
 
 
 def _outbox_publish(path: str) -> tuple[str, str]:
-    """Копия кадра под uuid-именем в outbox -> (публичный URL, имя копии)."""
-    name = f"ob_{uuid.uuid4().hex}{os.path.splitext(path)[1] or '.png'}"
+    """Копия кадра под uuid-именем в outbox -> (публичный URL, имя копии).
+
+    WebP наружу не отдаём никогда: seevio скачивает кадр сам, и спорить с
+    его декодером посреди оплаченной генерации не о чем."""
+    ext = os.path.splitext(path)[1].lower() or ".png"
+    if ext == ".webp":
+        name = f"ob_{uuid.uuid4().hex}.jpg"
+        if to_jpeg_copy(path, os.path.join(OUTBOX_DIR, name)):
+            return f"{PUBLIC_BASE_URL}/api/outbox/{name}", name
+        raise MediaError("не смог подготовить кадр для движка (jpeg-копия не собралась)")
+    name = f"ob_{uuid.uuid4().hex}{ext}"
     shutil.copyfile(path, os.path.join(OUTBOX_DIR, name))
     return f"{PUBLIC_BASE_URL}/api/outbox/{name}", name
 
@@ -699,7 +874,10 @@ def _gateway_image_field(path: str) -> tuple[str, str]:
         size_kb = 0
     src = path
     tmp = ""
-    if size_kb > GATEWAY_IMAGE_MAX_KB:
+    # WebP пережимаем ВСЕГДА, даже мелкий: шлюзы владельца принимают кадр
+    # байтами (это чинили отдельно, и ломать нельзя), а какой у них декодер —
+    # мы не знаем. JPEG понимают все.
+    if size_kb > GATEWAY_IMAGE_MAX_KB or path.lower().endswith(".webp"):
         tmp = os.path.join(UPLOAD_DIR, f"gw_{uuid.uuid4().hex}.jpg")
         # Ужать не удалось — это НЕ повод ронять сцену: шлём оригинал, пусть
         # дорого. Ловим и падение ffmpeg, и его отсутствие, и таймаут: иначе
@@ -1179,12 +1357,34 @@ async def animate_scene(
 
 # ──────────────────────────── сборка клипа ────────────────────────────
 
+# ПОТОЛОК БИТРЕЙТА КЛИПА. Замер на живом проде: собранные клипы писались при
+# 47 000–93 000 кбит/с ИЗ ИСХОДНИКА В 456 кбит/с — то есть 31-секундный ролик
+# весил 188 МБ, а трёхминутный вышел бы под гигабайт. Информации там на два
+# порядка меньше; лишние биты — это чистый расход диска, за который платят
+# соседи по серверу.
+#
+# Работает именно -maxrate, а не пресет: с кэпом 12M клип весит 90 МБ/мин
+# вместо 317 и собирается БЫСТРЕЕ (меньше бит писать — 15 с против 22 с на
+# десяти секундах материала). Поэтому veryfast остаётся: CPU на коробке с
+# 3.8 ГБ дороже, чем лишние проценты сжатия.
+CLIP_CRF = os.environ.get("CLIP_CRF", "20")
+CLIP_MAXRATE = os.environ.get("CLIP_MAXRATE", "12M")
+CLIP_BUFSIZE = os.environ.get("CLIP_BUFSIZE", "24M")
+
+
 def assemble_clip(scene_videos: list[str], track_audio_path: str | None,
-                  film_grain: bool = False, aspect: str = DEFAULT_ASPECT) -> str:
+                  film_grain: bool = False, aspect: str = DEFAULT_ASPECT,
+                  durations: list[int] | None = None) -> str:
     """Склеивает видео утверждённых сцен подряд и кладёт поверх дорожку трека.
 
     Каждая сцена приводится к единому размеру/фпс — иначе concat рассыпается
-    на разных источниках (Seedance и Grok отдают разные размеры)."""
+    на разных источниках (Seedance и Grok отдают разные размеры).
+
+    durations — слот КАЖДОЙ сцены по раскадровке. Движок отдаёт ролик своей
+    длины (seevio, например, не умеет короче четырёх секунд), и без -t
+    собранный клип шёл не по сетке раскадровки, а по тому, сколько кому
+    захотелось отдать: тайминги кадров переставали что-либо значить, а хвост
+    просто обрезался музыкой через -shortest."""
     if not scene_videos:
         raise MediaError("нет утверждённых сцен для сборки")
     cw, ch = clip_size(aspect)
@@ -1195,16 +1395,23 @@ def assemble_clip(scene_videos: list[str], track_audio_path: str | None,
         for i, name in enumerate(scene_videos):
             src = os.path.join(UPLOAD_DIR, name)
             dst = os.path.join(work, f"n{i:03d}.mp4")
-            cmd = [
-                FFMPEG, "-y", "-i", src,
+            slot = 0
+            if durations and i < len(durations):
+                slot = int(durations[i] or 0)
+            cmd = [FFMPEG, "-y", "-i", src]
+            if slot >= 2:
+                cmd += ["-t", str(slot)]
+            cmd += [
                 "-vf", f"scale={cw}:{ch}:force_original_aspect_ratio=decrease:flags=lanczos,"
                        f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
                        # Плёнка: живое зерно + лёгкий прижим контраста, как 16мм скан.
                        + (",noise=alls=11:allf=t+u,eq=contrast=1.04:saturation=0.93" if film_grain else ""),
-                "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", CLIP_CRF,
+                "-maxrate", CLIP_MAXRATE, "-bufsize", CLIP_BUFSIZE,
                 "-pix_fmt", "yuv420p", dst,
             ]
-            r = subprocess.run(cmd, capture_output=True, timeout=600)
+            with ffmpeg_slot():
+                r = subprocess.run(cmd, capture_output=True, timeout=600)
             if r.returncode != 0 or not os.path.exists(dst):
                 raise MediaError(f"ffmpeg не нормализовал сцену {name}: {r.stderr.decode()[-200:]}")
             normalized.append(dst)
@@ -1215,24 +1422,30 @@ def assemble_clip(scene_videos: list[str], track_audio_path: str | None,
                 f.write(f"file '{p}'\n")
 
         silent = os.path.join(work, "silent.mp4")
-        r = subprocess.run(
-            [FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", silent],
-            capture_output=True, timeout=600,
-        )
+        with ffmpeg_slot():
+            r = subprocess.run(
+                [FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", silent],
+                capture_output=True, timeout=600,
+            )
         if r.returncode != 0 or not os.path.exists(silent):
             raise MediaError(f"ffmpeg не склеил сцены: {r.stderr.decode()[-200:]}")
 
         out_name = f"clip_{uuid.uuid4().hex}.mp4"
         out_path = os.path.join(UPLOAD_DIR, out_name)
+        # +faststart: индекс в начало файла — клип начинает играть, не
+        # дожидаясь загрузки целиком.
         if track_audio_path and os.path.exists(track_audio_path):
             cmd = [
                 FFMPEG, "-y", "-i", silent, "-i", track_audio_path,
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                "-map", "0:v:0", "-map", "1:a:0", "-shortest", out_path,
+                "-map", "0:v:0", "-map", "1:a:0", "-shortest",
+                "-movflags", "+faststart", out_path,
             ]
         else:
-            cmd = [FFMPEG, "-y", "-i", silent, "-c", "copy", out_path]
-        r = subprocess.run(cmd, capture_output=True, timeout=600)
+            cmd = [FFMPEG, "-y", "-i", silent, "-c", "copy",
+                   "-movflags", "+faststart", out_path]
+        with ffmpeg_slot():
+            r = subprocess.run(cmd, capture_output=True, timeout=600)
         if r.returncode != 0 or not os.path.exists(out_path):
             raise MediaError(f"ffmpeg не наложил звук: {r.stderr.decode()[-200:]}")
         return out_name
