@@ -6121,44 +6121,106 @@ def check_mix(board: str = "", motion: str = "", lights: list[str] | None = None
     return uniq
 
 
-def mix(board: str, *, motion: str = "", lights: list[str] | None = None,
-        slots: dict | None = None, lang: str = "ru", engine: str = "") -> dict | None:
-    """Собрать сцену из заготовки, движения и световых модификаторов.
+#: Поля сцены, которыми распоряжается сборка. Ровно те, что принимает
+#: update_scene() в main.py, и ровно те, что показывает предпросмотр «было →
+#: станет». Список здесь один: разъехавшись, он показал бы одно, а записал другое.
+MIX_FIELDS = ("image_prompt", "image_prompt_last", "motion_prompt",
+              "shot_size", "camera_move", "shot_note")
 
-    Возвращает готовое тело PATCH, отдельно негатив (его принимает не всякий
-    канал) и список конфликтов. Конфликты НЕ блокируют сборку: решает человек,
-    а наше дело — предупредить."""
-    patch = board_patch(board, slots, lang=lang, engine=engine)
-    if not patch:
-        return None
-    b = _BOARD_BY_KEY[board]
-    lights = list(lights or [])
 
-    if motion:
+def light_tail(keys, slots: dict | None = None) -> str:
+    """Хвост световых модификаторов одной строкой — то, что ДОПИСЫВАЕТСЯ в конец
+    обоих кадров. Свет не переписывает кадр, а уточняет его: переписывающий
+    модификатор был бы вторым описанием сцены, и движок выбирал бы между ними."""
+    parts = []
+    for k in keys or ():
+        card = _LIGHT_BY_KEY.get(k)
+        if card:
+            parts.append(_sub(card["add"], _slot_values(card["slots"], slots)))
+    return " ".join(parts)
+
+
+def mix_scene(board: str = "", *, motion: str = "", lights: list[str] | None = None,
+              slots: dict | None = None, lang: str = "ru", engine: str = "",
+              base: dict | None = None) -> dict:
+    """ОБЩАЯ сборка: заготовка, движение и свет в любом сочетании, в том числе
+    поверх уже написанного кадра.
+
+    `base` — текущие поля сцены. Он и есть причина, по которой функция общая, а
+    не «применить заготовку»: владелец просил подмешивать движение и свет к УЖЕ
+    существующему кадру, а не только к свежесозданному. Без base карточка света
+    не имела бы к чему дописаться, и «подмешать» означало бы «стереть и написать
+    заново» — то есть потерю ручной правки промпта.
+
+    Порядок жёсткий и он же порядок MIX_RULES: стиль трека (его здесь нет и быть
+    не может — он подставляется на генерации) → заготовка → движение → свет.
+    Движение ЗАМЕНЯЕТ motion_prompt и camera_move целиком; свет ДОПИСЫВАЕТСЯ.
+
+    Неизвестные ключи молча пропускаются: 404 и 403 — работа роута, который
+    знает про тариф и про человека, а не словаря.
+
+    Ничего не блокируется. Конфликты возвращаются словами, решает человек."""
+    lights = [k for k in (lights or []) if k in _LIGHT_BY_KEY]
+
+    if board and board in _BOARD_BY_KEY:
+        patch = board_patch(board, slots, lang=lang, engine=engine) or {}
+    elif base:
+        patch = {f: str(base.get(f) or "") for f in MIX_FIELDS}
+        board = board if board in _BOARD_BY_KEY else ""
+    else:
+        patch, board = {}, ""
+
+    if motion in _MOTION_BY_KEY:
         text = motion_text(motion, slots, engine=engine)
         if text:
             patch["motion_prompt"] = text
-            m = _MOTION_BY_KEY[motion]
-            if m["camera"]:
-                patch["camera_move"] = m["camera"]
+            cam = _MOTION_BY_KEY[motion]["camera"]
+            if cam:
+                patch["camera_move"] = cam
+    else:
+        motion = ""
 
-    tail = []
-    for k in lights:
-        card = _LIGHT_BY_KEY.get(k)
-        if card:
-            tail.append(_sub(card["add"], _slot_values(card["slots"], slots)))
+    tail = light_tail(lights, slots)
     if tail:
-        add = " " + " ".join(tail)
-        patch["image_prompt"] += add
-        patch["image_prompt_last"] += add
+        # Дописываем ТОЛЬКО в непустой кадр. Свет в одиночку не сочиняет сцену:
+        # строка «Lit from behind…» без описания того, что снято, — это не кадр,
+        # а половина указания, и движок дорисует вторую половину сам.
+        for f in ("image_prompt", "image_prompt_last"):
+            if patch.get(f):
+                patch[f] = f"{patch[f]} {tail}"
+
+    used: dict = {}
+    if board:
+        used.update(_slot_values(_BOARD_BY_KEY[board]["slots"], slots))
+    if motion:
+        used.update(_slot_values(_MOTION_BY_KEY[motion]["slots"], slots))
+    for k in lights:
+        used.update(_slot_values(_LIGHT_BY_KEY[k]["slots"], slots))
 
     return {
         "board": board, "motion": motion, "lights": lights,
         "scene": patch,
-        "negative": b["negative"],
+        "add": tail,
+        "used": used,
+        "negative": _BOARD_BY_KEY[board]["negative"] if board else "",
         "engine": engine or "",
         "conflicts": check_mix(board, motion, lights),
     }
+
+
+def mix(board: str, *, motion: str = "", lights: list[str] | None = None,
+        slots: dict | None = None, lang: str = "ru", engine: str = "") -> dict | None:
+    """Собрать сцену ИЗ ЗАГОТОВКИ. Частный случай mix_scene() и намеренно
+    отдельная функция: примеры и документация собираются только так, с
+    обязательной заготовкой, и `None` на неизвестном ключе им нужен.
+
+    Возвращает готовое тело PATCH, отдельно негатив (его принимает не всякий
+    канал) и список конфликтов. Конфликты НЕ блокируют сборку: решает человек,
+    а наше дело — предупредить."""
+    if board not in _BOARD_BY_KEY:
+        return None
+    return mix_scene(board, motion=motion, lights=lights, slots=slots,
+                     lang=lang, engine=engine)
 
 
 def script_seed(key: str) -> dict:

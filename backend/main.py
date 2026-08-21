@@ -3292,6 +3292,12 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     for field in ("title", "lyrics", "comment"):
         if field in body:
             setattr(track, field, str(body[field]))
+    # ЗАМЕТКА РЕЖИССЁРА пишется здесь, и это единственное место. До базы промтов
+    # её ставили только генерация сюжета и сид каркаса — то есть применить
+    # сценарий из каталога было нечем, а заводить ради этого пишущий роут в
+    # самом каталоге значило бы дать одному полю второго хозяина.
+    if "director_note" in body:
+        track.director_note = str(body["director_note"] or "")[:4000]
     if "film_grain" in body:
         track.film_grain = bool(body["film_grain"])
     if "no_story" in body:
@@ -3659,6 +3665,305 @@ async def api_pack_apply(key: str, request: Request,
     slots = body.get("slots") if isinstance(body.get("slots"), dict) else {}
     return {"pack": key, "preset": pack["preset"], "styles": list(pack["styles"]),
             "scenes": prompts_library.pack_patches(key, slots)}
+
+
+# ═════════ БАЗА ПРОМТОВ: сценарии · сцены · движение · свет и цвет ═════════
+# Четвёртый, пятый, шестой и седьмой слои каталога. Разница между ними — не
+# размер карточки, а ЧТО ИМЕННО она заполняет:
+#
+#   сценарий — весь клип: сюжет проекта и режиссёрская заметка трека;
+#   сцена    — один кадр: шесть полей сцены разом;
+#   движение — motion_prompt и camera_move, ЗАМЕНЯЯ их;
+#   свет     — хвост, ДОПИСЫВАЕМЫЙ в оба кадра.
+#
+# Стиль трека сюда не входит и входить не может: фирменные пятнадцать закрыты
+# навсегда (см. prompts_catalog), наружу от них уходят подпись и описание.
+#
+# Пишущего роута здесь снова НЕТ, и по той же причине, что у приёмов выше:
+# считает POST .../apply и POST /api/mix, а записывает обычный PATCH сцены,
+# проекта или трека. Побочная выгода — та, которую владелец попросил прямо:
+# человек видит «было → станет» ДО того, как что-то изменится.
+
+
+def _groups(rows: list[dict], lg: str) -> list[dict]:
+    """Группы слоя с локализованными подписью и подсказкой."""
+    return [{"key": g["key"],
+             "label": g["label"].get(lg, g["label"]["en"]),
+             "hint": g["hint"].get(lg, g["hint"]["en"])} for g in rows]
+
+
+def _lib_who(request: Request, db: Session, lang: str) -> tuple[str, str, bool]:
+    """Язык, тариф и админский флаг — то, от чего зависит ЛЮБОЙ ответ каталога.
+    Три строки, повторённые в девяти роутах, разъехались бы на первой правке."""
+    user = _resolve_user(request, db)
+    return (_lang_of(request, lang),
+            _plan_of(user) if user else "free",
+            bool(user and user.is_admin))
+
+
+@app.get("/api/library")
+def api_library(request: Request, lang: str = "", db: Session = Depends(db_session)):
+    """ВСЯ база промтов одним ответом: четыре новых слоя плюс приёмы и наборы.
+
+    Одним, а не шестью запросами, намеренно. Каталог открывают целиком и
+    переключают вкладки мышкой: шесть round-trip'ов означали бы шесть
+    состояний загрузки и пустую вкладку под курсором. Тексты уже отфильтрованы
+    тарифом — закрытая карточка приезжает без first/last/motion вовсе."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    kw = {"lang": lg, "plan_id": plan, "is_admin": adm}
+    return {
+        "lang": lg,
+        "mix_rules": {
+            "max_boards": prompts_library.MIX_RULES["max_boards"],
+            "max_motions": prompts_library.MIX_RULES["max_motions"],
+            "max_lights": prompts_library.MIX_RULES["max_lights"],
+            "max_style_lights": prompts_library.MIX_RULES["max_style_lights"],
+            "order": list(prompts_library.MIX_RULES["order"]),
+            "note": prompts_library.MIX_RULES["note"].get(lg,
+                    prompts_library.MIX_RULES["note"]["en"]),
+        },
+        "fields": list(prompts_library.MIX_FIELDS),
+        "groups": {
+            "boards": _groups(prompts_library.BOARD_GROUPS, lg),
+            "motions": _groups(prompts_library.MOTION_GROUPS, lg),
+            "lights": _groups(prompts_library.LIGHT_GROUPS, lg),
+            "shots": _groups(prompts_library.CATEGORIES, lg),
+        },
+        "scripts": prompts_library.public_scripts(**kw),
+        "boards": prompts_library.public_boards(**kw),
+        "motions": prompts_library.public_motions(**kw),
+        "lights": prompts_library.public_lights(**kw),
+        # Приёмы и наборы — прежние слои. Они остаются в том же каталоге
+        # отдельными группами: набор применяется на весь трек, приём на одну
+        # сцену, и увести их из витрины значило бы спрятать артефакты уроков.
+        "shots": prompts_library.public_shots(**kw),
+        "packs": prompts_library.public_packs(**kw),
+    }
+
+
+@app.get("/api/scripts")
+def api_scripts(request: Request, lang: str = "", cut: str = "", style: str = "",
+                db: Session = Depends(db_session)):
+    """Сценарные промты — каркас ВСЕГО клипа. Фильтры: темп монтажа и стиль."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    return {"lang": lg,
+            "scripts": prompts_library.public_scripts(
+                lang=lg, cut=cut, style=style, plan_id=plan, is_admin=adm)}
+
+
+@app.get("/api/scripts/{key}")
+def api_script(key: str, request: Request, lang: str = "",
+               db: Session = Depends(db_session)):
+    lg, plan, adm = _lib_who(request, db, lang)
+    card = prompts_library.public_script(key, lang=lg, plan_id=plan, is_admin=adm)
+    if not card:
+        raise ApiError(404, "unknown_script", f"Unknown script: {key!r}")
+    return card
+
+
+@app.get("/api/boards")
+def api_boards(request: Request, lang: str = "", group: str = "", tier: str = "",
+               style: str = "", db: Session = Depends(db_session)):
+    """Раскадровочные промты — готовые сцены. Заполняют шесть полей кадра."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    return {"lang": lg,
+            "groups": _groups(prompts_library.BOARD_GROUPS, lg),
+            "boards": prompts_library.public_boards(
+                lang=lg, group=group, tier=tier, style=style,
+                plan_id=plan, is_admin=adm)}
+
+
+@app.get("/api/boards/{key}")
+def api_board(key: str, request: Request, lang: str = "",
+              db: Session = Depends(db_session)):
+    lg, plan, adm = _lib_who(request, db, lang)
+    card = prompts_library.public_board(key, lang=lg, plan_id=plan, is_admin=adm)
+    if not card:
+        raise ApiError(404, "unknown_board", f"Unknown board: {key!r}")
+    return card
+
+
+@app.get("/api/motions")
+def api_motions(request: Request, lang: str = "", group: str = "",
+                db: Session = Depends(db_session)):
+    """Промты движения. Заменяют motion_prompt и camera_move целиком."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    return {"lang": lg,
+            "groups": _groups(prompts_library.MOTION_GROUPS, lg),
+            "motions": prompts_library.public_motions(
+                lang=lg, group=group, plan_id=plan, is_admin=adm)}
+
+
+@app.get("/api/motions/{key}")
+def api_motion(key: str, request: Request, lang: str = "",
+               db: Session = Depends(db_session)):
+    lg, plan, adm = _lib_who(request, db, lang)
+    card = prompts_library.public_motion(key, lang=lg, plan_id=plan, is_admin=adm)
+    if not card:
+        raise ApiError(404, "unknown_motion", f"Unknown motion: {key!r}")
+    return card
+
+
+@app.get("/api/lights")
+def api_lights(request: Request, lang: str = "", group: str = "",
+               db: Session = Depends(db_session)):
+    """Свет и цвет. Дописываются в конец обоих кадров, ничего не переписывая."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    return {"lang": lg,
+            "groups": _groups(prompts_library.LIGHT_GROUPS, lg),
+            "lights": prompts_library.public_lights(
+                lang=lg, group=group, plan_id=plan, is_admin=adm)}
+
+
+@app.get("/api/lights/{key}")
+def api_light(key: str, request: Request, lang: str = "",
+              db: Session = Depends(db_session)):
+    lg, plan, adm = _lib_who(request, db, lang)
+    card = prompts_library.public_light(key, lang=lg, plan_id=plan, is_admin=adm)
+    if not card:
+        raise ApiError(404, "unknown_light", f"Unknown light: {key!r}")
+    return card
+
+
+# ──────────────────────────── миксование ────────────────────────────
+
+def _mix_selection(body: dict) -> tuple[str, str, list[str]]:
+    """Разобрать выбор из тела запроса и обрезать его по потолкам MIX_RULES.
+
+    Обрезаем ЗДЕСЬ, а не в словаре: потолок — правило продукта («одно движение
+    на сцену»), и нарушить его можно только запросом мимо витрины."""
+    board = str(body.get("board") or "").strip()
+    motion = str(body.get("motion") or "").strip()
+    raw = body.get("lights")
+    lights, seen = [], set()
+    for k in (raw if isinstance(raw, list) else []):
+        k = str(k or "").strip()
+        if k and k not in seen:
+            seen.add(k)
+            lights.append(k)
+    return board, motion, lights[:prompts_library.MIX_RULES["max_lights"]]
+
+
+def _mix_gate(board: str, motion: str, lights: list[str], user: "User") -> None:
+    """404 на несуществующую карточку, 403 на закрытую тарифом.
+
+    Замок стоит ЗДЕСЬ, а не только на витрине: без этой проверки текст платной
+    карточки уезжал бы наружу подстановкой, минуя список, где он закрыт."""
+    plan, adm = _plan_of(user), bool(user.is_admin)
+    checks = ([(board, prompts_library._BOARD_BY_KEY, "board")] if board else [])
+    if motion:
+        checks.append((motion, prompts_library._MOTION_BY_KEY, "motion"))
+    checks += [(k, prompts_library._LIGHT_BY_KEY, "light") for k in lights]
+    for key, table, kind in checks:
+        card = table.get(key)
+        if not card:
+            raise ApiError(404, f"unknown_{kind}", f"Unknown {kind}: {key!r}")
+        if not prompts_library.unlocked(card["tier"], plan, is_admin=adm):
+            raise ApiError(403, "plan_required",
+                           f"Card {key!r} requires the {card['tier']} plan")
+
+
+@app.post("/api/mix/check")
+async def api_mix_check(request: Request):
+    """Только конфликты, без единой строки промпта.
+
+    Отдельный роут и БЕЗ замка по тарифу — намеренно. Витрина зовёт его на
+    каждое изменение сборки, а объяснение «камера стоит и камера едет не бывают
+    в одном кадре» — это не товар, а причина, по которой человеку стоит
+    передумать. Прятать её за тарифом значит продавать молчание."""
+    body = await request.json() if await request.body() else {}
+    board, motion, lights = _mix_selection(body)
+    return {"conflicts": prompts_library.check_mix(board, motion, lights)}
+
+
+@app.post("/api/mix")
+async def api_mix(request: Request, user: User = Depends(current_user),
+                  db: Session = Depends(db_session)):
+    """Сборка «заготовка + движение + свет» → готовое тело PATCH /api/scenes/{id}.
+
+    body: {board?, motion?, lights?: [], slots?: {}, engine?: "", scene_id?: int}
+
+    НИЧЕГО НЕ ПИШЕТ. Если пришёл scene_id, сцена читается — и ответ несёт
+    `before` рядом с `scene`: ровно то «что именно изменится», которое просил
+    владелец. Без scene_id движение и свет всё равно собираются, просто
+    накладывать их не на что, и свет приезжает отдельным полем `add`.
+
+    Движок берём с кадра, потом с трека: у Grok нет последнего кадра и текст
+    движения для него другой (`solo`), а MiniMax читает команду камеры только
+    в квадратных скобках. Спросить об этом человека нельзя — он не обязан
+    помнить, чем снимает этот конкретный кадр."""
+    body = await request.json() if await request.body() else {}
+    board, motion, lights = _mix_selection(body)
+    if not (board or motion or lights):
+        raise ApiError(400, "empty_mix", "Nothing selected")
+    _mix_gate(board, motion, lights, user)
+
+    slots = body.get("slots") if isinstance(body.get("slots"), dict) else {}
+    engine = str(body.get("engine") or "").strip()
+    base, before = None, None
+    scene = None
+    if body.get("scene_id"):
+        scene = _own_scene(db, user, int(body["scene_id"]))
+        base = {f: getattr(scene, f, "") for f in prompts_library.MIX_FIELDS}
+        before = dict(base)
+        if not engine:
+            engine = scene.video_engine or scene.track.video_engine or ""
+    if engine and engine not in prompts_library.ENGINE_KEYS:
+        engine = ""
+
+    out = prompts_library.mix_scene(
+        board, motion=motion, lights=lights, slots=slots,
+        lang=_lang_of(request), engine=engine, base=base)
+    out["before"] = before
+    out["scene_id"] = scene.id if scene else 0
+    # Поля, которые сборка РЕАЛЬНО меняет: витрина подсвечивает только их, а не
+    # все шесть. Показать «изменится shot_note», когда он тот же самый, — это
+    # предупреждение, которому перестают верить.
+    out["changed"] = sorted(k for k, v in out["scene"].items()
+                            if not before or str(before.get(k) or "") != str(v or ""))
+    return out
+
+
+@app.post("/api/scripts/{key}/apply")
+async def api_script_apply(key: str, request: Request,
+                           user: User = Depends(current_user),
+                           db: Session = Depends(db_session)):
+    """Сценарий → сюжет проекта, заметка режиссёра и черновик раскадровки.
+
+    body: {slots?: {}, engine?: ""}
+
+    Считает и отдаёт, не пишет. Записывают три существующих роута, каждый свой
+    кусок: PATCH /api/project (сюжет), PATCH /api/tracks/{id} (заметка),
+    PATCH /api/scenes/{id} (кадры). Четвёртого места, знающего эти поля, здесь
+    не появляется — именно поэтому переименование поля ломает один файл, а не
+    четыре."""
+    card = prompts_library._SCRIPT_BY_KEY.get(key)
+    if not card:
+        raise ApiError(404, "unknown_script", f"Unknown script: {key!r}")
+    if not prompts_library.unlocked(card["tier"], _plan_of(user),
+                                    is_admin=user.is_admin):
+        raise ApiError(403, "plan_required",
+                       f"Script {key!r} requires the {card['tier']} plan")
+    body = await request.json() if await request.body() else {}
+    slots = body.get("slots") if isinstance(body.get("slots"), dict) else {}
+    engine = str(body.get("engine") or "").strip()
+    if engine not in prompts_library.ENGINE_KEYS:
+        engine = ""
+    lg = _lang_of(request)
+    seed = prompts_library.script_seed(key)
+    boards = prompts_library.script_boards(key)
+    return {
+        "script": key,
+        "story": seed["story"],
+        "note": seed["note"],
+        "preset": card["preset"],
+        "styles": list(card["styles_fit"]),
+        "boards": boards,
+        # Порядок сцен — порядок актов. Он и есть единственное, чем сценарий
+        # отличается от россыпи заготовок, поэтому патчи приезжают списком.
+        "scenes": [prompts_library.board_patch(b, slots, lang=lg, engine=engine)
+                   for b in boards],
+    }
 
 
 @app.post("/api/tracks/{track_id}/style")
@@ -4757,9 +5062,15 @@ def _character_model_paths(chars: list[Character], limit: int,
         picked: list[str] = []
         plain = [x for x in c.photos if (x.kind or "photo") != "model"]
         models = [x for x in c.photos if (x.kind or "photo") == "model"]
-        # Порядок важен: живые фото первыми (они и есть человек), разворот —
-        # в конце и только если места хватило.
-        order = (plain + models) if prefer_photo else (models + plain)
+        # Для КАДРОВ СЦЕН разворот не берём ВООБЩЕ, если есть живое фото:
+        # разворот сам является сеткой из нескольких ракурсов на нейтральном
+        # фоне, и генератор воспроизводит именно её — вместо сцены выходит
+        # второй character sheet. Раньше он приезжал «в конце, если место
+        # осталось», и при одном герое место всегда оставалось.
+        if prefer_photo:
+            order = plain if plain else models
+        else:
+            order = models + plain
         for x in sorted(order, key=lambda y: (y.position, y.id)):
             if len(picked) >= per_char or len(paths) + len(picked) >= limit:
                 break
@@ -4888,17 +5199,22 @@ def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[
         seen: set[str] = set()
         uniq = [x for x in out if not (x in seen or seen.add(x))]
         return uniq[:8]
+    # prefer_photo=True в ОБЕИХ ветках: для кадра сцены нужен живой снимок
+    # человека, а не разворот. Разворот — сетка ракурсов на нейтральном фоне,
+    # и генератор рисует её вместо сцены. Раньше флаг стоял только в одной
+    # ветке, и основной путь (у кадра нет своих рефов) тащил разворот первым.
     if scene_refs:
         out += scene_refs[:3]
         out += _character_model_paths(
-            chars or [c for c in project.characters if c.is_main], 3)
+            chars or [c for c in project.characters if c.is_main], 3,
+            prefer_photo=True)
     else:
         attr_path = _scene_attribute_photo(scene, chars)
         if attr_path:
             out.append(attr_path)
         if not chars:
             chars = [c for c in project.characters if c.is_main]
-        out += _character_model_paths(chars, 4)
+        out += _character_model_paths(chars, 4, prefer_photo=True)
     # РЕФЕРЕНСЫ СТИЛЯ — последними и не больше двух. Порядок здесь не
     # вкусовщина: персонаж важнее стиля. Стилевые картинки приезжают из
     # админки стилей (StyleAsset, in_generation=1) и подмешиваются ТОЛЬКО
