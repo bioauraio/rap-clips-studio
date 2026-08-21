@@ -864,6 +864,10 @@ def _body_kling(prompt: str, first: str, last: str | None, dur: int,
         "mode": spec.get("mode", "std"),
         "aspect_ratio": norm_aspect(aspect),
         "multi_shots": False,
+        # sound у Kling ОБЯЗАТЕЛЕН и строго булев: без поля API отвечает 422
+        # «sound cannot be empty», со строкой «off» — 500 «it must be a boolean».
+        # Звук нам не нужен: сверху ложится трек пользователя.
+        "sound": False,
     }
 
 
