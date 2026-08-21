@@ -3963,14 +3963,20 @@ function paintSceneEngineLine(line, tr, sceneId) {
   const s = (tr.scenes || []).find((x) => x.id === sceneId);
   const eff = videoEngineById(effVideoEngine(tr));
   line.innerHTML = "";
+  // ОДНА строка вместо трёх. Раньше шли подряд «как у объекта (трек)»,
+  // «поменять для этого кадра» и «ПРОМПТ» — три этажа на то, что помещается
+  // в строку. Слово «как у объекта» ушло: наследование и так подразумевается,
+  // а если у кадра свой движок, он назван прямо.
+  const own = s && (s.video_engine || s.image_engine);
   const cap = document.createElement("span");
   cap.className = "s-engine-name";
-  cap.textContent = t("engines.inherit", { object: objT("one") });
+  cap.textContent = eff ? eff.title : t("engines.inherit", { object: objT("one") });
   line.appendChild(cap);
-  if (eff) {
-    const note = document.createElement("span");
-    note.textContent = "· " + eff.title;
-    line.appendChild(note);
+  if (own) {
+    const mark = document.createElement("span");
+    mark.className = "s-engine-own";
+    mark.textContent = "· " + (t("engines.ownShort") || "свой");
+    line.appendChild(mark);
   }
   const made = s && (s.video_engine || s.image_engine);
   if (made) line.title = engineTitle(made);

@@ -3208,3 +3208,22 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
   .topbar .tb-project { padding-top: 6px; gap: 6px; }
   .mode-seg-btn { padding: 0 9px; font-size: 10px; }
 }
+
+/* ────────── строка движка кадра: ОДНА строка ──────────
+   Было три этажа: наследование, «поменять для этого кадра», «ПРОМПТ».
+   Теперь всё в ряд: движок · свой · поменять · промпт. Разделитель между
+   ними рисуем точкой, а не переносом. */
+.s-top-right {
+  flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 6px;
+}
+.s-engine-line { margin: 0; flex: 0 1 auto; }
+.s-engine-own { color: var(--accent-2-ink); font-weight: 700; }
+.s-top-right details.s-engine-override,
+.s-top-right details.s-prompt-details { flex: 0 1 auto; width: auto; border-top: 0; padding-top: 0; }
+.s-top-right details.s-engine-override[open],
+.s-top-right details.s-prompt-details[open] { flex: 1 1 100%; }
+/* Точка-разделитель перед каждой раскрывашкой в свёрнутом виде. */
+.s-top-right details:not([open]) > summary::before {
+  content: "· "; color: var(--muted);
+}
+.s-top-right details > summary { display: inline; padding: 0; }

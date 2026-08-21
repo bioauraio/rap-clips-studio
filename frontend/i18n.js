@@ -741,6 +741,7 @@ const I18N = {
 
     // ─────────── движки: один выбор на объект ───────────
     engines: {
+      ownShort: "own",
       title: "Engines",
       hint: "One choice for the whole {object}. Every frame follows it.",
       image: "Frames",
@@ -3043,6 +3044,7 @@ const I18N = {
 
     // ─────────── движки: один выбор на объект ───────────
     engines: {
+      ownShort: "свой",
       title: "Движки",
       hint: "Один выбор на весь объект ({object}). Все кадры идут по нему.",
       image: "Кадры",
