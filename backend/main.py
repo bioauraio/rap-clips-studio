@@ -5850,6 +5850,88 @@ def _run_midframes(scene_id: int) -> None:
         db.close()
 
 
+@app.delete("/api/scenes/{scene_id}/frames/{slot}")
+def delete_scene_frame(slot: str, scene_id: int, user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Убрать один кадр сцены: "first", "last" или номер промежуточного.
+
+    Кадры — опорные точки движения, и лишний портит сцену не меньше, чем
+    недостающий. Удаляем и файл, а не только ссылку, иначе архив растёт от
+    картинок, которых уже нигде не видно.
+    """
+    scene = _own_scene(db, user, scene_id)
+    if slot == "first":
+        if not scene.image_filename:
+            raise HTTPException(404, "первого кадра нет")
+        _remove_media(scene.image_filename)
+        scene.image_filename = ""
+    elif slot == "last":
+        if not scene.image_last_filename:
+            raise HTTPException(404, "последнего кадра нет")
+        _remove_media(scene.image_last_filename)
+        scene.image_last_filename = ""
+    else:
+        try:
+            idx = int(slot)
+        except ValueError:
+            raise HTTPException(400, "непонятный кадр")
+        mids = _midframes(scene)
+        if not 0 <= idx < len(mids):
+            raise HTTPException(404, "такого промежуточного кадра нет")
+        _remove_media(mids[idx].get("filename", ""))
+        mids.pop(idx)
+        scene.midframes_json = json.dumps(mids, ensure_ascii=False)
+    db.commit()
+    return scene_dict(scene)
+
+
+@app.post("/api/scenes/{scene_id}/frames/add")
+def add_scene_frame(scene_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Дорисовать ещё один промежуточный кадр — сверх расчётного количества."""
+    _guard_disk()
+    scene = _own_scene(db, user, scene_id)
+    if not scene.image_filename:
+        raise HTTPException(400, "сначала сгенерируй кадры сцены — референсом идёт первый кадр")
+    if not (scene.image_prompt or "").strip():
+        raise HTTPException(400, "у сцены пуст промпт первого кадра")
+    eng = scene.image_engine or _plan_image_engine(user)
+    _scene_charge(db, user, scene,
+                  _image_cost(user, eng, scene.track.image_resolution or ""),
+                  f"ещё один кадр сцены {scene.id}", kind="frames", engine=eng)
+    db.commit()
+    threading.Thread(target=_run_extra_midframe, args=(scene.id,), daemon=True).start()
+    return {"ok": True}
+
+
+def _run_extra_midframe(scene_id: int) -> None:
+    """Один дополнительный кадр в хвост промежуточных."""
+    import asyncio
+    db = SessionLocal()
+    try:
+        scene = db.get(Scene, scene_id)
+        if not scene:
+            return
+        track = scene.track
+        ref = os.path.join(UPLOAD_DIR, scene.image_filename)
+        mids = _midframes(scene)
+        prompt = (scene.image_prompt or "").strip()
+        data, mime = asyncio.run(mediagen.generate_image(
+            prompt, reference_path=ref, engine=scene.image_engine or "",
+            resolution=(track.image_resolution or ""), aspect=_track_aspect(track)))
+        fname = _save_image(data, mime)
+        _reg_file(db, fname, track.project.owner_id, kind="midframe",
+                  project_id=track.project_id, track_id=track.id, scene_id=scene.id)
+        mids.append({"filename": fname, "prompt": prompt})
+        scene.midframes_json = json.dumps(mids, ensure_ascii=False)
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — фон, ошибка не должна ронять поток
+        db.rollback()
+        log.warning("дополнительный кадр сцены %s упал: %s", scene_id, e)
+    finally:
+        db.close()
+
+
 @app.post("/api/scenes/{scene_id}/generate-midframes")
 def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     _guard_disk()
@@ -5875,6 +5957,56 @@ def generate_midframes(scene_id: int, user: User = Depends(current_user), db: Se
 
 
 # ───────────────── видео сцены + отрезок трека под неё ─────────────────
+
+def _scene_frame_chain(scene: Scene) -> list[str]:
+    """Все кадры сцены по порядку: первый, промежуточные, последний.
+
+    Промежуточные раньше были только украшением карточки — видео рисовалось
+    по двум крайним кадрам, а всё, что человек нарисовал между ними, движок
+    не видел и придумывал переход сам. Теперь цепочка — это раскадровка
+    сцены: сколько кадров, столько и опорных точек у движения.
+    """
+    out = []
+    if scene.image_filename:
+        out.append(scene.image_filename)
+    for m in _midframes(scene):
+        f = m.get("filename") or ""
+        if f and os.path.exists(os.path.join(UPLOAD_DIR, f)):
+            out.append(f)
+    if scene.image_last_filename:
+        out.append(scene.image_last_filename)
+    return [f for f in out if os.path.exists(os.path.join(UPLOAD_DIR, f))]
+
+
+def _concat_videos(parts: list[str], dest: str) -> bool:
+    """Склейка отрезков сцены без перекодирования."""
+    if len(parts) == 1:
+        shutil.copyfile(parts[0], dest)
+        return True
+    lst = dest + ".txt"
+    with open(lst, "w", encoding="utf-8") as fh:
+        for part in parts:
+            fh.write("file '" + part.replace("'", "'\\''") + "'\n")
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lst,
+             "-c", "copy", dest],
+            capture_output=True, timeout=900)
+        if r.returncode != 0 or not os.path.exists(dest):
+            # Отрезки от разных движков расходятся по кодеку — пересобираем.
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lst,
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                 "-pix_fmt", "yuv420p", dest],
+                capture_output=True, timeout=1800)
+        return r.returncode == 0 and os.path.exists(dest)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("склейка отрезков сцены не удалась: %s", str(e)[:200])
+        return False
+    finally:
+        if os.path.exists(lst):
+            os.remove(lst)
+
 
 def _run_scene_video(scene_id: int) -> None:
     db = SessionLocal()
@@ -5911,12 +6043,38 @@ def _run_scene_video(scene_id: int) -> None:
             if base:
                 bits.append(" ".join(base.split())[:220])
             motion = "; ".join(bits) or "subtle natural motion, slow camera drift, alive frame"
-        fname = asyncio.run(mediagen.animate_scene(
-            prompt=motion, first_path=first_path, last_path=last_path,
-            duration_sec=scene.duration_sec, provider=scene.video_provider,
-            seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
-            engine=engine, aspect=_track_aspect(track),
-        ))
+        # Кадров может быть больше двух: тогда сцена рисуется отрезками
+        # кадр→кадр и склеивается. Один кадр — тоже норма: движок оживит его
+        # без конечной точки.
+        chain = _scene_frame_chain(scene)
+        if len(chain) > 2:
+            legs = len(chain) - 1
+            leg_sec = max(4, round((scene.duration_sec or 0) / legs)) if legs else 6
+            parts = []
+            for i in range(legs):
+                a = os.path.join(UPLOAD_DIR, chain[i])
+                b = os.path.join(UPLOAD_DIR, chain[i + 1])
+                part = asyncio.run(mediagen.animate_scene(
+                    prompt=motion, first_path=a, last_path=b,
+                    duration_sec=leg_sec, provider=scene.video_provider,
+                    seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
+                    engine=engine, aspect=_track_aspect(track),
+                ))
+                parts.append(os.path.join(UPLOAD_DIR, part))
+            fname = f"scene_{scene.id}_{uuid.uuid4().hex[:8]}.mp4"
+            if not _concat_videos(parts, os.path.join(UPLOAD_DIR, fname)):
+                # Склейка не вышла — отдаём первый отрезок, а не пустоту.
+                fname = os.path.basename(parts[0])
+            else:
+                for extra in parts:
+                    _remove_media(os.path.basename(extra))
+        else:
+            fname = asyncio.run(mediagen.animate_scene(
+                prompt=motion, first_path=first_path, last_path=last_path,
+                duration_sec=scene.duration_sec, provider=scene.video_provider,
+                seedance_model=PLANS[_plan_of(owner)].get("seedance_model", "") if owner else "",
+                engine=engine, aspect=_track_aspect(track),
+            ))
         # Задача внешнего движка — в строку списания: «списали 154 токена →
         # задача kie abc123». Без неё спорную генерацию разобрать нечем.
         _attach_task(db, "scene", scene.id, mediagen.last_task_id(), "video")

@@ -1148,6 +1148,9 @@ const I18N = {
     },
 
     scene: {
+      frameDel: "remove frame",
+      frameDelAsk: "Remove this frame?",
+      frameAdd: "add one more frame",
       promptStale: "characters changed — the prompt still describes the previous person",
       genPrompt: "Write the prompt",
       genPromptTitle: "Model writes this shot from the story, style and neighbouring shots",
@@ -3527,6 +3530,9 @@ const I18N = {
     },
 
     scene: {
+      frameDel: "убрать кадр",
+      frameDelAsk: "Убрать этот кадр?",
+      frameAdd: "дорисовать ещё кадр",
       promptStale: "персонажи изменились — промпт всё ещё описывает прежнего героя",
       genPrompt: "Написать промпт",
       genPromptTitle: "Модель напишет этот кадр по сюжету, стилю и соседним кадрам",

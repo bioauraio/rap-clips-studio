@@ -5419,23 +5419,67 @@ function renderScene(s, audioEl, mode = "board") {
     audioEl.play();
   });
 
-  // Кадры сцены: первый и последний (Seedance интерполирует между ними).
+  // Кадры сцены одной сеткой: первый, промежуточные, последний. Все одного
+  // размера и все видны — это опорные точки движения, и мелкие «превьюшки»
+  // промежуточных врали, будто они второстепенные. У каждого — крестик,
+  // в конце карточка «+ кадр».
   const imgStatus = statusLabel(s.image_status);
   setStatus($(".s-image-status", card), s.image_status);
-  if (s.image_url) {
-    const p = $(".s-image-preview", card);
-    // 4К-оригиналы по 15МБ сетка не тянет — превью с миниатюры, клик = оригинал.
-    p.src = s.image_thumb_url || s.image_url;
-    p.classList.remove("hidden");
-    p.style.cursor = "zoom-in";
-    p.onclick = () => window.open(s.image_url, "_blank");
-  }
-  if (s.image_last_url) {
-    const p = $(".s-image-last-preview", card);
-    p.src = s.image_last_thumb_url || s.image_last_url;
-    p.classList.remove("hidden");
-    p.style.cursor = "zoom-in";
-    p.onclick = () => window.open(s.image_last_url, "_blank");
+  const thumbs = $(".s-thumbs", card);
+  if (thumbs) {
+    thumbs.innerHTML = "";
+    const chain = [];
+    if (s.image_url) {
+      chain.push({ slot: "first", url: s.image_url,
+                   thumb: s.image_thumb_url, cap: t("scene.firstCap") });
+    }
+    (s.midframes || []).forEach((m, i) => {
+      chain.push({ slot: String(i), url: m.url, thumb: m.thumb_url, cap: String(i + 2) });
+    });
+    if (s.image_last_url) {
+      chain.push({ slot: "last", url: s.image_last_url,
+                   thumb: s.image_last_thumb_url, cap: t("scene.lastCap") });
+    }
+    chain.forEach((f) => {
+      const box = document.createElement("div");
+      box.className = "s-thumb";
+      const img = document.createElement("img");
+      img.src = f.thumb || f.url;
+      img.alt = "";
+      img.loading = "lazy";
+      img.style.cursor = "zoom-in";
+      img.onclick = () => window.open(f.url, "_blank");
+      const cap = document.createElement("span");
+      cap.className = "s-thumb-cap";
+      cap.textContent = f.cap;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "s-thumb-del";
+      del.textContent = "\u00d7";
+      del.title = t("scene.frameDel") || "убрать кадр";
+      del.onclick = async (ev) => {
+        ev.stopPropagation();
+        if (!confirm(t("scene.frameDelAsk") || "Убрать этот кадр?")) return;
+        try {
+          await api(`/api/scenes/${s.id}/frames/${f.slot}`, { method: "DELETE" });
+        } catch (e) { fail(e); }
+        await loadProject();
+      };
+      box.append(img, cap, del);
+      thumbs.appendChild(box);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "s-thumb s-thumb-add";
+    add.textContent = "+";
+    add.title = t("scene.frameAdd") || "дорисовать кадр";
+    add.onclick = async () => {
+      try {
+        await api(`/api/scenes/${s.id}/frames/add`, { method: "POST" });
+        midframesExpect.set(s.id, { n: (s.midframes || []).length + 1, ts: Date.now() });
+      } catch (e) { fail(e); }
+    };
+    thumbs.appendChild(add);
   }
   const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
@@ -5454,16 +5498,6 @@ function renderScene(s, audioEl, mode = "board") {
     lastBtn.addEventListener("click", () => genSceneFrames(s.id, "last", sceneImgOverride(card)));
   }
 
-  // Промежуточные кадры: ряд мини-превью + кнопка с числом по длительности.
-  const midBox = $(".s-midframes", card);
-  (s.midframes || []).forEach((m, i) => {
-    const img = document.createElement("img");
-    img.src = m.thumb_url || m.url;
-    img.alt = "";
-    img.title = t("scene.midThumb", { n: i + 1 });
-    img.addEventListener("click", () => window.open(m.url, "_blank"));
-    midBox.appendChild(img);
-  });
   // Референсы кадра: композиция, свет, вайб. Модельки персонажей остаются
   // только ради узнаваемости лиц — стилистику диктуют реф и стиль трека.
   const refsBox = $(".s-refs", card);
@@ -5558,9 +5592,10 @@ function renderScene(s, audioEl, mode = "board") {
     v.src = s.video_url; v.classList.remove("hidden");
     v.poster = s.image_thumb_url || "";
   } else if (s.image_url) {
-    // Видео ещё нет — в «Анимации» показываем первый кадр как постер сцены.
-    const ph = $(".s-image-preview", card);
-    if (ph) { ph.src = s.image_thumb_url || s.image_url; ph.classList.remove("hidden"); }
+    // Видео ещё нет — в «Анимации» первый кадр стоит постером самого плеера.
+    // Отдельной картинки под это больше нет: плитки кадров живут в раскадровке.
+    const v = $(".s-video-preview", card);
+    if (v) { v.poster = s.image_thumb_url || s.image_url; v.classList.remove("hidden"); }
   }
   // ── ДВИЖОК КАДРА: наследование от объекта, переопределение по требованию ──
   // Ключевое отличие от прежнего кода: чипы больше не «выбор по умолчанию».
