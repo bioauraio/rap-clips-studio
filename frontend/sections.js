@@ -612,184 +612,25 @@
       s.lyric_line ? " · " + esc(String(s.lyric_line).slice(0, 40)) : ""}</option>`).join("");
   }
 
-  /* ═════════════════════════ КАТАЛОГ ПРИЁМОВ («Промты») ═════════════════════
-     ТРИ РАЗНЫЕ СУЩНОСТИ, И ПУТАТЬ ИХ НЕЛЬЗЯ:
-       стиль  — «как выглядит клип» (закрытый текст, наружу подпись и описание);
-       каркас — «что снимаем» (логлайн и биты);
-       приём  — «как снята ОДНА сцена» (открытый текст: первый кадр, последний,
-                движение).
-     Здесь живёт третий слой. Первые два уже есть на витрине /prompts и в
-     пикере стилей; дублировать их сюда значило бы завести вторую витрину
-     стилей, которая начнёт отставать.
+  /* ═════════════════════ КАТАЛОГ ПРОМТОВ («Промты») ═════════════════════
+     ЧЕТЫРЕ РАЗНЫЕ СУЩНОСТИ, И ПУТАТЬ ИХ НЕЛЬЗЯ:
+       сценарий — «что происходит во ВСЁМ клипе» (сюжет проекта и заметка);
+       сцена    — «как снят ОДИН кадр» (шесть полей кадра разом);
+       движение — «что делает камера и тело» (заменяет motion_prompt);
+       свет     — «откуда светит и какого цвета» (дописывается в оба кадра).
+     Пятая, стиль, здесь отсутствует намеренно и навсегда: текст фирменных
+     пятнадцати закрыт, наружу уходят только подпись и описание.
 
-     ЧТО ОТКРЫТО И ПОЧЕМУ. Приёмы камеры, света и монтажа — ремесло из
-     учебника, конкурентного преимущества в них ноль, а органики много: их
-     текст показываем целиком, с кнопками «скопировать» и «применить».
-     Фирменные стили закрыты навсегда — они и есть ров. */
+     САМ КАТАЛОГ ЖИВЁТ В library.js. Здесь остались только вход в него и
+     диалоги применения приёма и набора — их зовёт ещё и артефакт урока, и
+     вторая копия разъехалась бы с ним на первой правке. */
 
-  let library = null;
-  let libraryLang = "";
-  let libCat = "";
-  let libQuery = "";
-
-  async function loadLibrary(force) {
-    if (!force && library && libraryLang === lang()) return library;
-    libraryLang = lang();
-    const [shots, packs] = await Promise.all([
-      api(`/api/shots?lang=${encodeURIComponent(lang())}`),
-      api(`/api/packs?lang=${encodeURIComponent(lang())}`),
-    ]);
-    library = { ...shots, packs: packs.packs || [] };
-    return library;
-  }
-
-  function openLibrary(key) {
-    openSheet("prompts", T("library.title", "Промты"), async (body) => {
-      busy(body);
-      try {
-        await loadLibrary(true);
-      } catch (e) {
-        failed(body, "library.failed");
-        return;
-      }
-      renderLibrary(body);
-      if (key) {
-        const card = $(`.lb-card[data-key="${key}"]`, body);
-        if (card) card.scrollIntoView({ block: "center" });
-      }
-    });
-  }
-
-  function renderLibrary(body) {
-    const cats = library.categories || [];
-    body.innerHTML = `
-      <div class="lb-top">
-        <p class="ac-lead">${esc(T("library.lead", ""))}</p>
-        <input class="lb-search" type="search" value="${esc(libQuery)}"
-               placeholder="${esc(T("library.searchPh", ""))}" />
-        <div class="lb-cats" role="tablist">
-          <button type="button" class="lb-cat${libCat ? "" : " on"}" data-cat=""
-            >${esc(T("library.all", "Все"))}</button>
-          ${cats.map((c) => `<button type="button" class="lb-cat${
-            libCat === c.key ? " on" : ""}" data-cat="${esc(c.key)}" title="${esc(c.hint)}"
-            >${esc(c.label)}</button>`).join("")}
-          <button type="button" class="lb-cat${libCat === "packs" ? " on" : ""}" data-cat="packs"
-            >${esc(T("library.packs", "Наборы"))}</button>
-        </div>
-      </div>
-      <div class="lb-list"></div>
-      <p class="lb-styles muted">${esc(T("library.signatureNote", ""))}</p>`;
-
-    const list = $(".lb-list", body);
-    const paintList = () => { list.innerHTML = libraryHtml(); bindList(list); };
-    $$(".lb-cat", body).forEach((b) => b.addEventListener("click", () => {
-      libCat = b.dataset.cat;
-      $$(".lb-cat", body).forEach((x) => x.classList.toggle("on", x === b));
-      paintList();
-    }));
-    const search = $(".lb-search", body);
-    search.addEventListener("input", () => { libQuery = search.value; paintList(); });
-    paintList();
-  }
-
-  function match(s) {
-    const q = libQuery.trim().toLowerCase();
-    if (!q) return true;
-    return [s.label, s.desc, s.gain, s.camera, s.shot, (s.tags || []).join(" ")]
-      .join(" ").toLowerCase().includes(q);
-  }
-
-  function libraryHtml() {
-    if (libCat === "packs") {
-      const packs = (library.packs || []).filter(match);
-      if (!packs.length) return `<p class="muted">${esc(T("library.empty", ""))}</p>`;
-      return packs.map(packCard).join("");
-    }
-    const shots = (library.shots || [])
-      .filter((s) => !libCat || s.category === libCat)
-      .filter(match);
-    if (!shots.length) return `<p class="muted">${esc(T("library.empty", ""))}</p>`;
-    return shots.map(shotCard).join("");
-  }
-
-  /* КНОПКА «ПРИМЕНИТЬ» В СПИСКЕ — БЕЗ ОГНЯ, И ЭТО НЕ НЕДОСМОТР. Огонь стоит
-     на главном действии ЭКРАНА, а в каталоге пятьдесят шесть карточек: с
-     .primary на каждой экран превращается в пятьдесят шесть одинаково
-     «главных» кнопок, то есть ни в одну. Огонь остаётся там, где действие
-     действительно одно: артефакт урока и кнопка подтверждения в диалоге
-     применения. */
-  function shotCard(s) {
-    const prompts = s.locked ? `
-      <p class="lb-locked">${esc(TF("library.locked", { plan: planName(s.tier) }, ""))}</p>`
-      : `
-      <dl class="lb-prompts">
-        <dt>${esc(T("library.first", "Первый кадр"))}</dt><dd>${esc(s.first)}</dd>
-        ${s.last ? `<dt>${esc(T("library.last", "Последний кадр"))}</dt><dd>${esc(s.last)}</dd>` : ""}
-        <dt>${esc(T("library.motion", "Движение"))}</dt><dd>${esc(s.motion)}</dd>
-      </dl>`;
-    const slots = (s.slots || []).map((x) => `<code>{${esc(x.key)}}</code>`).join(" ");
-    return `<article class="lb-card" data-key="${esc(s.key)}">
-      <header>
-        <h4>${esc(s.label)}</h4>
-        ${s.locked ? `<span class="lb-tier">${esc(planName(s.tier))}</span>` : ""}
-      </header>
-      <p class="lb-desc">${esc(s.desc)}</p>
-      <p class="lb-gain"><b>${esc(T("library.gain", "Что даёт"))}:</b> ${esc(s.gain)}</p>
-      ${prompts}
-      ${slots ? `<p class="lb-slots">${esc(T("library.slotsTitle", "Слоты"))}: ${slots}</p>` : ""}
-      ${s.result ? `<p class="lb-result muted">${esc(s.result)}</p>` : ""}
-      <div class="row lb-actions">
-        ${s.locked
-          ? `<button type="button" class="lb-plans ghost">${esc(T("library.seePlans", ""))}</button>`
-          : `<button type="button" class="lb-copy ghost">${esc(T("library.copy", "Скопировать"))}</button>
-             <button type="button" class="lb-apply">${esc(T("library.apply", "Применить"))}</button>`}
-      </div>
-    </article>`;
-  }
-
-  function packCard(p) {
-    return `<article class="lb-card lb-pack" data-key="${esc(p.key)}">
-      <header>
-        <h4>${esc(p.label)}</h4>
-        ${p.locked ? `<span class="lb-tier">${esc(planName(p.tier))}</span>` : ""}
-      </header>
-      <p class="lb-desc">${esc(p.desc)}</p>
-      <ul class="ac-art-shots">${(p.shots || []).map((s) =>
-        `<li>${esc(s.label)}</li>`).join("")}</ul>
-      <div class="row lb-actions">
-        ${p.locked
-          ? `<button type="button" class="lb-plans ghost">${esc(T("library.seePlans", ""))}</button>`
-          : `<button type="button" class="lb-apply-pack">${
-              esc(T("academy.apply", "Применить в проект"))}</button>`}
-      </div>
-    </article>`;
-  }
-
-  function bindList(list) {
-    const find = (node) => {
-      const key = node.closest(".lb-card").dataset.key;
-      return (library.shots || []).find((s) => s.key === key);
-    };
-    $$(".lb-copy", list).forEach((b) => b.addEventListener("click", async () => {
-      const s = find(b);
-      if (!s) return;
-      const text = [s.first, s.last, s.motion].filter(Boolean).join("\n\n");
-      try {
-        await navigator.clipboard.writeText(text);
-        b.textContent = T("library.copied", "скопировано");
-        setTimeout(() => { b.textContent = T("library.copy", "Скопировать"); }, 1400);
-      } catch (e) { toast(T("common.copyManual", "")); }
-    }));
-    $$(".lb-apply", list).forEach((b) =>
-      b.addEventListener("click", () => { const s = find(b); if (s) applyShot(s); }));
-    $$(".lb-apply-pack", list).forEach((b) => b.addEventListener("click", () => {
-      const key = b.closest(".lb-card").dataset.key;
-      const p = (library.packs || []).find((x) => x.key === key);
-      if (p) applyPack(p);
-    }));
-    $$(".lb-plans", list).forEach((b) => b.addEventListener("click", () => {
-      if (typeof window.openAccountModal === "function") window.openAccountModal("plan");
-    }));
+  function openLibrary(key, context) {
+    openSheet("prompts", T("promptbase.title", T("library.title", "Промты")),
+      async (body) => {
+        if (!window.QlolLibrary) { failed(body, "library.failed"); return; }
+        await window.QlolLibrary.render(body, { key: key, ctx: context || null });
+      });
   }
 
   /* ───────────────── высота шапки как размер, а не как число ─────────────────
@@ -831,7 +672,7 @@
       window.onLangChange(() => {
         relabel();
         academy = null;
-        library = null;
+        if (window.QlolLibrary) window.QlolLibrary.forget();
         paint();
       });
     }
@@ -859,5 +700,17 @@
     boot();
   }
 
-  window.QlolSections = { mount, go, paint, openAcademy, openLibrary };
+  /* Обвязка листа отдаётся library.js ЦЕЛИКОМ, а не переписывается там заново.
+     Тост, перевод, экранирование, список треков и диалоги применения приёма и
+     набора — это ровно те места, где две копии означали бы два поведения: одно
+     в академии, другое в каталоге. Отсюда же берётся openSheet, поэтому
+     подсветка раздела продолжает работать, кто бы лист ни рисовал. */
+  window.QlolSections = {
+    mount, go, paint, openAcademy, openLibrary,
+    ui: {
+      T, TF, esc, lang, num, plural, toast, errorText, busy, failed,
+      planName, tracksOf, sceneOptions, slotFields, readSlots,
+      applyShot, applyPack,
+    },
+  };
 })();

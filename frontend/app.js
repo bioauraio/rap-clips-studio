@@ -5349,6 +5349,18 @@ function renderScene(s, audioEl, mode = "board") {
       if (window.mkFromScene) window.mkFromScene(s, tr);
     });
   }
+  // Каталог промтов с открытым кадром: сцена, движение и свет собираются в
+  // сборку и применяются СЮДА — номер кадра уже подставлен, искать его в
+  // списке заново не надо.
+  const libBtn = $(".s-lib", card);
+  if (libBtn) {
+    libBtn.addEventListener("click", () => {
+      if (!window.QlolSections) return;
+      window.QlolSections.openLibrary("", {
+        kind: "scene", sceneId: s.id, position: s.position,
+      });
+    });
+  }
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
@@ -9912,6 +9924,14 @@ function mkRenderBar() {
     par.textContent = "⚙";
     par.title = t("make.grpParams");
   }
+  // Каталог промтов — ПОДПИСЬЮ, а не значком. Значок здесь означал бы пятый
+  // безымянный кружок в строке, где уже стоят ✨ и ⚙, а каталог — это не
+  // настройка соседних кнопок, а другое место.
+  const libBtn = chatEl("mk-lib");
+  if (libBtn) {
+    libBtn.textContent = t("make.library");
+    libBtn.title = t("make.libraryTitle");
+  }
   const back = chatEl("mk-back-scene");
   if (back) {
     const fs = chatState.fromScene;
@@ -10305,6 +10325,19 @@ function mkFromScene(scene, track) {
 }
 window.mkFromScene = mkFromScene;
 
+// Обратный мост: каталог промтов кладёт собранный промпт в строку ввода.
+// НЕ ОТПРАВЛЯЕТ. В окне, где одно нажатие стоит до 252 токенов, «вставил и
+// сразу запустил» — это списание за то, чего человек ещё не прочитал.
+function mkInsertPrompt(text) {
+  const ta = chatEl("cc-text");
+  if (!ta) return false;
+  ta.value = String(text || "");
+  ta.focus();
+  chatRenderAll();
+  return true;
+}
+window.mkInsertPrompt = mkInsertPrompt;
+
 // Статусы тянем тем же приёмом, что и в студии: пока что-то в работе —
 // перечитываем ленту раз в три секунды. SSE ради этого не заводим.
 function chatSchedulePoll() {
@@ -10388,6 +10421,14 @@ function chatSchedulePoll() {
   if (parBtn) parBtn.addEventListener("click", mkTogglePanel);
   const enh = chatEl("mk-enhance");
   if (enh) enh.addEventListener("click", mkEnhance);
+  // Каталог открывается ЗДЕСЬ ЖЕ, поверх мастерской, и знает, что пришёл
+  // отсюда: «применить» в нём означает «вставить в строку ввода», а не
+  // «записать в кадр». Открыть тот же каталог из шапки тоже можно — там он
+  // спросит, в какой кадр писать.
+  const libBtn = chatEl("mk-lib");
+  if (libBtn) libBtn.addEventListener("click", () => {
+    if (window.QlolSections) window.QlolSections.openLibrary("", { kind: "make" });
+  });
 
   const resetAll = chatEl("mk-reset-all");
   if (resetAll) resetAll.addEventListener("click", mkResetAll);

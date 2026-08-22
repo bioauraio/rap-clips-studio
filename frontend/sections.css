@@ -580,3 +580,330 @@
      сильнее — не-администратор её не увидит. */
   .topbar.has-sections #admin-btn { display: inline-flex; }
 }
+
+/* ═══════════ БАЗА ПРОМТОВ: сценарии · сцены · движение · свет ═══════════
+   Четыре вкладки, поиск, группы, карточки и полоса сборки внизу листа.
+   Разметку рисует frontend/library.js.
+
+   ОГОНЬ ЗДЕСЬ ОДИН и стоит на подтверждении применения — в диалоге и на
+   кнопке полосы сборки. В самом каталоге сотня карточек: .primary на каждой
+   превратила бы лист в сотню одинаково «главных» кнопок, то есть ни в одну.
+   Вкладка, группа и выбранная карточка показаны ВЕСОМ и волосяной рамкой. */
+
+.pb-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--inset);
+  padding-bottom: 10px;
+}
+
+/* Вкладки — верхний ярус каталога: четыре РАЗНЫЕ сущности, а не четыре
+   фильтра одного списка. Поэтому подпись, а не иконка, и цифра рядом: до
+   нажатия видно, сколько там карточек. */
+.pb-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 6px;
+}
+.pb-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  box-shadow: none;
+}
+.pb-tab:hover:not(:disabled) { background: transparent; color: var(--text); }
+.pb-tab:active:not(:disabled) { transform: none; box-shadow: none; }
+.pb-tab.on {
+  color: var(--text);
+  font-weight: 800;
+  border-color: rgba(45, 33, 26, .55);
+}
+.pb-tab:focus-visible { outline: 2px solid var(--edge); outline-offset: 2px; }
+.pb-n {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pb-tabhint { margin: 0 0 8px; font-size: 12.5px; max-width: 72ch; }
+
+/* Откуда пришли: «применить» с карточки кадра и «применить» из мастерской
+   означают разное, и сказать это надо ДО нажатия, а не тостом после. */
+.pb-ctx {
+  margin: 0 0 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--gold-ink);
+  background: var(--gold-wash);
+  border-radius: 8px;
+}
+
+.pb-search {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(45, 33, 26, .22);
+  border-radius: 10px;
+  background: var(--inset);
+  font-size: 13.5px;
+  color: var(--text);
+}
+.pb-search:focus { outline: none; border-color: rgba(45, 33, 26, .6); }
+
+.pb-groups { display: flex; flex-wrap: wrap; gap: 4px; }
+.pb-group {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  box-shadow: none;
+}
+.pb-group:hover:not(:disabled) { background: transparent; color: var(--text); }
+.pb-group:active:not(:disabled) { transform: none; box-shadow: none; }
+.pb-group.on {
+  color: var(--text);
+  font-weight: 800;
+  border-color: rgba(45, 33, 26, .45);
+}
+/* Хвостовой чип уводит в ПРЕЖНИЙ слой (приёмы, наборы) — волосяная линия
+   слева отделяет «другую сущность» от групп текущей. */
+/* Линия рисуется псевдоэлементом, а НЕ border-left самого чипа: у чипа
+   радиус 999px, и левая граница на нём выходит не волоском, а полумесяцем,
+   обнимающим слово, — на скриншоте это читалось как открытая скобка. */
+.pb-group.tail { position: relative; margin-left: 13px; }
+.pb-group.tail::before {
+  content: "";
+  position: absolute;
+  left: -7px; top: 50%;
+  width: 1px; height: 14px;
+  transform: translateY(-50%);
+  background: rgba(45, 33, 26, .16);
+}
+
+/* УЗКИЙ ЭКРАН: вкладки и группы едут В ОДНУ СТРОКУ, как лента разделов в
+   шапке, а не переносятся. На 375px четыре вкладки и двенадцать групп в
+   перенос занимали больше полутора экранов — до первой карточки нужно было
+   листать, то есть каталог открывался пустым. Идиома та же, что у
+   .tb-sections: прокрутка, без полосы, со снапом. */
+@media (max-width: 560px) {
+  .pb-tabs, .pb-groups {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  .pb-tabs::-webkit-scrollbar, .pb-groups::-webkit-scrollbar { display: none; }
+  .pb-tab, .pb-group { flex: none; white-space: nowrap; scroll-snap-align: start; }
+  .pb-tabhint { margin-bottom: 6px; }
+}
+
+.pb-list { display: grid; gap: 12px; margin-top: 14px; }
+@media (min-width: 900px) {
+  .pb-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Сценарий — карточка на весь клип: у неё четыре акта и список
+     заготовок, и во вторую колонку она не влезает, не превращаясь в столбик. */
+  .pb-list .pb-script { grid-column: 1 / -1; }
+}
+
+.pb-card { scroll-margin-top: 90px; }
+/* Пришли по ссылке на карточку — она подсвечена рамкой, а не заливкой:
+   заливка здесь означала бы «выбрано», а это всего лишь «вот она». */
+.pb-card.hit { border-color: rgba(45, 33, 26, .55); }
+
+.pb-meta {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pb-picked {
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--accent-2-ink);
+  border: 1px solid rgba(193, 64, 27, .35);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.pb-traits { margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+.pb-trait {
+  font-size: 11px;
+  color: var(--ink-muted);
+  border: 1px solid rgba(45, 33, 26, .14);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+/* ── сценарий: акты долями хронометража ── */
+.pb-script-facts { margin-bottom: 8px; }
+.pb-acts { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.pb-acts li { display: flex; gap: 8px; font-size: 12.5px; align-items: baseline; }
+.pb-act-share {
+  flex: 0 0 40px;
+  text-align: right;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pb-act-t { flex: 1; color: var(--text); }
+.pb-act-t b { font-weight: 700; }
+
+/* ── кнопки карточки: тонкая обводка, без «подушки» объекта ── */
+.lb-actions .pb-apply,
+.lb-actions .pb-pick,
+.lb-actions .pb-plans {
+  background: transparent;
+  border: 1px solid rgba(45, 33, 26, .28);
+  border-radius: 9px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  box-shadow: none;
+}
+.lb-actions .pb-apply:hover:not(:disabled),
+.lb-actions .pb-pick:hover:not(:disabled),
+.lb-actions .pb-plans:hover:not(:disabled) { background: #fff; }
+.lb-actions .pb-apply:active:not(:disabled),
+.lb-actions .pb-pick:active:not(:disabled),
+.lb-actions .pb-plans:active:not(:disabled) { transform: none; box-shadow: none; }
+.lb-actions .pb-pick.on {
+  border-color: rgba(193, 64, 27, .45);
+  color: var(--accent-2-ink);
+}
+
+/* ── полоса сборки ──
+   Липкая внизу листа и появляется, только когда в сборке что-то есть. Пустая
+   полоса на всех экранах была бы пятой строкой шапки, которая ничего не
+   говорит; см. правило «сброс появляется, когда есть что сбрасывать». */
+.pb-mix { display: none; }
+.pb-mix.on {
+  display: block;
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 16px;
+  padding: 10px 12px;
+  background: var(--inset);
+  border: 1px solid rgba(45, 33, 26, .22);
+  border-radius: 12px;
+}
+.pb-mix-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.pb-mix-head b { font-size: 13px; }
+.pb-mix-head .muted { font-size: 11.5px; }
+.pb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pb-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid rgba(45, 33, 26, .2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  box-shadow: none;
+}
+.pb-chip:hover:not(:disabled) { background: #fff; }
+.pb-chip:active:not(:disabled) { transform: none; box-shadow: none; }
+.pb-chip-k {
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.pb-chip-x { color: var(--ink-muted); font-size: 11px; }
+.pb-mix-actions { gap: 8px; align-items: center; }
+
+/* Конфликт — это ПРЕДУПРЕЖДЕНИЕ, а не ошибка: применить всё равно можно, и
+   красная плашка тут врала бы. Золотая подложка и чернильный текст. */
+.pb-conf {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--gold-wash);
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--gold-ink);
+  display: grid;
+  gap: 4px;
+}
+.pb-conf li::before { content: "△ "; }
+
+/* ── «было → станет» ── */
+.pb-diff { margin: 12px 0; }
+.pb-diff-in {
+  border: 1px solid rgba(45, 33, 26, .16);
+  border-radius: 11px;
+  padding: 10px 12px;
+  background: var(--inset);
+}
+.pb-diff-head { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; }
+.pb-row { margin-bottom: 9px; font-size: 12.5px; }
+.pb-row-f {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 2px;
+}
+/* Прежнее значение — зачёркнутым и приглушённым, новое обычным. Показывать их
+   одинаково значило бы заставить человека сверять две простыни глазами. */
+.pb-was {
+  display: block;
+  color: var(--ink-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(111, 95, 82, .5);
+  margin-bottom: 2px;
+}
+.pb-now { display: block; color: var(--text); }
+.pb-row.same .pb-row-f { opacity: .65; }
+.pb-row-same { font-size: 12px; }
+
+.pb-neg {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(45, 33, 26, .14);
+  font-size: 12.5px;
+}
+.pb-neg b { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.pb-neg p { margin: 4px 0; }
+
+.pb-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 8px 0;
+  font-size: 12.5px;
+}
+.pb-check input { margin-top: 2px; }
+
+.pb-styles { margin-top: 18px; font-size: 12px; }
+
+/* «Здесь нет, но есть на вкладке» — ответ на пустой список. Пустой список без
+   этой строки врёт: карточка почти всегда есть, просто в соседнем слое, и
+   контровой свет ищут в сценах ровно так же часто, как наезд — в свете. */
+.pb-else { margin: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); }
+.pb-else-go {
+  background: transparent;
+  border: 1px solid rgba(45, 33, 26, .28);
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: none;
+}
+.pb-else-go:hover:not(:disabled) { background: #fff; }
+.pb-else-go:active:not(:disabled) { transform: none; box-shadow: none; }

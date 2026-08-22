@@ -1,13 +1,18 @@
-# Библиотека приёмов — третий слой каталога
+# Библиотека приёмов и база промтов
 
-Что это: 56 готовых промтов под наш конвейер, разложенных по семи категориям,
-плюс 8 наборов, которые применяются в проект одной кнопкой.
-Данные — `backend/prompts_library.py`, он же источник правды. Здесь — почему
-библиотека устроена именно так и где проходят границы.
+Что это: **56 приёмов** (часть I) и **база промтов** из 17 сценариев, 47 готовых
+сцен, 32 промтов движения и 22 модификаторов света (часть II), плюс 8 наборов,
+которые применяются в проект одной кнопкой. Данные —
+`backend/prompts_library.py`, он же источник правды. Здесь — почему всё это
+устроено именно так и где проходят границы.
 
-Соседний документ `docs/prompts.md` описывает первые два слоя (стили и
-каркасы). Этот — третий, и он единственный, чьи тексты промптов мы отдаём
-наружу.
+Соседний документ `docs/prompts.md` описывает первые два слоя каталога (стили и
+каркасы). Этот — всё остальное, и оно единственное, чьи тексты промптов мы
+отдаём наружу.
+
+Часть I отвечает на вопрос «каким приёмом это снято». Часть II — на вопросы «про
+что весь клип», «что именно в этой сцене», «что движется» и «откуда свет», и её
+карточки **микшируются между собой** по машинным правилам (раздел 18).
 
 ---
 
@@ -17,7 +22,11 @@
 |---|---|---|---|
 | `STYLES` (`prompts_catalog`) | как выглядит весь клип | 15 | **закрыты навсегда** |
 | `CLIP_PRESETS` (`prompts_catalog`) | что снимаем на весь трек | 15 | seed закрыт |
-| **`SHOTS` (`prompts_library`)** | **как снята ОДНА сцена** | **56** | **открыты** |
+| **`SHOTS` (`prompts_library`)** | **каким приёмом снята сцена** | **56** | **открыты** |
+| **`SCRIPTS` (`prompts_library`)** | **сюжет всего клипа** | **17** | открыты, кроме seed'а по тарифу |
+| **`BOARDS` (`prompts_library`)** | **готовая сцена раскадровки** | **47** | открыты по тарифу |
+| **`MOTIONS` (`prompts_library`)** | **что движется между кадрами** | **32** | открыты по тарифу |
+| **`LIGHTS` (`prompts_library`)** | **откуда свет и какая палитра** | **22** | открыты по тарифу |
 
 Стиль и каркас ставятся один раз на трек. Приём ложится на конкретную карточку
 кадра и больше ничего не трогает — поэтому приёмов пятьдесят шесть, а стилей
@@ -278,16 +287,1140 @@ POST /api/packs/{key}/apply     подставить слоты → готовы
 
 ---
 
-## 12. Что осталось не сделано
+# Часть II. База промтов: сценарии · сцены · движение · свет
 
-- **Витрины `/prompts` для приёмов нет.** API готов и отвечает, статическая
-  страница (`tools/build_content.py`) знает только про 15 стилей и 15 каркасов.
-  Пока приёмы доступны через API, но не индексируются — а для SEO 56 открытых
-  карточек это самое ценное, что у раздела есть.
-- **Кнопки «Применить» в интерфейсе урока нет.** Фронтматтер её описывает,
-  эндпоинт её обслуживает, но `frontend/` про них ещё не знает.
-- **Поле `source` пустое у всех карточек.** Тексты написаны с нуля, так что
-  атрибуции требовать не с чего; поле оставлено под будущие карточки, опирающиеся
-  на открытую документацию вендоров.
+Всё, что выше, — про **приём**: один операторский ход, минимальная единица
+ремесла. Владелец просил другое и большее: готовые промты, которые заполняют
+сцену целиком, лежат по драматургическим полкам и **микшируются между собой**.
+Это четыре новые сущности в том же файле.
+
+| Сущность | Единица | Что заполняет | Штук |
+|---|---|---|---|
+| `SCRIPTS` | весь клип | `Project.story` + `Track.director_note` | **17** |
+| `BOARDS` | одна сцена раскадровки | `shot_size`, `camera_move`, `image_prompt`, `image_prompt_last`, `motion_prompt`, `shot_note` | **47** |
+| `MOTIONS` | только движение | `motion_prompt` (+ `camera_move`) | **32** |
+| `LIGHTS` | уточнение кадра | дописка в конец обоих кадров | **22** |
+
+Плюс `TRAITS` (20 черт), `CONFLICT_PAIRS`, `MIX_RULES` и `EXAMPLES` (13
+примеров) — механика миксования, раздел 18.
+
+---
+
+## 13. Почему заготовка — не то же самое, что приём
+
+Вопрос законный: `SHOTS` уже заполняют пять полей сцены, зачем рядом `BOARDS`.
+
+**Ось рубрикации разная, и это не вкусовщина.** Приём назван по операторскому
+ходу (наезд, контровой, склейка на движении) и разложен по оси «что настраивает».
+Заготовка названа по **функции в клипе** (открывающая, проход, портрет, финал,
+переход между локациями) и разложена по оси «где это стоит в ролике». Человек,
+которому нужен финальный кадр, не должен перебирать наезды, — а человек, который
+учится, не должен искать «контровой» в папке «финалы».
+
+**И у заготовки есть три поля, которых у приёма нет:**
+
+| Поле | Зачем | Что ломается без него |
+|---|---|---|
+| `note` | `shot_note` — человеческая подпись сцены в раскадровке | автор смотрит в тридцать одинаковых строк и не понимает, где он |
+| `solo` | вариант `motion` для Grok, который оживляет **только первый кадр** | половина каталога на Grok не работает: «движение между кадрами» ему бессмысленно |
+| `bracket` | команда камеры в скобках для MiniMax H3 | MiniMax читает буквально только скобки, а Seedance и Kling утащат их в кадр как текст |
+| `negative` | отдельный канал запретов | Kling 3.0 ждёт запреты полем, а не текстом промпта |
+
+Слить два списка в один значило бы потерять либо ось «функция», либо эти поля.
+
+---
+
+## 14. Сценарные промты: 17 штук
+
+Единица — **весь клип**. Карточка отвечает на пять вопросов, на которые стиль и
+приём не отвечают никогда: про что это, кто герой, что повторяется, чем
+открывается и чем заканчивается.
+
+```
+key        night_shift
+music      медленный рэп и клауд, 70–95 BPM, разреженный бит, усталая подача
+logline    Он работает, пока город спит, и уходит домой, когда город просыпается
+hero       Работник, а не звезда: единственное движущееся в месте на толпу
+motif      Одни и те же часы возвращаются трижды, каждый раз позже
+opens      Пустое освещённое пространство до того, как в него кто-то вошёл
+closes     Первый свет на том же пространстве, уже выключенном
+acts       4 акта с долями хронометража, крупностью и списком заготовок
+scenes     14 / 28 / 40
+story      → Project.story   (по-русски, 100+ слов)
+dnote      → Track.director_note
+```
+
+**`story` по-русски, и это не небрежность.** `claude.py` требует сюжет клипа
+по-русски (`SCENES_SYSTEM`), английский seed там просто не сработает. Тот же
+порядок, что у закрытых `_SEEDS` в `prompts_catalog`, и `validate()` проверяет
+наличие кириллицы.
+
+**Доли актов в сумме равны 1.0** — как у каркасов каталога, и по той же
+причине: число сцен плавает от трека к треку, а доля хронометража
+масштабируется на любой.
+
+`script_boards(key)` отдаёт **черновик раскадровки целиком**: заготовку
+открытия, все заготовки актов по порядку и заготовку финала, без повторов. Это
+и есть «сценарий, разложенный на сцены» — остаётся разложить по дорожке.
+
+Чем это отличается от `CLIP_PRESETS` каталога: каркас даёт биты и доли, но не
+даёт ни роли героя, ни сквозного мотива, ни привязки к конкретным сценам, а его
+seed закрыт. Сценарий — открытый слой поверх той же механики; там, где родство
+есть, оно указано полем `preset`.
+
+---
+
+## 15. Раскадровочные промты: 47 сцен в 10 группах
+
+Каждая карточка заполняет **шесть полей сцены разом** — это и просил владелец:
+не абзац текста, а готовая строка раскадровки.
+
+**Последний кадр — другая фаза того же действия, а не другой кадр.** Отсюда
+обязательный лок `The same … in the same … same light, same clothing` и слово
+«now», после которого стоит ровно одно изменение. `validate()` роняет сборку,
+если лока в `last` нет: без него движок приезжает другой комнатой и другим
+человеком, и это самая частая порча пары кадров.
+
+**Стиля в тексте нет.** Ни плёнки, ни зерна, ни палитры, ни грейда — их ставит
+стиль трека первым блоком промпта, и дублирование уже ломало картинку и уже
+чинилось. Проверяется машинно списком `_BAN_GRADE`. Свет в кадре есть, но
+только **геометрией**: откуда идёт, куда падает, что в тени.
+
+**`styles_fit` — это совместимость, а не вкус.** Карточка, которая держится
+композицией (деталь, портрет, проём, пустой финальный кадр), работает на любом
+стиле, включая рисованные, и помечена всеми ими: человек, выбравший Пиксар, не
+должен видеть каталог из трёх сцен. Сужаем список только там, где сцена
+опирается на свет или фактуру, которых у стиля нет. Минимум по стилю сейчас —
+шесть заготовок.
+
+---
+
+## 16. Промты движения: 32 карточки
+
+Единица — **только `motion_prompt`**. Карточка не трогает кадры: она ложится на
+уже собранную сцену и отвечает на один вопрос — что происходит между первым и
+последним кадром.
+
+Три текста в каждой карточке, и это не избыточность, а три разных движка:
+
+| Поле | Кому | Форма |
+|---|---|---|
+| `text` | Seedance, Kling, MiniMax | описывает **разницу** между кадрами |
+| `solo` | Grok | самодостаточная фраза: «поворачивается к камере и замирает» |
+| `bracket` | MiniMax H3 | одна команда в скобках, приклеивается рендером |
+
+Жёсткие правила, зашитые в тексты и проверяемые машинно:
+
+- **одно движение камеры на карточку** — два движения модели не исполняют, а
+  смешивают в кашу, поэтому «наезда с облётом» здесь не существует;
+- **у каждого движения есть конец** (`settles` / `stops` / `holds` / `comes to
+  rest`) — движение без конечного состояния подвешивает генерацию и даёт дрейф;
+- **орбита не больше четверти оборота** на сцену 5–6 секунд: полный облёт
+  разваливает геометрию лица, это видно уже на трети;
+- **никаких градусов и метров** — «на четверть оборота» модель понимает, «на 84°»
+  игнорирует;
+- **никаких ссылок на соседние сцены** — кадр анимируется изолированно.
+
+Поле `physics` — не украшение, а содержание карточки: вторичное движение (ткань
+отстаёт, волосы перелетают, пыль поднимается и падает, бумага переворачивается)
+это то, из-за чего кадр читается снятым, а не собранным. Модель почти никогда
+не добавит его сама.
+
+---
+
+## 17. Свет и цвет: 22 модификатора и одна уступка
+
+Единица — **одна фраза**, дописываемая в конец обоих кадров. Карточка ничего не
+снимает, она уточняет уже собранный кадр.
+
+Главное правило раздела не косметическое: **стиль трека главнее**. Поэтому
+карточки делятся на два уровня:
+
+| Уровень | Что описывает | Правило |
+|---|---|---|
+| `scene` | **геометрия света**: откуда идёт, куда падает, что в тени, сколько источников | можно всегда; слова про плёнку, зерно и грейд запрещены машинно |
+| `style` | **палитра и грейд** — то, чем распоряжается стиль | текст обязан начинаться с уступки `without overriding the track style` |
+
+Уступка — не вежливость, а работающая конструкция: модель получает пожелание, а
+не вторую конфликтующую инструкцию по грейду. Отсутствие уступки в карточке
+`level="style"` роняет `validate()`. Без этой проверки через полгода палитра из
+сцены начнёт спорить с палитрой из стиля, и никто не вспомнит почему.
+
+---
+
+## 18. Миксование: порядок, потолки, конфликты
+
+Порядок сборки один и обратному не подлежит:
+
+```
+СТИЛЬ ТРЕКА  →  ЗАГОТОВКА  →  ДВИЖЕНИЕ  →  СВЕТ И ЦВЕТ
+(рендер)        (BOARDS)      (MOTIONS)    (LIGHTS)
+```
+
+- стиль подставляет конвейер первым блоком — карточки его не видят;
+- заготовка даёт все шесть полей сцены;
+- движение **заменяет** `motion_prompt` целиком (и `camera_move`, если у
+  карточки он есть), а не дописывается к нему: два описания движения в одном
+  поле — ровно то противоречие, на котором модель ломается;
+- свет **дописывается** в конец обоих кадров, потому что уточняет картинку.
+
+**Потолки** (`MIX_RULES`): одна заготовка, одно движение, не больше двух
+световых модификаторов и не больше одного из них уровня `style`. Потолок не
+эстетический: каждый модификатор — ещё две-три фразы в промпте, и после
+третьего движки начинают выбирать между ними случайно.
+
+**Конфликт считается двумя способами, и оба нужны:**
+
+1. **По чертам** (`TRAITS` + `CONFLICT_PAIRS`) — машинно, без участия автора
+   карточки. «Камера стоит» и «камера едет», «полдень» и «ночь», «жёсткий свет»
+   и «мягкий» несовместимы физически, а не по вкусу.
+2. **По явным спискам** `conflicts_with` / `fits_with` в самих карточках — там,
+   где конфликт содержательный и чертами не выражается (наезд против отъезда).
+
+Первый способ ловит то, о чём автор не подумал; второй — то, о чём подумал.
+
+**Одно исключение, и оно принципиальное.** Карточка движения **перебивает**
+камеру заготовки, а не спорит с ней: `mix()` переписывает `camera_move`,
+поэтому наезд на статичную заготовку — это не конфликт, а ровно то, ради чего
+карточки движения существуют. `check_mix()` сравнивает камерные черты заготовки
+только тогда, когда движение о камере ничего не говорит.
+
+**Конфликт ничего не блокирует.** `mix()` собирает сцену в любом случае и
+возвращает список конфликтов рядом. Карточки можно столкнуть осознанно; наше
+дело — сказать, чем человек платит, а не запретить ему.
+
+```python
+mix("night_lamp_pass", motion="m_handheld_drift",
+    lights=["l_harsh_noon", "l_soft_wrap", "l_one_accent"])
+# conflicts:
+#   больше 2 световых модификаторов — движок выбирает между ними наугад
+#   night_lamp_pass × l_harsh_noon — «ночь» и «день» не бывают в одном кадре
+#   night_lamp_pass × l_soft_wrap  — «жёсткий свет» и «мягкий» не бывают вместе
+#   l_harsh_noon × l_soft_wrap     — то же между собой
+```
+
+---
+
+## 19. Что лежит в базе: полный состав
+
+#### Сценарии
+
+| ключ | название | для какой музыки | монтаж | сцен | тариф |
+|---|---|---|---|---|---|
+| `night_shift` | Ночная смена | Медленный рэп и клауд, 70–95 BPM, разреженный бит, усталая подача. | slow, 70–95 | 28 | free |
+| `two_rooms` | Две комнаты | Дуэты, ответные куплеты, спетые припевы, 85–110 BPM. Любой трек с двумя голосами или двумя настроениями. | mid, 85–110 | 30 | free |
+| `the_return` | Возвращение | Среднетемповый повествовательный рэп, 85–100 BPM, много куплета, маленький припев. | mid, 85–100 | 30 | free |
+| `run_the_block` | Забег по кварталу | Быстрый дрилл и жёсткий трэп, 130–160 BPM, плотные хэты, агрессивная подача. | fast, 130–160 | 40 | free |
+| `cold_call` | Звонок | Тёмный средний темп, 90–115 BPM, один повторяющийся хук, напряжение вместо мелодии. | mid, 90–115 | 28 | free |
+| `last_train` | Последний поезд | Мелодичный рэп и спетые хуки, 75–100 BPM, много реверба, грустно, но не медленно. | mid, 75–100 | 26 | free |
+| `the_offer` | Предложение | Угрожающий средний темп, 90–110 BPM, низ, разреженная аранжировка, почти речитатив. | mid, 90–110 | 24 | pro |
+| `market_day` | Базарный день | Тёплое семплированное, 90–105 BPM, духовые или струнные в петле, бодро, но не разгонно. | mid, 90–105 | 30 | free |
+| `factory_hymn` | Гимн цеха | Индастриал, фонк, жёсткая электроника, 100–140 BPM, механическая петля, мало мелодии. | fast, 100–140 | 34 | pro |
+| `sea_line` | До моря | Тёплое мелодичное, спетый припев, 80–105 BPM, открытая аранжировка, светлое. | slow, 80–105 | 24 | free |
+| `yard_saints` | Святые двора | Душевный бумбап или рэп с госпел-семплом, 85–95 BPM, хор в припеве. | mid, 85–95 | 28 | pro |
+| `black_car` | Чёрная машина | Холодный трэп, 120–140 BPM, саб, мало элементов, угрожающее пространство. | mid, 120–140 | 30 | pro |
+| `stage_and_after` | Сцена и после | Треки с концертной энергией, 95–125 BPM, большой хук, под толпу. | fast, 95–125 | 34 | free |
+| `mirror_year` | Год в зеркале | Рефлексивный средний темп, 80–100 BPM, куплетный, одна повторяющаяся строка. | slow, 80–100 | 24 | pro |
+| `three_wishes` | Три желания | Игровая или сюрреальная продакшн-подача, 95–120 BPM, необычные семплы, панчи. | fast, 95–120 | 30 | pro |
+| `unpacking` | Распаковка | Чистые коммерческие биты, 100–120 BPM, без мата, хук в первые 5 секунд. | fast, 100–120 | 20 | pro |
+| `paper_trail` | Бумажный след | Повествовательный рэп, 85–100 BPM, плотный текст, маленький припев или без него. | mid, 85–100 | 26 | free |
+
+#### Заготовки
+
+**Открывающие кадры** (6) — Первые три секунды решают, досмотрят ли остальное.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `open_door_out` | Выход из двери | wide | static, low angle | free |
+| `open_empty_place` | Место до людей | establishing | static, eye level | free |
+| `open_detail_first` | Деталь до лица | extreme close-up | static, macro | free |
+| `open_direct_look` | Прямо в объектив | close-up | static, eye level | free |
+| `open_from_black` | Из темноты | close-up | static, slow reveal | free |
+| `open_mid_action` | Уже на бегу | medium | static, low, subject crosses frame | free |
+
+**Проходы и движение** (5) — Сцены, от которых трек начинает казаться идущим куда-то.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `travel_walk_away` | Уход от камеры | wide | steadicam follow from behind, lowering to waist height | free |
+| `travel_side_track` | Сбоку, вровень | medium | tracking alongside, matched speed | free |
+| `travel_stairs_down` | Лестница вниз | medium | handheld descent, slightly behind | free |
+| `travel_car_window` | Через окно | medium | static inside the vehicle | free |
+| `travel_corridor_push` | По коридору | wide | slow push-in along the corridor | pro |
+
+**Портреты и эмоция** (5) — Лицо, которое держат достаточно долго, чтобы поверить.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `portrait_hold_still` | Держим портрет | close-up | static, eye level | free |
+| `portrait_turn_to_lens` | Поворот к камере | close-up | static, eye level | free |
+| `portrait_breath_break` | Слом | extreme close-up | static, slightly low | pro |
+| `portrait_profile_to_front` | Профиль в фас | medium | static, chest level | free |
+| `portrait_two_shot` | Двое в одном кадре | medium | static, eye level, symmetrical | pro |
+
+**Детали и предметы** (5) — Самые дешёвые в генерации сцены — и те, что продают мир.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `detail_hands_work` | Руки работают | close-up | static, high angle over the hands | free |
+| `detail_object_pickup` | Берёт предмет | close-up | static, low, level with the surface | free |
+| `detail_texture_macro` | Макро фактуры | extreme close-up | static macro, shallow focus | free |
+| `detail_pocket_reveal` | Из кармана | close-up | static, chest level | free |
+| `detail_written_trace` | Оставленный след | extreme close-up | static, angled across the surface | pro |
+
+**Действие и экшен** (5) — Движение, которое обязано читаться за две секунды.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `action_run_toward` | Бег на камеру | wide | static, low | free |
+| `action_impact_stop` | Удар | medium | static, chest level | pro |
+| `action_jump_land` | Прыжок и приземление | medium | static, low | free |
+| `action_throw_away` | Бросок | medium | static, eye level | free |
+| `action_fall_back` | Падение назад | medium | static, low | pro |
+
+**Толпа и массовка** (4) — Масса как персонаж. Людей не считаем: модели не умеют.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `crowd_part_for_hero` | Толпа расступается | wide | static, chest level, subject moves toward camera | pro |
+| `crowd_one_still` | Все движутся, он стоит | wide | static, slightly high | free |
+| `crowd_hands_up` | Руки вверх | medium | handheld, held above head height | free |
+| `crowd_queue_line` | Очередь | wide | static, low, along the line | free |
+
+**Интерьеры** (4) — Комнаты, где источник света виден в кадре.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `interior_window_side` | У окна | medium | static, eye level | free |
+| `interior_doorframe` | В дверном проёме | wide | static, centred on the doorway | free |
+| `interior_table_sit` | За столом | medium | static, table height | free |
+| `interior_mirror` | В зеркале | medium | static, slightly off-axis to the glass | pro |
+
+**Ночь и свет** (5) — Ночь — это не темнота, а малое число источников.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `night_lamp_pass` | Под фонарём | medium | static, low, subject walks into the light | free |
+| `night_headlights` | Фары по стене | medium | static, facing the wall | free |
+| `night_screen_face` | Свет от экрана | close-up | static, eye level | free |
+| `night_neon_wall` | У вывесок | medium | static, eye level | pro |
+| `night_rain_reflect` | Дождь и отражения | wide | static, very low, close to the ground | free |
+
+**Финальные кадры** (4) — То, чем клип кончается, решает, о чём он был.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `final_pull_to_wide` | Отъезд в пустоту | medium | slow pull-back to wide | free |
+| `final_walk_out_frame` | Пустой кадр после ухода | wide | static, eye level | free |
+| `final_rhyme_open` | Рифма с первым кадром | establishing | static, matching the opening angle | pro |
+| `final_last_look` | Последний взгляд | extreme close-up | static, eye level | free |
+
+**Переходы между локациями** (4) — Пары сцен: половина ощущения от клипа живёт на склейке.
+
+| ключ | название | крупность | камера | тариф |
+|---|---|---|---|---|
+| `bridge_body_wipe` | Перекрытие телом | medium | static, subject crosses close to the lens | pro |
+| `bridge_match_shape` | Та же форма, другое место | close-up | static, centred on the shape | pro |
+| `bridge_door_through` | Через дверь | medium | static, behind the character | free |
+| `bridge_light_to_dark` | Из света в темноту | medium | static, subject walks away from the light | free |
+
+#### Движение
+
+**Камера** (12) — Одно движение на сцену. Амплитуда словами, никаких градусов.
+
+| ключ | название | camera_move | MiniMax | физика |
+|---|---|---|---|---|
+| `m_push_settle` | Наезд с остановкой | slow push-in | [Push in] | Перспектива меняется, потому что камера едет: фон за героем растёт. |
+| `m_pull_open` | Отъезд с раскрытием | slow pull-back | [Pull out] | По краям входит передний план — именно он продаёт движение. |
+| `m_truck_side` | Тревеллинг вбок | truck right at walking pace | [Truck left] | Близкое проносится, дальнее ползёт — вся суть приёма в этой разнице. |
+| `m_pedestal_down` | Камера опускается | pedestal down to waist height | [Pedestal down] | Горизонт поднимается по кадру, земля набирает вес. |
+| `m_arc_quarter` | Четверть облёта | arc a quarter turn to the left | — | Двигается только фон. Герой не должен доворачиваться вслед за камерой. |
+| `m_crane_rise` | Кран вверх | crane up and back | — | Внизу ничто не меняется, поднимается только точка зрения. Без наклона по дороге. |
+| `m_steadi_follow` | Идём следом | steadicam follow from behind | [Tracking shot] | Мелкая вертикальная качка в такт шагам не даёт движению стать механическим. |
+| `m_handheld_drift` | Дрейф с рук | handheld, slight drift | [Shake] | Амплитуда обязана быть мелкой: больше пары градусов читается как брак, а не приём. |
+| `m_rack_focus` | Перевод фокуса | static, focus pull | [Static shot] | В первом кадре глубина резкости обязана быть малой, иначе переводить нечего. |
+| `m_tilt_up` | Наклон вверх | tilt up from the ground | [Tilt up] | Наклон — не подъём: камера не набирает высоту, только угол. |
+| `m_pan_link` | Панорама, связывающая две точки | slow pan right | [Pan right] | Ближнее смазывается сильнее дальнего: слишком быстрая панорама даёт строб. |
+| `m_dolly_zoom` | Долли-зум | dolly in while zooming out | — | Герой обязан быть неподвижен и по центру, иначе приём превращается в мазню. |
+
+**Тело** (8) — Что делает человек, когда камера не делает ничего.
+
+| ключ | название | camera_move | MiniMax | физика |
+|---|---|---|---|---|
+| `m_turn_to_lens` | Поворот к объективу | static, eye level | [Static shot] | Ведёт шея, волосы отстают, плечи почти не участвуют. |
+| `m_weight_step` | Перенос веса | static | [Static shot] | Сначала бёдра, потом плечи. Наоборот — походка марионетки. |
+| `m_head_snap` | Рывок головой | static | [Static shot] | Весь фокус в перелёте: волосы и воротник приходят после того, как голова встала. |
+| `m_sit_to_stand` | Из сидя в стоя | static, chest level | [Static shot] | Вес сначала идёт вперёд и только потом вверх, иначе тело левитирует. |
+| `m_hand_raise` | Рука входит в кадр | static, macro | [Static shot] | Пальцы смыкаются после касания, а не до: ранний захват и читается как подделка. |
+| `m_enter_frame` | Входит в кадр | static | [Static shot] | Торможение занимает полтора шага: мгновенная остановка читается как сбой. |
+| `m_shoulder_drop` | Плечи падают | static, close | [Static shot] | Сначала опускается грудь, потом голова. Одновременно — это обвал, а не выдох. |
+| `m_eyes_to_lens` | Глаза находят объектив | static, close | [Static shot] | Один моргок до прихода взгляда и ни одного после: моргание на приходе рушит момент. |
+
+**Физика** (8) — Вторичное движение: ткань, волосы, пыль, дым, вода, дыхание.
+
+| ключ | название | camera_move | MiniMax | физика |
+|---|---|---|---|---|
+| `m_coat_inertia` | Инерция пальто | — | — | Ткань никогда не ведёт тело. Если подол пошёл первым — кадр неправильный. |
+| `m_hair_lag` | Запаздывание волос | — | — | Перелёт и возврат. Волосы, встающие вместе с головой, читаются как шлем. |
+| `m_hem_settle` | Ткань укладывается | — | — | Чем тяжелее ткань, тем длиннее задержка. Джинса встаёт быстрее пальто. |
+| `m_dust_bloom` | Пыльный выброс | — | — | Пыль сначала поднимается, потом падает. Только расширяющееся облако — это дым, не удар. |
+| `m_smoke_curl` | Дым тянется | — | — | Сначала поднимается, остывая — расходится вбок. Строго вертикальный дым выглядит фальшиво. |
+| `m_water_drip` | Вода и круги | — | — | Один круг на каплю. Несколько кругов от одной — классический признак генерации. |
+| `m_breath_fog` | Видимое дыхание | — | — | Облачко обязано разойтись до следующего выдоха, иначе читается как дым. |
+| `m_paper_scatter` | Бумага разлетается | — | — | Бумага переворачивается при падении и никогда не падает плашмя — иначе это карты. |
+
+**Переходы** (4) — Движение, работа которого — спрятать склейку или посадить её.
+
+| ключ | название | camera_move | MiniMax | физика |
+|---|---|---|---|---|
+| `m_whip_out` | Рывок из сцены | fast whip pan right | [Pan right] | Смазана только последняя секунда: сцена из сплошного смаза не смотрится. |
+| `m_blur_resolve` | Проявление из размытия | static, focus resolve | [Static shot] | Фокус приходит один раз и встаёт: рысканье туда-сюда читается как сломанный объектив. |
+| `m_body_wipe` | Перекрытие передним планом | static | [Static shot] | Перекрывающее обязано быть не в фокусе: резкий передний план читается как брак. |
+| `m_freeze_settle` | Мёртвая остановка | static | [Static shot] | Именно вторичное движение доказывает, что это остановка, а не стоп-кадр. |
+
+#### Свет и цвет
+
+**Схемы света** (9) — Откуда идёт свет. Меняет кадр сильнее любого другого решения.
+
+| ключ | название | уровень | чем платим |
+|---|---|---|---|
+| `l_rim_back` | Контровой ободок | scene | Отрывает человека от тёмного фона вообще без дополнительного света. |
+| `l_hard_single` | Один жёсткий источник | scene | Умолчание любого драматичного кадра. Ничего не стоит и читается сразу. |
+| `l_soft_wrap` | Мягкий обёртывающий | scene | Единственная схема, прощающая плохо сгенерённое лицо. |
+| `l_three_point` | Три точки | scene | Когда кадр не должен иметь мнения: товар, интервью, герой-кадр. |
+| `l_practical_only` | Только источники в кадре | scene | Самый дешёвый способ сделать сгенерённый кадр похожим на задокументированный. |
+| `l_window_motivated` | Мотивирован окном | scene | Интерьеры лучше всего читаются при одном и только одном направлении света. |
+| `l_screen_glow` | Экран снизу | scene | Самый современный свет из существующих, и декорация ему не нужна. |
+| `l_chiaroscuro` | Один луч и больше ничего | scene | Прячет всё, что модель рисует плохо. И быстрее всего выглядит претенциозно — не чаще раза. |
+| `l_high_key_bounce` | Высокий ключ | scene | Работает как контраст. Две подряд — и клип становится плоским. |
+
+**Время суток** (6) — Термины, которые движки читают буквально: «golden hour» работает, «красивый свет» — нет.
+
+| ключ | название | уровень | чем платим |
+|---|---|---|---|
+| `l_blue_hour` | Синий час | scene | Единственное время суток, когда интерьер и натура сходятся без ухищрений. |
+| `l_golden_hour` | Золотой час | scene | Продаёт любой кадр. И самый заезженный час в каталоге — его надо заслужить. |
+| `l_harsh_noon` | Жёсткий полдень | scene | Свет, который никто не выбирает, — именно поэтому он читается как настоящий. |
+| `l_overcast_flat` | Пасмурно | scene | По умолчанию документально. Всё выглядит честным и слегка грустным. |
+| `l_first_light` | Первый свет | scene | Естественный финал любого ночного клипа: то же место, другой час. |
+| `l_deep_night` | Глухая ночь | scene | Ночь — это не темнота, а малое число источников. Назови их, иначе кадр поплывёт. |
+
+**Палитра** (4) — Уступает стилю трека. Пожелание, а не вторая инструкция.
+
+| ключ | название | уровень | чем платим |
+|---|---|---|---|
+| `l_one_accent` | Один акцентный цвет | style | Держи один и тот же акцент весь клип, иначе он перестаёт быть акцентом. |
+| `l_complementary` | Тёплая кожа, холодные тени | style | Работает на любом цветном стиле. На монохромных пропускать. |
+| `l_three_colours` | Только три цвета | style | Самое сильное палитрное правило и самое трудное для тридцати сцен. |
+| `l_analogous_warm` | Всё тёплое | style | Читается как воспоминание. Плохо дружит со всем, чему нужен холодный акцент. |
+
+**Контраст и грейд** (3) — Этим распоряжается стиль. Эти карточки лишь подталкивают.
+
+| ключ | название | уровень | чем платим |
+|---|---|---|---|
+| `l_contrast_hold` | Держать контраст | style | Для сцен, которые вернулись плоскими. Не лечит плохую схему света. |
+| `l_crushed_blacks` | Отпустить чёрное | style | Приём производства, а не стиля: меньше видимой площади — меньше видимых ошибок. |
+| `l_soft_bloom` | Дать светам расцвести | style | Делает лампы и вывески главными в кадре. Спорит с любым стилем, которому нужны чистые края. |
+
+#### Конфликтующие пары черт
+
+| черта | несовместима с |
+|---|---|
+| камера неподвижна | камера едет |
+| камера неподвижна | с рук |
+| быстро | медленно |
+| ночь | день |
+| интерьер | натура |
+| тесная крупность | общий план |
+| жёсткий свет | мягкий свет |
+| низкий ключ | высокий ключ |
+| толпа в кадре | герой один |
+
+---
+
+## 20. Примеры
+
+Примеры здесь — **данные, а не текст в документации**: они описаны в
+`EXAMPLES` и печатаются вызовом `render_example()`, поэтому пример физически не
+может разойтись с карточкой. Разошедшийся пример хуже отсутствующего — он учит
+формулировке, которой в продукте уже нет.
+
+Перегенерация блока после правки карточек:
+
+```
+python3 backend/prompts_library.py --examples
+```
+
+По одному примеру на каждую из десяти групп заготовок плюс по одному на
+сценарий, движение и свет.
+
+### Открывающий: выход из подъезда в сумерках
+
+Выбрано: сценарий **night_shift**, заготовка **open_door_out**, движение **m_coat_inertia**, свет **l_practical_only**, **l_blue_hour**.
+
+Подставлено: `{character}` = young man in a black hooded jacket, `{location}` = panel block courtyard, `{time}` = late dusk, `{outfit}` = long grey coat.
+
+```
+shot_size   : wide
+camera_move : static, low angle
+shot_note   : Выход из проёма, со спины
+
+image_prompt (первый кадр):
+  Wide shot from outside panel block courtyard: young man in a black hooded
+  jacket stands in a lit doorway with their back to the camera, one hand still
+  on the door, the street dark and empty in front of them at late dusk.
+  Vertical framing, the doorway occupying the upper centre, wet ground in the
+  lower third. Lit only by the light sources visible inside the frame — lamps,
+  windows and signs — with no additional light from outside the shot. Shot
+  after sunset while the sky is still brighter than the ground, every lamp in
+  the scene already switched on and competing with the last daylight.
+
+image_prompt_last (последний кадр):
+  The same young man in a black hooded jacket in the same doorway of the same
+  panel block courtyard at the same late dusk, now two steps out on the street
+  with the door swinging shut behind them, still seen from behind, same
+  clothing and same light from the doorway. Lit only by the light sources
+  visible inside the frame — lamps, windows and signs — with no additional
+  light from outside the shot. Shot after sunset while the sky is still
+  brighter than the ground, every lamp in the scene already switched on and
+  competing with the last daylight.
+
+motion_prompt:
+  The long grey coat swings a beat behind every step young man in a black
+  hooded jacket takes, the hem lifting on the forward swing and settling
+  against the legs when the movement stops.
+
+negative (уходит отдельным каналом там, где он есть):
+  face visible, camera shake, duplicated door, warped hands, text on the wall
+```
+
+Почему так: Два световых модификатора уровня сцены и ни одного палитрного: цветом уже распоряжается стиль.
+
+На Grok эта сцена идёт вариантом `solo`: `The long grey coat swings a beat behind each step young man in a black hooded jacket takes, the hem lifting and then settling against the legs as the movement stops.`
+
+### Проход: уход по мокрой улице
+
+Выбрано: сценарий **black_car**, заготовка **travel_walk_away**, движение **m_steadi_follow**, свет **l_deep_night**.
+
+Подставлено: `{character}` = woman in a long coat, `{location}` = narrow one-way street, `{time}` = 3 a.m..
+
+```
+shot_size   : wide
+camera_move : steadicam follow from behind
+shot_note   : Уход по улице, камера следом
+
+image_prompt (первый кадр):
+  Wide shot from behind: woman in a long coat steps off the kerb into a narrow
+  street in narrow one-way street at 3 a.m., shoulders up, hands in pockets,
+  street lamps receding into the distance along the vertical of the frame,
+  puddles holding their reflections, plenty of headroom. Shot in full darkness
+  with no light from the sky at all: everything visible is lit by lamps,
+  windows or headlights, and the space between them is black.
+
+image_prompt_last (последний кадр):
+  The same woman in a long coat in the same street in narrow one-way street at
+  the same 3 a.m., same clothing and same lamps, now framed from the waist up
+  and much closer, passing directly under one lamp so the light falls on the
+  shoulders from above. Shot in full darkness with no light from the sky at
+  all: everything visible is lit by lamps, windows or headlights, and the
+  space between them is black.
+
+motion_prompt:
+  The camera follows woman in a long coat from behind at their own walking
+  pace in one unbroken move and settles when they stop; the frame stays level
+  and the distance stays the same.
+
+negative (уходит отдельным каналом там, где он есть):
+  face turning back, foot sliding, background shifting, extra pedestrians,
+  camera jitter
+```
+
+Почему так: Карточка движения заменяет и camera_move: следование здесь и есть кадр, а не украшение.
+
+На Grok эта сцена идёт вариантом `solo`: `The camera follows woman in a long coat from behind at walking pace in one unbroken move and settles when they stop, holding the same distance the whole way.`
+
+### Портрет: держим крупный план
+
+Выбрано: сценарий **the_offer**, заготовка **portrait_hold_still**, движение **m_push_settle**, свет **l_hard_single**.
+
+Подставлено: `{character}` = man in his forties, shaved head, `{location}` = empty office room, `{emotion}` = jaw set, eyes not blinking.
+
+```
+shot_size   : close-up
+camera_move : slow push-in
+shot_note   : Крупный план, минимум движения
+
+image_prompt (первый кадр):
+  Close-up of man in his forties, shaved head in empty office room, head and
+  shoulders filling the vertical frame, lit from one side so half the face
+  falls into shadow, jaw set, eyes not blinking, eyes fixed on something just
+  past the lens, background dark and unreadable. Lit by a single hard
+  undiffused source from one side, sharp-edged shadows falling across the
+  surfaces behind, no fill light anywhere in the frame.
+
+image_prompt_last (последний кадр):
+  The same man in his forties, shaved head in the same empty office room with
+  the same single-side light and the same framing, the head turned a few
+  degrees further into the light, jaw set, eyes not blinking unchanged. Lit by
+  a single hard undiffused source from one side, sharp-edged shadows falling
+  across the surfaces behind, no fill light anywhere in the frame.
+
+motion_prompt:
+  The camera moves steadily closer along one axis and settles. man in his
+  forties, shaved head does not move toward the camera; only the distance
+  between them shrinks, and the framing comes to rest tighter than it began.
+
+negative (уходит отдельным каналом там, где он есть):
+  smiling, exaggerated expression, head bobbing, warped eyes, second face
+```
+
+Почему так: Наезд на статичную заготовку: можно, потому что статична композиция, а не камера.
+
+На Grok эта сцена идёт вариантом `solo`: `Slow push-in on man in his forties, shaved head over six seconds: the framing tightens, they hold still and blink once, and the move settles without any pan or roll.`
+
+### Деталь: руки заканчивают работу
+
+Выбрано: сценарий **night_shift**, заготовка **detail_hands_work**, движение **m_hand_raise**, свет **l_hard_single**, **l_analogous_warm**.
+
+Подставлено: `{prop}` = steel kettle, `{location}` = canteen kitchen.
+
+```
+shot_size   : close-up
+camera_move : static, macro
+shot_note   : Только руки, работа с предметом
+
+image_prompt (первый кадр):
+  Close-up looking down at a pair of hands in canteen kitchen working on steel
+  kettle on a worn surface, sleeves pushed up, one hard light from the left
+  throwing the shadows of the fingers across the surface, no face in the
+  frame. Lit by a single hard undiffused source from one side, sharp-edged
+  shadows falling across the surfaces behind, no fill light anywhere in the
+  frame. Colour note, without overriding the track style: keep every colour in
+  the frame on the warm side, with nothing cold anywhere in the shot.
+
+image_prompt_last (последний кадр):
+  The same hands on the same surface in the same canteen kitchen under the
+  same hard left light, steel kettle now finished and set down flat, the
+  fingers withdrawn to the edge of the frame. Lit by a single hard undiffused
+  source from one side, sharp-edged shadows falling across the surfaces
+  behind, no fill light anywhere in the frame. Colour note, without overriding
+  the track style: keep every colour in the frame on the warm side, with
+  nothing cold anywhere in the shot.
+
+motion_prompt:
+  A hand enters from the bottom edge of the frame, reaches steel kettle and
+  comes to rest on it; nothing else in the shot moves.
+
+negative (уходит отдельным каналом там, где он есть):
+  face in frame, six fingers, warped knuckles, third hand, readable text
+```
+
+Почему так: Один свет уровня сцены плюс одна палитра — и палитра формулировкой уступает стилю.
+
+На Grok эта сцена идёт вариантом `solo`: `A hand slides into the frame from the bottom edge, reaches steel kettle and comes to rest on it. Nothing else moves.`
+
+### Экшен: бег на объектив
+
+Выбрано: сценарий **run_the_block**, заготовка **action_run_toward**, движение **m_dust_bloom**, свет **l_hard_single**.
+
+Подставлено: `{character}` = teenager in a red tracksuit, `{location}` = concrete underpass, `{time}` = midday.
+
+```
+shot_size   : wide
+camera_move : static, low
+shot_note   : Бег на камеру, резкая остановка
+
+image_prompt (первый кадр):
+  Wide low shot in concrete underpass at midday: teenager in a red tracksuit
+  far away at the end of the frame, already running toward the camera, both
+  arms driving, the ground stretching between them and the lens. Lit by a
+  single hard undiffused source from one side, sharp-edged shadows falling
+  across the surfaces behind, no fill light anywhere in the frame.
+
+image_prompt_last (последний кадр):
+  The same teenager in a red tracksuit in the same concrete underpass at the
+  same midday, same clothing, now filling the frame from the knees up, one
+  foot planted hard in the foreground and the body braked. Lit by a single
+  hard undiffused source from one side, sharp-edged shadows falling across the
+  surfaces behind, no fill light anywhere in the frame.
+
+motion_prompt:
+  Dust bursts outward from the point of contact, hangs in the light for a
+  moment and settles back toward the ground.
+
+negative (уходит отдельным каналом там, где он есть):
+  sliding feet, floating body, motion blur on the background, warped legs,
+  jitter
+```
+
+Почему так: Карточка физики вместо камеры: на быстрых сценах камера обязана стоять.
+
+На Grok эта сцена идёт вариантом `solo`: `Dust bursts outward from the point of contact, hangs in the light for a moment and settles back toward the ground.`
+
+### Толпа: одна неподвижная фигура
+
+Выбрано: сценарий **market_day**, заготовка **crowd_one_still**, движение **m_freeze_settle**, свет **l_overcast_flat**.
+
+Подставлено: `{crowd}` = commuters in dark coats, `{character}` = girl with a shaved head, `{location}` = station concourse, `{time}` = morning rush.
+
+```
+shot_size   : wide
+camera_move : static
+shot_note   : Неподвижный в потоке
+
+image_prompt (первый кадр):
+  Wide shot of station concourse at morning rush filled with a dense stream of
+  commuters in dark coats moving through the frame in both directions, girl
+  with a shaved head standing motionless in the middle of the stream facing
+  the camera, everyone else blurred by their own movement. Lit by a completely
+  overcast sky acting as one enormous soft source, no visible shadows and no
+  clear direction to the light.
+
+image_prompt_last (последний кадр):
+  The same station concourse at the same morning rush with the same dense
+  stream of commuters in dark coats and the same light, girl with a shaved
+  head still motionless in the same spot while the people around them are in
+  completely different positions. Lit by a completely overcast sky acting as
+  one enormous soft source, no visible shadows and no clear direction to the
+  light.
+
+motion_prompt:
+  All movement in the frame halts at once and the shot holds completely still;
+  only the smallest secondary motion — cloth, hair, dust — settles a beat
+  after everything else has stopped.
+
+negative (уходит отдельным каналом там, где он есть):
+  hero moving, counted people, duplicated faces, morphing coats, camera drift
+```
+
+Почему так: Ровный пасмурный свет на толпе: тени превратили бы плотную массу в кашу.
+
+На Grok эта сцена идёт вариантом `solo`: `All movement in the frame halts at once and the shot holds still, with only cloth, hair and dust settling a beat after everything else has stopped.`
+
+### Интерьер: у окна
+
+Выбрано: сценарий **two_rooms**, заготовка **interior_window_side**, движение **m_breath_fog**, свет **l_window_motivated**.
+
+Подставлено: `{character}` = woman in a knitted jumper, `{location}` = one-room flat, `{time}` = first light.
+
+```
+shot_size   : medium
+camera_move : static, eye level
+shot_note   : Свет из окна с одной стороны
+
+image_prompt (первый кадр):
+  Medium shot inside one-room flat at first light: woman in a knitted jumper
+  stands beside a tall window in profile, lit entirely from the window on one
+  side while the rest of the room falls into shadow, dust visible in the shaft
+  of light, the window filling the left of the vertical frame. All the light
+  in the room comes from one window, spilling across the floor in a hard-edged
+  shape and leaving the far side of the space unlit.
+
+image_prompt_last (последний кадр):
+  The same woman in a knitted jumper beside the same window in the same
+  one-room flat at the same first light, same light direction, now turned
+  toward the window with the forehead almost touching the glass and the face
+  fully in the light. All the light in the room comes from one window,
+  spilling across the floor in a hard-edged shape and leaving the far side of
+  the space unlit.
+
+motion_prompt:
+  The breath of woman in a knitted jumper shows as a small cloud that leaves
+  the mouth, drifts up past the face and disperses, then settles into a slow
+  steady rhythm.
+
+negative (уходит отдельным каналом там, где он есть):
+  second light source, flat exposure, warped window frame, readable view
+  outside, camera drift
+```
+
+Почему так: Световая карточка повторяет направление света заготовки, а не добавляет второй источник.
+
+На Grok эта сцена идёт вариантом `solo`: `The breath of woman in a knitted jumper shows as a small cloud leaving the mouth, drifting up past the face and dispersing, then settling into a slow steady rhythm.`
+
+### Ночь: вход в пятно фонаря
+
+Выбрано: сценарий **cold_call**, заготовка **night_lamp_pass**, движение **m_weight_step**, свет **l_deep_night**, **l_crushed_blacks**.
+
+Подставлено: `{character}` = man in a leather jacket, `{location}` = empty embankment, `{time}` = 2 a.m..
+
+```
+shot_size   : medium
+camera_move : static
+shot_note   : Входит в пятно фонаря
+
+image_prompt (первый кадр):
+  Medium shot in empty embankment at 2 a.m.: man in a leather jacket walks in
+  near darkness between two street lamps, only the outline of the shoulders
+  catching the light from behind, the pool of lamp light waiting empty in the
+  lower part of the vertical frame. Shot in full darkness with no light from
+  the sky at all: everything visible is lit by lamps, windows or headlights,
+  and the space between them is black. Contrast note, without overriding the
+  track style: let the shadows go completely black with no detail recovered in
+  them.
+
+image_prompt_last (последний кадр):
+  The same man in a leather jacket in the same street in empty embankment at
+  the same 2 a.m., same clothing and the same two lamps, now standing inside
+  the pool of light with the face lit hard from directly above and the eye
+  sockets in shadow. Shot in full darkness with no light from the sky at all:
+  everything visible is lit by lamps, windows or headlights, and the space
+  between them is black. Contrast note, without overriding the track style:
+  let the shadows go completely black with no detail recovered in them.
+
+motion_prompt:
+  man in a leather jacket shifts their weight from the back foot to the front,
+  the hips leading and the shoulders arriving a beat later, and comes to rest
+  with both feet planted.
+
+negative (уходит отдельным каналом там, где он есть):
+  even street lighting, second light source, warped face, camera movement,
+  daylight
+```
+
+Почему так: Грейд здесь производственный приём: меньше видимой площади — меньше видимых ошибок.
+
+На Grok эта сцена идёт вариантом `solo`: `man in a leather jacket shifts weight from the back foot to the front, hips leading and shoulders arriving a beat later, and comes to rest with both feet planted.`
+
+### Финал: отъезд в пустоту
+
+Выбрано: сценарий **last_train**, заготовка **final_pull_to_wide**, движение **m_pull_open**, свет **l_first_light**.
+
+Подставлено: `{character}` = man with a duffel bag, `{location}` = end-of-line platform, `{time}` = first light.
+
+```
+shot_size   : medium
+camera_move : slow pull-back
+shot_note   : Отъезд, пока герой не станет мелким
+
+image_prompt (первый кадр):
+  Medium shot of man with a duffel bag standing still in end-of-line platform
+  at first light, framed from the waist up, facing the camera, the background
+  reading only as texture behind them. Shot at first light with the sky
+  brighter than the ground, the air still and cold, the street lamps beginning
+  to look unnecessary.
+
+image_prompt_last (последний кадр):
+  The same man with a duffel bag in the same end-of-line platform at the same
+  first light in the same light, now tiny and off-centre in the lower third of
+  a very wide frame, the whole space open around them. Shot at first light
+  with the sky brighter than the ground, the air still and cold, the street
+  lamps beginning to look unnecessary.
+
+motion_prompt:
+  The camera retreats in a straight line and settles, opening more of the
+  space every second. man with a duffel bag stays exactly where they are and
+  does not walk away from the lens.
+
+negative (уходит отдельным каналом там, где он есть):
+  subject walking away, zoom artefacts, warped background, camera roll, cut
+```
+
+Почему так: Заготовка и движение говорят одно и то же намеренно: карточка движения лишь уточняет формулировку.
+
+На Grok эта сцена идёт вариантом `solo`: `Slow pull-back away from man with a duffel bag over six seconds, opening the space around them until the move settles. They stay where they are and do not follow the camera.`
+
+### Переход: из света в темноту
+
+Выбрано: сценарий **the_return**, заготовка **bridge_light_to_dark**, движение **m_blur_resolve**, свет **l_chiaroscuro**.
+
+Подставлено: `{character}` = man in a denim jacket, `{location}` = underpass mouth, `{time}` = late afternoon.
+
+```
+shot_size   : medium
+camera_move : static, focus resolve
+shot_note   : Переход из света в тень
+
+image_prompt (первый кадр):
+  Medium shot in underpass mouth at late afternoon: man in a denim jacket
+  stands in a bright patch of open light with the mouth of a dark passage
+  directly behind them in the vertical frame, the boundary between the two
+  cutting the shot in half. Lit by a single narrow shaft of light cutting
+  across the frame, everything outside it completely unlit and unreadable.
+
+image_prompt_last (последний кадр):
+  The same man in a denim jacket in the same underpass mouth at the same late
+  afternoon, same clothing, now inside the dark passage with only the outline
+  of the shoulders and hair catching the light left behind. Lit by a single
+  narrow shaft of light cutting across the frame, everything outside it
+  completely unlit and unreadable.
+
+motion_prompt:
+  The shot begins completely out of focus and sharpens onto man in a denim
+  jacket, coming to rest once the face is clear; the camera itself never
+  moves.
+
+negative (уходит отдельным каналом там, где он есть):
+  even exposure, fill light in the passage, warped silhouette, camera follow,
+  flicker
+```
+
+Почему так: Переход пишется как одна сцена, а применяется парой: следующая сцена открывается с тёмного конца.
+
+На Grok эта сцена идёт вариантом `solo`: `The shot begins completely out of focus and sharpens onto man in a denim jacket, coming to rest once the face is clear. The camera itself does not move.`
+
+### Сценарий, разложенный на раскадровку
+
+Выбрано: сценарий **night_shift**, заготовка **open_empty_place**, движение **m_smoke_curl**, свет **l_practical_only**.
+
+Подставлено: `{location}` = empty depot hall, `{time}` = half past midnight, `{weather}` = cold draught, `{character}` = man in a work jacket.
+
+```
+shot_size   : establishing
+camera_move : static, eye level
+shot_note   : Заявочный: только локация
+
+image_prompt (первый кадр):
+  Establishing wide of empty depot hall at half past midnight, completely
+  empty of people, composed symmetrically with the vanishing point in the
+  centre of the vertical frame, cold draught visible in the air, every light
+  source in the scene switched on. Lit only by the light sources visible
+  inside the frame — lamps, windows and signs — with no additional light from
+  outside the shot.
+
+image_prompt_last (последний кадр):
+  The same empty empty depot hall from the same camera position at the same
+  half past midnight with the same lights on: only cold draught has moved
+  through the frame and one distant light has gone out. Lit only by the light
+  sources visible inside the frame — lamps, windows and signs — with no
+  additional light from outside the shot.
+
+motion_prompt:
+  Smoke drifts upward through the beam of light in a slow curl, breaks apart
+  near the top of the frame and settles into a thin haze.
+
+negative (уходит отдельным каналом там, где он есть):
+  people, animals, moving vehicles, camera drift, warped architecture
+```
+
+Почему так: script_boards() отдаёт черновик раскадровки целиком по актам; это её первая сцена.
+
+### Одна заготовка, три движка
+
+Выбрано: заготовка **portrait_turn_to_lens**, движение **m_turn_to_lens**.
+
+Подставлено: `{character}` = girl with wet hair, `{location}` = tiled bathroom, `{emotion}` = mouth closed, eyes steady.
+
+```
+shot_size   : close-up
+camera_move : static, eye level
+shot_note   : Профиль поворачивается в контакт
+
+image_prompt (первый кадр):
+  Close-up of girl with wet hair in tiled bathroom in profile, facing left out
+  of the frame, unaware of the camera, lit from the front-left so the near
+  cheek is bright and the far side is in shadow, mouth closed, eyes steady.
+
+image_prompt_last (последний кадр):
+  The same girl with wet hair in the same tiled bathroom in the same light and
+  framing, now turned fully to face the camera with the eyes directly in the
+  lens, mouth closed, eyes steady.
+
+motion_prompt:
+  girl with wet hair turns the head from profile toward the camera in one
+  continuous move and stops with the eyes in the lens; the hair follows a beat
+  behind the turn.
+
+negative (уходит отдельным каналом там, где он есть):
+  head rotating past the camera, neck stretching, warped ear, blinking out of
+  sync, jitter
+```
+
+Почему так: Одна и та же карточка рендерится по-разному для движка с двумя кадрами, для Grok и для MiniMax.
+
+На Grok эта сцена идёт вариантом `solo`: `girl with wet hair turns from profile toward the camera in one continuous move and stops with the eyes in the lens, the hair trailing a beat behind.`
+
+### Световые модификаторы на одной заготовке
+
+Выбрано: сценарий **stage_and_after**, заготовка **night_neon_wall**, движение **m_hair_lag**, свет **l_one_accent**, **l_deep_night**.
+
+Подставлено: `{character}` = rapper in a white vest, `{location}` = back alley behind the venue, `{time}` = after midnight, `{accent}` = sodium orange.
+
+```
+shot_size   : medium
+camera_move : static, eye level
+shot_note   : Разворот у светящихся вывесок
+
+image_prompt (первый кадр):
+  Medium shot of rapper in a white vest standing with their back to a wall of
+  glowing signs in back alley behind the venue at after midnight, the signs
+  out of focus behind them, their light falling on one side of the face and
+  leaving the other in shadow, sodium orange dominating the glow. Colour note,
+  without overriding the track style: let a single sodium orange element be
+  the only loud colour in the frame while everything else stays quiet. Shot in
+  full darkness with no light from the sky at all: everything visible is lit
+  by lamps, windows or headlights, and the space between them is black.
+
+image_prompt_last (последний кадр):
+  The same rapper in a white vest against the same wall of signs in the same
+  back alley behind the venue at the same after midnight, same sodium orange
+  glow, now turned so the lit side of the face is away from the camera and the
+  shadowed side is toward it. Colour note, without overriding the track style:
+  let a single sodium orange element be the only loud colour in the frame
+  while everything else stays quiet. Shot in full darkness with no light from
+  the sky at all: everything visible is lit by lamps, windows or headlights,
+  and the space between them is black.
+
+motion_prompt:
+  The hair of rapper in a white vest follows the head a beat late, overshoots
+  slightly at the end of the movement and settles back across the shoulders.
+
+negative (уходит отдельным каналом там, где он есть):
+  readable signage, flickering strobe, even lighting, warped face, camera pan
+```
+
+Почему так: Одна палитра и одно время суток — это потолок, и палитра уступает стилю формулировкой.
+
+На Grok эта сцена идёт вариантом `solo`: `The hair of rapper in a white vest follows the head a beat late, overshoots at the end of the movement and settles back across the shoulders.`
+
+
+---
+
+## 21. Самопроверка базы промтов
+
+`python3 backend/prompts_library.py` гоняет и старые приёмы, и новые слои одним
+списком ошибок. Что проверяется сверх раздела 11:
+
+**Заготовки.** Группа, тариф и крупность — из своих словарей. В `last` есть лок
+`The same …`. В `motion` и `solo` есть конечное состояние. Нет слов, которыми
+распоряжается стиль (`_BAN_GRADE`). Нет ссылок на соседние кадры (`_BAN_REF`).
+Слот в тексте объявлен и наоборот. В `shot_note` слотов нет вообще —
+подставленное английское значение внутри русской подписи читается как брак.
+Команда MiniMax — из их пятнадцати и не длиннее трёх через запятую. `needs_last`
+не сочетается с Grok.
+
+**Движение.** Конечное состояние в обоих текстах. Скобочная команда из словаря.
+Ссылки `fits_with` / `conflicts_with` указывают на существующие карточки.
+
+**Свет.** `level="scene"` — без слов стиля; `level="style"` — обязательно с
+фразой-уступкой. Иначе карточка начнёт спорить со стилем трека, и это заметят
+не мы, а человек, у которого испортился кадр.
+
+**Сценарии.** Сумма долей актов равна 1.0. Все заготовки актов существуют.
+`story` по-русски и длиннее логлайна. `story` не совпадает с закрытым seed'ом
+родственного каркаса — граница актива проверяется и здесь.
+
+**Примеры.** Каждый пример собирается и **не конфликтует сам с собой**: пример,
+который нарушает собственные правила миксования, учит плохому. И у каждой из
+десяти групп заготовок есть хотя бы один пример.
+
+Поиск по словам устроен **по границам слов, а не подстрокой** — иначе «withdrawn»
+содержит «hdr», и запрет срабатывает на невиновной карточке. Это уже случилось
+один раз при сборке.
+
+---
+
+## 22. Что осталось не сделано
+
+- **Витрины `/prompts` нет ни для приёмов, ни для базы промтов.** API отвечает
+  по приёмам и наборам; для сценариев, заготовок, движения и света публичные
+  функции (`public_scripts`, `public_boards`, `public_motions`, `public_lights`,
+  `mix`, `check_mix`) написаны и проверены, но роутов в `main.py` под них пока
+  нет. Это следующий шаг и он механический.
+- **Кнопки «Применить» в интерфейсе нет.** `board_patch()` отдаёт готовое тело
+  `PATCH /api/scenes/{id}` вместе с `shot_note`; фронт про него ещё не знает.
+- **Пример владельца «Анька» на диске отсутствует.** Блоковая разметка с локами
+  (`REFERENCE LOCKS / LIGHTING / CAMERA / ACTION по секундам / NEGATIVE LOCKS`)
+  восстановлена по смыслу — лок в `last`, негатив отдельным каналом, движение с
+  конечным состоянием, — но исходный файл стоит попросить и сверить.
+- **Поле `source` пустое у всех карточек.** Тексты написаны с нуля, атрибуции
+  требовать не с чего; поле оставлено под будущие карточки, опирающиеся на
+  открытую документацию вендоров.
 - **Гиф-доказательств нет.** В уроках заявлены врезки «так неправильно / так
   правильно» — их надо сгенерить нашей же студией, это ручная работа.
+- **Раскладка по актам приблизительная.** `POST /api/scripts/{key}/apply`
+  отдаёт готовые тела кадров в порядке актов, и витрина кладёт их по одному на
+  сцену подряд. Доли актов (`share`) при этом не учитываются: сценарий, у
+  которого второй акт занимает 35 % хронометража, всё равно получает по одному
+  кадру на заготовку. Считать по долям надо, но для этого нужна длительность
+  трека, а она бывает нулевой у только что заведённой дорожки.
+
+
+---
+
+# Часть III. Как это встроено в сервис
+
+## 23. Роуты
+
+Читающие — отдают карточки по белому списку полей, тексты вкладываются только
+тем, кому их открывает тариф:
+
+| роут | что отдаёт |
+|---|---|
+| `GET /api/library` | **весь** каталог одним ответом: четыре слоя, группы, приёмы, наборы, `mix_rules`, `fields` |
+| `GET /api/scripts` · `/api/scripts/{key}` | сценарии, фильтры `cut`, `style` |
+| `GET /api/boards` · `/api/boards/{key}` | заготовки сцен, фильтры `group`, `tier`, `style` |
+| `GET /api/motions` · `/api/motions/{key}` | движения, фильтр `group` |
+| `GET /api/lights` · `/api/lights/{key}` | свет и цвет, фильтр `group` |
+
+Один запрос вместо шести — потому что каталог открывают целиком и переключают
+вкладки мышкой: шесть round-trip’ов означали бы шесть состояний загрузки и
+пустую вкладку под курсором. Витрина забирает `/api/library` один раз за сеанс
+и сбрасывает кэш только на смене языка.
+
+Считающие — **ничего не пишут**:
+
+| роут | что делает |
+|---|---|
+| `POST /api/mix/check` | только конфликты выбора, без единой строки промпта и **без замка по тарифу** |
+| `POST /api/mix` | сборка → готовое тело `PATCH /api/scenes/{id}`, плюс `before`, `changed`, `add`, `negative`, `conflicts` |
+| `POST /api/scripts/{key}/apply` | `story`, `note`, список заготовок и готовые тела кадров по порядку актов |
+
+`/api/mix/check` намеренно открыт всем: объяснение «камера стоит и камера едет
+не бывают в одном кадре» — это не товар, а причина передумать, и прятать его за
+тарифом значит продавать молчание. `/api/mix` тариф уже проверяет: без этого
+текст платной карточки утекал бы подстановкой мимо витрины, где он закрыт.
+
+Пишущего роута у каталога нет. Записывают три существующих: `PATCH /api/project`
+(сюжет), `PATCH /api/tracks/{id}` (заметка режиссёра), `PATCH /api/scenes/{id}`
+(кадры). Четвёртого места, знающего поля кадра, не появилось — поэтому
+переименование поля ломает один файл, а не четыре. Единственная правка в старом
+коде: `PATCH /api/tracks/{id}` научился писать `director_note`, у которого до
+этого было два хозяина (генерация сюжета и сид каркаса) и ни одного ручного.
+
+## 24. Сборка: что с чем и что при этом видно
+
+Витрина — `frontend/library.js`, лист открывается из ленты разделов
+(«Промты»), с карточки кадра (кнопка «Каталог») и из мастерской (кнопка
+«Промты» в строке ввода). Откуда пришли — написано прямо на листе, потому что
+«применить» в каждом случае означает разное:
+
+| откуда | что делает «применить» |
+|---|---|
+| лента разделов | спрашивает трек и кадр |
+| карточка кадра | этот кадр уже выбран |
+| мастерская | вставляет собранный промпт в строку ввода, в кадр не пишет |
+
+Сборка держится полосой внизу листа и на каждое изменение спрашивает
+`/api/mix/check`. Потолки соблюдает сама витрина, а не сообщение об ошибке
+после нажатия: заготовка и движение вытесняют предыдущие (их по одному на
+сцену), свет копится до двух и дальше выталкивает самый старый — «положить в
+сборку» никогда не отвечает «нельзя».
+
+Конфликт **не запрещает**. Он подписан словами на золотой подложке — это
+предупреждение, а не ошибка, и красная плашка тут врала бы.
+
+Перед записью диалог показывает «было → станет» построчно: прежнее значение
+зачёркнуто и приглушено, новое обычным чернилом, неизменившиеся поля подписаны
+«не меняется». Предпросмотр приходит **тем же вызовом**, который потом и
+запишут; собери его в браузере — и однажды человек увидит одно, а сохранит
+другое. Записывается только то, что реально меняется: отправлять все шесть
+полей значило бы затереть чужую правку, сделанную между показом и нажатием.
+
+`negative` в кадр не пишется, потому что поля под него в базе нет вообще:
+движки читают запреты отдельным каналом. Диалог говорит это прямо и даёт
+скопировать — молча положить запреты в промпт значило бы отправить их как
+описание.
+
+## 25. Что осталось прежним
+
+Фирменные стили наружу по-прежнему не уходят: ни один из новых роутов их не
+отдаёт, а `_validate_v2()` продолжает искать в базе промтов дословные куски
+закрытых текстов. Пятой вкладки «Стили» в каталоге нет и не будет — подпись и
+описание стиля живут в пикере стиля трека.
+
+Приёмы (56) и наборы (8) остались в том же каталоге хвостовыми группами:
+наборы применяются на весь трек и потому стоят рядом со сценариями, одиночные
+приёмы — рядом со сценами. Их диалоги применения не продублированы, а взяты у
+`sections.js`: те же диалоги зовёт артефакт урока, и вторая копия разъехалась
+бы с ним на первой правке.
