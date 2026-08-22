@@ -3525,7 +3525,49 @@ function buildSceneIndex() {
 
 function sceneTrack(id) { return sceneTrackIndex.get(id) || null; }
 
+// ПРОКРУТКА ПЕРЕЖИВАЕТ ПЕРЕРИСОВКУ. Ленты сцен и персонажей листаются вбок,
+// а render() строит их заново — и браузер честно ставил каждую ленту в
+// нулевую позицию. Со стороны это выглядело так, будто ЛЮБАЯ кнопка
+// отматывает интерфейс до упора влево: человек нажимал «Видео сцены» у
+// двадцатого кадра и оказывался у первого. Запоминаем позиции по ключу
+// контейнера и возвращаем их после отрисовки.
+const scrollKeep = new Map();
+
+function scrollKey(el, i) {
+  const card = el.closest(".track-card, [data-id]");
+  return (card && card.dataset.id ? `t${card.dataset.id}:` : `n${i}:`)
+    + el.className.split(" ")[0];
+}
+
+function saveScroll() {
+  document.querySelectorAll(".scenes, .chars-strip").forEach((el, i) => {
+    if (el.scrollLeft > 0) scrollKeep.set(scrollKey(el, i), el.scrollLeft);
+  });
+  return window.scrollY;
+}
+
+function restoreScroll(pageY) {
+  document.querySelectorAll(".scenes, .chars-strip").forEach((el, i) => {
+    const x = scrollKeep.get(scrollKey(el, i));
+    // scroll-snap ловит присвоение scrollLeft на ещё не разложенной ленте,
+    // поэтому возвращаем позицию после ближайшей отрисовки кадра.
+    if (x) requestAnimationFrame(() => { el.scrollLeft = x; });
+  });
+  if (pageY != null && Math.abs(window.scrollY - pageY) > 4) {
+    requestAnimationFrame(() => window.scrollTo(0, pageY));
+  }
+}
+
 function render() {
+  const keepY = saveScroll();
+  try {
+    renderInner();
+  } finally {
+    restoreScroll(keepY);
+  }
+}
+
+function renderInner() {
   buildSceneIndex();
   renderProjectBar();
   applyMode();

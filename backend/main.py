@@ -6091,6 +6091,12 @@ def _run_scene_video(scene_id: int) -> None:
         _reg_file(db, fname, track.project.owner_id, kind="video",
                   project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         scene.video_status = "done"
+        # Видео появилось — кадр идёт в клип. Раньше галочку надо было ставить
+        # руками на каждый кадр, и оплаченные сцены не попадали в сборку
+        # просто потому, что про них забыли. Осознанный отказ (человек сам снял
+        # галочку) авто-приём не трогает.
+        if not scene.approved_manual:
+            scene.approved = True
 
         scene.video_stale = False    # видео снято под нынешний слот
         # Отрезок трека ровно под эту сцену — слушаем видео с его музыкой.
@@ -6172,6 +6178,8 @@ async def approve_scene(scene_id: int, request: Request, user: User = Depends(cu
     if approved and not scene.video_filename:
         raise HTTPException(400, "сначала сгенерируй видео сцены")
     scene.approved = approved
+    # Ручной отказ — сигнал авто-приёму: эту сцену в клип не тащить.
+    scene.approved_manual = not approved
     db.commit()
     return scene_dict(scene)
 
@@ -8868,7 +8876,9 @@ def restore_scene_version(scene_id: int, version_id: int, only: str = "all",
         scene.video_status = "done"
         scene.video_error = ""
         scene.video_stale = False
-        scene.approved = False
+        # Версию выбирают осознанно — значит в клип идёт именно она.
+        if not scene.approved_manual:
+            scene.approved = True
         ver.video_filename, ver.audio_filename = cur_video, cur_audio
         ver.video_engine = cur_engine
         db.commit()
@@ -8900,9 +8910,9 @@ def restore_scene_version(scene_id: int, version_id: int, only: str = "all",
     scene.image_error = ""
     scene.video_status = "done" if ver.video_filename else ""
     scene.video_error = ""
-    # Утверждение не переносится: сцена изменилась, и утверждать её надо
-    # заново — иначе автосборка склеит клип из того, чего человек не видел.
-    scene.approved = False
+    # Вернули прежний дубль целиком — он и идёт в клип: возврат версии это
+    # выбор, а не черновик. Ручной отказ по-прежнему сильнее.
+    scene.approved = bool(ver.video_filename) and not scene.approved_manual
     # Промежуточные кадры относились к ТОЙ паре, которой больше нет.
     for m in _midframes(scene):
         _remove_media(m.get("filename", ""), db)
