@@ -751,6 +751,49 @@ def slice_audio(track_audio_path: str, start_sec: float, duration_sec: float) ->
     return out_name
 
 
+def video_duration(name: str) -> float:
+    """Реальная длина ролика в секундах. 0 — если файла нет или он битый."""
+    path = os.path.join(UPLOAD_DIR, name)
+    if not os.path.exists(path):
+        return 0.0
+    try:
+        r = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, timeout=60)
+        return round(float((r.stdout or b"0").decode().strip() or 0), 2)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def trim_video(name: str, start_sec: float, end_sec: float) -> str:
+    """Вырезает кусок [start_sec, end_sec] из готового ролика сцены.
+
+    Перекодируем, а не режем по ключевым кадрам: -c copy двигает точку реза
+    к ближайшему ключевому кадру, и вместо запрошенной секунды получается
+    «примерно там» — на шестисекундной сцене это заметная ошибка.
+    """
+    src = os.path.join(UPLOAD_DIR, name)
+    if not os.path.exists(src):
+        raise MediaError("исходное видео сцены не найдено")
+    dur = max(0.0, round(end_sec - start_sec, 2))
+    if dur < 0.5:
+        raise MediaError("после обрезки осталось бы меньше половины секунды")
+    out_name = f"trim_{uuid.uuid4().hex}.mp4"
+    out_path = os.path.join(UPLOAD_DIR, out_name)
+    cmd = [
+        FFMPEG, "-y", "-ss", str(max(0.0, start_sec)), "-t", str(dur), "-i", src,
+        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", CLIP_CRF,
+        "-maxrate", CLIP_MAXRATE, "-bufsize", CLIP_BUFSIZE,
+        "-pix_fmt", "yuv420p", out_path,
+    ]
+    with ffmpeg_slot():
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+    if r.returncode != 0 or not os.path.exists(out_path):
+        raise MediaError(f"ffmpeg не обрезал видео: {r.stderr.decode()[-200:]}")
+    return out_name
+
+
 # ──────────────────────────── видео сцены ────────────────────────────
 
 def _data_url(path: str) -> str:

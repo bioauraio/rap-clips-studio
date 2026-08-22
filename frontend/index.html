@@ -47,17 +47,17 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=73" />
-<link rel="stylesheet" href="/landing.css?v=73" />
-<link rel="stylesheet" href="/tg.css?v=73" />
+<link rel="stylesheet" href="/style.css?v=74" />
+<link rel="stylesheet" href="/landing.css?v=74" />
+<link rel="stylesheet" href="/tg.css?v=74" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=73" />
+<link rel="stylesheet" href="/music-studio.css?v=74" />
 <!-- Лента разделов, академия и каталог приёмов. ПОСЛЕ style.css: берёт его
      токены и правит шапку только под классом .has-sections — без sections.js
      вёрстка обязана остаться прежней. -->
-<link rel="stylesheet" href="/sections.css?v=73" />
+<link rel="stylesheet" href="/sections.css?v=74" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -75,7 +75,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=73"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=74"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -1158,6 +1158,17 @@
         <video class="s-video-preview hidden" controls loop preload="none"></video>
       </div>
       <span class="s-anim-status status"></span>
+      <!-- Обрезка готового ролика: движок часто отдаёт разгон в начале или
+           мёртвый хвост. Перегенерация ради этого — новые токены и другой
+           дубль; здесь просто отрезаем. Кнопки «отсюда»/«досюда» берут
+           текущую позицию плеера, поэтому границы не надо угадывать. -->
+      <div class="s-trim hidden">
+        <button type="button" class="s-trim-in ghost" data-i18n="scene.trimIn"></button>
+        <span class="s-trim-range muted"></span>
+        <button type="button" class="s-trim-out ghost" data-i18n="scene.trimOut"></button>
+        <button type="button" class="s-trim-do primary hidden" data-i18n="scene.trimDo"></button>
+        <button type="button" class="s-trim-reset ghost hidden" data-i18n="scene.trimReset"></button>
+      </div>
       <label class="approve-check" data-i18n-title="scene.approveTitle">
         <input type="checkbox" class="s-approve" />
         <span data-i18n="scene.approve"></span>
@@ -1242,24 +1253,24 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=73"></script>
-<script src="/i18n.js?v=73"></script>
-<script src="/app.js?v=73"></script>
+<script src="/modes.js?v=74"></script>
+<script src="/i18n.js?v=74"></script>
+<script src="/app.js?v=74"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=73"></script>
+<script src="/music-studio.js?v=74"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=73"></script>
+<script src="/mode-menu.js?v=74"></script>
 <!-- ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ. ПОСЛЕ app.js и mode-menu.js: она
      ПЕРЕНОСИТ в свою ленту живые кнопки шапки (#chat-btn, #music-btn,
      #account-btn, #admin-btn) вместе с их обработчиками, поэтому обработчики
      к этому моменту должны быть уже навешаны. -->
-<script src="/sections.js?v=73"></script>
+<script src="/sections.js?v=74"></script>
 <!-- Каталог промтов (четыре слоя и сборка). Отдельным файлом от sections.js:
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
-<script src="/library.js?v=73"></script>
+<script src="/library.js?v=74"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1283,10 +1294,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=73";
+  css.href = "/nav.css?v=74";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=73";
+  js.src = "/nav.js?v=74";
   document.body.appendChild(js);
 })();
 </script>

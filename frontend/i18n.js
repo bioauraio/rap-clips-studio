@@ -1148,6 +1148,12 @@ const I18N = {
     },
 
     scene: {
+      trimIn: "start here",
+      trimOut: "end here",
+      trimDo: "Trim",
+      trimReset: "reset",
+      trimAsk: "Trim the clip to {a} — {b}? The full take stays in history.",
+      trimWhole: "whole clip",
       moveLeft: "move frame earlier",
       moveRight: "move frame later",
       frameDel: "remove frame",
@@ -3532,6 +3538,12 @@ const I18N = {
     },
 
     scene: {
+      trimIn: "начало здесь",
+      trimOut: "конец здесь",
+      trimDo: "Обрезать",
+      trimReset: "сбросить",
+      trimAsk: "Обрезать ролик до {a} — {b}? Полный дубль останется в истории.",
+      trimWhole: "весь ролик",
       moveLeft: "сдвинуть кадр раньше",
       moveRight: "сдвинуть кадр позже",
       frameDel: "убрать кадр",

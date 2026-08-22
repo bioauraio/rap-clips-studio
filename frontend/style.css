@@ -3255,3 +3255,8 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .scene-card.drag-over { border-left-color: var(--accent); }
 .scene-card[draggable="true"] .scene-head { cursor: grab; }
 .scene-card.dragging .scene-head { cursor: grabbing; }
+
+/* Обрезка ролика: одна строка под плеером — границы и действие рядом. */
+.s-trim { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.s-trim button { padding: 3px 9px; font-size: 11px; }
+.s-trim-range { font-family: var(--font-mono); font-size: 11px; }

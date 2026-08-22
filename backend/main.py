@@ -2039,6 +2039,9 @@ def scene_dict(s: Scene) -> dict:
         "duration_sec": s.duration_sec, "lyric_line": s.lyric_line,
         "characters": s.characters,
         "prompt_stale": bool(getattr(s, "prompt_stale", False)),
+        # Реальная длина ролика: слот сцены и длина видео расходятся, а
+        # обрезать надо по тому, что есть на самом деле.
+        "video_seconds": float(s.video_seconds or 0),
         "attribute_ids": [int(x) for x in (s.attribute_ids or "").split(",") if x.strip().isdigit()],
         "shot_size": s.shot_size, "camera_move": s.camera_move,
         "image_prompt": s.image_prompt, "motion_prompt": s.motion_prompt,
@@ -6091,6 +6094,7 @@ def _run_scene_video(scene_id: int) -> None:
         _reg_file(db, fname, track.project.owner_id, kind="video",
                   project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         scene.video_status = "done"
+        scene.video_seconds = mediagen.video_duration(fname)
         # Видео появилось — кадр идёт в клип. Раньше галочку надо было ставить
         # руками на каждый кадр, и оплаченные сцены не попадали в сборку
         # просто потому, что про них забыли. Осознанный отказ (человек сам снял
@@ -6167,6 +6171,60 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
     db.commit()
     _spawn_gen(user, _run_scene_video, scene_id, kind="video")
     return {"ok": True}
+
+
+@app.post("/api/scenes/{scene_id}/trim")
+async def trim_scene_video(scene_id: int, request: Request,
+                           user: User = Depends(current_user),
+                           db: Session = Depends(db_session)):
+    """Отрезать начало и/или конец у ГОТОВОГО видео сцены.
+
+    Движок часто отдаёт лишнее: полсекунды разгона в начале или мёртвый хвост
+    в конце. Перегенерация ради этого — новые токены и другой дубль, а нужно
+    просто отрезать. Прежний ролик уходит в историю версий, слот сцены
+    подгоняется под новую длину, и отрезок дорожки перерезается под неё же.
+    """
+    scene = _own_scene(db, user, scene_id)
+    if not scene.video_filename:
+        raise HTTPException(400, "у сцены нет видео — нечего обрезать")
+    body = await request.json()
+    full = (float(scene.video_seconds or 0)
+            or mediagen.video_duration(scene.video_filename)
+            or float(scene.duration_sec or 0))
+    try:
+        start = max(0.0, float(body.get("start") or 0))
+        end = float(body.get("end") if body.get("end") is not None else full)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "начало и конец должны быть числами")
+    end = min(end, full) if full else end
+    if end - start < 0.5:
+        raise HTTPException(400, "после обрезки осталось бы меньше половины секунды")
+    track = scene.track
+    # Прежний дубль сохраняем ДО подмены: обрезка необратима, а человек
+    # может захотеть вернуть полный ролик.
+    _keep_scene_version(db, scene, track, kind="video",
+                        cost_points=int(scene.charged_points or 0))
+    old_video, old_audio = scene.video_filename, scene.audio_filename
+    try:
+        scene.video_filename = mediagen.trim_video(old_video, start, end)
+    except mediagen.MediaError as e:
+        raise HTTPException(400, str(e))
+    _reg_file(db, scene.video_filename, track.project.owner_id, kind="video",
+              project_id=track.project_id, track_id=track.id, scene_id=scene.id)
+    # Слот сцены = длина того, что реально осталось: иначе сборка снова
+    # подрежет ролик по старому слоту и обрезка потеряет смысл.
+    scene.video_seconds = round(end - start, 2)
+    scene.duration_sec = _clamp_dur(round(end - start))
+    scene.video_stale = False
+    if not scene.approved_manual:
+        scene.approved = True
+    _renumber_scenes(track)
+    db.commit()
+    # Прежний ролик остался в версии — с диска не убираем. Музыку под кадрами
+    # перерезаем: слоты поехали, и дальше по треку тоже.
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    db.refresh(scene)
+    return scene_dict(scene)
 
 
 @app.post("/api/scenes/{scene_id}/approve")
