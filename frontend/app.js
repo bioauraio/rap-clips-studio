@@ -8788,6 +8788,64 @@ const chatState = {
 
 function chatEl(id) { return document.getElementById(id); }
 
+/* ─────────────────────── ассистент песочницы ───────────────────────
+   Отличие от чужих генераторов: тот знает только строку ввода, а наш видит
+   ПРОЕКТ — сколько кадров без картинки, у каких сцен нет видео, покрыт ли
+   трек целиком. Поэтому он предлагает не «опишите ваше видео», а «дорисовать
+   кадры сцены 7». Запускает всё человек нажатием: тратить его токены без
+   спроса ассистент не должен. */
+
+const AGENT_RUN = {
+  gen_scenes: (a) => api(`/api/tracks/${a.track_id}/generate-scenes`, { method: "POST" }),
+  extend_scenes: (a) => api(`/api/tracks/${a.track_id}/scenes/extend`, { method: "POST", body: {} }),
+  gen_frames: (a) => api(`/api/scenes/${a.scene_id}/generate-frames`, { method: "POST", body: { which: "both" } }),
+  gen_video: (a) => api(`/api/scenes/${a.scene_id}/generate-video`, { method: "POST" }),
+  assemble: (a) => api(`/api/tracks/${a.track_id}/assemble`, { method: "POST" }),
+};
+
+async function askAgent(text) {
+  const box = chatEl("cc-agent");
+  if (!box || !activeProjectId) return;
+  const reply = chatEl("cc-agent-reply");
+  const acts = chatEl("cc-agent-acts");
+  box.classList.remove("hidden");
+  reply.textContent = t("agent.thinking");
+  acts.innerHTML = "";
+  let d;
+  try {
+    d = await api("/api/chat/agent", {
+      method: "POST", body: { text: text || "", project_id: activeProjectId },
+    });
+  } catch (e) {
+    reply.textContent = errText(e);
+    return;
+  }
+  reply.textContent = d.reply || "";
+  (d.actions || []).forEach((a) => {
+    if (a.kind === "none" || !a.title) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cc-agent-act";
+    b.textContent = a.title;
+    b.addEventListener("click", async () => {
+      // Подсказки «сгенерировать картинку/видео» просто кладут промпт в поле:
+      // дальше человек выбирает модель и жмёт отправку сам.
+      if (a.kind === "image" || a.kind === "video") {
+        const field = chatEl("cc-text");
+        if (field) { field.value = a.prompt || a.title; field.focus(); }
+        return;
+      }
+      const run = AGENT_RUN[a.kind];
+      if (!run) return;
+      b.disabled = true;
+      try { await run(a); } catch (e) { fail(e); b.disabled = false; return; }
+      b.textContent = t("agent.started");
+    });
+    acts.appendChild(b);
+  });
+}
+
+
 // Единица токенов в нужной форме: «1 токен», «2 токена», «5 токенов».
 function chatUnit(n) { return tPlural(n, tRaw("chat.unit")); }
 
@@ -8811,6 +8869,9 @@ function showChat() {
     history.replaceState(null, "", "#/make");
   }
   chatBoot();
+  // Ассистент здоровается состоянием проекта, а не пустым «чем помочь»:
+  // человек открывает окно и сразу видит, что в его проекте не доделано.
+  askAgent("").catch(() => { /* нет проекта или шлюз молчит — окно работает и так */ });
 }
 
 function chatLeave() {

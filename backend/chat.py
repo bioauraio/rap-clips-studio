@@ -1303,6 +1303,123 @@ def _own_scene_for_chat(db: Session, user: User, scene_id: int) -> Scene:
     return scene
 
 
+AGENT_SYSTEM = (
+    "Ты ассистент внутри студии клипов. Тебе дают СОСТОЯНИЕ проекта человека "
+    "и его последнюю реплику. Твоя работа — предложить 3-5 КОНКРЕТНЫХ следующих "
+    "шагов именно по этому проекту, а не общие советы.\n"
+    "Отвечай ТОЛЬКО валидным JSON вида "
+    '{"reply": "...", "actions": [{"kind": "...", "title": "...", "track_id": 0, '
+    '"scene_id": 0, "prompt": "..."}]}\n'
+    "kind — одно из: gen_scenes (разбить трек на кадры), extend_scenes (дописать "
+    "недостающие кадры), gen_frames (нарисовать кадры сцены), gen_video (оживить "
+    "сцену), assemble (собрать клип), image (сгенерировать картинку в песочнице по "
+    "prompt), video (сгенерировать видео в песочнице по prompt), none (просто "
+    "ответ).\n"
+    "title — короткая надпись на кнопке по-русски, до 40 знаков, без точки.\n"
+    "Предлагай только то, что СЕЙЧАС выполнимо по состоянию: не зови рисовать "
+    "кадры там, где нет раскадровки, и не предлагай собрать клип без видео. "
+    "reply — две-три фразы живой речи, без списков и без markdown."
+)
+
+
+def _project_state(db: Session, user: User, project_id: int) -> dict:
+    """Состояние проекта человеческим языком — контекст для агента.
+
+    Агент без этого отвечает общими советами уровня «сначала придумайте идею».
+    Смысл ассистента внутри студии именно в том, что он знает, что у ЭТОГО
+    трека кадров на две минуты из трёх и что видео нет ровно у четырёх сцен.
+    """
+    p = (db.query(Project)
+         .filter(Project.id == int(project_id or 0), Project.owner_id == user.id)
+         .first())
+    if not p:
+        return {}
+    tracks = []
+    for t in sorted(p.tracks, key=lambda x: (x.position, x.id)):
+        scenes = list(t.scenes)
+        with_first = sum(1 for s in scenes if s.image_filename)
+        with_video = sum(1 for s in scenes if s.video_filename)
+        covered = sum(int(s.duration_sec or 0) for s in scenes)
+        tracks.append({
+            "id": t.id, "title": t.title or "без названия",
+            "audio_sec": int(t.audio_duration_sec or 0),
+            "scenes": len(scenes),
+            "covered_sec": covered,
+            "frames_done": with_first,
+            "videos_done": with_video,
+            "approved": sum(1 for s in scenes if s.approved and s.video_filename),
+            "clip": t.clip_status or "нет",
+            "style": (t.style_keys or "").replace(",", ", "),
+            # Первые незакрытые сцены: агенту нужно на что сослаться id-шником.
+            "next_without_frames": [s.id for s in sorted(scenes, key=lambda x: x.position)
+                                    if not s.image_filename][:5],
+            "next_without_video": [s.id for s in sorted(scenes, key=lambda x: x.position)
+                                   if s.image_filename and not s.video_filename][:5],
+        })
+    return {
+        "project": p.name or "без названия",
+        "mode": p.kind or "album",
+        "story": "есть" if (p.story or "").strip() else "нет",
+        "characters": [c.name for c in sorted(p.characters, key=lambda x: x.position)
+                       if (c.name or "").strip()],
+        "tracks": tracks,
+    }
+
+
+@router.post("/api/chat/agent")
+async def chat_agent(request: Request, user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Ассистент песочницы: понимает проект и предлагает следующий шаг.
+
+    Стоит ноль токенов — идёт через подписочный шлюз, как «улучшить промпт».
+    Ничего сам не запускает: возвращает предложения кнопками, нажатие делает
+    человек. Автономно тратить чужие токены ассистент не должен.
+    """
+    body = await _body(request)
+    text = str(body.get("text") or "").strip()
+    state = _project_state(db, user, body.get("project_id") or 0)
+    if not state:
+        raise HTTPException(400, "проект не найден — выбери его в шапке")
+    messages = [
+        {"role": "system", "content": AGENT_SYSTEM},
+        {"role": "user", "content":
+            "СОСТОЯНИЕ ПРОЕКТА:\n"
+            + json.dumps(state, ensure_ascii=False, indent=1)
+            + "\n\nРЕПЛИКА ЧЕЛОВЕКА: "
+            + (text or "(молчит — предложи, что делать дальше)")},
+    ]
+    try:
+        out, provider = await _ask_gateway(messages)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"ассистент не ответил: {str(e)[:200]}")
+    raw = (out or "").strip()
+    # Модель нет-нет да обернёт JSON в ```json — вырезаем забор, а не падаем.
+    if raw.startswith("```"):
+        raw = raw.split("```")[1] if "```" in raw[3:] else raw.strip("`")
+        raw = raw[4:] if raw.lower().startswith("json") else raw
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        # Не JSON — значит модель просто поговорила. Это не ошибка: отдаём
+        # текст как есть, без кнопок.
+        return {"reply": (out or "").strip()[:2000], "actions": [], "provider": provider}
+    acts = []
+    for a in (data.get("actions") or [])[:5]:
+        kind = str(a.get("kind") or "none")
+        if kind not in ("gen_scenes", "extend_scenes", "gen_frames", "gen_video",
+                        "assemble", "image", "video", "none"):
+            continue
+        acts.append({
+            "kind": kind,
+            "title": str(a.get("title") or "")[:40],
+            "track_id": int(a.get("track_id") or 0),
+            "scene_id": int(a.get("scene_id") or 0),
+            "prompt": str(a.get("prompt") or "")[:2000],
+        })
+    return {"reply": str(data.get("reply") or "")[:2000], "actions": acts,
+            "provider": provider, "state": state}
+
+
 @router.get("/api/chat/targets")
 def save_targets(user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Куда можно положить результат — «Куда положить» в панели параметров.

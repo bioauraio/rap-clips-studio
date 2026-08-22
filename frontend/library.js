@@ -590,7 +590,7 @@
       <div class="row pb-mix-actions">
         <button type="button" class="primary pb-mix-go">${
           esc(ctx && ctx.kind === "make"
-            ? T("promptbase.toMake", "Вставить в мастерскую")
+            ? T("promptbase.toMake", "Вставить в генератор")
             : T("promptbase.applyMix", "Применить сборку"))}</button>
         <button type="button" class="ghost pb-mix-clear">${
           esc(T("promptbase.clear", "Очистить"))}</button>
@@ -670,7 +670,7 @@
         <p class="muted ac-slot-note">${esc(T("academy.slotsNote", ""))}</p>
         <div class="pb-diff"></div>
         <div class="row"><button type="button" class="primary pb-go">${
-          esc(toMake ? T("promptbase.toMake", "Вставить в мастерскую")
+          esc(toMake ? T("promptbase.toMake", "Вставить в генератор")
                      : T("library.apply", "Применить"))}</button>
           <span class="status pb-status"></span></div>`;
 

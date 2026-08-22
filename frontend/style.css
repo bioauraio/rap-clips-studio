@@ -3348,3 +3348,20 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .topbar .mode-switch:hover { background: #fff; }
 .topbar .mode-switch:active { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
 .topbar .mode-switch[aria-expanded="true"] { color: var(--on-fire); background: var(--fire-ink); }
+
+/* Ассистент песочницы: реплика и кнопки-предложения над полем ввода.
+   Тонкая рамка без тени — это подсказка, а не ещё одна панель действий. */
+.cc-agent {
+  border: 1px solid rgba(45, 33, 26, .18); border-radius: 12px;
+  padding: 8px 10px; margin-bottom: 6px; background: var(--inset);
+}
+.cc-agent-reply { margin: 0 0 6px; font-size: 12px; line-height: 1.45; }
+.cc-agent-reply:empty { display: none; }
+.cc-agent-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.cc-agent-act {
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  border: 1px solid rgba(45, 33, 26, .3); background: var(--card);
+  box-shadow: none; cursor: pointer;
+}
+.cc-agent-act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-ink); }
+.cc-agent-act:disabled { opacity: .55; }
