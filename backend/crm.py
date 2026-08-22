@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 
 import mailer
 from db import (
-    AdminAction, Campaign, CampaignRecipient, Chat, ChatMessage, FileOwner,
+    AdminAction, AppSetting, Campaign, CampaignRecipient, Chat, ChatMessage, FileOwner,
     PointEvent, ProcessedPayment, Project, RefEvent, Scene, SessionLocal,
     StyleAsset, StyleOverride, Track, User, now,
 )
@@ -381,6 +381,58 @@ def admin_user_actions(uid: int, user: User = Depends(admin_user),
 
 
 # ═══════════════════════ СВОДКА ПО СЕРВИСУ ═══════════════════════
+
+@router.get("/api/admin/pricing")
+def admin_pricing(user: User = Depends(admin_user), db: Session = Depends(db_session)):
+    """Нынешняя наценка и то, во что она обходится клиенту.
+
+    Показываем не голый коэффициент, а его следствие: сколько токенов стоит
+    типичная сцена сейчас. Двигать процент вслепую — верный способ уронить
+    маржу или отпугнуть ценой.
+    """
+    core = _core()
+    k = core._markup()
+    engines = []
+    for eid, title in [(e, e) for e in core.mediagen.VIDEO_ENGINES]:
+        engines.append({"id": eid, "video_cost": core.VIDEO_COST.get(eid, 0)})
+    return {
+        "markup": round(k, 2),
+        "min": core.MARKUP_MIN,
+        "max": core.MARKUP_MAX,
+        "point_usd_base": core.POINT_USD,
+        "point_usd_now": round(core._point_usd(), 5),
+        "frame_pair_cost": core.FRAME_COST.get("nano-banana", 0),
+        "scene_cost": core.SCENE_COST.get("seedance-2-mini", 0),
+        "engines": engines,
+        "signup_bonus": core.REF_SIGNUP_BONUS,
+        "cashback_pct": core.REF_CASHBACK_PCT,
+    }
+
+
+@router.post("/api/admin/pricing")
+async def admin_set_pricing(request: Request, user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    """Сдвинуть коэффициент наценки. Действует сразу, без переката сервиса."""
+    core = _core()
+    body = await request.json()
+    try:
+        k = float(body.get("markup"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "наценка должна быть числом")
+    k = max(core.MARKUP_MIN, min(core.MARKUP_MAX, k))
+    row = db.get(AppSetting, core.MARKUP_KEY)
+    if row:
+        row.value = str(k)
+        row.updated_at = now()
+    else:
+        db.add(AppSetting(key=core.MARKUP_KEY, value=str(k)))
+    db.commit()
+    # Кэш держит значение несколько секунд — сбрасываем, чтобы ползунок
+    # отвечал сразу, а не «через пять секунд».
+    core._markup_cache.update(at=0.0, value=k)
+    log.info("админ %s поставил наценку %s", user.id, k)
+    return admin_pricing(user=user, db=db)
+
 
 @router.get("/api/admin/stats")
 def admin_stats(days: int = 30, user: User = Depends(admin_user),

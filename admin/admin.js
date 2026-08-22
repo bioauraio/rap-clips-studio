@@ -73,6 +73,8 @@
       sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
     { id: "styles", ico: "🎨", title: "Стили",
       sub: "Промпт, референсы, файлы и сценарная база каждого стиля. Промпты закрыты: наружу уходят только подпись и описание." },
+    { id: "pricing", ico: "📈", title: "Наценка",
+      sub: "Наш токен — своя валюта и не равен токену движка. Ползунок задаёт, во сколько раз мы продаём дороже себестоимости. Действует сразу." },
     { id: "models", ico: "⚙️", title: "Модели",
       sub: "Что живо по ключам, сколько стоит нам и сколько человеку. Только чтение — движки правятся кодом." },
     { id: "settings", ico: "🔑", title: "Настройки",
@@ -770,10 +772,71 @@
     } catch (e) { fail(box, e); }
   }
 
+  /* ─────────────────────────── наценка ─────────────────────────── */
+  async function renderPricing(box) {
+    let d;
+    try { d = await api("/api/admin/pricing"); } catch (e) { return fail(box, e); }
+    box.innerHTML = `
+      <div class="adm-card">
+        <div class="adm-price-head">
+          <span class="adm-price-k">×<b>${d.markup.toFixed(2)}</b></span>
+          <span class="muted">к себестоимости движков</span>
+        </div>
+        <input type="range" class="adm-markup" min="${d.min}" max="${d.max}"
+               step="0.05" value="${d.markup}" />
+        <div class="adm-price-scale muted">
+          <span>×${d.min} — по себестоимости</span><span>×${d.max}</span>
+        </div>
+        <div class="adm-price-facts">
+          <div><b class="adm-f-scene">${d.scene_cost}</b><span>токенов за сцену<br>Seedance 2 Mini</span></div>
+          <div><b class="adm-f-frames">${d.frame_pair_cost}</b><span>за пару кадров<br>Nano Banana</span></div>
+          <div><b class="adm-f-usd">$${d.point_usd_now}</b><span>себестоимости<br>в одном токене</span></div>
+        </div>
+        <p class="muted adm-price-note">
+          Чем выше коэффициент, тем больше токенов списывается за ту же
+          генерацию — цена тарифов не меняется, меняется то, сколько работы
+          человек получает за свои токены. Бонусы за друзей:
+          <b>${d.signup_bonus}</b> токенов за регистрацию и
+          <b>${d.cashback_pct}%</b> кэшбэка с каждой его оплаты.
+        </p>
+        <div class="adm-price-acts">
+          <button type="button" class="adm-price-save primary" disabled>Применить</button>
+          <span class="adm-price-msg muted"></span>
+        </div>
+      </div>`;
+    const slider = $(".adm-markup", box);
+    const save = $(".adm-price-save", box);
+    const msg = $(".adm-price-msg", box);
+    const kEl = $(".adm-price-k b", box);
+    // Пока ползунок ведут, показываем ПРЕДПОЛАГАЕМУЮ цену: считаем её из той
+    // же пропорции, что и сервер, чтобы решение принималось до нажатия.
+    const base = { scene: d.scene_cost, frames: d.frame_pair_cost,
+                   usd: d.point_usd_now, k: d.markup };
+    slider.addEventListener("input", () => {
+      const k = Number(slider.value);
+      const ratio = k / base.k;
+      kEl.textContent = k.toFixed(2);
+      $(".adm-f-scene", box).textContent = Math.ceil(base.scene * ratio);
+      $(".adm-f-frames", box).textContent = Math.ceil(base.frames * ratio);
+      $(".adm-f-usd", box).textContent = "$" + (base.usd / ratio).toFixed(5);
+      save.disabled = Math.abs(k - base.k) < 0.001;
+      msg.textContent = "";
+    });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        await api("/api/admin/pricing", { method: "POST",
+                                          body: { markup: Number(slider.value) } });
+      } catch (e) { msg.textContent = String(e.message || e); save.disabled = false; return; }
+      msg.textContent = "наценка применена";
+      await renderPricing(box);
+    });
+  }
+
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
     payouts: renderPayouts, ledger: renderLedger, styles: renderStyles,
-    models: renderModels, settings: renderSettings,
+    models: renderModels, pricing: renderPricing, settings: renderSettings,
   };
 
   async function boot() {

@@ -37,7 +37,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -600,29 +600,130 @@ GATEWAY_POINTS = int(os.environ.get("GATEWAY_POINTS", "2"))
 SCENE_SEC = 6              # средняя длина сцены, из claude.py
 
 
+# КОЭФФИЦИЕНТ НАЦЕНКИ. Наш токен — своя валюта, он НЕ равен токену движка:
+# POINT_USD говорит, сколько себестоимости мы кладём в один токен, и чем
+# меньше это число, тем больше токенов стоит одна и та же генерация. Наценка
+# k делает ровно это: рабочая цена токена = POINT_USD / k. При k = 1 мы
+# продаём по себестоимости, при k = 2 берём вдвое.
+#
+# Живёт в базе, а не в окружении: владелец правит её ползунком в админке, и
+# ждать переката контейнера ради процента наценки незачем. Значение кэшируем
+# на несколько секунд — иначе каждый расчёт цены лез бы в базу.
+MARKUP_KEY = "markup"
+MARKUP_DEFAULT = float(os.environ.get("MARKUP", "1.0"))
+MARKUP_MIN, MARKUP_MAX = 0.5, 5.0
+_markup_cache = {"at": 0.0, "value": MARKUP_DEFAULT}
+
+
+def _markup() -> float:
+    """Нынешний коэффициент наценки."""
+    if time.time() - _markup_cache["at"] < 5:
+        return _markup_cache["value"]
+    value = MARKUP_DEFAULT
+    db = SessionLocal()
+    try:
+        row = db.get(AppSetting, MARKUP_KEY)
+        if row:
+            value = float(row.value or MARKUP_DEFAULT)
+    except Exception as e:  # noqa: BLE001 — база недоступна, цена не должна падать
+        log.warning("наценка не прочиталась, беру прежнюю: %s", str(e)[:120])
+        value = _markup_cache["value"]
+    finally:
+        db.close()
+    value = max(MARKUP_MIN, min(MARKUP_MAX, value))
+    _markup_cache.update(at=time.time(), value=value)
+    return value
+
+
+def _point_usd() -> float:
+    """Сколько себестоимости в одном нашем токене с учётом наценки."""
+    return POINT_USD / max(0.01, _markup())
+
+
 def _points_of_usd(usd: float) -> int:
     """Доллары себестоимости → токены. Округление ВВЕРХ: недобор токена — это
     наши деньги, а не пользовательские."""
     if usd <= 0:
         return GATEWAY_POINTS
-    return max(GATEWAY_POINTS, math.ceil(usd / POINT_USD))
+    return max(GATEWAY_POINTS, math.ceil(usd / _point_usd()))
 
 
 # Цена ПАРЫ кадров сцены (первый + последний) по движку картинок.
-FRAME_COST = {
+class _PriceTable(dict):
+    """Ценник, который пересчитывается при смене наценки.
+
+    Раньше это были обычные словари, посчитанные один раз на импорте: сдвинув
+    ползунок, владелец менял бы цену только после переката контейнера, а до
+    него сервис продолжал бы продавать по старой. Наследуемся от dict, чтобы
+    весь прежний код (`FRAME_COST[eid]`, `.get`, итерация) работал как был.
+    """
+
+    def __init__(self, price):
+        super().__init__()
+        self._price = price
+        self._markup = None
+        self._sync()
+
+    def _sync(self):
+        k = _markup()
+        if k == self._markup:
+            return
+        self._markup = k
+        super().clear()
+        super().update(self._price())
+
+    def __getitem__(self, key):
+        self._sync()
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        self._sync()
+        return super().get(key, default)
+
+    def items(self):
+        self._sync()
+        return super().items()
+
+    def values(self):
+        self._sync()
+        return super().values()
+
+    def __iter__(self):
+        self._sync()
+        return super().__iter__()
+
+
+FRAME_COST = _PriceTable(lambda: {
     eid: _points_of_usd(2 * mediagen.image_engine_usd(eid))
     for eid in mediagen.IMAGE_ENGINES
-}
+})
 # Цена ВИДЕО сцены (6 секунд) по движку видео.
-VIDEO_COST = {
+VIDEO_COST = _PriceTable(lambda: {
     eid: _points_of_usd(mediagen.video_engine_usd(eid, SCENE_SEC))
     for eid in mediagen.VIDEO_ENGINES
-}
+})
 # Легаси-карта «движок → цена сцены целиком» для витрины и старых вызовов:
 # кадры считаются по шлюзу (базовый случай), видео — по своему движку.
-SCENE_COST = {
+SCENE_COST = _PriceTable(lambda: {
     eid: FRAME_COST["chatgpt"] + VIDEO_COST[eid] for eid in VIDEO_COST
-}
+})
+
+
+class _FramesCost(int):
+    """«Аванс за кадры на шлюзе» — легаси-имя, которое читают как число.
+    Значение зависит от наценки, поэтому подставляем свежее при каждом
+    приведении к int/строке, а не замораживаем на импорте."""
+
+    def __int__(self):
+        return FRAME_COST["chatgpt"]
+
+    def __index__(self):
+        return FRAME_COST["chatgpt"]
+
+    def __repr__(self):
+        return str(FRAME_COST["chatgpt"])
+
+
 FRAMES_COST = FRAME_COST["chatgpt"]  # аванс за кадры на шлюзе (легаси-имя)
 # Текстовые шаги идут через нашу подписку Claude и стоят нам ноль — берём за них
 # ноль и мы: иначе бесплатный тариф не доживал до первого клипа, а именно первый
@@ -1174,6 +1275,15 @@ def _move_points(db: Session, user: User, delta: int, what: str, *,
     delta = int(delta or 0)
     if not delta:
         return 0
+    # БОНУСНЫЕ СПИСЫВАЮТСЯ ПЕРВЫМИ. gen_points — общий кошелёк и остаётся
+    # единственной правдой об остатке; bonus_points лишь помечает, какая его
+    # часть заработана приглашениями. Тратим подаренное раньше купленного:
+    # обратный порядок означал бы, что кэшбэк лежит мёртвым грузом, пока
+    # человек проедает свои деньги.
+    if delta < 0:
+        user.bonus_points = max(0, int(user.bonus_points or 0) + delta)
+    elif meta.get("kind") == "bonus":
+        user.bonus_points = int(user.bonus_points or 0) + delta
     user.gen_points = int(user.gen_points or 0) + delta  # ledger-ok: единственная дверь
     try:
         return _log_points(db, user, delta, what, commit=commit, **meta)
@@ -1390,8 +1500,10 @@ def _find_ambassador(db: Session, code: str) -> "User | None":
     code = _norm_code(code)
     if not code:
         return None
-    return db.query(User).filter(User.ref_code == code,
-                                 User.is_ambassador.is_(True)).first()
+    # Код ищем у ЛЮБОГО пользователя, а не только у амбассадора: звать друзей
+    # за токены может каждый. Денежная доля по-прежнему достаётся только
+    # амбассадорам — это разные механики на одной ссылке.
+    return db.query(User).filter(User.ref_code == code).first()
 
 
 def _attach_ref(db: Session, user: "User | None", code: str) -> "User | None":
@@ -1408,9 +1520,68 @@ def _attach_ref(db: Session, user: "User | None", code: str) -> "User | None":
     user.referred_by = amb.id
     db.add(RefEvent(ambassador_id=amb.id, referral_id=user.id, kind="signup"))
     db.commit()
-    log.info("партнёрка: юзер %s закреплён за амбассадором %s (код %s)",
+    _bonus_for_signup(db, user)
+    log.info("партнёрка: юзер %s закреплён за %s (код %s)",
              user.id, amb.id, amb.ref_code)
     return amb
+
+
+# БОНУСЫ ЗА ДРУЗЕЙ. Деньгами партнёрка платит амбассадорам (Payout), а это
+# другая, массовая механика: любой пользователь зовёт друга и получает токены.
+# Токенами платить выгоднее и нам, и ему — они возвращаются в сервис, а не
+# уходят на карту.
+REF_SIGNUP_BONUS = int(os.environ.get("REF_SIGNUP_BONUS", "50"))
+# Доля от КАЖДОЙ оплаты друга, начисляемая пригласившему токенами.
+REF_CASHBACK_PCT = max(0, min(100, int(os.environ.get("REF_CASHBACK_PCT", "10"))))
+
+
+def _grant_bonus(db: Session, user: "User | None", points: int, what: str,
+                 **meta) -> int:
+    """Начислить бонусные токены. Единственная дверь для кэшбэка."""
+    if not user or points <= 0:
+        return 0
+    meta.setdefault("kind", "bonus")
+    ev = _move_points(db, user, int(points), what, **meta)
+    log.info("бонус: user %s +%s токенов за %s (бонусных стало %s)",
+             user.id, points, what, user.bonus_points)
+    return ev
+
+
+def _bonus_for_signup(db: Session, invited: "User") -> None:
+    """Друг зарегистрировался по ссылке — пригласившему бонус."""
+    if not invited or not invited.referred_by or REF_SIGNUP_BONUS <= 0:
+        return
+    host = db.get(User, invited.referred_by)
+    if not host:
+        return
+    _grant_bonus(db, host, REF_SIGNUP_BONUS,
+                 f"бонус за приглашённого друга #{invited.id}",
+                 ref_type="ref_signup", ref_id=invited.id)
+
+
+def _bonus_for_payment(db: Session, payer: "User", amount_kopeks: int,
+                       points_bought: int = 0) -> None:
+    """Друг оплатил — пригласившему кэшбэк токенами.
+
+    Считаем от КУПЛЕННЫХ токенов, а не от рублей: цена рубля в токенах
+    зависит от тарифа и наценки, и процент от суммы давал бы разный бонус за
+    одинаковую покупку. Если тариф без явного числа токенов, отступаем к
+    сумме через нынешнюю цену токена.
+    """
+    if not payer or not payer.referred_by or REF_CASHBACK_PCT <= 0:
+        return
+    host = db.get(User, payer.referred_by)
+    if not host:
+        return
+    base = int(points_bought or 0)
+    if base <= 0 and amount_kopeks > 0:
+        base = _points_of_usd(amount_kopeks / 100 / max(1.0, USD_RUB))
+    bonus = int(base * REF_CASHBACK_PCT / 100)
+    if bonus <= 0:
+        return
+    _grant_bonus(db, host, bonus,
+                 f"кэшбэк {REF_CASHBACK_PCT}% с оплаты друга #{payer.id}",
+                 ref_type="ref_payment", ref_id=payer.id)
 
 
 def _ref_stats(db: Session, user: User) -> dict:
@@ -1453,7 +1624,7 @@ def _ref_first_payment(db: Session, user: User) -> bool:
 
 
 def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str,
-                pct: "int | None" = None) -> None:
+                pct: "int | None" = None, points_bought: int = 0) -> None:
     """Начислить амбассадору долю с платежа его реферала.
 
     Вебхук ЮKassa штатно приходит по нескольку раз на один платёж, поэтому
@@ -1470,6 +1641,12 @@ def _ref_reward(db: Session, buyer: User, amount_kopeks: int, payment_id: str,
         return
     amb = db.get(User, buyer.referred_by)
     if not amb or amb.id == buyer.id:
+        return
+    # Кэшбэк токенами получает КТО УГОДНО, кто привёл друга. Ниже по функции
+    # идёт денежная доля — она только для амбассадоров.
+    if not db.query(RefEvent).filter(RefEvent.payment_id == str(payment_id or "")).first():
+        _bonus_for_payment(db, buyer, amount_kopeks, points_bought)
+    if not amb.is_ambassador:
         return
     # Ищем и по «голому» id: платежи, начатые до перехода на префикс провайдера,
     # записаны в ленту без него, и второй раз платить за них нельзя.
@@ -1578,6 +1755,10 @@ def _user_dict(user: User) -> dict:
     tier = _tier_of_user(user)
     return {"id": user.id, "name": user.name, "login": user.login,
             "is_admin": user.is_admin, "gen_points": user.gen_points,
+            # Из чего сложен остаток: бонусные заработаны приглашениями и
+            # тратятся первыми, платные — то, что человек купил сам.
+            "bonus_points": int(user.bonus_points or 0),
+            "paid_points": max(0, int(user.gen_points or 0) - int(user.bonus_points or 0)),
             "plan": plan_id, "plan_title": PLANS[plan_id]["title"],
             # Ступень объёма и месячная норма ЭТОГО человека: интерфейсу нужно
             # различать u1 и u4, у них разный объём при одном имени тарифа.
@@ -10442,7 +10623,12 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
         "next_charge": user.plan_until.isoformat() if (user.plan_until and user.autopay
                                                        and plan != "free") else "",
         "stars_subscription": _stars_subscription(user),
-        "points": user.gen_points, "projects": projects,
+        "points": user.gen_points,
+        # Кошелёк один, но человек должен видеть, что из него заработано
+        # приглашениями: иначе кэшбэк выглядит как «просто цифра стала больше».
+        "bonus_points": int(user.bonus_points or 0),
+        "paid_points": max(0, int(user.gen_points or 0) - int(user.bonus_points or 0)),
+        "projects": projects,
         # Сколько клипов по 3 минуты ещё выйдет из остатка. Считаем по рабочей
         # лошадке тарифа (самый дешёвый ПЛАТНЫЙ движок): по самому дорогому на
         # PRO MAX выходит «0 клипов», хотя на Seedance 2 Mini их три.

@@ -47,6 +47,11 @@ class User(Base):
     # трёхминутного клипа, то есть обещание «первый клип за наш счёт»
     # не выполнялось. Теперь оба числа в одном месте правды.
     gen_points = Column(Integer, nullable=False, default=150)
+    # БОНУСНЫЕ токены: кэшбэк за приглашённых друзей и их оплаты. Тратятся
+    # наравне с платными и списываются ПЕРВЫМИ — купленное не должно сгорать
+    # раньше подаренного. Отдельный счётчик нужен только чтобы человек видел,
+    # сколько у него своих денег, а сколько заработано приглашениями.
+    bonus_points = Column(Integer, nullable=False, default=0)
     # Тариф: free — видео только через Grok (наша подписка, бесплатно),
     # pro — открывается Seedance (платные кредиты владельца сервиса).
     plan = Column(String, nullable=False, default="free")
@@ -553,6 +558,18 @@ class TrackPhoto(Base):
     kind = Column(String, nullable=False, default="photo")   # photo | model
     from_photos = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=now)
+
+
+class AppSetting(Base):
+    """Настройки, которые правит владелец на ходу, без переката сервиса.
+
+    Коэффициент наценки живёт здесь, а не в переменных окружения: менять его
+    ползунком и ждать рестарта контейнера — разные вещи.
+    """
+    __tablename__ = "app_settings"
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False, default="")
+    updated_at = Column(DateTime, default=now)
 
 
 class Scene(Base):

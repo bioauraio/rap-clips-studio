@@ -353,7 +353,14 @@ function renderUserBar() {
   // Кабинет открыт всем, включая гостя: тариф и партнёрка живут на его id.
   if (accBtn) accBtn.classList.remove("hidden");
   badge.classList.toggle("hidden", Boolean(u.is_admin));
+  // В шапке — общий остаток, потому что тратится он одним кошельком. Из чего
+  // он сложен, видно в подсказке и подробно в кабинете: смешивать два числа
+  // в бейдже значит заставлять человека считать в уме на каждом экране.
   badge.textContent = `${tNum(u.gen_points)} ${t("top.pointsUnit")}`;
+  badge.title = u.bonus_points
+    ? t("top.pointsSplit", { paid: tNum(u.paid_points), bonus: tNum(u.bonus_points) })
+    : "";
+  badge.classList.toggle("has-bonus", Boolean(u.bonus_points));
   // Тариф видно сразу: на free видео рисует Grok, Seedance открыт на pro.
   let planBadge = $("#plan-badge");
   if (!planBadge) {
@@ -1066,6 +1073,13 @@ async function renderAccountPane(pane) {
         <span class="dash-big">${escHtml(tNum(a.points))}</span>
         <span class="dash-unit">${escHtml(t("top.pointsUnit"))}</span>
       </div>
+      ${a.bonus_points ? `<div class="dash-split">
+        <span class="dash-split-part"><b>${escHtml(tNum(a.paid_points))}</b> ${
+          escHtml(t("dash.paidPart"))}</span>
+        <span class="dash-split-part bonus"><b>${escHtml(tNum(a.bonus_points))}</b> ${
+          escHtml(t("dash.bonusPart"))}</span>
+      </div>
+      <span class="dash-line muted">${escHtml(t("dash.bonusFirst"))}</span>` : ""}
       <div class="dash-hero-lines">
         <span class="dash-line">${sceneCost > 0
           ? escHtml(t("dash.enough", { n: tNum(scenesLeft),

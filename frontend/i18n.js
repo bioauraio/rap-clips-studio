@@ -118,6 +118,7 @@ const I18N = {
     },
 
     top: {
+      pointsSplit: "{paid} paid · {bonus} bonus",
       brandTitle: "lolq.ai — music video studio",
       coverTitle: "project cover — click to replace",
       projectNamePh: "clip name",
@@ -839,6 +840,9 @@ const I18N = {
 
     // ─────────── дашборд кабинета ───────────
     dash: {
+      paidPart: "paid",
+      bonusPart: "bonus",
+      bonusFirst: "bonus tokens are spent first",
       left: "Tokens left",
       leftOf: "of {n} a month",
       enough: "enough for about {n} {word}",
@@ -2528,6 +2532,7 @@ const I18N = {
     },
 
     top: {
+      pointsSplit: "{paid} платных · {bonus} бонусных",
       brandTitle: "lolq.ai — студия клипов",
       coverTitle: "обложка проекта — клик, чтобы заменить",
       projectNamePh: "название клипа",
@@ -3234,6 +3239,9 @@ const I18N = {
 
     // ─────────── дашборд кабинета ───────────
     dash: {
+      paidPart: "платных",
+      bonusPart: "бонусных",
+      bonusFirst: "бонусные тратятся первыми",
       left: "Осталось токенов",
       leftOf: "из {n} в месяц",
       enough: "хватит примерно на {n} {word}",
