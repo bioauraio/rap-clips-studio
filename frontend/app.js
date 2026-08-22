@@ -4987,6 +4987,16 @@ function renderTrack(tr) {
       await loadProject();
     });
   }
+  // Скачать дорожку: ссылка ведёт на тот же файл, что играет плеер. Прячем,
+  // когда дорожки нет — ссылка в никуда хуже отсутствующей.
+  const getLink = $(".t-audio-get", card);
+  if (getLink) {
+    getLink.classList.toggle("hidden", !tr.audio_filename);
+    if (tr.audio_filename) {
+      getLink.href = `/api/tracks/${tr.id}/audio`;
+      getLink.setAttribute("download", `${(tr.title || "track").slice(0, 60)}.mp3`);
+    }
+  }
   const durEl = $(".t-duration", card);
   durEl.textContent = tr.audio_duration_sec ? fmtTime(tr.audio_duration_sec) : "";
   if (tr.audio_profile) durEl.title = t("track.audioProfile") + ": " + tr.audio_profile;

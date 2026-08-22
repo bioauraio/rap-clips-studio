@@ -3305,3 +3305,25 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 /* Замена дорожки — тихое действие рядом с длительностью. */
 .t-audio-swap { display: inline-flex; align-items: center; cursor: pointer; font-size: 11px; }
 .t-audio-swap.busy { opacity: .5; pointer-events: none; }
+
+/* Строка работы с файлом дорожки: длительность и два действия рядом.
+   Кнопки в проекте стилизованы по тегу button, а тут label (обёртка над
+   file input) и ссылка на скачивание — повторяем тот же вид явно, иначе
+   действия выглядят обычным текстом и их не находят. */
+.t-audio-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.t-audio-acts .btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 6px 12px; border-radius: 12px; cursor: pointer;
+  font-size: 11.5px; font-weight: 700; text-decoration: none;
+  color: var(--text); background: var(--card); border: 2px solid #2d211a;
+  box-shadow: 0 4px 0 #2d211a;
+  transition: transform .08s, box-shadow .08s;
+}
+.t-audio-acts .btn:hover { background: #fff; }
+.t-audio-acts .btn:active { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
+.t-audio-acts .btn.ghost {
+  background: transparent; border-color: rgba(45, 33, 26, .3);
+  box-shadow: none; color: var(--ink-muted);
+}
+.t-audio-acts .btn.ghost:active { transform: none; }
+.t-audio-swap.busy { opacity: .5; pointer-events: none; }

@@ -1086,7 +1086,8 @@ const I18N = {
       hint: "click to seek, drag to select a piece; vertical lines are frame boundaries",
     },
     track: {
-      audioSwap: "replace track file",
+      audioGet: "download track",
+      audioSwap: "upload track",
       audioTiny: "this file is only {n} bytes — it did not download fully. Get it again from the source.",
       coverageShort: "Scenes cover {covered} of {total} — the rest of the track has no picture yet.",
       extendScenes: "Add {n} more scenes",
@@ -3490,7 +3491,8 @@ const I18N = {
       hint: "щелчок — перемотка, протяжка — выделить кусок; вертикали — границы кадров",
     },
     track: {
-      audioSwap: "заменить дорожку",
+      audioGet: "скачать трек",
+      audioSwap: "загрузить трек",
       audioTiny: "в этом файле всего {n} байт — он не докачался. Скачай его из источника заново.",
       randomCast: "случайные кадры",
       randomCastTitle: "следующая раскадровка: герои распределятся по кадрам — где-то один, где-то двое, пара кадров без людей",
