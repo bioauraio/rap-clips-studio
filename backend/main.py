@@ -6752,7 +6752,19 @@ def _run_assemble(track_id: int) -> None:
         if track:
             track.clip_status = "error"
             track.clip_error = _err_text(e, 500)
-            db.commit()
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001 — сессия отравлена, берём свежую
+                db.rollback()
+                fresh = SessionLocal()
+                try:
+                    row = fresh.get(Track, track_id)
+                    if row:
+                        row.clip_status = "error"
+                        row.clip_error = _err_text(e, 500)
+                        fresh.commit()
+                finally:
+                    fresh.close()
         log.warning("сборка клипа трека %s упала: %s", track_id, e)
     finally:
         db.close()
@@ -6766,6 +6778,16 @@ def assemble_track_clip(track_id: int, user: User = Depends(current_user), db: S
     approved = [s for s in track.scenes if s.approved and s.video_filename]
     if not approved:
         raise HTTPException(400, "нет утверждённых сцен с видео")
+    # ДОРОЖКУ ПРОВЕРЯЕМ ЗАРАНЕЕ. Битый файл валит сборку на самом последнем
+    # шаге — наложении звука, когда все сцены уже перекодированы: минуты
+    # работы впустую, а в интерфейсе просто «собираю клип…».
+    if track.audio_filename:
+        apath = os.path.join(UPLOAD_DIR, track.audio_filename)
+        if not os.path.exists(apath) or os.path.getsize(apath) < MIN_AUDIO_BYTES:
+            track.clip_status = "error"
+            track.clip_error = "дорожка повреждена или не догрузилась — загрузи её заново"
+            db.commit()
+            raise HTTPException(422, track.clip_error)
     track.clip_status = "queued"
     db.commit()
     Thread(target=_run_assemble, args=(track_id,), daemon=True).start()
