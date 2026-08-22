@@ -1613,7 +1613,7 @@ def _attach_ref(db: Session, user: "User | None", code: str) -> "User | None":
 # другая, массовая механика: любой пользователь зовёт друга и получает токены.
 # Токенами платить выгоднее и нам, и ему — они возвращаются в сервис, а не
 # уходят на карту.
-REF_SIGNUP_BONUS = int(os.environ.get("REF_SIGNUP_BONUS", "50"))
+REF_SIGNUP_BONUS = int(os.environ.get("REF_SIGNUP_BONUS", "500"))
 # Доля от КАЖДОЙ оплаты друга, начисляемая пригласившему токенами.
 REF_CASHBACK_PCT = max(0, min(100, int(os.environ.get("REF_CASHBACK_PCT", "10"))))
 
@@ -10765,9 +10765,12 @@ def _ref_event_dict(e: RefEvent, who: str) -> dict:
 def ambassador_join(user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Подключить партнёрку. Повторный вызов безопасен и возвращает ТОТ ЖЕ код:
     выданный код перевыпускать нельзя — ссылки на него уже разошлись по чатам."""
+    # ДВА УРОВНЯ ПАРТНЁРКИ. Простая доступна всем и платит ТОКЕНАМИ: человек
+    # берёт ссылку и зовёт друзей. Режим амбассадора с денежными выплатами
+    # включает админ вручную — деньги наружу не должны раздаваться по кнопке
+    # «подключить», это отдельные отношения и отдельная отчётность.
     if not user.ref_code:
         user.ref_code = _new_ref_code(db)
-    user.is_ambassador = True
     db.commit()
     return {"ok": True, "code": user.ref_code, "link": _ref_link(user.ref_code),
             "discount_pct": REF_DISCOUNT_PCT, "reward_pct": REF_REWARD_PCT}
@@ -10796,6 +10799,13 @@ def ambassador_cabinet(user: User = Depends(current_user), db: Session = Depends
                .order_by(Payout.id.desc()).limit(50).all())
     return {
         "is_ambassador": bool(user.is_ambassador),
+        # Простая партнёрка: подключена, если код уже выдан. Именно по этому
+        # признаку фронт рисует ссылку и счётчик токенов, а не по статусу
+        # амбассадора — иначе обычный человек не увидел бы вообще ничего.
+        "joined": bool(user.ref_code),
+        "bonus_points": int(user.bonus_points or 0),
+        "signup_bonus": REF_SIGNUP_BONUS,
+        "cashback_pct": REF_CASHBACK_PCT,
         "code": user.ref_code or "",
         "link": _ref_link(user.ref_code),
         "discount_pct": REF_DISCOUNT_PCT,

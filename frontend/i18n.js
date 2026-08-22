@@ -1483,6 +1483,8 @@ const I18N = {
     },
 
     ref: {
+      statBonus: "bonus tokens",
+      noteTokens: "You get <b>{bonus}</b> tokens for every friend who signs up by your link, and <b>{pct}%</b> of everything they pay — in tokens. They spend like any other tokens.",
       joinLead: "Bring people in on your own link — and take a cut of what they pay.",
       joinDiscount: "your friend gets <b>{pct}%</b> off their first payment",
       joinReward: "you get <b>{pct}%</b> of every payment they make, not just the first one",
@@ -3893,6 +3895,8 @@ const I18N = {
     },
 
     ref: {
+      statBonus: "бонусных токенов",
+      noteTokens: "За каждого друга по твоей ссылке — <b>{bonus}</b> токенов, и <b>{pct}%</b> токенами с каждой его оплаты. Тратятся как обычные.",
       joinLead: "Приводи людей по своей ссылке — и забирай долю с их оплат.",
       joinDiscount: "другу — скидка <b>{pct}%</b> на первую оплату",
       joinReward: "тебе — <b>{pct}%</b> с каждого его платежа, не только с первого",

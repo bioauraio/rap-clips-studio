@@ -2626,7 +2626,10 @@ async function renderPlanPane(pane) {
 async function renderRefPane(pane) {
   let d;
   try { d = await api("/api/ambassador"); } catch (e) { return accFail(pane, e); }
-  if (d.is_ambassador) renderRefCabinet(pane, d); else renderRefJoin(pane, d);
+  // Кабинет открывается ВСЕМ, у кого есть ссылка: в простой партнёрке там
+  // токены и приглашённые, у амбассадора дополнительно деньги и выплаты.
+  if (d.joined || d.is_ambassador) renderRefCabinet(pane, d);
+  else renderRefJoin(pane, d);
 }
 
 function renderRefJoin(pane, d) {
@@ -2673,18 +2676,22 @@ function renderRefCabinet(pane, d) {
       <input class="acc-link" readonly value="${escHtml(link)}" />
       <button type="button" class="acc-copy" data-copy="${escHtml(link)}">${escHtml(t("common.copy"))}</button>
     </div>
-    <p class="muted acc-note">${escHtml(t("ref.note", {
-      discount: Number(d.discount_pct) || 0, reward: Number(d.reward_pct) || 0 }))}</p>
+    <p class="muted acc-note">${d.is_ambassador
+      ? escHtml(t("ref.note", { discount: Number(d.discount_pct) || 0,
+                                reward: Number(d.reward_pct) || 0 }))
+      : escHtml(t("ref.noteTokens", { bonus: tNum(d.signup_bonus),
+                                      pct: Number(d.cashback_pct) || 0 }))}</p>
 
-    <div class="acc-stats acc-stats-5">
+    <div class="acc-stats ${d.is_ambassador ? "acc-stats-5" : ""}">
       <div class="acc-stat"><b>${escHtml(tNum(s.invited))}</b><span>${escHtml(t("ref.statInvited"))}</span></div>
       <div class="acc-stat"><b>${escHtml(tNum(s.buyers))}</b><span>${escHtml(t("ref.statBuyers"))}</span></div>
+      <div class="acc-stat acc-stat-hi"><b>${escHtml(tNum(d.bonus_points))}</b><span>${escHtml(t("ref.statBonus"))}</span></div>
+      ${d.is_ambassador ? `
       <div class="acc-stat"><b>${escHtml(fmtRub(s.accrued_kopeks))}</b><span>${escHtml(t("ref.statAccrued"))}</span></div>
-      <div class="acc-stat"><b>${escHtml(fmtRub(s.paid_kopeks))}</b><span>${escHtml(t("ref.statPaid"))}</span></div>
-      <div class="acc-stat acc-stat-hi"><b>${escHtml(fmtRub(s.available_kopeks))}</b><span>${escHtml(t("ref.statAvailable"))}</span></div>
+      <div class="acc-stat"><b>${escHtml(fmtRub(s.available_kopeks))}</b><span>${escHtml(t("ref.statAvailable"))}</span></div>` : ""}
     </div>
-    <p class="muted acc-note">${escHtml(t("ref.turnover", { sum: fmtRub(s.turnover_kopeks) }))}${
-      Number(s.reserved_kopeks) ? escHtml(t("ref.reserved", { sum: fmtRub(s.reserved_kopeks) })) : ""}</p>
+    ${d.is_ambassador ? `<p class="muted acc-note">${escHtml(t("ref.turnover", { sum: fmtRub(s.turnover_kopeks) }))}${
+      Number(s.reserved_kopeks) ? escHtml(t("ref.reserved", { sum: fmtRub(s.reserved_kopeks) })) : ""}</p>` : ""}
 
     <label>${escHtml(t("ref.eventsLabel"))}</label>
     ${events.length ? `<div class="acc-table-wrap"><table class="acc-table"><tbody>
@@ -2698,6 +2705,10 @@ function renderRefCabinet(pane, d) {
       </tr>`).join("")}
     </tbody></table></div>` : `<p class="muted">${escHtml(t("ref.eventsEmpty"))}</p>`}
 
+    <!-- ДЕНЬГИ ТОЛЬКО У АМБАССАДОРА. В простой партнёрке платят токенами, и
+         реквизиты с заявкой на выплату там не просто лишние — они обещают
+         то, чего в этом уровне нет. Режим амбассадора включает админ. -->
+    ${d.is_ambassador ? `
     <label>${escHtml(t("ref.detailsLabel"))}</label>
     <textarea class="acc-details" rows="2" placeholder="${escHtml(t("ref.detailsPh"))}">${escHtml(d.payout_details || "")}</textarea>
     <div class="row">
@@ -2708,10 +2719,10 @@ function renderRefCabinet(pane, d) {
       <input class="acc-payout-sum" type="number" min="0" step="1" placeholder="${escHtml(t("ref.payoutPh"))}" />
       <button type="button" class="primary acc-payout-btn">${escHtml(t("ref.payoutBtn"))}</button>
     </div>
-    <p class="muted acc-note">${escHtml(t("ref.payoutNote", { sum: fmtRub(d.min_payout_kopeks) }))}</p>
+    <p class="muted acc-note">${escHtml(t("ref.payoutNote", { sum: fmtRub(d.min_payout_kopeks) }))}</p>` : ""}
     <span class="acc-msg status"></span>
 
-    ${payouts.length ? `<label>${escHtml(t("ref.myPayouts"))}</label>
+    ${d.is_ambassador && payouts.length ? `<label>${escHtml(t("ref.myPayouts"))}</label>
       <div class="acc-payouts">${payouts.map((p) => {
         const st = payoutStatus(p.status);
         return `<div class="acc-payout">
@@ -7929,6 +7940,7 @@ function ldPlanCard(plan) {
     scale = `<div class="ld-plan-scale">
       <input class="ld-range ld-tier-range" type="range" min="0" max="${plan.tiers.length - 1}"
              step="1" value="${idx}" data-plan="${escHtml(plan.id)}"
+             style="--fill: ${plan.tiers.length > 1 ? (idx / (plan.tiers.length - 1)) * 100 : 100}%"
              aria-label="${escHtml(T.tierAria)}"
              aria-valuetext="${escHtml(tFill(T.pointsLine, { points: tNum(points) }))}" />
       <div class="ld-ticks ld-tier-ticks">${plan.tiers.map((tr, i) => `
@@ -8023,6 +8035,14 @@ function ldRenderPlans() {
   $$(".ld-tier-ticks button", box).forEach((b) =>
     b.addEventListener("click", () => pick(b.dataset.plan, b.dataset.idx)));
   $$(".ld-tier-range", box).forEach((r) => {
+    // Заливка едет за пальцем: перерисовка карточки приходит позже, и без
+    // этого шкала «догоняла» ползунок рывком.
+    const paintFill = () => {
+      const max = Number(r.max) || 1;
+      r.style.setProperty("--fill", `${(Number(r.value) / max) * 100}%`);
+    };
+    paintFill();
+    r.addEventListener("input", paintFill);
     const paint = () => {
       const max = Number(r.max) || 1;
       const pct = max ? (Number(r.value) / max) * 100 : 0;

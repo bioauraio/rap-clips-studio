@@ -565,6 +565,34 @@ class TrackPhoto(Base):
     created_at = Column(DateTime, default=now)
 
 
+class StudioOrder(Base):
+    """Заказ на генерацию «под ключ»: клип делаем мы, а не клиент сам.
+
+    Отдельная сущность, а не проект с пометкой: у заказа своя жизнь —
+    бриф, согласование сметы, статус работы и переписка, — и она идёт
+    ПАРАЛЛЕЛЬНО обычным проектам. Когда заказ берут в работу, под него
+    заводится обычный проект, и project_id связывает одно с другим.
+    """
+    __tablename__ = "studio_orders"
+    id = Column(Integer, primary_key=True)
+    # Заказ можно оставить и без входа — тогда клиента опознаём по контакту.
+    user_id = Column(Integer, nullable=True, index=True)
+    contact = Column(String, nullable=False, default="")     # телеграм, почта, телефон
+    name = Column(String, nullable=False, default="")
+    brief = Column(Text, nullable=False, default="")         # что нужно снять
+    reference_url = Column(String, nullable=False, default="")
+    budget_kopeks = Column(Integer, nullable=False, default=0)
+    deadline = Column(String, nullable=False, default="")
+    # new → quoted (выставлена смета) → paid → in_work → done | cancelled
+    status = Column(String, nullable=False, default="new", index=True)
+    quote_kopeks = Column(Integer, nullable=False, default=0)
+    manager_note = Column(Text, nullable=False, default="")
+    project_id = Column(Integer, nullable=True)
+    source = Column(String, nullable=False, default="site")  # site | bot | miniapp
+    created_at = Column(DateTime, default=now)
+    updated_at = Column(DateTime, default=now)
+
+
 class AppSetting(Base):
     """Настройки, которые правит владелец на ходу, без переката сервиса.
 
