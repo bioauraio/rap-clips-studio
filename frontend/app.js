@@ -5322,7 +5322,22 @@ function renderScene(s, audioEl, mode = "board") {
 
   // Написать промпт кадра по контексту раскадровки. Нужна прежде всего для
   // кадров, добавленных руками: у них поля пустые, и видео на них падало.
+  // Персонажей сменили — текст промпта всё ещё описывает прежнего человека.
+  // Имя мы подменили, внешность нет: подсвечиваем кнопку и говорим почему.
   const genPromptBtn = $(".s-gen-prompt", card);
+  if (genPromptBtn && s.prompt_stale) {
+    genPromptBtn.classList.add("primary");
+    genPromptBtn.title = t("scene.promptStale")
+      || "персонажи изменились — промпт всё ещё описывает прежнего героя";
+    const warn = $(".s-prompt-details summary", card);
+    if (warn && !$(".s-stale-dot", warn)) {
+      const dot = document.createElement("span");
+      dot.className = "s-stale-dot";
+      dot.textContent = " ●";
+      dot.title = genPromptBtn.title;
+      warn.appendChild(dot);
+    }
+  }
   if (genPromptBtn) {
     genPromptBtn.addEventListener("click", async () => {
       const was = genPromptBtn.textContent;

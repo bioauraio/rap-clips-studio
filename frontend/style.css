@@ -3227,3 +3227,6 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
   content: "· "; color: var(--muted);
 }
 .s-top-right details > summary { display: inline; padding: 0; }
+
+/* Промпт описывает прежнего героя — точка рядом с «ПРОМПТ». */
+.s-stale-dot { color: var(--accent-2-ink); font-size: 9px; vertical-align: middle; }

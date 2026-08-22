@@ -594,6 +594,11 @@ class Scene(Base):
     image_error = Column(Text, nullable=False, default="")
     # Промпт последнего кадра — пишется Claude'ом вместе со сценарием.
     image_prompt_last = Column(Text, nullable=False, default="")
+    # Персонажей кадра сменили, а текст промпта описывает прежнего человека
+    # («young lean wiry man in a helmet» — это был lol4, а не Анька). Имя мы
+    # подменяем автоматически, внешность — нет: её должна переписать модель.
+    # Флаг говорит интерфейсу показать это вслух, а не оставить ловушку.
+    prompt_stale = Column(Boolean, nullable=False, default=False)
 
     # Промежуточные кадры сцены: JSON-список [{"filename":…, "prompt":…}].
     # Промпты строятся интерполяцией первый→последний без Claude; файлы

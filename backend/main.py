@@ -2038,6 +2038,7 @@ def scene_dict(s: Scene) -> dict:
         "id": s.id, "track_id": s.track_id, "position": s.position, "start_sec": s.start_sec,
         "duration_sec": s.duration_sec, "lyric_line": s.lyric_line,
         "characters": s.characters,
+        "prompt_stale": bool(getattr(s, "prompt_stale", False)),
         "attribute_ids": [int(x) for x in (s.attribute_ids or "").split(",") if x.strip().isdigit()],
         "shot_size": s.shot_size, "camera_move": s.camera_move,
         "image_prompt": s.image_prompt, "motion_prompt": s.motion_prompt,
@@ -4412,15 +4413,52 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
 
 
 @app.patch("/api/scenes/{scene_id}")
+def _swap_prompt_names(scene: Scene, old_raw: str, new_raw: str) -> None:
+    """Заменить имена прежних героев в текстах кадра на новых.
+
+    Замена позиционная: первый ушедший меняется на первого пришедшего и так
+    далее. Это не идеально для сложных перестановок, зато честно закрывает
+    типичный случай «был один герой, стал другой» и не трогает промпт, если
+    список персонажей не изменился."""
+    old_names = [n.strip() for n in (old_raw or "").split(",") if n.strip()]
+    new_names = [n.strip() for n in (new_raw or "").split(",") if n.strip()]
+    gone = [n for n in old_names if n not in new_names]
+    came = [n for n in new_names if n not in old_names]
+    if not gone or not came:
+        return
+    pairs = list(zip(gone, came))
+    for field in ("image_prompt", "image_prompt_last", "motion_prompt", "shot_note"):
+        text = getattr(scene, field, "") or ""
+        if not text:
+            continue
+        for a, b in pairs:
+            text = re.sub(rf"(?<![\w]){re.escape(a)}(?![\w])", b, text)
+        setattr(scene, field, text)
+
+
 async def update_scene(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
+    was_chars = scene.characters or ""
     # characters и image_prompt_last фронт слал всегда — бэк их молча ронял;
     # чипы персонажей и правка последнего кадра держатся на этих полях.
     for field in ("duration_sec", "lyric_line", "characters", "shot_size", "camera_move",
                   "image_prompt", "motion_prompt", "shot_note", "image_prompt_last"):
         if field in body:
             setattr(scene, field, str(body[field]) if field != "duration_sec" else body[field])
+    if "image_prompt" in body:
+        scene.prompt_stale = False
+    if "characters" in body:
+        scene.characters = _normalize_scene_characters(scene.characters, scene.track.project)
+        # ИМЯ ГЕРОЯ ВШИТО В ТЕКСТ ПРОМПТА. Сменить чип персонажа было
+        # недостаточно: в image_prompt остаётся «Extreme close-up of lol4…»,
+        # генератор читает имя оттуда и рисует прежнего человека. Меняем чип —
+        # меняем и имена в тексте, иначе выбор ничего не значит.
+        if "image_prompt" not in body and (was_chars or "") != (scene.characters or ""):
+            _swap_prompt_names(scene, was_chars, scene.characters)
+            # Имя подменили, внешность в тексте осталась прежней — говорим об
+            # этом прямо, вместо того чтобы человек это выяснял по картинке.
+            scene.prompt_stale = True
     if "attribute_ids" in body:
         ids = body["attribute_ids"] or []
         scene.attribute_ids = ",".join(str(int(i)) for i in ids if str(i).isdigit())
@@ -7268,6 +7306,7 @@ async def generate_scene_prompt(scene_id: int, user: User = Depends(current_user
         ))
     except Exception as e:  # noqa: BLE001 — причину показываем в карточке
         raise HTTPException(502, f"не вышло написать промпт: {str(e)[:200]}")
+    scene.prompt_stale = False
     scene.image_prompt = str(res.get("image_prompt") or "").strip() or scene.image_prompt
     scene.image_prompt_last = str(res.get("image_prompt_last") or "").strip() or scene.image_prompt_last
     scene.motion_prompt = str(res.get("motion_prompt") or "").strip() or scene.motion_prompt

@@ -1148,6 +1148,7 @@ const I18N = {
     },
 
     scene: {
+      promptStale: "characters changed — the prompt still describes the previous person",
       genPrompt: "Write the prompt",
       genPromptTitle: "Model writes this shot from the story, style and neighbouring shots",
       library: "Catalogue",
@@ -3526,6 +3527,7 @@ const I18N = {
     },
 
     scene: {
+      promptStale: "персонажи изменились — промпт всё ещё описывает прежнего героя",
       genPrompt: "Написать промпт",
       genPromptTitle: "Модель напишет этот кадр по сюжету, стилю и соседним кадрам",
       library: "Каталог",
