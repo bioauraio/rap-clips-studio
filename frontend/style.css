@@ -2602,9 +2602,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
    лента съедала 577px из 1360px строки и сжимала список проектов до 73px —
    то есть тумблер отбирал место у того, ради чего человек в шапку смотрит.
    Название неактивного режима читается в подсказке и в карточке меню. */
+/* ЛЕНТА РЕЖИМОВ УБРАНА СОВСЕМ. Она была второй строкой навигации под первой:
+   разная типографика (моноширинный капс против обычного текста), разная
+   форма кнопок, а два слова — «Мастерская» и «Музыка» — стояли одновременно
+   в обеих строках и означали разное. Режим это свойство ПРОЕКТА, поэтому он
+   переехал капсулой к имени проекта, а меню с карточками режимов осталось
+   тем же. Строка навигации теперь одна. */
 @media (min-width: 1100px) {
-  .mode-seg { display: flex; }
-  .topbar .mode-switch { display: none; }
+  .mode-seg { display: none; }
   /* Подписи режимов НЕ прячем даже на узком: владелец просил именно текст,
      а иконка без подписи не читается. Лента прокручивается вбок. */
   .mode-seg-btn:not(.on) .mode-seg-cap { display: inline; }
@@ -3327,3 +3332,19 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 }
 .t-audio-acts .btn.ghost:active { transform: none; }
 .t-audio-swap.busy { opacity: .5; pointer-events: none; }
+
+
+/* Капсула режима рядом с проектом: единственный переключатель «чем снимаю».
+   Раньше она была запасным вариантом для узкого экрана и выглядела как
+   бейдж; теперь это кнопка, и она обязана читаться как кнопка. */
+.topbar .mode-switch {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--tb-h, 34px); padding: 0 12px; border-radius: 999px;
+  border: 1.5px solid #2d211a; background: var(--card);
+  box-shadow: 0 2px 0 #2d211a; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
+  letter-spacing: .05em; text-transform: uppercase;
+}
+.topbar .mode-switch:hover { background: #fff; }
+.topbar .mode-switch:active { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.topbar .mode-switch[aria-expanded="true"] { color: var(--on-fire); background: var(--fire-ink); }
