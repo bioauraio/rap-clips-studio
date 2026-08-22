@@ -3248,3 +3248,10 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 
 /* Промпт описывает прежнего героя — точка рядом с «ПРОМПТ». */
 .s-stale-dot { color: var(--accent-2-ink); font-size: 9px; vertical-align: middle; }
+
+/* Перестановка кадров: тянущаяся карточка бледнеет, будущий сосед
+   подсвечивается слева — видно, куда именно встанет кадр. */
+.scene-card.dragging { opacity: .45; }
+.scene-card.drag-over { border-left-color: var(--accent); }
+.scene-card[draggable="true"] .scene-head { cursor: grab; }
+.scene-card.dragging .scene-head { cursor: grabbing; }

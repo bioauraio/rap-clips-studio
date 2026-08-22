@@ -3558,6 +3558,48 @@ function restoreScroll(pageY) {
   }
 }
 
+// Порядок кадров трека: сдвиг соседа и перенос на чужое место. Обе операции
+// шлют серверу ПОЛНЫЙ новый список — так порядок не может разъехаться, даже
+// если у клиента устаревший снимок сцены.
+function sceneOrderOf(sceneId) {
+  const tr = sceneTrack(sceneId);
+  if (!tr) return null;
+  const ids = (tr.scenes || [])
+    .slice()
+    .sort((a, b) => a.position - b.position || a.id - b.id)
+    .map((x) => x.id);
+  return { tr, ids };
+}
+
+async function sendSceneOrder(tr, ids) {
+  try {
+    await api(`/api/tracks/${tr.id}/scenes/reorder`, { method: "POST", body: { order: ids } });
+  } catch (e) { fail(e); }
+  await loadProject();
+}
+
+async function moveScene(sceneId, dir) {
+  const got = sceneOrderOf(sceneId);
+  if (!got) return;
+  const { tr, ids } = got;
+  const i = ids.indexOf(sceneId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  await sendSceneOrder(tr, ids);
+}
+
+async function dropSceneBefore(movedId, targetId) {
+  const got = sceneOrderOf(movedId);
+  if (!got) return;
+  const { tr, ids } = got;
+  if (!ids.includes(targetId)) return;   // перетащили в чужой трек — не наше дело
+  const rest = ids.filter((x) => x !== movedId);
+  rest.splice(rest.indexOf(targetId), 0, movedId);
+  await sendSceneOrder(tr, rest);
+}
+
+
 function render() {
   const keepY = saveScroll();
   try {
@@ -5304,6 +5346,36 @@ function renderScene(s, audioEl, mode = "board") {
   card.dataset.id = s.id;
   card.dataset.start = s.start_sec;
   card.dataset.duration = s.duration_sec;
+  // ПЕРЕСТАНОВКА КАДРОВ. Порядок в раскадровке — он же порядок в клипе:
+  // сборка склеивает сцены по position. Мышью карточку можно тащить, на
+  // телефоне тащить по горизонтальной ленте нечем — поэтому ещё и стрелки.
+  card.draggable = true;
+  card.addEventListener("dragstart", (ev) => {
+    // Из полей ввода тянуть нельзя — иначе выделение текста превращается
+    // в перетаскивание всей карточки.
+    if (ev.target.closest("input, textarea, select, button")) { ev.preventDefault(); return; }
+    ev.dataTransfer.setData("text/plain", String(s.id));
+    ev.dataTransfer.effectAllowed = "move";
+    card.classList.add("dragging");
+  });
+  card.addEventListener("dragend", () => card.classList.remove("dragging"));
+  card.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+    card.classList.add("drag-over");
+  });
+  card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+  card.addEventListener("drop", async (ev) => {
+    ev.preventDefault();
+    card.classList.remove("drag-over");
+    const moved = Number(ev.dataTransfer.getData("text/plain"));
+    if (!moved || moved === s.id) return;
+    await dropSceneBefore(moved, s.id);
+  });
+  const mvL = $(".s-mv-left", card);
+  const mvR = $(".s-mv-right", card);
+  if (mvL) mvL.addEventListener("click", () => moveScene(s.id, -1));
+  if (mvR) mvR.addEventListener("click", () => moveScene(s.id, 1));
   $(".s-pos", card).textContent = t("scene.pos", { n: s.position });
   $(".s-time", card).textContent = `${fmtTime(s.start_sec)} — ${fmtTime(s.start_sec + s.duration_sec)}`;
   // Акт серии и кто говорит — метки режимов «сериалы»/«UGC». У клипа обе

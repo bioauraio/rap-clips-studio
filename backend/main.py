@@ -7349,6 +7349,72 @@ def _renumber_scenes(track: Track) -> None:
         cursor += s.duration_sec
 
 
+@app.post("/api/tracks/{track_id}/scenes/reorder")
+async def reorder_scenes(track_id: int, request: Request,
+                         user: User = Depends(current_user),
+                         db: Session = Depends(db_session)):
+    """Новый порядок кадров раскадровки — он же порядок в финальном клипе.
+
+    Слот едет ВМЕСТЕ с кадром: длительность — свойство кадра, а не места в
+    ряду. Поэтому после перестановки заново раскладывается таймлайн, и куски
+    дорожки под сценами пересчитываются: иначе кадр звучал бы музыкой той
+    секунды, где он лежал раньше.
+    """
+    track = _own_track(db, user, track_id)
+    body = await request.json()
+    order = [int(x) for x in (body.get("order") or [])]
+    mine = {s.id: s for s in track.scenes}
+    seen = []
+    for sid in order:
+        if sid in mine and sid not in seen:
+            seen.append(sid)
+    if not seen:
+        raise HTTPException(400, "пустой порядок кадров")
+    # Кадры, которых в присланном списке нет, остаются в хвосте в прежнем
+    # порядке: клиент мог отстать от свежесозданной сцены, и терять её нельзя.
+    rest = [s.id for s in sorted(track.scenes, key=lambda x: (x.position, x.id))
+            if s.id not in seen]
+    for i, sid in enumerate(seen + rest, start=1):
+        mine[sid].position = i
+    _renumber_scenes(track)
+    db.commit()
+    # Музыка под кадрами разъехалась — нарезаем её заново под новые места.
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    return {"ok": True, "order": [s.id for s in
+                                  sorted(track.scenes, key=lambda x: x.position)]}
+
+
+def _resync_scene_audio(track_id: int) -> None:
+    """Перенарезать отрезки дорожки под нынешние места кадров."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        src = _track_audio_path(track)
+        if not src:
+            return
+        for s in sorted(track.scenes, key=lambda x: x.position):
+            if not s.video_filename and not s.image_filename:
+                continue
+            old = s.audio_filename
+            try:
+                s.audio_filename = mediagen.slice_audio(
+                    src, int(s.start_sec or 0), int(s.duration_sec or 0))
+            except Exception as e:  # noqa: BLE001 — один кадр не рушит трек
+                log.warning("нарезка звука кадра %s: %s", s.id, str(e)[:120])
+                continue
+            db.commit()
+            if old and old != s.audio_filename:
+                _remove_media(old, db)
+                db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("пересборка звука трека %s: %s", track_id, str(e)[:150])
+    finally:
+        db.close()
+
+
 @app.post("/api/tracks/{track_id}/scenes/extend")
 async def extend_scenes(track_id: int, request: Request,
                         user: User = Depends(current_user),

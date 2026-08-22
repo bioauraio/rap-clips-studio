@@ -1148,6 +1148,8 @@ const I18N = {
     },
 
     scene: {
+      moveLeft: "move frame earlier",
+      moveRight: "move frame later",
       frameDel: "remove frame",
       frameDelAsk: "Remove this frame?",
       frameAdd: "add one more frame",
@@ -3530,6 +3532,8 @@ const I18N = {
     },
 
     scene: {
+      moveLeft: "сдвинуть кадр раньше",
+      moveRight: "сдвинуть кадр позже",
       frameDel: "убрать кадр",
       frameDelAsk: "Убрать этот кадр?",
       frameAdd: "дорисовать ещё кадр",
