@@ -4419,6 +4419,48 @@ async def trim_track_audio(track_id: int, request: Request,
     return track_dict(track)
 
 
+@app.post("/api/tracks/{track_id}/audio")
+async def replace_track_audio(track_id: int, audio: UploadFile,
+                              user: User = Depends(current_user),
+                              db: Session = Depends(db_session)):
+    """Заменить дорожку у существующего трека.
+
+    Раньше дорожку можно было задать только при создании: чтобы поменять
+    испорченный или не тот файл, приходилось заводить трек заново — вместе с
+    раскадровкой и всеми оплаченными кадрами. Здесь меняется только звук,
+    кадры и видео остаются на месте.
+    """
+    _guard_disk()
+    track = _own_track(db, user, track_id)
+    ext = os.path.splitext(audio.filename or "")[1] or ".mp3"
+    data = await audio.read()
+    if len(data) < MIN_AUDIO_BYTES:
+        raise HTTPException(400, "файл дорожки не долетел или пуст — загрузи ещё раз")
+    fname = f"{uuid.uuid4().hex}{ext}"
+    path = os.path.join(UPLOAD_DIR, fname)
+    with open(path, "wb") as f:
+        f.write(data)
+    dur = _ffprobe_duration(path)
+    if dur <= 0:
+        os.remove(path)
+        raise HTTPException(400, "это не читается как аудио — проверь формат файла")
+    track.audio_filename = fname
+    track.audio_duration_sec = dur
+    _reg_file(db, fname, track.project.owner_id, kind="audio",
+              project_id=track.project_id, track_id=track.id)
+    try:
+        track.audio_profile = _audio_profile(path, dur)
+    except Exception as e:  # noqa: BLE001 — профиль не обязателен
+        log.warning("профиль звука не посчитался: %s", str(e)[:120])
+    # Клип собран под прежний звук, а кадры звучат его отрезками.
+    track.clip_status = ""
+    track.clip_error = ""
+    db.commit()
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    db.refresh(track)
+    return track_dict(track)
+
+
 @app.get("/api/tracks/{track_id}/waveform")
 def get_waveform(track_id: int, points: int = 900,
                  user: User = Depends(current_user), db: Session = Depends(db_session)):

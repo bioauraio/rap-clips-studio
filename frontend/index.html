@@ -47,17 +47,17 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=77" />
-<link rel="stylesheet" href="/landing.css?v=77" />
-<link rel="stylesheet" href="/tg.css?v=77" />
+<link rel="stylesheet" href="/style.css?v=78" />
+<link rel="stylesheet" href="/landing.css?v=78" />
+<link rel="stylesheet" href="/tg.css?v=78" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=77" />
+<link rel="stylesheet" href="/music-studio.css?v=78" />
 <!-- Лента разделов, академия и каталог приёмов. ПОСЛЕ style.css: берёт его
      токены и правит шапку только под классом .has-sections — без sections.js
      вёрстка обязана остаться прежней. -->
-<link rel="stylesheet" href="/sections.css?v=77" />
+<link rel="stylesheet" href="/sections.css?v=78" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -75,7 +75,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=77"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=78"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -876,6 +876,12 @@
                     <span class="wp-hint muted" data-i18n="wave.hint"></span>
                   </div>
                   <span class="t-duration"></span>
+                  <!-- Замена дорожки без пересоздания трека: раскадровка и
+                       оплаченные кадры остаются на месте. -->
+                  <label class="t-audio-swap ghost">
+                    <span data-i18n="track.audioSwap"></span>
+                    <input type="file" accept="audio/*" hidden />
+                  </label>
                 </div>
                 <div class="track-right">
                   <label data-i18n="track.comment"></label>
@@ -1280,24 +1286,24 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=77"></script>
-<script src="/i18n.js?v=77"></script>
-<script src="/app.js?v=77"></script>
+<script src="/modes.js?v=78"></script>
+<script src="/i18n.js?v=78"></script>
+<script src="/app.js?v=78"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=77"></script>
+<script src="/music-studio.js?v=78"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=77"></script>
+<script src="/mode-menu.js?v=78"></script>
 <!-- ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ. ПОСЛЕ app.js и mode-menu.js: она
      ПЕРЕНОСИТ в свою ленту живые кнопки шапки (#chat-btn, #music-btn,
      #account-btn, #admin-btn) вместе с их обработчиками, поэтому обработчики
      к этому моменту должны быть уже навешаны. -->
-<script src="/sections.js?v=77"></script>
+<script src="/sections.js?v=78"></script>
 <!-- Каталог промтов (четыре слоя и сборка). Отдельным файлом от sections.js:
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
-<script src="/library.js?v=77"></script>
+<script src="/library.js?v=78"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1321,10 +1327,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=77";
+  css.href = "/nav.css?v=78";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=77";
+  js.src = "/nav.js?v=78";
   document.body.appendChild(js);
 })();
 </script>

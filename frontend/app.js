@@ -4961,6 +4961,32 @@ function renderTrack(tr) {
   } else {
     audioEl.style.display = "none";
   }
+  // Замена дорожки: файл уходит как есть, сервер отклоняет пустой и
+  // нечитаемый — молча положить в трек четыре байта больше нельзя.
+  const swap = $(".t-audio-swap", card);
+  if (swap) {
+    const inp = $("input", swap);
+    inp.addEventListener("change", async () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      if (f.size < 1024) {
+        alert(t("track.audioTiny", { n: f.size }));
+        inp.value = "";
+        return;
+      }
+      const fd = new FormData();
+      fd.append("audio", f);
+      swap.classList.add("busy");
+      try {
+        await api(`/api/tracks/${tr.id}/audio`, { method: "POST", body: fd });
+        waveCache.delete(tr.id);
+      } catch (e) { fail(e); } finally {
+        swap.classList.remove("busy");
+        inp.value = "";
+      }
+      await loadProject();
+    });
+  }
   const durEl = $(".t-duration", card);
   durEl.textContent = tr.audio_duration_sec ? fmtTime(tr.audio_duration_sec) : "";
   if (tr.audio_profile) durEl.title = t("track.audioProfile") + ": " + tr.audio_profile;
