@@ -452,6 +452,52 @@ async def _kie_result_urls(model: str, payload_input: dict, *, timeout_s: float,
     raise MediaError(f"kie.ai: таймаут ожидания результата ({model})")
 
 
+async def kie_task_result(task_id: str) -> dict:
+    """Чем закончилась задача kie.ai — по её id, без ожидания.
+
+    Нужно после перезапуска сервиса: тред генерации умер вместе с процессом,
+    а задача на стороне движка продолжала считаться и уже оплачена. Здесь мы
+    спрашиваем её итог и, если она готова, забираем результат — вместо того
+    чтобы списать токены и выбросить работу.
+
+    Возвращает {"state": waiting|success|fail, "urls": [...], "error": str}.
+    """
+    if not task_id or not KIE_KEY:
+        return {"state": "waiting", "urls": [], "error": ""}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        r = await client.get(f"{KIE_API}/api/v1/jobs/recordInfo",
+                             params={"taskId": task_id}, headers=_kie_headers())
+        if r.status_code != 200:
+            return {"state": "waiting", "urls": [], "error": f"http {r.status_code}"}
+        sd = (r.json() or {}).get("data") or {}
+        state = str(sd.get("state") or "").lower()
+        if state == "fail":
+            return {"state": "fail", "urls": [],
+                    "error": str(sd.get("failMsg") or sd.get("failCode") or "")[:200]}
+        if state != "success":
+            return {"state": "waiting", "urls": [], "error": ""}
+        raw = sd.get("resultJson") or "{}"
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            parsed = {}
+        urls = parsed.get("resultUrls") or parsed.get("result_urls") or []
+        return {"state": "success", "urls": [str(u) for u in urls], "error": ""}
+
+
+async def fetch_to_upload(url: str, ext: str) -> str:
+    """Скачать готовый результат движка в наше хранилище."""
+    name = f"rescued_{uuid.uuid4().hex}{ext}"
+    dst = os.path.join(UPLOAD_DIR, name)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=20.0)) as client:
+        r = await client.get(url)
+        if r.status_code != 200 or not r.content:
+            raise MediaError(f"не скачался результат: http {r.status_code}")
+        with open(dst, "wb") as f:
+            f.write(r.content)
+    return name
+
+
 # ──────────────────────────── картинки ────────────────────────────
 
 async def _nano_banana(prompt: str, ref_paths: list[str], engine: str,

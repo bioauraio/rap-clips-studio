@@ -3614,6 +3614,187 @@ async function dropSceneBefore(movedId, targetId) {
 }
 
 
+/* ─────────────────────────── свой плеер дорожки ───────────────────────────
+   Родные контролы браузера умеют только «играть/пауза»: ни увидеть, где в
+   треке припев, ни понять, куда попадают границы кадров, по ним нельзя. Тут
+   форма волны с сеткой раскадровки поверх, перемотка щелчком, выделение
+   куска мышью, минимальный эквалайзер и нарезка дорожки по выделению.      */
+
+const waveCache = new Map();   // trackId → пики (форма волны не меняется)
+const eqChains = new Map();    // trackId → узлы WebAudio, чтобы не пересоздавать
+
+async function wavePeaks(trackId) {
+  if (waveCache.has(trackId)) return waveCache.get(trackId);
+  const d = await api(`/api/tracks/${trackId}/waveform`);
+  waveCache.set(trackId, d);
+  return d;
+}
+
+// Эквалайзер поднимаем ЛЕНИВО, по первому нажатию: AudioContext, созданный
+// без жеста человека, браузер держит в suspended, и звук просто пропадает.
+function eqChain(trackId, audioEl) {
+  if (eqChains.has(trackId)) return eqChains.get(trackId);
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  try {
+    const ctx = new Ctx();
+    const src = ctx.createMediaElementSource(audioEl);
+    const mk = (type, freq) => {
+      const f = ctx.createBiquadFilter();
+      f.type = type; f.frequency.value = freq; f.gain.value = 0;
+      return f;
+    };
+    const low = mk("lowshelf", 220);
+    const mid = mk("peaking", 1200);
+    const high = mk("highshelf", 5000);
+    mid.Q.value = 0.9;
+    src.connect(low); low.connect(mid); mid.connect(high); high.connect(ctx.destination);
+    const chain = { ctx, low, mid, high };
+    eqChains.set(trackId, chain);
+    return chain;
+  } catch (e) {
+    // Второй createMediaElementSource на том же теге бросает — значит цепь
+    // уже собрана в прошлой перерисовке; молча живём без эквалайзера.
+    return null;
+  }
+}
+
+function mountWavePlayer(card, tr, audioEl) {
+  const box = $(".wp", card);
+  if (!box) return;
+  box.classList.remove("hidden");
+  const cv = $(".wp-wave", box);
+  const playBtn = $(".wp-play", box);
+  const clock = $(".wp-clock", box);
+  const cutBtn = $(".wp-cut", box);
+  const clearBtn = $(".wp-clear", box);
+  let peaks = null;
+  let sel = null;             // выделенный кусок {a, b} в секундах
+  const dur = () => audioEl.duration || tr.audio_duration_sec || 0;
+
+  // Границы кадров рисуем поверх волны: сразу видно, что припев разрезан
+  // посередине, а не после сборки клипа.
+  const bounds = () => (tr.scenes || [])
+    .slice().sort((a, b) => a.position - b.position)
+    .map((s) => ({ at: s.start_sec, n: s.position }));
+
+  function draw() {
+    const w = cv.clientWidth || 600;
+    const h = cv.height;
+    if (cv.width !== w) cv.width = w;
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, w, h);
+    const total = dur() || 1;
+    if (sel) {
+      g.fillStyle = "rgba(224, 80, 58, .13)";
+      g.fillRect((sel.a / total) * w, 0, ((sel.b - sel.a) / total) * w, h);
+    }
+    if (peaks && peaks.length) {
+      const mid = h / 2;
+      const played = (audioEl.currentTime / total) * w;
+      for (let x = 0; x < w; x++) {
+        const v = peaks[Math.floor((x / w) * peaks.length)] || 0;
+        const bar = Math.max(1, v * (h * 0.92));
+        g.fillStyle = x <= played ? "#e0503a" : "rgba(45, 33, 26, .28)";
+        g.fillRect(x, mid - bar / 2, 1, bar);
+      }
+    }
+    g.strokeStyle = "rgba(45, 33, 26, .35)";
+    g.lineWidth = 1;
+    bounds().forEach((b) => {
+      const x = Math.round((b.at / total) * w) + 0.5;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    });
+    const px = Math.round((audioEl.currentTime / total) * w) + 0.5;
+    g.strokeStyle = "#2d211a"; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(px, 0); g.lineTo(px, h); g.stroke();
+    clock.textContent = `${fmtTime(audioEl.currentTime)} / ${fmtTime(total)}`
+      + (sel ? ` · ${t("wave.selected", { a: fmtTime(sel.a), b: fmtTime(sel.b) })}` : "");
+    cutBtn.classList.toggle("hidden", !sel);
+    clearBtn.classList.toggle("hidden", !sel);
+  }
+
+  const atX = (ev) => {
+    const r = cv.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * (dur() || 0);
+  };
+
+  // Щелчок — перемотка, протяжка — выделение. Разделяем по пройденному
+  // расстоянию: иначе дрожание руки на клике каждый раз давало бы выделение.
+  let dragFrom = null;
+  cv.addEventListener("pointerdown", (ev) => {
+    dragFrom = { x: ev.clientX, at: atX(ev) };
+    cv.setPointerCapture(ev.pointerId);
+  });
+  cv.addEventListener("pointermove", (ev) => {
+    if (!dragFrom) return;
+    if (Math.abs(ev.clientX - dragFrom.x) < 4) return;
+    const now = atX(ev);
+    sel = { a: Math.min(dragFrom.at, now), b: Math.max(dragFrom.at, now) };
+    draw();
+  });
+  cv.addEventListener("pointerup", (ev) => {
+    if (dragFrom && Math.abs(ev.clientX - dragFrom.x) < 4) {
+      audioEl.currentTime = dragFrom.at;
+      sel = null;
+    }
+    dragFrom = null;
+    draw();
+  });
+
+  playBtn.addEventListener("click", () => {
+    if (audioEl.paused) audioEl.play().catch(fail); else audioEl.pause();
+  });
+  audioEl.addEventListener("play", () => { playBtn.textContent = "❚❚"; });
+  audioEl.addEventListener("pause", () => { playBtn.textContent = "▶"; });
+  audioEl.addEventListener("timeupdate", draw);
+  audioEl.addEventListener("loadedmetadata", draw);
+  audioEl.addEventListener("error", () => {
+    box.classList.add("wp-broken");
+    clock.textContent = t("wave.broken");
+  });
+
+  clearBtn.addEventListener("click", () => { sel = null; draw(); });
+  cutBtn.addEventListener("click", async () => {
+    if (!sel) return;
+    if (!confirm(t("wave.cutAsk", { a: fmtTime(sel.a), b: fmtTime(sel.b) }))) return;
+    cutBtn.disabled = true;
+    try {
+      await api(`/api/tracks/${tr.id}/audio/trim`, {
+        method: "POST", body: { start: Number(sel.a.toFixed(2)), end: Number(sel.b.toFixed(2)) },
+      });
+      waveCache.delete(tr.id);
+    } catch (e) { fail(e); cutBtn.disabled = false; return; }
+    await loadProject();
+  });
+
+  const eqBox = $(".wp-eq", box);
+  $(".wp-eq-btn", box).addEventListener("click", () => {
+    eqBox.classList.toggle("hidden");
+    const chain = eqChain(tr.id, audioEl);
+    if (!chain) return;
+    if (chain.ctx.state === "suspended") chain.ctx.resume();
+    const bind = (sel2, node) => {
+      const el = $(sel2, box);
+      el.oninput = () => { node.gain.value = Number(el.value); };
+    };
+    bind(".wp-eq-low", chain.low);
+    bind(".wp-eq-mid", chain.mid);
+    bind(".wp-eq-high", chain.high);
+    $(".wp-eq-reset", box).onclick = () => {
+      ["low", "mid", "high"].forEach((k) => {
+        chain[k].gain.value = 0;
+        $(`.wp-eq-${k}`, box).value = 0;
+      });
+    };
+  });
+
+  draw();
+  wavePeaks(tr.id).then((d) => { peaks = d.peaks; draw(); })
+    .catch(() => { /* волна не обязательна: плеер работает и без картинки */ });
+}
+
+
 function render() {
   const keepY = saveScroll();
   try {
@@ -4774,8 +4955,12 @@ function renderTrack(tr) {
   }
   $(".t-lyrics", card).value = tr.lyrics;
   const audioEl = $(".t-audio", card);
-  if (tr.audio_filename) audioEl.src = `/api/tracks/${tr.id}/audio`;
-  else audioEl.style.display = "none";
+  if (tr.audio_filename) {
+    audioEl.src = `/api/tracks/${tr.id}/audio`;
+    mountWavePlayer(card, tr, audioEl);
+  } else {
+    audioEl.style.display = "none";
+  }
   const durEl = $(".t-duration", card);
   durEl.textContent = tr.audio_duration_sec ? fmtTime(tr.audio_duration_sec) : "";
   if (tr.audio_profile) durEl.title = t("track.audioProfile") + ": " + tr.audio_profile;

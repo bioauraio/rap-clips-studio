@@ -24,7 +24,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -238,6 +238,78 @@ def _bootstrap_users() -> None:
 _bootstrap_users()
 
 
+def _rescue_paid_jobs(db: Session) -> int:
+    """Дозабрать результаты задач, переживших перезапуск сервиса.
+
+    Ищем сцены, застрявшие в queued/running, у которых в журнале списания
+    записан id внешней задачи. Спрашиваем движок об итоге: готово — скачиваем
+    и ставим на место, упало — возвращаем токены, ещё считается — оставляем
+    как есть, следующий заход подберёт.
+    """
+    import asyncio
+
+    saved = 0
+    try:
+        stuck = (db.query(Scene)
+                 .filter(or_(Scene.video_status.in_(("queued", "running")),
+                             Scene.image_status.in_(("queued", "running"))))
+                 .all())
+    except Exception as e:  # noqa: BLE001 — старая база без колонок
+        log.warning("не вышло собрать зависшие генерации: %s", str(e)[:150])
+        return 0
+    for scene in stuck:
+        for kind, status_col, file_col, ext in (
+            ("video", "video_status", "video_filename", ".mp4"),
+            ("frames", "image_status", "image_filename", ".png"),
+        ):
+            if getattr(scene, status_col, "") not in ("queued", "running"):
+                continue
+            ev = (db.query(PointEvent)
+                  .filter(PointEvent.ref_type == "scene", PointEvent.ref_id == scene.id,
+                          PointEvent.kind == kind, PointEvent.task_id != "")
+                  .order_by(PointEvent.id.desc()).first())
+            if not ev or not ev.task_id:
+                continue
+            try:
+                res = asyncio.run(mediagen.kie_task_result(ev.task_id))
+            except Exception as e:  # noqa: BLE001 — движок недоступен, попробуем позже
+                log.warning("задача %s не опрошена: %s", ev.task_id, str(e)[:120])
+                continue
+            if res["state"] == "waiting":
+                continue           # ещё считается — не трогаем, подберём позже
+            if res["state"] == "fail":
+                owner = (db.get(User, scene.track.project.owner_id)
+                         if scene.track and scene.track.project else None)
+                if owner and ev.delta < 0:
+                    _refund(db, owner, abs(int(ev.delta)),
+                            f"движок не справился с задачей {ev.task_id}")
+                setattr(scene, status_col, "error")
+                db.commit()
+                continue
+            if not res["urls"]:
+                continue
+            try:
+                fname = asyncio.run(mediagen.fetch_to_upload(res["urls"][0], ext))
+            except Exception as e:  # noqa: BLE001 — ссылка протухла
+                log.warning("результат задачи %s не скачался: %s", ev.task_id, str(e)[:120])
+                continue
+            setattr(scene, file_col, fname)
+            setattr(scene, status_col, "done")
+            track = scene.track
+            if track:
+                _reg_file(db, fname, track.project.owner_id, kind=kind,
+                          project_id=track.project_id, track_id=track.id, scene_id=scene.id)
+            if kind == "video":
+                scene.video_seconds = mediagen.video_duration(fname)
+                if not scene.approved_manual:
+                    scene.approved = True
+            db.commit()
+            saved += 1
+            log.info("спасена оплаченная генерация: сцена %s, задача %s",
+                     scene.id, ev.task_id)
+    return saved
+
+
 def _reset_orphan_jobs() -> None:
     """Сбросить статусы задач, чьи потоки не пережили перезапуск.
 
@@ -248,6 +320,12 @@ def _reset_orphan_jobs() -> None:
     чтобы их можно было запустить заново."""
     db = SessionLocal()
     try:
+        # СНАЧАЛА СПАСАЕМ ОПЛАЧЕННОЕ. Тред умер вместе с процессом, но задача
+        # на стороне движка считалась дальше и уже списала наши деньги. Прежде
+        # чем помечать что-либо ошибкой, спрашиваем движок: если результат
+        # готов — забираем его. Иначе каждый деплой сжигал токены за работу,
+        # которая была сделана.
+        rescued = _rescue_paid_jobs(db)
         note = "прервано перезапуском сервиса — запусти заново"
         n = 0
         for model, pairs in (
@@ -268,6 +346,8 @@ def _reset_orphan_jobs() -> None:
                     if hasattr(row, err):
                         setattr(row, err, note)
                     n += 1
+        if rescued:
+            log.info("после перезапуска дозабрано готовых генераций: %s", rescued)
         if n:
             db.commit()
             log.info("сброшено зависших задач после рестарта: %s", n)
@@ -599,6 +679,8 @@ POINT_USD = float(os.environ.get("POINT_USD", "0.0125"))
 # 2 токена — символическая плата ровно за это.
 GATEWAY_POINTS = int(os.environ.get("GATEWAY_POINTS", "2"))
 SCENE_SEC = 6              # средняя длина сцены, из claude.py
+# Меньше килобайта — это не дорожка, а обрыв связи или пустой файл.
+MIN_AUDIO_BYTES = 1024
 
 
 # КОЭФФИЦИЕНТ НАЦЕНКИ. Наш токен — своя валюта, он НЕ равен токену движка:
@@ -3452,12 +3534,22 @@ async def create_track(
         fname = f"{uuid.uuid4().hex}{ext}"
         path = os.path.join(UPLOAD_DIR, fname)
         data = await audio.read()
+        # ОБОРВАННУЮ ЗАГРУЗКУ НЕ ЗАПИСЫВАЕМ. Раньше сюда падало что угодно,
+        # включая ноль байт: файл на диске в четыре байта, запись в базе
+        # осталась, длительность подставилась дефолтная — и плеер молча
+        # показывал «Ошибка», а причину увидеть было негде.
+        if len(data) < MIN_AUDIO_BYTES:
+            raise HTTPException(400, "файл дорожки не долетел или пуст — загрузи ещё раз")
         with open(path, "wb") as f:
             f.write(data)
+        dur = _ffprobe_duration(path)
+        if dur <= 0:
+            os.remove(path)
+            raise HTTPException(400, "это не читается как аудио — проверь формат файла")
         track.audio_filename = fname
         _reg_file(db, fname, project.owner_id, kind="audio",
                   project_id=project.id, track_id=track.id)
-        track.audio_duration_sec = _ffprobe_duration(path)
+        track.audio_duration_sec = dur
         try:
             track.audio_profile = _audio_profile(path, track.audio_duration_sec)
         except Exception as e:  # noqa: BLE001
@@ -4266,7 +4358,116 @@ def get_audio(track_id: int, user: User = Depends(current_user), db: Session = D
     path = os.path.join(UPLOAD_DIR, track.audio_filename)
     if not os.path.exists(path):
         raise HTTPException(404, "файл отсутствует на диске")
-    return FileResponse(path)
+    # Битую дорожку honestly называем битой: браузер на такой файл показывает
+    # одно слово «Ошибка», и человеку неоткуда узнать, что файл не долетел.
+    if os.path.getsize(path) < MIN_AUDIO_BYTES:
+        raise HTTPException(422, "файл дорожки повреждён или не догрузился — загрузи его заново")
+    # accept-ranges нужен перемотке: без него ползунок в плеере тащит файл
+    # с нуля на каждый прыжок.
+    return FileResponse(path, headers={"Accept-Ranges": "bytes"})
+
+
+@app.post("/api/tracks/{track_id}/audio/trim")
+async def trim_track_audio(track_id: int, request: Request,
+                           user: User = Depends(current_user),
+                           db: Session = Depends(db_session)):
+    """Оставить в дорожке только выбранный кусок.
+
+    Клип часто делают под припев, а не под всю песню. Резать в стороннем
+    редакторе и загружать заново — лишний круг; здесь тот же результат в один
+    приём. Прежний файл НЕ удаляем: раскадровка уже привязана к прежним
+    секундам, и вернуться должно быть куда.
+    """
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(404, "у трека нет дорожки")
+    src = os.path.join(UPLOAD_DIR, track.audio_filename)
+    if not os.path.exists(src):
+        raise HTTPException(404, "файл дорожки отсутствует на диске")
+    body = await request.json()
+    try:
+        start = max(0.0, float(body.get("start") or 0))
+        end = float(body.get("end") or track.audio_duration_sec or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "начало и конец должны быть числами")
+    if end - start < 1:
+        raise HTTPException(400, "кусок короче секунды — резать нечего")
+    ext = os.path.splitext(track.audio_filename)[1] or ".mp3"
+    fname = f"{uuid.uuid4().hex}{ext}"
+    dst = os.path.join(UPLOAD_DIR, fname)
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(start), "-t", str(round(end - start, 2)),
+             "-i", src, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", dst],
+            capture_output=True, timeout=600)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise HTTPException(500, f"не вышло нарезать дорожку: {str(e)[:120]}")
+    if r.returncode != 0 or not os.path.exists(dst):
+        raise HTTPException(500, f"ffmpeg не нарезал дорожку: {r.stderr.decode()[-200:]}")
+    track.audio_filename = fname
+    track.audio_duration_sec = _ffprobe_duration(dst)
+    _reg_file(db, fname, track.project.owner_id, kind="audio",
+              project_id=track.project_id, track_id=track.id)
+    try:
+        track.audio_profile = _audio_profile(dst, track.audio_duration_sec)
+    except Exception as e:  # noqa: BLE001 — профиль не обязателен
+        log.warning("профиль звука после нарезки не посчитался: %s", str(e)[:120])
+    db.commit()
+    # Кадры звучат отрезками прежней дорожки — перерезаем под новую.
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    db.refresh(track)
+    return track_dict(track)
+
+
+@app.get("/api/tracks/{track_id}/waveform")
+def get_waveform(track_id: int, points: int = 900,
+                 user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Огибающая громкости дорожки — форма волны для плеера.
+
+    Считаем на сервере: тянуть в браузер десятимегабайтный mp3 ради картинки
+    волны значит ждать её на каждом открытии проекта. Результат кэшируем
+    рядом с файлом — форма волны у дорожки не меняется.
+    """
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(404, "аудио не найдено")
+    src = os.path.join(UPLOAD_DIR, track.audio_filename)
+    if not os.path.exists(src) or os.path.getsize(src) < MIN_AUDIO_BYTES:
+        raise HTTPException(422, "дорожка повреждена или не догрузилась")
+    points = max(100, min(2000, int(points or 900)))
+    cache = os.path.join(THUMB_DIR, f"wave_{track.audio_filename}.{points}.json")
+    if os.path.exists(cache) and os.path.getmtime(cache) >= os.path.getmtime(src):
+        try:
+            with open(cache, encoding="utf-8") as fh:
+                return json.load(fh)
+        except ValueError:
+            pass  # кэш побился — считаем заново
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", src, "-ac", "1", "-ar", "8000",
+             "-f", "s16le", "-"],
+            capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise HTTPException(500, f"не вышло прочитать дорожку: {str(e)[:120]}")
+    raw = r.stdout or b""
+    if not raw:
+        raise HTTPException(422, "в дорожке нет звука")
+    import array
+    samples = array.array("h")
+    samples.frombytes(raw[:len(raw) - (len(raw) % 2)])
+    step = max(1, len(samples) // points)
+    peaks = []
+    for i in range(0, len(samples), step):
+        chunk = samples[i:i + step]
+        peaks.append(round(max(abs(min(chunk)), abs(max(chunk))) / 32768, 3) if chunk else 0)
+    peaks = peaks[:points]
+    data = {"peaks": peaks, "duration": float(track.audio_duration_sec or 0)}
+    try:
+        with open(cache, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError as e:  # noqa: BLE001 — без кэша просто медленнее
+        log.warning("кэш формы волны не записался: %s", str(e)[:120])
+    return data
 
 
 # ─────────────────────────── обложки проекта и трека ───────────────────────────

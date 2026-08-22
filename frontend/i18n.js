@@ -1077,6 +1077,14 @@ const I18N = {
       failed: "the style catalogue did not load — reload the page",
     },
 
+    wave: {
+      eq: "EQ", low: "low", mid: "mid", high: "high", flat: "flat",
+      cut: "keep this piece", clear: "clear selection",
+      selected: "selected {a} — {b}",
+      cutAsk: "Keep only {a} — {b} of the track? The storyboard timing is rebuilt for the new length.",
+      broken: "the audio file is damaged — upload it again",
+      hint: "click to seek, drag to select a piece; vertical lines are frame boundaries",
+    },
     track: {
       coverageShort: "Scenes cover {covered} of {total} — the rest of the track has no picture yet.",
       extendScenes: "Add {n} more scenes",
@@ -3471,6 +3479,14 @@ const I18N = {
       failed: "каталог стилей не загрузился — обнови страницу",
     },
 
+    wave: {
+      eq: "эквалайзер", low: "низ", mid: "середина", high: "верх", flat: "ровно",
+      cut: "оставить кусок", clear: "снять выделение",
+      selected: "выделено {a} — {b}",
+      cutAsk: "Оставить в треке только {a} — {b}? Тайминги раскадровки пересоберутся под новую длину.",
+      broken: "файл дорожки повреждён — загрузи его заново",
+      hint: "щелчок — перемотка, протяжка — выделить кусок; вертикали — границы кадров",
+    },
     track: {
       randomCast: "случайные кадры",
       randomCastTitle: "следующая раскадровка: герои распределятся по кадрам — где-то один, где-то двое, пара кадров без людей",

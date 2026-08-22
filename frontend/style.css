@@ -328,8 +328,8 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 /* Этапы живут в строке названия. Прокручиваются, если не влезают, но НЕ
    переносятся на свою строку — она съедала высоту впустую. */
 .track-head .stage-tabs {
-  flex: 1 1 auto; min-width: 0; margin: 0;
-  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  flex: 0 1 auto; min-width: 0; margin: 0;
+  display: flex; overflow-x: auto; scrollbar-width: none;
 }
 .track-head .stage-tabs::-webkit-scrollbar { display: none; }
 .track-head .stage-tab { flex: none; }
@@ -345,23 +345,33 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   padding-bottom: 4px; scrollbar-width: none;
 }
 .stage-tabs::-webkit-scrollbar { display: none; }
-.stage-tab {
-  display: inline-flex; align-items: center; gap: 7px; flex: none;
-  padding: 6px 11px; border-radius: 999px; white-space: nowrap;
-  font-size: 11.5px; font-weight: 700; box-shadow: 0 3px 0 #2d211a;
+/* ЭТАПЫ — ТУМБЛЕР, А НЕ КНОПКИ. Раньше каждый этап был отдельной кнопкой с
+   объёмной тенью и заливкой — три таких «Настройка / Раскадровка / Анимация»
+   весили в интерфейсе больше, чем «Сгенерировать раскадровку», ради которой
+   человек сюда и пришёл. Переключатель показывает, где ты находишься, но не
+   притворяется действием: одна оправа, тонкая, активный сегмент выделен
+   заливкой без тени. */
+.stage-tabs {
+  border: 2px solid #2d211a; border-radius: 999px; padding: 3px;
+  gap: 2px; background: var(--inset); box-shadow: 0 2px 0 #e8d8c4;
 }
-.stage-tab:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 0 0 #2d211a; }
+.stage-tab {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+  font-size: 11.5px; font-weight: 700;
+  border: none; background: none; box-shadow: none; color: var(--ink);
+}
+.stage-tab:hover:not(:disabled):not(.on) { background: rgba(45, 33, 26, .07); }
+.stage-tab:active:not(:disabled) { transform: none; box-shadow: none; }
 .stage-tab .st-num {
   font-family: var(--font-mono); font-size: 10px; font-weight: 800;
-  width: 16px; height: 16px; border-radius: 6px; flex: none;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: rgba(45,33,26,.1);
+  opacity: .55;
 }
 .stage-tab.on,
 .stage-tab.on:hover:not(:disabled) {
   color: var(--on-fire); background: var(--fire-ink);
 }
-.stage-tab.on .st-num { background: rgba(45,33,26,.16); color: var(--on-fire); }
+.stage-tab.on .st-num { opacity: .85; color: var(--on-fire); }
 .stage-dot { width: 8px; height: 8px; border-radius: 50%; background: #cfc2b4; flex: none; }
 .stage-dot.part, .stage-dot.busy { background: var(--accent-2); }
 .stage-dot.busy { animation: stage-dot-pulse 1.1s ease-in-out infinite; }
@@ -3267,3 +3277,27 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .dash-split-part b { font-family: var(--font-mono); font-size: 15px; color: #2d211a; }
 .dash-split-part.bonus b { color: var(--accent-ink); }
 #points-badge.has-bonus { border-color: var(--accent); }
+
+/* ── свой плеер дорожки: волна, границы кадров, эквалайзер, нарезка ── */
+.wp { display: flex; flex-direction: column; gap: 6px; }
+.wp-row { display: flex; align-items: center; gap: 8px; }
+.wp-row .wp-spacer { flex: 1; }
+.wp-play { min-width: 38px; }
+.wp-clock { font-family: var(--font-mono); font-size: 11px; }
+.wp-wave {
+  width: 100%; height: 96px; display: block; cursor: crosshair;
+  border: 2px solid #2d211a; border-radius: 12px; background: var(--inset);
+  touch-action: none;   /* протяжка выделяет кусок, а не листает страницу */
+}
+.wp-broken .wp-wave { opacity: .4; }
+.wp-eq { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.wp-eq label { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.wp-eq input[type="range"] { width: 110px; }
+.wp-hint { font-size: 11px; }
+
+/* Иерархия панели раскадровки: главное действие крупнее, вспомогательные —
+   тише. «Открыть крупно» и «Разложить лист» не должны весить столько же,
+   сколько «Сгенерировать раскадровку». */
+.board-bar .gen-scenes { font-size: 13px; padding: 9px 16px; }
+.board-bar .sb-open,
+.board-bar .slice-storyboard { font-size: 11.5px; padding: 6px 11px; }
