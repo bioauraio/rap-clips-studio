@@ -581,7 +581,11 @@ const I18N = {
         note: "Logline, season arc, beat sheet, an act-by-act script for each episode.",
       },
       object: {
-        track: { one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
+        track: {
+      randomCast: "random cast",
+      randomCastTitle: "next storyboard: heroes spread across frames — somewhere one, somewhere two, a few frames with nobody",
+      shuffleCast: "reshuffle cast",
+      shuffleAsk: "Reshuffle characters across the existing frames? Prompts will need rewriting for the new cast.", one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
                  save: "Save track", style: "Clip style", chars: "Album characters" },
         reel: { one: "video", many: "Videos", add: "+ add video", empty: "no videos yet",
                 save: "Save video", style: "Video style", chars: "Channel characters" },
@@ -3468,6 +3472,10 @@ const I18N = {
     },
 
     track: {
+      randomCast: "случайные кадры",
+      randomCastTitle: "следующая раскадровка: герои распределятся по кадрам — где-то один, где-то двое, пара кадров без людей",
+      shuffleCast: "перетасовать состав",
+      shuffleAsk: "Перетасовать персонажей по готовым кадрам? Промпты под новый состав нужно будет переписать.",
       coverageShort: "Кадры покрывают {covered} из {total} — остаток трека пока без картинки.",
       extendScenes: "Дописать ещё {n} кадров",
       // Обратный случай и куда опаснее: сборка вешает звук с -shortest, и

@@ -4755,6 +4755,23 @@ function renderTrack(tr) {
   $(".t-comment", card).value = tr.comment;
   $(".t-grain", card).checked = Boolean(tr.film_grain);
   $(".t-nostory", card).checked = Boolean(tr.no_story);
+  // Случайный состав: галочка влияет на СЛЕДУЮЩУЮ генерацию раскадровки —
+  // модель сама разложит героев по кадрам и опишет в промптах именно их.
+  // Кнопка рядом тасует состав в УЖЕ готовой раскадровке, без генерации.
+  const rc = $(".t-randomcast", card);
+  if (rc) rc.checked = Boolean(tr.random_cast);
+  const shuffleBtn = $(".t-shuffle-cast", card);
+  if (shuffleBtn) {
+    shuffleBtn.classList.toggle("hidden", !(tr.scenes_count > 0));
+    shuffleBtn.addEventListener("click", async () => {
+      if (!confirm(t("track.shuffleAsk"))) return;
+      shuffleBtn.disabled = true;
+      try {
+        await api(`/api/tracks/${tr.id}/scenes/shuffle-cast`, { method: "POST" });
+      } catch (e) { fail(e); shuffleBtn.disabled = false; return; }
+      await loadProject();
+    });
+  }
   $(".t-lyrics", card).value = tr.lyrics;
   const audioEl = $(".t-audio", card);
   if (tr.audio_filename) audioEl.src = `/api/tracks/${tr.id}/audio`;
@@ -6359,6 +6376,7 @@ async function saveTrack(id, card) {
       comment: $(".t-comment", card).value,
       film_grain: $(".t-grain", card).checked,
       no_story: $(".t-nostory", card).checked,
+      random_cast: $(".t-randomcast", card) ? $(".t-randomcast", card).checked : false,
       lyrics: $(".t-lyrics", card).value,
     },
   });

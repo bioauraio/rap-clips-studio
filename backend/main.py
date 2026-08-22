@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import re
+import random
 import secrets
 import threading
 import shutil
@@ -2366,6 +2367,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
                                - int(t.audio_duration_sec or 0)) if t.audio_duration_sec else 0,
         "copied_from_id": int(t.copied_from_id or 0),
         "film_grain": t.film_grain, "no_story": t.no_story,
+        "random_cast": bool(getattr(t, "random_cast", False)),
         # Один выбор движков на весь объект. Пусто = «как решит тариф»;
         # карточка кадра показывает это наследование, а не пустой чип.
         "video_engine": t.video_engine or "", "image_engine": t.image_engine or "",
@@ -3485,6 +3487,8 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
         track.director_note = str(body["director_note"] or "")[:4000]
     if "film_grain" in body:
         track.film_grain = bool(body["film_grain"])
+    if "random_cast" in body:
+        track.random_cast = bool(body["random_cast"])
     if "no_story" in body:
         track.no_story = bool(body["no_story"])
     if "location_bible" in body:
@@ -4497,6 +4501,7 @@ def _run_scene_generation(track_id: int) -> None:
                 # Как стиль влияет на драматургию (админка стилей).
                 story_base=prompts_catalog.story_base(_track_style_keys(track)),
                 engine=engine,
+                random_cast=bool(getattr(track, "random_cast", False)),
             ))
         for s in list(track.scenes):
             _remove_media(s.image_filename)
@@ -5112,6 +5117,86 @@ def generate_storyboard(track_id: int, user: User = Depends(current_user), db: S
     db.commit()
     _spawn_gen(user, _run_storyboard, track_id, kind="storyboard")
     return {"ok": True}
+
+
+# СЛУЧАЙНЫЙ СОСТАВ КАДРОВ. Доли подобраны не «поровну», а по тому, как
+# смонтирован живой клип: несущая масса — одиночные планы, они держат
+# узнавание героя; пары дают диалог и конфликт; тройка и пустой кадр —
+# редкие акценты, от которых ряд перестаёт быть однообразным.
+CAST_SHAPE = (
+    (1, 55),   # один герой в кадре
+    (2, 28),   # двое
+    (3, 10),   # трое
+    (0, 7),    # без людей: пейзаж, деталь, предмет
+)
+
+
+def _pick_cast_size(rnd: random.Random, pool: int) -> int:
+    """Сколько героев в этом кадре."""
+    roll = rnd.randint(1, 100)
+    acc = 0
+    for size, weight in CAST_SHAPE:
+        acc += weight
+        if roll <= acc:
+            return min(size, pool)
+    return min(1, pool)
+
+
+def _shuffle_track_cast(track: Track, project: Project, seed: "int | None" = None) -> int:
+    """Разложить персонажей проекта по кадрам трека.
+
+    Главный герой (первый в списке проекта) появляется заметно чаще прочих:
+    равномерная раздача превращает клип в парад незнакомцев, где ни одно лицо
+    не успевает запомниться. Остальные тасуются колодой — так каждый получает
+    свои кадры, а не выпадает случайно по десять раз подряд.
+    """
+    names = [c.name.strip() for c in sorted(project.characters, key=lambda x: x.position)
+             if c.name.strip()]
+    if not names:
+        return 0
+    rnd = random.Random(seed if seed is not None else secrets.randbits(32))
+    hero = names[0]
+    others = names[1:]
+    deck: list[str] = []
+    changed = 0
+    scenes = sorted(track.scenes, key=lambda x: (x.position, x.id))
+    for sc in scenes:
+        size = _pick_cast_size(rnd, len(names))
+        if size == 0:
+            cast = []
+        else:
+            # Герой в кадре с вероятностью 60% — при одном персонаже в проекте
+            # это просто он сам.
+            cast = [hero] if (not others or rnd.randint(1, 100) <= 60) else []
+            while len(cast) < size and others:
+                if not deck:
+                    deck = others[:]
+                    rnd.shuffle(deck)
+                pick = deck.pop()
+                if pick not in cast:
+                    cast.append(pick)
+            if not cast:
+                cast = [hero]
+        line = ",".join(cast)
+        if line != (sc.characters or ""):
+            was = sc.characters or ""
+            sc.characters = line
+            # Имена в тексте промпта едут за составом, а описание внешности
+            # остаётся прежним — помечаем кадр, чтобы это не всплыло картинкой.
+            _swap_prompt_names(sc, was, line)
+            sc.prompt_stale = True
+            changed += 1
+    return changed
+
+
+@app.post("/api/tracks/{track_id}/scenes/shuffle-cast")
+def shuffle_track_cast(track_id: int, user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Перетасовать персонажей по кадрам — по кнопке, без генерации."""
+    track = _own_track(db, user, track_id)
+    changed = _shuffle_track_cast(track, track.project)
+    db.commit()
+    return {"ok": True, "changed": changed}
 
 
 def _normalize_scene_characters(raw: str, project: Project) -> str:

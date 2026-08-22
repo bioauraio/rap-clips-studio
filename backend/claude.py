@@ -375,6 +375,20 @@ async def extend_scenes(
     историю заново и выдаёт другую завязку. Здесь она видит последние кадры и
     продолжает с того места, где раскадровка оборвалась."""
     system = SCENES_SYSTEM.replace("{STYLE}", style or "стиль на твой выбор, подходящий треку")
+    # РАЗНЫЙ СОСТАВ КАДРА. Без прямого требования модель ведёт через весь клип
+    # одного героя: получается парад одинаковых планов. Просим раскладывать
+    # состав так, как режут живой клип — одиночные планы несущей массой, пары
+    # для диалога, тройки и безлюдные кадры как редкие акценты.
+    if random_cast:
+        system += (
+            "\n\nСОСТАВ КАДРА РАЗНЫЙ. Не веди одного и того же героя через все "
+            "кадры. Примерные доли по раскадровке: около половины кадров — ОДИН "
+            "герой крупно или средне, около трети — ДВОЕ во взаимодействии, "
+            "несколько кадров — ТРОЕ, и один-два кадра БЕЗ людей вовсе (пейзаж, "
+            "деталь, предмет). Главный герой появляется чаще остальных, но не в "
+            "каждом кадре. В поле characters каждого кадра перечисляй ровно тех, "
+            "кто в нём есть, и описывай в image_prompt именно этот состав."
+        )
     chars = _characters_block(characters or [])
     tail = "\n".join(
         f"  {t['position']}. {t.get('shot_note') or ''}"
@@ -402,7 +416,7 @@ async def generate_scenes(
     *, story: str, character_bible: str, track_note: str, title: str,
     lyrics: str, comment: str, style: str, duration_sec: int,
     characters: list[dict] | None = None, audio_profile: str = "",
-    story_base: str = "", engine: str = "",
+    story_base: str = "", engine: str = "", random_cast: bool = False,
 ) -> dict:
     system = SCENES_SYSTEM.replace("{STYLE}", style or "стиль на твой выбор, подходящий треку")
     chars = _characters_block(characters or [])
