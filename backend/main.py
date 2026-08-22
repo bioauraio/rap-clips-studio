@@ -4412,7 +4412,6 @@ def generate_scenes(track_id: int, user: User = Depends(current_user), db: Sessi
     return {"ok": True}
 
 
-@app.patch("/api/scenes/{scene_id}")
 def _swap_prompt_names(scene: Scene, old_raw: str, new_raw: str) -> None:
     """Заменить имена прежних героев в текстах кадра на новых.
 
@@ -4436,6 +4435,7 @@ def _swap_prompt_names(scene: Scene, old_raw: str, new_raw: str) -> None:
         setattr(scene, field, text)
 
 
+@app.patch("/api/scenes/{scene_id}")
 async def update_scene(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
