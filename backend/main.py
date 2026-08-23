@@ -6400,13 +6400,21 @@ def delete_scene_frame(slot: str, scene_id: int, user: User = Depends(current_us
 @app.post("/api/scenes/{scene_id}/frames/add")
 def add_scene_frame(scene_id: int, user: User = Depends(current_user),
                     db: Session = Depends(db_session)):
-    """Дорисовать ещё один промежуточный кадр — сверх расчётного количества."""
+    """Плюсик в сетке кадров: добавить кадр в ЛЮБОМ состоянии сцены.
+
+    Промежуточный кадр рисуется по первому — он идёт референсом. Но у пустой
+    сцены первого кадра нет, и кнопка отвечала отказом «сначала сгенерируй
+    кадры»: человек нажимал «добавить кадр» и получал инструкцию вместо
+    кадра. Теперь пустая сцена просто рисует свой первый кадр — это и есть
+    «добавить кадр», когда добавлять пока не к чему.
+    """
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
-    if not scene.image_filename:
-        raise HTTPException(400, "сначала сгенерируй кадры сцены — референсом идёт первый кадр")
     if not (scene.image_prompt or "").strip():
-        raise HTTPException(400, "у сцены пуст промпт первого кадра")
+        raise HTTPException(400, "у сцены пуст промпт первого кадра — напиши его кнопкой «Промпт»")
+    if not scene.image_filename:
+        return generate_scene_frames(scene_id, which="first", engine="",
+                                     user=user, db=db)
     eng = scene.image_engine or _plan_image_engine(user)
     _scene_charge(db, user, scene,
                   _image_cost(user, eng, scene.track.image_resolution or ""),
@@ -7738,6 +7746,118 @@ def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list) -> str:
         parts.append(f"CHARACTER (clothing, accessories, character and mood): {desc}")
     parts.append(rules)
     return "\n\n".join(parts)
+
+
+# РАЗВОРОТ ПРЕДМЕТА. У персонажа лист строится вокруг фигуры и лица, у вещи —
+# вокруг формы, материала и этикетки: поза, рост и руки здесь не значат
+# ничего, зато значат блики, толщина стенки и то, что написано на упаковке.
+# Поэтому отдельный набор промптов, а не «тот же с другими словами».
+PROP_SHEET_STYLES = {
+    "3d": (
+        "Professional 3D product turnaround sheet, high-end CG render (Unreal "
+        "Engine / Blender cycles look): the SAME single object shown in four "
+        "views side by side — front, three-quarter, side, back — floating at the "
+        "same scale and the same distance in every view. Clean neutral light-grey "
+        "studio background, soft even three-point lighting, subtle contact shadow. "
+        "Accurate materials: surface finish, reflections, transparency, print."
+    ),
+    "real": (
+        "Photorealistic product reference sheet: the SAME single object "
+        "photographed in four views side by side — front, three-quarter, side, "
+        "back — identical scale and identical distance in every view. Neutral "
+        "light-grey seamless studio backdrop, soft even softbox lighting, sharp "
+        "focus, true material texture."
+    ),
+}
+
+PROP_SHEET_VIEWS = (
+    "Four views left to right: front, three-quarter, side, back. "
+    "ONE object only, no hands, no people, no packaging box unless the object IS "
+    "the packaging, nothing else in frame. Identical colour, identical proportions "
+    "and identical markings in all four views. "
+    "Even neutral grey studio background, no text captions, no labels added by "
+    "you, no grid lines, no watermark."
+)
+
+# Этикетка — то место, где генератор врёт чаще всего: он «дорисовывает»
+# правдоподобный текст вместо настоящего. Для товара это брак.
+PROP_SHEET_IDENTITY = (
+    "The reference photos are ALL the SAME real object — this is the product. "
+    "Reproduce its exact shape, exact colour, exact finish and exact printed "
+    "artwork. Copy any text and logo on it EXACTLY as photographed, letter for "
+    "letter; never invent, translate or restyle the lettering. If a detail is "
+    "not visible in the photos, keep it plain rather than inventing it."
+)
+
+
+def _prop_sheet_photos(attr: CharacterAttribute, limit: int) -> list:
+    """Живые снимки предмета для референса — сгенерированные листы не берём."""
+    live = [ph for ph in sorted(attr.photos, key=lambda x: (x.position, x.id))
+            if (getattr(ph, "kind", "photo") or "photo") == "photo"
+            and os.path.exists(os.path.join(UPLOAD_DIR, ph.filename))]
+    limit = max(1, int(limit))
+    if len(live) <= limit:
+        return live
+    return [live[0]] + live[-(limit - 1):]
+
+
+@app.post("/api/attributes/{attr_id}/generate-model")
+async def generate_attribute_model(attr_id: int, request: Request,
+                                   user: User = Depends(current_user),
+                                   db: Session = Depends(db_session)):
+    """3D-разворот ПРЕДМЕТА по его фото и описанию.
+
+    То же самое, что разворот персонажа, но для вещи: набор ракурсов, из
+    которого дальше строятся кадры. Нужен ровно затем же — чтобы продукт
+    оставался собой от кадра к кадру, а не превращался в похожую банку.
+    """
+    attr = _own_attribute(db, user, attr_id)
+    body = await request.json() if await request.body() else {}
+    desc = (str(body.get("description") or "").strip() or attr.description).strip()
+    kind = str(body.get("kind") or "3d")
+    if kind not in PROP_SHEET_STYLES:
+        kind = "3d"
+    engine = _model_sheet_engine(user)
+    spec = mediagen.IMAGE_ENGINES.get(engine, {})
+    max_refs = int(spec.get("max_refs") or 1)
+    photos = _prop_sheet_photos(
+        attr, min(MODEL_SHEET_MAX_PHOTOS, max_refs) if max_refs > 1
+        else MODEL_SHEET_COLLAGE_PHOTOS)
+    if not desc and not photos:
+        raise HTTPException(400, "нужны фото предмета или его описание")
+    parts = [PROP_SHEET_STYLES[kind]]
+    if photos:
+        parts.append(PROP_SHEET_IDENTITY)
+    else:
+        parts.append("No reference photos: build the object from the written "
+                     "description alone and keep it identical across all views.")
+    if desc:
+        parts.append(f"OBJECT (shape, material, colour, printed artwork): {desc}")
+    parts.append(PROP_SHEET_VIEWS)
+    prompt = "\n\n".join(parts)
+
+    resolution = "4K" if "4K" in (spec.get("resolutions") or ()) else ""
+    cost = _image_cost(user, engine, resolution)
+    _charge(db, user, cost, f"разворот предмета {attr.id}",
+            kind="frames", engine=engine, ref_type="attribute", ref_id=attr.id)
+    db.commit()
+    refs = [os.path.join(UPLOAD_DIR, ph.filename) for ph in photos]
+    try:
+        data, mime = await mediagen.generate_image(
+            prompt, reference_paths=refs, engine=engine,
+            resolution=resolution, aspect="16:9")
+    except Exception as e:  # noqa: BLE001 — движок упал, деньги возвращаем
+        _refund(db, user, cost, f"разворот предмета {attr.id}")
+        db.commit()
+        raise HTTPException(502, _err_text(e, 502))
+    fname = _save_image(data, mime)
+    _reg_file(db, fname, attr.character.project.owner_id, kind="model",
+              project_id=attr.character.project_id)
+    pos = max((ph.position for ph in attr.photos), default=0) + 1
+    db.add(AttributePhoto(attribute_id=attr.id, position=pos,
+                          filename=fname, kind="model"))
+    db.commit()
+    return {"ok": True, "url": f"/api/media/{fname}", "charged": cost}
 
 
 @app.post("/api/characters/{char_id}/generate-model")

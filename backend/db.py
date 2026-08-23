@@ -393,6 +393,10 @@ class AttributePhoto(Base):
     attribute_id = Column(Integer, ForeignKey("character_attributes.id"), nullable=False)
     position = Column(Integer, nullable=False, default=0)
     filename = Column(String, nullable=False)
+    # photo — живой снимок предмета, model — сгенерированный лист ракурсов.
+    # Без этого различия лист уходил бы референсом в следующую генерацию, и
+    # через пару итераций предмет рисовался бы с рисунка, а не с фотографии.
+    kind = Column(String, nullable=False, default="photo")
     created_at = Column(DateTime, default=now)
 
     attribute = relationship("CharacterAttribute", back_populates="photos")
