@@ -4280,8 +4280,22 @@ function paintSceneEngineLine(line, tr, sceneId) {
     mark.textContent = "· " + (t("engines.ownShort") || "свой");
     line.appendChild(mark);
   }
+  // ЧЕМ КАДР СНЯТ НА САМОМ ДЕЛЕ. Когда платный движок отказывает — кончились
+  // кредиты, отвалился ключ, — конвейер уходит на шлюз владельца по
+  // подписке. Раньше в строке всё равно стояло имя платной модели, и понять,
+  // что рисовал Grok, было неоткуда. Теперь это написано прямо, вместе с
+  // главным следствием: шлюз не тратит кредиты и не упирается в лимиты.
   const made = s && (s.video_engine || s.image_engine);
   if (made) line.title = engineTitle(made);
+  const GATEWAYS = ["grok", "chatgpt"];
+  const usedGw = GATEWAYS.find((g) => made === g);
+  if (usedGw) {
+    const gw = document.createElement("span");
+    gw.className = "s-engine-gw";
+    gw.textContent = "· " + t("engines.viaGateway", { name: engineTitle(usedGw) });
+    gw.title = t("engines.viaGatewayHint");
+    line.appendChild(gw);
+  }
 }
 
 

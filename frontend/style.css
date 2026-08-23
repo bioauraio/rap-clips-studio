@@ -3385,3 +3385,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 }
 .t-url-go { flex: none; font-size: 11.5px; padding: 6px 12px; }
 .t-url-hint { font-size: 11px; line-height: 1.4; margin: 4px 0 0; }
+
+/* Кадр снят запасным шлюзом, а не платным движком — говорим об этом в строке
+   движка. Не тревожный цвет: это рабочий режим, а не поломка. */
+.s-engine-gw { color: var(--accent-2-ink); font-size: 10.5px; }

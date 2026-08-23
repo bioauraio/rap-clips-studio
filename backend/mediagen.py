@@ -142,7 +142,13 @@ NANO_RESOLUTION = os.environ.get("NANO_RESOLUTION", "2K")
 # Порядок фолбэка движков кадров, если явный не задан вызовом.
 IMAGE_PROVIDER_ORDER = os.environ.get("IMAGE_PROVIDER_ORDER", "").strip()
 
-IMAGE_TIMEOUT = httpx.Timeout(200.0, connect=15.0)
+# ТЕРПЕНИЕ К ШЛЮЗАМ. Это не API, а живой браузер по подписке владельца: он
+# рисует картинку минуты, а при нескольких кадрах подряд запросы ещё и стоят
+# в очереди — браузер один. На 200 секундах шлюз регулярно не успевал, и
+# запасной путь, ради которого он и существует, не срабатывал ровно тогда,
+# когда платный движок отказал. Спешить тут некуда: шлюз стоит нам ноль.
+IMAGE_TIMEOUT = httpx.Timeout(
+    float(os.environ.get("IMAGE_GATEWAY_TIMEOUT", "420")), connect=15.0)
 VIDEO_TIMEOUT = httpx.Timeout(560.0, connect=15.0)
 
 # Итоговое разрешение кадров/клипа. 9:16. «4К» по высоте — апскейл ffmpeg:
@@ -353,6 +359,21 @@ def resolve_image_engine(wanted: str) -> str:
 
 def _kie_headers() -> dict:
     return {"Authorization": f"Bearer {KIE_API_KEY}", "Content-Type": "application/json"}
+
+
+def _why(e: Exception) -> str:
+    """Человеческая причина сбоя шлюза.
+
+    У httpx.ReadTimeout пустой str(), и в карточке кадра появлялось
+    «ChatGPT-шлюз недоступен: » — сообщение без сообщения. Тип исключения
+    знает ответ всегда, поэтому берём его, когда текста нет.
+    """
+    text = str(e).strip()
+    if text:
+        return text
+    if isinstance(e, httpx.TimeoutException):
+        return f"не ответил за {int(IMAGE_TIMEOUT.read or 0)} с"
+    return type(e).__name__
 
 
 async def _kie_upload(client: httpx.AsyncClient, path: str) -> str:
@@ -606,7 +627,7 @@ async def generate_image_ex(
                         "engine": "chatgpt", "native_4k": False}
             errors.append(f"ChatGPT-шлюз {r.status_code}: {r.text[:150]}")
         except Exception as e:  # noqa: BLE001
-            errors.append(f"ChatGPT-шлюз недоступен: {e}")
+            errors.append(f"ChatGPT-шлюз недоступен: {_why(e)}")
         return None
 
     async def _grok() -> dict | None:
@@ -629,7 +650,7 @@ async def generate_image_ex(
                         "engine": "grok", "native_4k": False}
             errors.append(f"Grok-шлюз {r.status_code}: {r.text[:150]}")
         except Exception as e:  # noqa: BLE001
-            errors.append(f"Grok-шлюз недоступен: {e}")
+            errors.append(f"Grok-шлюз недоступен: {_why(e)}")
         return None
 
     async def _nano(engine_id: str) -> dict | None:

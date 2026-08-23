@@ -827,6 +827,8 @@ const I18N = {
 
     // ─────────── движки: один выбор на объект ───────────
     engines: {
+      viaGateway: "{name} is drawing",
+      viaGatewayHint: "The paid engine refused, so the owner\u2019s subscription gateway took over: no credits are spent and there are no per-request limits, but it is slower.",
       ownShort: "own",
       title: "Engines",
       hint: "One choice for the whole {object}. Every frame follows it.",
@@ -3250,6 +3252,8 @@ const I18N = {
 
     // ─────────── движки: один выбор на объект ───────────
     engines: {
+      viaGateway: "рисует {name}",
+      viaGatewayHint: "Платный движок отказал, работает шлюз по подписке владельца: кредиты не тратятся и лимитов на запросы нет, но получается медленнее.",
       ownShort: "свой",
       title: "Движки",
       hint: "Один выбор на весь объект ({object}). Все кадры идут по нему.",
