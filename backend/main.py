@@ -11153,6 +11153,20 @@ USAGE_KINDS = ("frames", "video", "chat", "audio", "story", "sheet",
                "model", "assemble", "other")
 
 
+@app.get("/api/account/api-credit")
+async def account_api_credit(user: User = Depends(current_user)):
+    """Остаток на нашем счету у поставщика движков — только владельцу.
+
+    Обычному человеку это число ничего не говорит и говорить не должно: у
+    него свои токены. Владельцу оно жизненно важно — расход админа во
+    внутренний журнал не попадает, и уход счёта в минус иначе замечается
+    только по отказам генерации.
+    """
+    if not user.is_admin:
+        raise HTTPException(404, "не найдено")
+    return await mediagen.kie_credit()
+
+
 @app.get("/api/account/usage")
 def account_usage(days: int = 30, user: User = Depends(current_user),
                   db: Session = Depends(db_session)):

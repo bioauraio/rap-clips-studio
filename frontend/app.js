@@ -1048,6 +1048,12 @@ async function renderAccountPane(pane) {
   // Расход — отдельный запрос и НЕ обязательный: журнал мог не завестись на
   // старой базе, и кабинет обязан открыться всё равно.
   const usage = await api("/api/account/usage?days=30").catch(() => null);
+  // Счёт у поставщика движков — только владельцу. Его генерации не
+  // тарифицируются внутри (админ), поэтому внутренний расход всегда ноль, а
+  // деньги при этом уходят. Единственное честное место, где это видно.
+  const apiCredit = (me && me.user && me.user.is_admin)
+    ? await api("/api/account/api-credit").catch(() => null)
+    : null;
   const linked = a.linked || {};
   const chips = [["telegram", "Telegram"], ["google", "Google"],
                  ["yandex", t("account.yandex")], ["password", t("account.password")]];
@@ -1068,6 +1074,12 @@ async function renderAccountPane(pane) {
       </div>
     </div>
 
+    ${apiCredit && apiCredit.ok ? `<div class="dash-api ${apiCredit.credit < 0 ? "bad" : ""}">
+      <span class="dash-api-label">${escHtml(t("dash.apiCredit"))}</span>
+      <b>${escHtml(tNum(Math.round(apiCredit.credit)))}</b>
+      ${apiCredit.credit < 0
+        ? `<span class="dash-api-warn">${escHtml(t("dash.apiCreditNeg"))}</span>` : ""}
+    </div>` : ""}
     <div class="dash-hero">
       <div class="dash-hero-top">
         <span class="dash-big">${escHtml(tNum(a.points))}</span>
@@ -5853,7 +5865,15 @@ function renderScene(s, audioEl, mode = "board") {
     add.onclick = async () => {
       try {
         await api(`/api/scenes/${s.id}/frames/add`, { method: "POST" });
-        midframesExpect.set(s.id, { n: (s.midframes || []).length + 1, ts: Date.now() });
+        if (s.image_url) {
+          // Дорисовывается промежуточный: ждём его по росту числа кадров.
+          midframesExpect.set(s.id, { n: (s.midframes || []).length + 1, ts: Date.now() });
+        } else {
+          // Пустая сцена рисует ПЕРВЫЙ кадр — у него есть обычный статус,
+          // и карточка должна показать «рисую» сразу, не дожидаясь опроса.
+          s.image_status = "queued";
+          await loadProject();
+        }
       } catch (e) { fail(e); }
     };
     thumbs.appendChild(add);

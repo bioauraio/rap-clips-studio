@@ -397,6 +397,10 @@ class AttributePhoto(Base):
     # Без этого различия лист уходил бы референсом в следующую генерацию, и
     # через пару итераций предмет рисовался бы с рисунка, а не с фотографии.
     kind = Column(String, nullable=False, default="photo")
+    # Для kind="spin" — азимут камеры в градусах (0…359). Вьюер крутит предмет,
+    # подставляя кадр с нужным углом, поэтому угол должен быть свойством кадра,
+    # а не выводиться из порядка: ракурсы догенерируются и порядок поедет.
+    angle = Column(Integer, nullable=False, default=-1)
     created_at = Column(DateTime, default=now)
 
     attribute = relationship("CharacterAttribute", back_populates="photos")

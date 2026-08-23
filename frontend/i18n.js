@@ -844,6 +844,8 @@ const I18N = {
 
     // ─────────── дашборд кабинета ───────────
     dash: {
+      apiCredit: "credits left at the engine provider",
+      apiCreditNeg: "the account is in debt — new generations will be refused until you top it up",
       paidPart: "paid",
       bonusPart: "bonus",
       bonusFirst: "bonus tokens are spent first",
@@ -3261,6 +3263,8 @@ const I18N = {
 
     // ─────────── дашборд кабинета ───────────
     dash: {
+      apiCredit: "кредитов у поставщика движков",
+      apiCreditNeg: "счёт в минусе — генерации будут отбиваться, пока не пополнишь",
       paidPart: "платных",
       bonusPart: "бонусных",
       bonusFirst: "бонусные тратятся первыми",

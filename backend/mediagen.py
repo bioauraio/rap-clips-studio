@@ -452,6 +452,29 @@ async def _kie_result_urls(model: str, payload_input: dict, *, timeout_s: float,
     raise MediaError(f"kie.ai: таймаут ожидания результата ({model})")
 
 
+async def kie_credit() -> dict:
+    """Сколько кредитов осталось на нашем счету у kie.ai.
+
+    Это НЕ токены человека, а наши деньги у поставщика: генерации списываются
+    оттуда. Владелец работает админом, а админ у нас не тарифицируется — его
+    расход не попадает во внутренний журнал вовсе, и единственное место, где
+    видно правду о тратах, это баланс поставщика. Отрицательное значение
+    означает долг: новые задачи начнут отбиваться отказом.
+    """
+    if not KIE_API_KEY:
+        return {"ok": False, "credit": None, "error": "ключ kie.ai не задан"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            r = await client.get(f"{KIE_API}/api/v1/chat/credit",
+                                 headers=_kie_headers())
+        if r.status_code != 200:
+            return {"ok": False, "credit": None, "error": f"http {r.status_code}"}
+        data = r.json() or {}
+        return {"ok": True, "credit": float(data.get("data") or 0), "error": ""}
+    except Exception as e:  # noqa: BLE001 — недоступность поставщика не ошибка кабинета
+        return {"ok": False, "credit": None, "error": str(e)[:150]}
+
+
 async def kie_task_result(task_id: str) -> dict:
     """Чем закончилась задача kie.ai — по её id, без ожидания.
 

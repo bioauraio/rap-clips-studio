@@ -3365,3 +3365,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 }
 .cc-agent-act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-ink); }
 .cc-agent-act:disabled { opacity: .55; }
+
+/* Счёт у поставщика движков — виден только владельцу. В минусе кричит. */
+.dash-api {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 7px 10px; margin-bottom: 8px; border-radius: 10px;
+  border: 1px solid rgba(45, 33, 26, .18); background: var(--inset); font-size: 12px;
+}
+.dash-api b { font-family: var(--font-mono); font-size: 15px; }
+.dash-api.bad { border-color: var(--danger); background: rgba(200, 60, 40, .07); }
+.dash-api.bad b { color: var(--danger-ink); }
+.dash-api-warn { color: var(--danger-ink); }
