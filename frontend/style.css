@@ -3376,3 +3376,12 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .dash-api.bad { border-color: var(--danger); background: rgba(200, 60, 40, .07); }
 .dash-api.bad b { color: var(--danger-ink); }
 .dash-api-warn { color: var(--danger-ink); }
+
+/* Импорт дорожки по ссылке: строка появляется по кнопке, не занимая место. */
+.t-url-row { display: flex; gap: 6px; margin-top: 6px; }
+.t-url-input {
+  flex: 1; min-width: 0; padding: 6px 10px; font-size: 12px;
+  border: 1.5px solid rgba(45, 33, 26, .3); border-radius: 10px; background: var(--card);
+}
+.t-url-go { flex: none; font-size: 11.5px; padding: 6px 12px; }
+.t-url-hint { font-size: 11px; line-height: 1.4; margin: 4px 0 0; }

@@ -5020,6 +5020,35 @@ function renderTrack(tr) {
       getLink.setAttribute("download", `${(tr.title || "track").slice(0, 60)}.mp3`);
     }
   }
+  // Импорт дорожки по ссылке. Поле спрятано за кнопкой: в обычной работе
+  // файл перетаскивают, а ссылка нужна изредка — держать её постоянно
+  // раскрытой значит занимать строку ради редкого случая.
+  const urlBtn = $(".t-audio-url", card);
+  const urlRow = $(".t-url-row", card);
+  const urlHint = $(".t-url-hint", card);
+  if (urlBtn && urlRow) {
+    urlBtn.addEventListener("click", () => {
+      const closed = urlRow.classList.contains("hidden");
+      urlRow.classList.toggle("hidden", !closed);
+      if (urlHint) urlHint.classList.toggle("hidden", !closed);
+      if (closed) { const f = $(".t-url-input", urlRow); if (f) f.focus(); }
+    });
+    const go = $(".t-url-go", urlRow);
+    const field = $(".t-url-input", urlRow);
+    const send = async () => {
+      const url = (field.value || "").trim();
+      if (!url) return;
+      go.disabled = true;
+      try {
+        await api(`/api/tracks/${tr.id}/audio/from-url`, { method: "POST", body: { url } });
+        waveCache.delete(tr.id);
+        field.value = "";
+      } catch (e) { fail(e); go.disabled = false; return; }
+      await loadProject();
+    };
+    go.addEventListener("click", send);
+    field.addEventListener("keydown", (ev) => { if (ev.key === "Enter") send(); });
+  }
   const durEl = $(".t-duration", card);
   durEl.textContent = tr.audio_duration_sec ? fmtTime(tr.audio_duration_sec) : "";
   if (tr.audio_profile) durEl.title = t("track.audioProfile") + ": " + tr.audio_profile;

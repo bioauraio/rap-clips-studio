@@ -4461,6 +4461,86 @@ async def replace_track_audio(track_id: int, audio: UploadFile,
     return track_dict(track)
 
 
+# Площадки, где аудио отдаётся только через обход их правил. Пускать сюда
+# ссылку на ролик значит встроить в сервис выкачивание чужих записей: жалобы
+# правообладателей прилетят не пользователю, а на домен и на платёжный
+# аккаунт. Поэтому отказ явный и с объяснением, а не молчаливая ошибка.
+STREAM_HOSTS = (
+    "youtube.com", "youtu.be", "music.youtube.com",
+    "soundcloud.com", "spotify.com", "vk.com", "vkvideo.ru",
+    "tiktok.com", "instagram.com", "rutube.ru", "yandex.ru",
+)
+AUDIO_URL_MAX_BYTES = 60 * 1024 * 1024   # 60 МБ — больше песни не бывает
+
+
+@app.post("/api/tracks/{track_id}/audio/from-url")
+async def track_audio_from_url(track_id: int, request: Request,
+                               user: User = Depends(current_user),
+                               db: Session = Depends(db_session)):
+    """Забрать дорожку по ПРЯМОЙ ссылке на аудиофайл.
+
+    Работает с тем, что лежит файлом: облако с прямой ссылкой, битмейкерская
+    площадка, твой сайт, выгрузка от дистрибьютора. Ссылки на ролики и
+    стриминг отбиваются — оттуда звук достаётся только в обход правил
+    площадки, и делать это частью продукта нельзя.
+    """
+    _guard_disk()
+    track = _own_track(db, user, track_id)
+    body = await request.json()
+    url = str(body.get("url") or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "нужна ссылка, начинающаяся с http:// или https://")
+    host = url.split("//", 1)[1].split("/", 1)[0].lower().lstrip("www.")
+    if any(host == h or host.endswith("." + h) for h in STREAM_HOSTS):
+        raise HTTPException(
+            400,
+            "с этой площадки скачивать нельзя — нужна прямая ссылка на файл "
+            "(облако, сайт битмейкера, выгрузка от дистрибьютора)")
+    import httpx as _httpx  # noqa: PLC0415 — так же, как в остальных местах файла
+
+    try:
+        async with _httpx.AsyncClient(timeout=_httpx.Timeout(180.0, connect=15.0),
+                                      follow_redirects=True) as client:
+            r = await client.get(url)
+    except Exception as e:  # noqa: BLE001 — недоступный адрес не должен ронять сервис
+        raise HTTPException(400, f"не вышло скачать: {str(e)[:150]}")
+    if r.status_code != 200:
+        raise HTTPException(400, f"ссылка ответила {r.status_code} — файл недоступен")
+    data = r.content or b""
+    if len(data) < MIN_AUDIO_BYTES:
+        raise HTTPException(400, "по ссылке пусто — это не файл дорожки")
+    if len(data) > AUDIO_URL_MAX_BYTES:
+        raise HTTPException(400, "файл больше 60 МБ — загрузи его вручную")
+    # Расширение берём из адреса, а не из типа ответа: облака отдают
+    # application/octet-stream на что угодно, и по нему ничего не понять.
+    ext = os.path.splitext(url.split("?", 1)[0])[1].lower()
+    if ext not in (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
+        ext = ".mp3"
+    fname = f"{uuid.uuid4().hex}{ext}"
+    path = os.path.join(UPLOAD_DIR, fname)
+    with open(path, "wb") as f:
+        f.write(data)
+    dur = _ffprobe_duration(path)
+    if dur <= 0:
+        os.remove(path)
+        raise HTTPException(
+            400, "по ссылке лежит не аудио — вероятно, это страница, а не файл")
+    track.audio_filename = fname
+    track.audio_duration_sec = dur
+    _reg_file(db, fname, track.project.owner_id, kind="audio",
+              project_id=track.project_id, track_id=track.id)
+    try:
+        track.audio_profile = _audio_profile(path, dur)
+    except Exception as e:  # noqa: BLE001 — профиль не обязателен
+        log.warning("профиль звука не посчитался: %s", str(e)[:120])
+    track.clip_status = ""
+    track.clip_error = ""
+    db.commit()
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    db.refresh(track)
+    return track_dict(track)
+
+
 @app.get("/api/tracks/{track_id}/waveform")
 def get_waveform(track_id: int, points: int = 900,
                  user: User = Depends(current_user), db: Session = Depends(db_session)):

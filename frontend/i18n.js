@@ -1093,6 +1093,10 @@ const I18N = {
       ask: "what next?",
     },
     track: {
+      audioUrl: "by link",
+      audioUrlPh: "direct link to the audio file",
+      audioUrlGo: "Fetch",
+      audioUrlHint: "A direct link to a file — your cloud, the beatmaker\u2019s page, a distributor export. Links to videos and streaming will not work: audio can only be taken from there by breaking the platform\u2019s rules.",
       audioGet: "download track",
       audioSwap: "upload track",
       audioTiny: "this file is only {n} bytes — it did not download fully. Get it again from the source.",
@@ -3507,6 +3511,10 @@ const I18N = {
       ask: "что дальше?",
     },
     track: {
+      audioUrl: "по ссылке",
+      audioUrlPh: "прямая ссылка на аудиофайл",
+      audioUrlGo: "Забрать",
+      audioUrlHint: "Прямая ссылка на файл — твоё облако, страница битмейкера, выгрузка от дистрибьютора. Ссылки на ролики и стриминг не сработают: звук оттуда достаётся только в обход правил площадки.",
       audioGet: "скачать трек",
       audioSwap: "загрузить трек",
       audioTiny: "в этом файле всего {n} байт — он не докачался. Скачай его из источника заново.",
