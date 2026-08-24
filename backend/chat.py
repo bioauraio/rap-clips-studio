@@ -1304,22 +1304,51 @@ def _own_scene_for_chat(db: Session, user: User, scene_id: int) -> Scene:
 
 
 AGENT_SYSTEM = (
-    "Ты ассистент внутри студии клипов. Тебе дают СОСТОЯНИЕ проекта человека "
-    "и его последнюю реплику. Твоя работа — предложить 3-5 КОНКРЕТНЫХ следующих "
-    "шагов именно по этому проекту, а не общие советы.\n"
-    "Отвечай ТОЛЬКО валидным JSON вида "
-    '{"reply": "...", "actions": [{"kind": "...", "title": "...", "track_id": 0, '
-    '"scene_id": 0, "prompt": "..."}]}\n'
-    "kind — одно из: gen_scenes (разбить трек на кадры), extend_scenes (дописать "
-    "недостающие кадры), gen_frames (нарисовать кадры сцены), gen_video (оживить "
-    "сцену), assemble (собрать клип), image (сгенерировать картинку в песочнице по "
-    "prompt), video (сгенерировать видео в песочнице по prompt), none (просто "
-    "ответ).\n"
-    "title — короткая надпись на кнопке по-русски, до 40 знаков, без точки.\n"
-    "Предлагай только то, что СЕЙЧАС выполнимо по состоянию: не зови рисовать "
-    "кадры там, где нет раскадровки, и не предлагай собрать клип без видео. "
-    "reply — две-три фразы живой речи, без списков и без markdown."
+    "Ты агент студии клипов: не советчик, а исполнитель. Тебе дают СОСТОЯНИЕ "
+    "(один проект или все проекты человека) и его реплику. Ты отвечаешь планом "
+    "конкретных действий по ЭТИМ данным.\n"
+    "Отвечай ТОЛЬКО валидным JSON: {\"reply\": \"...\", \"actions\": [...]}.\n"
+    "Каждое действие: {\"kind\", \"title\", \"track_id\", \"scene_id\", "
+    "\"project_id\", \"prompt\", \"fields\"}.\n"
+    "БЕСПЛАТНЫЕ kinds — их применит сервер сразу, без кнопки:\n"
+    "  set_style   — поменять стиль трека: fields={\"style_keys\": \"ключ1,ключ2\", "
+    "\"style_extra\": \"своими словами\"}\n"
+    "  edit_scene  — поправить кадр: fields из image_prompt, image_prompt_last, "
+    "motion_prompt, shot_note, camera_move, characters\n"
+    "  new_track   — завести трек в проекте: fields={\"title\", \"comment\"}\n"
+    "ПЛАТНЫЕ kinds — вернутся человеку кнопкой, запускает он:\n"
+    "  gen_scenes, extend_scenes, gen_frames (scene_id), gen_video (scene_id), "
+    "assemble (track_id), image (prompt), video (prompt)\n"
+    "  open_project — переключить человека на проект project_id (бесплатно, кнопкой)\n"
+    "none — просто ответ.\n"
+    "title — надпись на кнопке по-русски, до 40 знаков. Предлагай только "
+    "выполнимое сейчас: не зови рисовать кадры без раскадровки и не собирай "
+    "клип без видео. За один ответ не больше двух бесплатных правок и трёх "
+    "кнопок. reply — две-три живые фразы, без списков и markdown."
 )
+
+def _global_state(db: Session, user: User) -> dict:
+    """Все проекты человека одним взглядом — контекст «Суперкомпьютера».
+
+    Не полные раскадровки (это тысячи строк), а сводка недоделанного: агент
+    отвечает на «что у меня где висит» и предлагает, куда пойти.
+    """
+    rows = (db.query(Project).filter(Project.owner_id == user.id)
+            .order_by(Project.id.desc()).limit(20).all())
+    out = []
+    for pr in rows:
+        tracks = list(pr.tracks)
+        scenes = [sc for t in tracks for sc in t.scenes]
+        out.append({
+            "project_id": pr.id, "name": pr.name or "без названия",
+            "kind": pr.kind or "album", "tracks": len(tracks),
+            "scenes": len(scenes),
+            "frames_missing": sum(1 for sc in scenes if not sc.image_filename),
+            "videos_missing": sum(1 for sc in scenes
+                                  if sc.image_filename and not sc.video_filename),
+            "clips_ready": sum(1 for t in tracks if t.clip_filename),
+        })
+    return {"projects": out}
 
 
 def _project_state(db: Session, user: User, project_id: int) -> dict:
@@ -1366,6 +1395,84 @@ def _project_state(db: Session, user: User, project_id: int) -> dict:
     }
 
 
+def _core():
+    """main импортируется ЛЕНИВО: chat подключается ИЗ main.py, и импорт на
+    верхнем уровне дал бы цикл — тот же приём, что в crm.py и bot_api."""
+    import main  # noqa: PLC0415
+    return main
+
+
+AGENT_FREE_KINDS = ("set_style", "edit_scene", "new_track")
+AGENT_PAID_KINDS = ("gen_scenes", "extend_scenes", "gen_frames", "gen_video",
+                    "assemble", "image", "video", "open_project", "none")
+
+
+def _aid(value, fallback: int = 0) -> int:
+    """id из ответа модели. Она нет-нет да пришлёт вместо числа НАЗВАНИЕ
+    («Клип») — падать из-за этого нельзя, берём запасное значение."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _agent_apply(db: Session, user: User, act: dict, default_project: int = 0) -> str:
+    """Применить БЕСПЛАТНУЮ правку агента. Возвращает строку-отчёт.
+
+    Сервер выполняет только то, что не стоит токенов и обратимо: стиль,
+    тексты кадра, новый трек. Всё платное уходит человеку кнопкой — решение
+    «с подтверждением» принято владельцем осознанно.
+    """
+    core = _core()
+    kind = act.get("kind")
+    fields = act.get("fields") or {}
+    if kind == "set_style":
+        t = db.get(core.Track, _aid(act.get("track_id")))
+        if not t or not _owned_project(user, t.project):
+            return "трек не найден"
+        keys = [k.strip() for k in str(fields.get("style_keys") or "").split(",")
+                if k.strip() in core.prompts_catalog.STYLE_KEYS][:3]
+        extra = str(fields.get("style_extra") or "").strip()[:2000]
+        t.style_keys = ",".join(keys)
+        t.style_extra = extra
+        t.style = core.prompts_catalog.fusion(keys, extra)
+        db.commit()
+        return f"стиль трека «{t.title}» обновлён"
+    if kind == "edit_scene":
+        sc = db.get(core.Scene, _aid(act.get("scene_id")))
+        if not sc or not _owned_project(user, sc.track.project):
+            return "кадр не найден"
+        allowed = ("image_prompt", "image_prompt_last", "motion_prompt",
+                   "shot_note", "camera_move", "characters")
+        touched = []
+        for f in allowed:
+            if f in fields and str(fields[f]).strip():
+                setattr(sc, f, str(fields[f]))
+                touched.append(f)
+        if "characters" in touched:
+            sc.characters = core._normalize_scene_characters(sc.characters, sc.track.project)
+        if "image_prompt" in touched:
+            sc.prompt_stale = False
+        db.commit()
+        return f"кадр {sc.position} обновлён ({', '.join(touched)})" if touched else "нечего менять"
+    if kind == "new_track":
+        pr = db.get(Project, _aid(act.get("project_id"), default_project))
+        if not pr or pr.owner_id != user.id:
+            return "проект не найден"
+        pos = max((t.position for t in pr.tracks), default=0) + 1
+        t = core.Track(project_id=pr.id, position=pos,
+                       title=str(fields.get("title") or "Новый трек")[:100],
+                       comment=str(fields.get("comment") or "")[:2000])
+        db.add(t)
+        db.commit()
+        return f"трек «{t.title}» создан"
+    return "неизвестное действие"
+
+
+def _owned_project(user: User, project) -> bool:
+    return bool(project and project.owner_id == user.id)
+
+
 @router.post("/api/chat/agent")
 async def chat_agent(request: Request, user: User = Depends(current_user),
                      db: Session = Depends(db_session)):
@@ -1377,9 +1484,13 @@ async def chat_agent(request: Request, user: User = Depends(current_user),
     """
     body = await _body(request)
     text = str(body.get("text") or "").strip()
-    state = _project_state(db, user, body.get("project_id") or 0)
-    if not state:
-        raise HTTPException(400, "проект не найден — выбери его в шапке")
+    scope = str(body.get("scope") or "project")
+    if scope == "global":
+        state = _global_state(db, user)
+    else:
+        state = _project_state(db, user, body.get("project_id") or 0)
+        if not state:
+            raise HTTPException(400, "проект не найден — выбери его в шапке")
     messages = [
         {"role": "system", "content": AGENT_SYSTEM},
         {"role": "user", "content":
@@ -1403,21 +1514,29 @@ async def chat_agent(request: Request, user: User = Depends(current_user),
         # Не JSON — значит модель просто поговорила. Это не ошибка: отдаём
         # текст как есть, без кнопок.
         return {"reply": (out or "").strip()[:2000], "actions": [], "provider": provider}
-    acts = []
-    for a in (data.get("actions") or [])[:5]:
+    acts, applied = [], []
+    for a in (data.get("actions") or [])[:6]:
         kind = str(a.get("kind") or "none")
-        if kind not in ("gen_scenes", "extend_scenes", "gen_frames", "gen_video",
-                        "assemble", "image", "video", "none"):
+        if kind in AGENT_FREE_KINDS:
+            # Бесплатное и обратимое сервер делает сразу — за этим агент и
+            # нужен. Отчёт уходит в ответ, чтобы человек видел, ЧТО менялось.
+            try:
+                applied.append(_agent_apply(db, user, a, _aid(body.get("project_id"))))
+            except Exception as e:  # noqa: BLE001 — одна правка не рушит ответ
+                applied.append(f"не вышло: {str(e)[:120]}")
+            continue
+        if kind not in AGENT_PAID_KINDS:
             continue
         acts.append({
             "kind": kind,
             "title": str(a.get("title") or "")[:40],
-            "track_id": int(a.get("track_id") or 0),
-            "scene_id": int(a.get("scene_id") or 0),
+            "track_id": _aid(a.get("track_id")),
+            "scene_id": _aid(a.get("scene_id")),
+            "project_id": _aid(a.get("project_id"), _aid(body.get("project_id"))),
             "prompt": str(a.get("prompt") or "")[:2000],
         })
     return {"reply": str(data.get("reply") or "")[:2000], "actions": acts,
-            "provider": provider, "state": state}
+            "applied": applied, "provider": provider}
 
 
 @router.get("/api/chat/targets")

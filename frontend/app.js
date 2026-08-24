@@ -3819,6 +3819,7 @@ function mountWavePlayer(card, tr, audioEl) {
 
 
 function render() {
+  paInit();
   const keepY = saveScroll();
   try {
     renderInner();
@@ -8898,6 +8899,105 @@ const AGENT_RUN = {
   gen_video: (a) => api(`/api/scenes/${a.scene_id}/generate-video`, { method: "POST" }),
   assemble: (a) => api(`/api/tracks/${a.track_id}/assemble`, { method: "POST" }),
 };
+
+/* ─────────────── агент проекта: выдвижная панель в студии ─────────────── */
+// Один и тот же серверный агент в двух ипостасях: здесь — контекст ОДНОГО
+// проекта (стили, кадры, конвейер), в Генераторе — «Суперкомпьютер» со
+// взглядом на все проекты. Бесплатные правки сервер применяет сам и
+// отчитывается строкой; платное приходит кнопками с запуском по нажатию.
+
+const paHistory = [];   // сеансовая переписка: перезагрузка страницы = чистый лист
+
+function paEl(id) { return document.getElementById(id); }
+
+function paAddMsg(cls, text) {
+  const feed = paEl("pa-feed");
+  if (!feed) return null;
+  const div = document.createElement("div");
+  div.className = "pa-msg " + cls;
+  div.textContent = text;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+  return div;
+}
+
+async function paAsk(text) {
+  const feed = paEl("pa-feed");
+  if (text) paAddMsg("me", text);
+  const wait = paAddMsg("bot muted", t("agent.thinking"));
+  let d;
+  try {
+    d = await api("/api/chat/agent", {
+      method: "POST",
+      body: { text: text || "", project_id: activeProjectId, scope: "project" },
+    });
+  } catch (e) {
+    wait.textContent = errText(e);
+    return;
+  }
+  wait.remove();
+  // Отчёт о сделанном — отдельными строками: человек должен видеть, что
+  // агент реально поменял, а не верить на слово.
+  (d.applied || []).forEach((line) => paAddMsg("done", "✓ " + line));
+  if (d.applied && d.applied.length) await loadProject();
+  if (d.reply) paAddMsg("bot", d.reply);
+  (d.actions || []).forEach((a) => {
+    if (a.kind === "none" || !a.title) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pa-act";
+    b.textContent = a.title;
+    b.addEventListener("click", async () => {
+      if (a.kind === "open_project" && a.project_id) {
+        activeProjectId = a.project_id;
+        localStorage.setItem("rc_project", a.project_id);
+        await loadProject();
+        paAddMsg("done", "✓ " + a.title);
+        return;
+      }
+      if (a.kind === "image" || a.kind === "video") {
+        paAddMsg("bot", a.prompt || a.title);
+        return;
+      }
+      const run = AGENT_RUN[a.kind];
+      if (!run) return;
+      b.disabled = true;
+      try { await run(a); } catch (e) { fail(e); b.disabled = false; return; }
+      b.textContent = "✓ " + (t("agent.started") || "запустил");
+      await loadProject();
+    });
+    feed.appendChild(b);
+  });
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function paInit() {
+  const bubble = paEl("pa-bubble");
+  const panel = paEl("pa-panel");
+  if (!bubble || !panel || bubble.dataset.wired) return;
+  bubble.dataset.wired = "1";
+  bubble.classList.remove("hidden");
+  bubble.addEventListener("click", async () => {
+    const closed = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden", !closed);
+    if (closed && !paEl("pa-feed").childElementCount) {
+      await paAsk("");    // здоровается состоянием проекта
+    }
+  });
+  paEl("pa-close").addEventListener("click", () => panel.classList.add("hidden"));
+  const send = paEl("pa-send");
+  const field = paEl("pa-text");
+  const go = async () => {
+    const v = (field.value || "").trim();
+    if (!v) return;
+    field.value = "";
+    await paAsk(v);
+  };
+  send.addEventListener("click", go);
+  field.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); go(); }
+  });
+}
 
 async function askAgent(text) {
   const box = chatEl("cc-agent");

@@ -3414,3 +3414,40 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .trend-state { font-size: 12px; }
 .trend-state video { width: 100%; border-radius: 10px; }
 .trend-dl { display: inline-block; margin-top: 6px; font-size: 12px; }
+
+/* ── Агент проекта: пузырь и выдвижная панель ── */
+.pa-bubble {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60;
+  width: 52px; height: 52px; border-radius: 50%; font-size: 20px;
+  background: var(--fire-ink); color: var(--on-fire);
+  border: 2px solid #2d211a; box-shadow: 0 4px 0 #2d211a; cursor: pointer;
+}
+.pa-bubble:active { transform: translateY(4px); box-shadow: 0 0 0 #2d211a; }
+.pa-panel {
+  position: fixed; right: 18px; bottom: 82px; z-index: 60;
+  width: min(380px, calc(100vw - 36px)); height: min(520px, calc(100vh - 120px));
+  display: flex; flex-direction: column;
+  background: #fffdf9; border: 2px solid #2d211a; border-radius: 16px;
+  box-shadow: 0 6px 0 #2d211a;
+}
+.pa-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid rgba(45, 33, 26, .15);
+}
+.pa-head b { flex: 1; font-size: 13px; }
+.pa-feed { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.pa-msg { font-size: 12.5px; line-height: 1.45; max-width: 92%; }
+.pa-msg.me { align-self: flex-end; background: var(--inset); border-radius: 10px; padding: 6px 10px; }
+.pa-msg.done { color: var(--ok, #2c7a3f); font-size: 12px; }
+.pa-act {
+  align-self: flex-start; padding: 5px 12px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 700; cursor: pointer;
+  border: 1.5px solid #2d211a; background: var(--card); box-shadow: 0 2px 0 #2d211a;
+}
+.pa-act:active { transform: translateY(2px); box-shadow: 0 0 0 #2d211a; }
+.pa-compose { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid rgba(45, 33, 26, .15); }
+.pa-compose textarea {
+  flex: 1; resize: none; font-size: 12.5px; padding: 7px 10px;
+  border: 1.5px solid rgba(45, 33, 26, .3); border-radius: 10px;
+}
+.pa-compose button { flex: none; padding: 7px 14px; font-size: 12px; }
