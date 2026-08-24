@@ -5703,6 +5703,35 @@ function renderScene(s, audioEl, mode = "board") {
   if (actEl) actEl.textContent = s.act ? s.act.replace(/_/g, " ") : "";
   const spEl = $(".s-speaker", card);
   if (spEl) spEl.textContent = s.speaker || "";
+  // ОЗВУЧКА — только в режимах с ведущим (UGC, ИИ-блогеры): там реплика
+  // кадра и есть звук ролика. В клипах звук — трек, кнопка не нужна.
+  const modeId = curMode().id;
+  if (modeId === "ugc" || modeId === "blogger") {
+    const vo = document.createElement("button");
+    vo.type = "button";
+    vo.className = "ghost s-voice board-only";
+    vo.textContent = "🎙";
+    vo.title = t("voice.btnTitle");
+    vo.addEventListener("click", async () => {
+      let vs;
+      try { vs = await api("/api/voices"); } catch (e) { fail(e); return; }
+      if (!vs.enabled) { alert(t("voice.notReady")); return; }
+      if (!vs.voices.length) { alert(t("voice.noVoices")); return; }
+      const names = vs.voices.map((v, i) => `${i + 1}. ${v.name}`).join("\n");
+      const pick = prompt(t("voice.pick") + "\n" + names, "1");
+      const idx = Number(pick) - 1;
+      if (!(idx >= 0 && idx < vs.voices.length)) return;
+      vo.disabled = true;
+      try {
+        await api(`/api/scenes/${s.id}/voiceover`, {
+          method: "POST", body: { voice_id: vs.voices[idx].id },
+        });
+        vo.textContent = "🎙✓";
+      } catch (e) { fail(e); } finally { vo.disabled = false; }
+    });
+    const head = $(".scene-head", card);
+    if (head) head.insertBefore(vo, $(".s-extend", card));
+  }
   $(".s-duration", card).value = s.duration_sec;
   $(".s-shotsize", card).value = s.shot_size || "";
   $(".s-camera", card).value = s.camera_move || "";

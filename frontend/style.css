@@ -3451,3 +3451,11 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
   border: 1.5px solid rgba(45, 33, 26, .3); border-radius: 10px;
 }
 .pa-compose button { flex: none; padding: 7px 14px; font-size: 12px; }
+
+/* Заголовок группы режимов в меню: «маркетинг» объединяет UGC и мокапы. */
+.mode-seg-group {
+  align-self: center; flex: none; padding: 0 6px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 800;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--ink-muted);
+  border-left: 1px solid rgba(45, 33, 26, .25); margin-left: 4px;
+}

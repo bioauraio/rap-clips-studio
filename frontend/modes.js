@@ -101,29 +101,6 @@
       ],
     },
     {
-      // UGC И ИИ-БЛОГЕРЫ — ОДИН РЕЖИМ, а не два. Владелец называет их через
-      // слэш, и по всем четырём признакам они совпадают: объект — ролик,
-      // ритм — слоты 5–8 секунд, документы — персона и бриф, каркасы —
-      // UGC_FORMATS. Разница ровно в одном: есть ли сквозной ведущий. Это
-      // формат ролика внутри режима, а не второй режим.
-      id: "ugc",
-      kind: "mode",
-      icon: "📱",
-      get title() { return T("modes.ugc.title", "UGC / блогеры"); },
-      get full() { return T("modes.ugc.full", "UGC и ИИ-блогеры"); },
-      get note() { return T("modes.ugc.note", ""); },
-      projectKinds: ["ugc"],
-      defaultKind: "ugc",
-      object: "reel",
-      steps: [
-        step("persona", 1, "🙋", "project", "docs", "", "Блогер"),
-        step("chars", 2, "🎭", "project", "chars", "", "Персонажи"),
-        step("reels", 3, "📋", "project", "tracks", "setup", "Ролики"),
-        step("board", 4, "🎞", "track", "tracks", "board", "Раскадровка"),
-        step("anim", 5, "▶", "track", "tracks", "anim", "Анимация"),
-      ],
-    },
-    {
       // ЯРЛЫК, а не режим. Полное объяснение — в backend/formats.py,
       // MODE_SHORTCUTS: у стиля нет ни своего объекта, ни ритма, ни
       // документов, ни каркаса. Здесь он стоит там, где его ждёт владелец.
@@ -137,9 +114,58 @@
       steps: [],
     },
     {
+      // ИИ-БЛОГЕРЫ — отдельная страница, не формат внутри UGC. Центр тяжести
+      // другой: здесь сначала СОБИРАЮТ ведущего (фото, развороты, голос), а
+      // ролики — производное от него. В UGC наоборот: бриф продукта главный,
+      // ведущий опционален.
+      id: "blogger",
+      kind: "mode",
+      icon: "🎙",
+      get title() { return T("modes.blogger.title", "ИИ-блогеры"); },
+      get full() { return T("modes.blogger.full", "ИИ-блогеры — сквозной ведущий и его ролики"); },
+      get note() { return T("modes.blogger.note", ""); },
+      projectKinds: ["blogger"],
+      defaultKind: "blogger",
+      object: "reel",
+      steps: [
+        step("chars", 1, "🎭", "project", "chars", "", "Блогеры"),
+        step("persona", 2, "🙋", "project", "docs", "", "Характер"),
+        step("reels", 3, "📋", "project", "tracks", "setup", "Ролики"),
+        step("board", 4, "🎞", "track", "tracks", "board", "Раскадровка"),
+        step("anim", 5, "▶", "track", "tracks", "anim", "Анимация"),
+      ],
+    },
+    {
+      // UGC И ИИ-БЛОГЕРЫ — ОДИН РЕЖИМ, а не два. Владелец называет их через
+      // слэш, и по всем четырём признакам они совпадают: объект — ролик,
+      // ритм — слоты 5–8 секунд, документы — персона и бриф, каркасы —
+      // UGC_FORMATS. Разница ровно в одном: есть ли сквозной ведущий. Это
+      // формат ролика внутри режима, а не второй режим.
+      id: "ugc",
+      kind: "mode",
+      icon: "📱",
+      // Группа «Маркетинг (for brand)»: UGC и мокапы работают на бренд, а не
+      // на артиста — меню режимов рисует их под общим заголовком.
+      group: "brand",
+      get title() { return T("modes.ugc.title", "UGC"); },
+      get full() { return T("modes.ugc.full", "UGC — ролики про продукт"); },
+      get note() { return T("modes.ugc.note", ""); },
+      projectKinds: ["ugc"],
+      defaultKind: "ugc",
+      object: "reel",
+      steps: [
+        step("persona", 1, "🙋", "project", "docs", "", "Блогер"),
+        step("chars", 2, "🎭", "project", "chars", "", "Персонажи"),
+        step("reels", 3, "📋", "project", "tracks", "setup", "Ролики"),
+        step("board", 4, "🎞", "track", "tracks", "board", "Раскадровка"),
+        step("anim", 5, "▶", "track", "tracks", "anim", "Анимация"),
+      ],
+    },
+    {
       id: "mockup",
       kind: "mode",
       icon: "📦",
+      group: "brand",
       get title() { return T("modes.mockup.title", "мокапы"); },
       get full() { return T("modes.mockup.full", "Мокапы — предметная съёмка товара"); },
       get note() { return T("modes.mockup.note", ""); },

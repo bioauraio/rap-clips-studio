@@ -33,6 +33,7 @@ import formats
 import gate
 import learn
 import mediagen
+import voice
 import prompts_catalog
 import prompts_library
 import stripe_pay
@@ -6940,6 +6941,54 @@ async def trim_scene_video(scene_id: int, request: Request,
     threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
     db.refresh(scene)
     return scene_dict(scene)
+
+
+# ─────────────────────────── озвучка (ИИ-блогеры) ───────────────────────────
+
+@app.get("/api/voices")
+def voices_list(user: User = Depends(current_user)):
+    """Голоса ElevenLabs. enabled=false — контур ждёт ключ, интерфейс говорит
+    об этом словами, а не пустым списком."""
+    import asyncio
+    if not voice.available():
+        return {"enabled": False, "voices": []}
+    return {"enabled": True, "voices": asyncio.run(voice.list_voices())}
+
+
+@app.post("/api/scenes/{scene_id}/voiceover")
+async def scene_voiceover(scene_id: int, request: Request,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """Озвучить реплику кадра голосом блогера.
+
+    Звук ложится в audio_filename сцены — то же поле, куда клип кладёт
+    отрезок трека, поэтому сборка подхватывает голос без единой правки.
+    Текст по умолчанию — реплика кадра (lyric_line), можно прислать свой.
+    """
+    if not voice.available():
+        raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
+    scene = _own_scene(db, user, scene_id)
+    body = await request.json()
+    text = str(body.get("text") or scene.lyric_line or scene.shot_note or "").strip()
+    if not text:
+        raise HTTPException(400, "у кадра нет реплики — напиши текст")
+    voice_id = str(body.get("voice_id") or "").strip()
+    if not voice_id:
+        raise HTTPException(400, "выбери голос")
+    try:
+        fname = await voice.tts(text, voice_id, UPLOAD_DIR)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    old = scene.audio_filename
+    scene.audio_filename = fname
+    _reg_file(db, fname, scene.track.project.owner_id, kind="audio",
+              project_id=scene.track.project_id, track_id=scene.track_id,
+              scene_id=scene.id)
+    db.commit()
+    if old and old != fname:
+        _remove_media(old, db)
+        db.commit()
+    return {"ok": True, "audio_url": f"/api/media/{fname}"}
 
 
 @app.post("/api/scenes/{scene_id}/approve")

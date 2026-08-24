@@ -544,6 +544,7 @@ const I18N = {
     // Режим = вид проекта. Один объект в словаре на режим, как и на сервере
     // (backend/formats.py): подписи живут здесь, структура — там.
     modes: {
+      blogger: { title: "AI bloggers", full: "AI bloggers — a recurring host and their reels", note: "" },
       label: "Mode",
       clip: {
         title: "rap clips",
@@ -1104,6 +1105,12 @@ const I18N = {
       uploading: "uploading the photo…", working: "drawing the frame…",
       animating: "animating…", download: "Download",
       errored: "it failed — your tokens were refunded", failed: "could not load the templates",
+    },
+    voice: {
+      btnTitle: "voice this line (ElevenLabs)",
+      notReady: "Voiceover is not set up yet — the ElevenLabs key is missing.",
+      noVoices: "No voices on the ElevenLabs account yet.",
+      pick: "Which voice? Enter the number:",
     },
     track: {
       audioUrl: "by link",
@@ -2991,6 +2998,7 @@ const I18N = {
     // Режим = вид проекта. Один объект в словаре на режим, как и на сервере
     // (backend/formats.py): подписи живут здесь, структура — там.
     modes: {
+      blogger: { title: "ИИ-блогеры", full: "ИИ-блогеры — сквозной ведущий и его ролики", note: "" },
       label: "Режим",
       clip: {
         title: "rap clips",
@@ -3535,6 +3543,12 @@ const I18N = {
       uploading: "загружаю фото…", working: "рисую кадр…",
       animating: "оживляю…", download: "Скачать",
       errored: "не получилось — токены возвращены", failed: "не загрузилась витрина",
+    },
+    voice: {
+      btnTitle: "озвучить реплику (ElevenLabs)",
+      notReady: "Озвучка пока не настроена — нет ключа ElevenLabs.",
+      noVoices: "На аккаунте ElevenLabs ещё нет голосов.",
+      pick: "Каким голосом? Введи номер:",
     },
     track: {
       audioUrl: "по ссылке",

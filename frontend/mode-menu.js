@@ -335,7 +335,17 @@
 
     // Та же лента сегментов, что и в шапке: на телефоне она единственная.
     const rail = el("div", "mode-sheet-rail");
+    let lastGroup = "";
     R().seg().forEach((m) => {
+      // Заголовок группы: UGC и мокапы работают на бренд, и владелец просил
+      // видеть их отдельным блоком «Маркетинг», а не вперемешку с клипами.
+      if ((m.group || "") !== lastGroup) {
+        lastGroup = m.group || "";
+        if (lastGroup === "brand") {
+          rail.appendChild(el("span", "mode-seg-group",
+            T("modes.menu.brandGroup", "маркетинг")));
+        }
+      }
       const b = el("button", "mode-seg-btn" + (m.id === activeId() ? " on" : ""));
       b.type = "button";
       b.append(el("span", "mode-seg-ico", m.icon), el("span", "mode-seg-cap", m.title));

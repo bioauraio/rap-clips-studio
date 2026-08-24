@@ -89,6 +89,32 @@ MODES = [
         ],
     },
     {
+        # ИИ-БЛОГЕРЫ — отдельный режим, БОЛЬШЕ не формат внутри UGC. Владелец
+        # развёл их явно: UGC — ролики про продукт для брендов, блогеры —
+        # СКВОЗНОЙ ведущий как продукт сам по себе: его собирают, крутят
+        # ракурсами и снимают с ним ролики с озвучкой. Другой центр тяжести —
+        # персонаж, а не бриф, поэтому и страница своя.
+        "id": "blogger",
+        "icon": "🎙",
+        "kinds": ["blogger"],
+        "default_kind": "blogger",
+        "object": "reel",
+        "needs_audio": False,
+        "needs_lyrics": False,
+        "format_catalog": "ugc",
+        "scenes": {"min": 6, "typ": 8, "max": 10, "slot": [5, 8]},
+        "docs": ["persona"],
+        "track_docs": ["brief"],
+        "group_by": "",
+        "steps": [
+            {"id": "chars",   "num": 1, "icon": "🎭", "scope": "project", "panel": "chars"},
+            {"id": "persona", "num": 2, "icon": "🙋", "scope": "project", "panel": "docs"},
+            {"id": "reels",   "num": 3, "icon": "📋", "scope": "project", "panel": "tracks", "pane": "setup"},
+            {"id": "board",   "num": 4, "icon": "🎞", "scope": "track",   "panel": "tracks", "pane": "board"},
+            {"id": "anim",    "num": 5, "icon": "▶",  "scope": "track",   "panel": "tracks", "pane": "anim"},
+        ],
+    },
+    {
         # МОКАПЫ — предметная съёмка. Отдельный режим, а не пресет клипа:
         # у него другой объект второго уровня (товар, а не дорожка), другой
         # ритм (ракурс, а не такт), другие документы (фирменный мир и бриф
@@ -152,7 +178,7 @@ _MODE_BY_ID = {m["id"]: m for m in MODES}
 _MODE_BY_KIND = {k: m for m in MODES for k in m["kinds"]}
 
 # Виды проектов для окна «новый проект»: kind → режим.
-PROJECT_KINDS = ["album", "single", "ugc", "series", "mockup"]
+PROJECT_KINDS = ["album", "single", "ugc", "blogger", "series", "mockup"]
 
 # Все виды документов, которые вообще бывают. Валидатор роутов сверяется с
 # этим множеством, чтобы в docs.kind не приезжала произвольная строка.
