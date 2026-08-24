@@ -38,7 +38,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -1829,6 +1829,124 @@ def get_or_create_project(db: Session, user: User, project_id: int | None = None
         db.commit()
         db.refresh(project)
     return project
+
+
+# ─────────────────────────── тренды ───────────────────────────
+# Короткий контур «фото → трендовый ролик»: вся режиссура зашита в шаблон,
+# человек только загружает фотографию. Ни проекта, ни трека — самый быстрый
+# путь к результату, каким пользуются витрины конкурентов.
+
+def _trend_dict(t: TrendPreset, user: "User | None" = None) -> dict:
+    v_eng = t.video_engine or "seedance-2-mini"
+    i_eng = t.image_engine or "nano-banana"
+    cost = (_points_of_usd(mediagen.image_engine_usd(i_eng))
+            + _points_of_usd(mediagen.video_engine_usd(v_eng, t.duration_sec or 6)))
+    return {
+        "id": t.id, "title": t.title, "duration_sec": t.duration_sec,
+        "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
+        "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
+        "cost_points": cost,
+    }
+
+
+@app.get("/api/trends")
+def list_trends(request: Request, db: Session = Depends(db_session)):
+    """Витрина шаблонов. Публичная: карточки с примерами — двигатель захода."""
+    user = _resolve_user(request, db)
+    rows = (db.query(TrendPreset).filter(TrendPreset.enabled.is_(True))
+            .order_by(TrendPreset.position, TrendPreset.id).all())
+    return {"presets": [_trend_dict(t, user) for t in rows],
+            "authorized": bool(user)}
+
+
+@app.post("/api/trends/{preset_id}/make")
+async def make_trend(preset_id: int, photo: UploadFile,
+                     user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Фото → ролик по шаблону. Единственное действие пользователя."""
+    _guard_disk()
+    t = db.get(TrendPreset, preset_id)
+    if not t or not t.enabled:
+        raise HTTPException(404, "шаблон не найден")
+    data = await photo.read()
+    if len(data) < 1024:
+        raise HTTPException(400, "фото не долетело — попробуй ещё раз")
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    fname = f"trend_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(data)
+    _reg_file(db, fname, user.id, kind="photo")
+    cost = _trend_dict(t)["cost_points"]
+    _charge(db, user, cost, f"тренд «{t.title}»", kind="trend", engine=t.video_engine or "")
+    job = TrendJob(preset_id=t.id, user_id=user.id, photo_filename=fname,
+                   charged_points=cost)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    _spawn_gen(user, _run_trend_job, job.id, kind="video")
+    return {"ok": True, "job_id": job.id, "charged": cost}
+
+
+@app.get("/api/trends/jobs/{job_id}")
+def trend_job_status(job_id: int, user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    job = db.get(TrendJob, job_id)
+    if not job or job.user_id != user.id:
+        raise HTTPException(404, "задача не найдена")
+    return {
+        "id": job.id, "status": job.status, "error": job.error,
+        "frame_url": f"/api/media/{job.frame_filename}" if job.frame_filename else "",
+        "video_url": f"/api/media/{job.video_filename}" if job.video_filename else "",
+    }
+
+
+def _run_trend_job(job_id: int) -> None:
+    """Кадр по фото человека → анимация по шаблону. Два шага, оба зашиты."""
+    import asyncio
+    db = SessionLocal()
+    try:
+        job = db.get(TrendJob, job_id)
+        if not job:
+            return
+        t = db.get(TrendPreset, job.preset_id)
+        owner = db.get(User, job.user_id)
+        job.status = "frame"
+        db.commit()
+        photo = os.path.join(UPLOAD_DIR, job.photo_filename)
+        prompt = (t.image_prompt or "") + (
+            "\n\nThe reference photo is the REAL person to feature: reproduce "
+            "their exact face, hair and build. Do not beautify or restyle them.")
+        data, mime = asyncio.run(mediagen.generate_image(
+            prompt, reference_path=photo, engine=t.image_engine or "",
+            aspect=t.aspect or "9:16"))
+        job.frame_filename = _save_image(data, mime)
+        _reg_file(db, job.frame_filename, job.user_id, kind="frames")
+        job.status = "video"
+        db.commit()
+        mediagen.reset_task()
+        job.video_filename = asyncio.run(mediagen.animate_scene(
+            prompt=t.motion_prompt or "subtle natural motion",
+            first_path=os.path.join(UPLOAD_DIR, job.frame_filename),
+            last_path=None, duration_sec=t.duration_sec or 6,
+            provider="seedance", engine=t.video_engine or "seedance-2-mini",
+            aspect=t.aspect or "9:16"))
+        _reg_file(db, job.video_filename, job.user_id, kind="video")
+        job.status = "done"
+        db.commit()
+        log.info("тренд %s: ролик готов для user %s", job.preset_id, job.user_id)
+    except Exception as e:  # noqa: BLE001 — вернуть токены и сказать правду
+        db.rollback()
+        job = db.get(TrendJob, job_id)
+        if job:
+            job.status = "error"
+            job.error = _err_text(e, 400)
+            owner = db.get(User, job.user_id)
+            if owner and job.charged_points:
+                _refund(db, owner, job.charged_points, f"тренд не получился ({job.id})")
+            db.commit()
+        log.warning("тренд-задача %s упала: %s", job_id, e)
+    finally:
+        db.close()
 
 
 # ─────────────────────────── авторизация ───────────────────────────
@@ -12527,5 +12645,24 @@ def admin_page(request: Request, rest: str = "",
 reload_style_overlay()
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")
+
+
+class _NoCacheIndex(StaticFiles):
+    """index.html отдаётся с запретом кэширования.
+
+    Safari охотно держит index неделями: человек открывал сайт после деплоя
+    и получал СТАРУЮ оболочку — пустую страницу с фоном, потому что она
+    запрашивала статику, которой уже нет. Версионируется у нас только
+    js/css (?v=N), а сам index — нет, поэтому кэшировать его нельзя вовсе.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        path = getattr(resp, "path", "") or ""
+        if path.endswith("index.html"):
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
 if os.path.isdir(FRONTEND_DIR):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+    app.mount("/", _NoCacheIndex(directory=FRONTEND_DIR, html=True), name="static")

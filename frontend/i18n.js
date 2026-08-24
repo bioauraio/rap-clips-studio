@@ -153,6 +153,7 @@ const I18N = {
     nav: {
       aria: "Service sections",
       sections: {
+        trends: "Trends",
         studio: "Studio",
         academy: "Academy",
         prompts: "Prompts",
@@ -1093,6 +1094,13 @@ const I18N = {
       thinking: "looking at your project…",
       started: "started ✓",
       ask: "what next?",
+    },
+    trends: {
+      title: "Trends", intro: "Upload one photo — get a trending clip with yourself in it. Everything else is already set up in the template.",
+      empty: "Templates are coming soon.", make: "Make it with me", sec: "s",
+      uploading: "uploading the photo…", working: "drawing the frame…",
+      animating: "animating…", download: "Download",
+      errored: "it failed — your tokens were refunded", failed: "could not load the templates",
     },
     track: {
       audioUrl: "by link",
@@ -2594,6 +2602,7 @@ const I18N = {
     nav: {
       aria: "Разделы сервиса",
       sections: {
+        trends: "Тренды",
         studio: "Студия",
         academy: "Академия",
         prompts: "Промты",
@@ -3513,6 +3522,13 @@ const I18N = {
       thinking: "смотрю твой проект…",
       started: "запустил ✓",
       ask: "что дальше?",
+    },
+    trends: {
+      title: "Тренды", intro: "Загрузи одну фотографию — получишь трендовый ролик с собой. Остальное уже настроено в шаблоне.",
+      empty: "Шаблоны скоро появятся.", make: "Сделать со мной", sec: "с",
+      uploading: "загружаю фото…", working: "рисую кадр…",
+      animating: "оживляю…", download: "Скачать",
+      errored: "не получилось — токены возвращены", failed: "не загрузилась витрина",
     },
     track: {
       audioUrl: "по ссылке",

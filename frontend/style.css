@@ -3389,3 +3389,28 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 /* Кадр снят запасным шлюзом, а не платным движком — говорим об этом в строке
    движка. Не тревожный цвет: это рабочий режим, а не поломка. */
 .s-engine-gw { color: var(--accent-2-ink); font-size: 10.5px; }
+
+/* ── Тренды: сетка шаблонов «фото → ролик» ── */
+.trend-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+.trend-card {
+  display: flex; flex-direction: column; gap: 8px;
+  border: 2px solid #2d211a; border-radius: 16px; padding: 10px;
+  background: #fffdf9; box-shadow: 0 3px 0 #e8d8c4;
+}
+.trend-card video, .trend-card img, .trend-ph {
+  width: 100%; aspect-ratio: 9/16; object-fit: cover;
+  border-radius: 10px; background: var(--inset); display: block;
+}
+.trend-meta { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.trend-go {
+  display: flex; justify-content: center; padding: 7px 10px; cursor: pointer;
+  border: 2px solid #2d211a; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: var(--fire-ink); color: var(--on-fire); box-shadow: 0 3px 0 #2d211a;
+}
+.trend-go:active { transform: translateY(3px); box-shadow: 0 0 0 #2d211a; }
+.trend-state { font-size: 12px; }
+.trend-state video { width: 100%; border-radius: 10px; }
+.trend-dl { display: inline-block; margin-top: 6px; font-size: 12px; }

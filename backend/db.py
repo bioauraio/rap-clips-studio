@@ -601,6 +601,48 @@ class StudioOrder(Base):
     updated_at = Column(DateTime, default=now)
 
 
+class TrendPreset(Base):
+    """Трендовый шаблон: готовый ролик-образец, в который человек подставляет
+    себя одной фотографией.
+
+    Вся режиссура зашита владельцем в шаблон заранее — промпт кадра, движение,
+    движок, длительность. Пользователь не пишет ни слова: фото → видео. Это
+    отдельный от студии контур, потому что здесь нет ни проекта, ни трека —
+    короткий путь для сбора аудитории.
+    """
+    __tablename__ = "trend_presets"
+    id = Column(Integer, primary_key=True)
+    position = Column(Integer, nullable=False, default=0)
+    title = Column(String, nullable=False, default="")
+    # Промпт КАДРА: как вписать человека с фото в сцену шаблона.
+    image_prompt = Column(Text, nullable=False, default="")
+    # Промпт ДВИЖЕНИЯ: что происходит в ролике.
+    motion_prompt = Column(Text, nullable=False, default="")
+    poster_filename = Column(String, nullable=False, default="")   # обложка карточки
+    sample_filename = Column(String, nullable=False, default="")   # ролик-пример
+    image_engine = Column(String, nullable=False, default="")      # пусто = по тарифу
+    video_engine = Column(String, nullable=False, default="")
+    duration_sec = Column(Integer, nullable=False, default=6)
+    aspect = Column(String, nullable=False, default="9:16")
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=now)
+
+
+class TrendJob(Base):
+    """Одна генерация по шаблону: фото человека → его ролик."""
+    __tablename__ = "trend_jobs"
+    id = Column(Integer, primary_key=True)
+    preset_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    photo_filename = Column(String, nullable=False, default="")
+    frame_filename = Column(String, nullable=False, default="")
+    video_filename = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="queued")   # queued|frame|video|done|error
+    error = Column(Text, nullable=False, default="")
+    charged_points = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=now)
+
+
 class AppSetting(Base):
     """Настройки, которые правит владелец на ходу, без переката сервиса.
 

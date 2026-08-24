@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 import os
 import threading
 import time
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 from sqlalchemy import func, or_
@@ -381,6 +382,83 @@ def admin_user_actions(uid: int, user: User = Depends(admin_user),
 
 
 # ═══════════════════════ СВОДКА ПО СЕРВИСУ ═══════════════════════
+
+@router.get("/api/admin/trends")
+def admin_trends(user: User = Depends(admin_user), db: Session = Depends(db_session)):
+    core = _core()
+    rows = db.query(core.TrendPreset).order_by(
+        core.TrendPreset.position, core.TrendPreset.id).all()
+    return {"presets": [{
+        "id": t.id, "title": t.title, "enabled": t.enabled,
+        "image_prompt": t.image_prompt, "motion_prompt": t.motion_prompt,
+        "image_engine": t.image_engine, "video_engine": t.video_engine,
+        "duration_sec": t.duration_sec, "aspect": t.aspect,
+        "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
+        "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
+    } for t in rows]}
+
+
+@router.post("/api/admin/trends")
+async def admin_trend_save(request: Request, user: User = Depends(admin_user),
+                           db: Session = Depends(db_session)):
+    """Создать или поправить шаблон. Файлы постера и примера — отдельной ручкой."""
+    core = _core()
+    body = await request.json()
+    t = db.get(core.TrendPreset, int(body.get("id") or 0)) if body.get("id") else None
+    if not t:
+        t = core.TrendPreset()
+        db.add(t)
+    for field in ("title", "image_prompt", "motion_prompt",
+                  "image_engine", "video_engine", "aspect"):
+        if field in body:
+            setattr(t, field, str(body[field] or ""))
+    if "duration_sec" in body:
+        t.duration_sec = max(2, min(12, int(body["duration_sec"] or 6)))
+    if "enabled" in body:
+        t.enabled = bool(body["enabled"])
+    if "position" in body:
+        t.position = int(body["position"] or 0)
+    db.commit()
+    db.refresh(t)
+    return {"ok": True, "id": t.id}
+
+
+@router.post("/api/admin/trends/{preset_id}/media")
+async def admin_trend_media(preset_id: int, kind: str = "poster",
+                            file: UploadFile = None,
+                            user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    """Постер (картинка) или пример (ролик) шаблона."""
+    core = _core()
+    t = db.get(core.TrendPreset, preset_id)
+    if not t:
+        raise HTTPException(404, "шаблон не найден")
+    data = await file.read()
+    if len(data) < 1024:
+        raise HTTPException(400, "файл пуст")
+    ext = os.path.splitext(file.filename or "")[1].lower() or (".jpg" if kind == "poster" else ".mp4")
+    fname = f"trendm_{preset_id}_{kind}_{uuid.uuid4().hex[:8]}{ext}"
+    path = os.path.join(core.UPLOAD_DIR, fname)
+    with open(path, "wb") as f:
+        f.write(data)
+    if kind == "sample":
+        t.sample_filename = fname
+    else:
+        t.poster_filename = fname
+    db.commit()
+    return {"ok": True, "url": f"/api/media/{fname}"}
+
+
+@router.delete("/api/admin/trends/{preset_id}")
+def admin_trend_delete(preset_id: int, user: User = Depends(admin_user),
+                       db: Session = Depends(db_session)):
+    core = _core()
+    t = db.get(core.TrendPreset, preset_id)
+    if t:
+        db.delete(t)
+        db.commit()
+    return {"ok": True}
+
 
 @router.get("/api/admin/pricing")
 def admin_pricing(user: User = Depends(admin_user), db: Session = Depends(db_session)):

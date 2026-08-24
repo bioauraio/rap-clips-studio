@@ -114,6 +114,16 @@
     },
     { id: "make", adopt: "#chat-btn", active: () => shown("#chat") },
     {
+      // Тренды — витрина шаблонов «фото → ролик»: стоит первой из
+      // контент-разделов, потому что это самый короткий путь новичка
+      // к результату — ему не нужен ни трек, ни проект.
+      id: "trends",
+      label: () => T("nav.sections.trends", "Тренды"),
+      title: () => T("nav.titles.trends", ""),
+      active: () => sheet === "trends",
+      open: () => openTrends(),
+    },
+    {
       id: "academy",
       label: () => T("nav.sections.academy", "Академия"),
       title: () => T("nav.titles.academy", ""),
@@ -332,6 +342,121 @@
     academyLang = lang();
     academy = await api(`/api/learn?lang=${encodeURIComponent(lang())}`);
     return academy;
+  }
+
+  /* ─────────────────────────── тренды ─────────────────────────── */
+  // Витрина шаблонов: карточка с примером → загрузка фото → готовый ролик.
+  // Ни трека, ни проекта: вся режиссура зашита владельцем в шаблон.
+
+  let trendPoll = null;
+
+  function openTrends() {
+    openSheet("trends", T("trends.title", "Тренды"), async (body) => {
+      busy(body);
+      let d;
+      try {
+        d = await api("/api/trends");
+      } catch (e) {
+        failed(body, "trends.failed");
+        return;
+      }
+      body.innerHTML = "";
+      const intro = document.createElement("p");
+      intro.className = "muted";
+      intro.textContent = T("trends.intro",
+        "Загрузи одну фотографию — получишь трендовый ролик с собой. Всё остальное уже настроено в шаблоне.");
+      body.appendChild(intro);
+      if (!(d.presets || []).length) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = T("trends.empty", "Шаблоны скоро появятся.");
+        body.appendChild(empty);
+        return;
+      }
+      const grid = document.createElement("div");
+      grid.className = "trend-grid";
+      d.presets.forEach((t) => {
+        const card = document.createElement("div");
+        card.className = "trend-card";
+        card.innerHTML = `
+          ${t.sample_url
+            ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
+                 ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+            : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+            : `<div class="trend-ph"></div>`}
+          <div class="trend-meta">
+            <b>${esc(t.title)}</b>
+            <span class="muted">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
+          </div>
+          <label class="trend-go">
+            <span>${T("trends.make", "Сделать со мной")}</span>
+            <input type="file" accept="image/*" hidden />
+          </label>
+          <div class="trend-state hidden"></div>`;
+        const vid = card.querySelector("video");
+        if (vid) {
+          card.addEventListener("mouseenter", () => vid.play().catch(() => {}));
+          card.addEventListener("mouseleave", () => vid.pause());
+        }
+        const inp = card.querySelector("input");
+        inp.addEventListener("change", () => trendMake(card, t, inp));
+        grid.appendChild(card);
+      });
+      body.appendChild(grid);
+    });
+  }
+
+  async function trendMake(card, t, inp) {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    if (!d0Authorized()) {
+      location.hash = "#/login";
+      return;
+    }
+    const state = card.querySelector(".trend-state");
+    const go = card.querySelector(".trend-go");
+    go.classList.add("hidden");
+    state.classList.remove("hidden");
+    state.textContent = T("trends.uploading", "загружаю фото…");
+    const fd = new FormData();
+    fd.append("photo", f);
+    let job;
+    try {
+      job = await api(`/api/trends/${t.id}/make`, { method: "POST", body: fd });
+    } catch (e) {
+      state.textContent = String(e.message || e);
+      go.classList.remove("hidden");
+      return;
+    }
+    state.textContent = T("trends.working", "рисую кадр…");
+    const tick = async () => {
+      let st;
+      try {
+        st = await api(`/api/trends/jobs/${job.job_id}`);
+      } catch (e) {
+        state.textContent = String(e.message || e);
+        return;
+      }
+      if (st.status === "error") {
+        state.textContent = st.error || T("trends.errored", "не получилось — токены возвращены");
+        go.classList.remove("hidden");
+        return;
+      }
+      if (st.status === "done" && st.video_url) {
+        state.innerHTML = `<video src="${st.video_url}" controls autoplay loop playsinline></video>
+          <a class="trend-dl" href="${st.video_url}" download>${T("trends.download", "Скачать")}</a>`;
+        return;
+      }
+      state.textContent = st.status === "video"
+        ? T("trends.animating", "оживляю…")
+        : T("trends.working", "рисую кадр…");
+      trendPoll = setTimeout(tick, 4000);
+    };
+    tick();
+  }
+
+  function d0Authorized() {
+    try { return Boolean(window.me && window.me.user); } catch (e) { return true; }
   }
 
   function openAcademy(slug) {
