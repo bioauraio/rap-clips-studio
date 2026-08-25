@@ -570,6 +570,13 @@ def track_analysis(track_id: int, refresh: bool = False,
     if data is None or refresh:
         try:
             data = audio_analysis.analyze(os.path.join(UPLOAD_DIR, t.source_filename))
+            # Тональность — тем же кликом: темп без тональности это полдиагноза.
+            import music as _music
+            try:
+                data.update(_music.detect_key(
+                    os.path.join(UPLOAD_DIR, t.source_filename)))
+            except Exception as e:  # noqa: BLE001 — тональность не рушит темп
+                data["key_error"] = str(e)[:120]
         except audio_analysis.AnalysisError as e:
             raise _audio_error(e)
         t.analysis_json = json.dumps(data)
@@ -604,10 +611,28 @@ async def generate_music(
     if not prompt:
         raise HTTPException(400, "опиши, какая нужна музыка")
     if not audio.available():
-        raise _api_error(
-            503, "audio_disabled",
-            "Music generation is not connected: the service has no ElevenLabs key yet. "
-            "Upload your own track instead — mastering and release prep work without it.")
+        # ФОЛБЭК НА SUNO ЧЕРЕЗ KIE. Ключа ElevenLabs нет, а kie — есть: отказ
+        # здесь был бы враньём про «не подключено», когда движок доступен.
+        import music as _music
+        if not _music.KIE_KEY:
+            raise _api_error(
+                503, "audio_disabled",
+                "Music generation is not connected: no ElevenLabs or kie key yet. "
+                "Upload your own track instead — mastering and release prep work without it.")
+        core = _core()
+        cost = core._points_of_usd(0.06)
+        core._charge(db, user, cost, "музыка (Suno)", kind="audio",
+                     ref_type="music", engine="suno")
+        try:
+            tid = await _music.suno_generate(prompt, title=title,
+                                             instrumental=bool(instrumental))
+        except RuntimeError as e:
+            core._refund(db, user, cost, "музыка не запустилась",
+                         kind="audio", ref_type="music")
+            raise _api_error(502, "suno_failed", str(e)[:200])
+        return {"ok": True, "engine": "suno", "task_id": tid, "charged": cost,
+                "note": "Suno считает 1–3 минуты; забери результат опросом "
+                        "/api/music/suno/{task_id}"}
     secs = max(float(GEN_MIN_S), min(float(GEN_MAX_S), float(seconds or 60)))
     core = _core()
     cost = max(1, -(-int(round(secs)) // 30)) * COST_MUSIC_PER_30S
@@ -683,6 +708,38 @@ def _ref_library() -> list:
             "note": str(row.get("note") or ""),
         })
     return out
+
+
+@router.get("/api/music/suno/{task_id}")
+async def suno_poll(task_id: str, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Опрос Suno-задачи; по готовности трек скачивается в раздел."""
+    import music as _music
+    st = await _music.suno_status(task_id)
+    if st["status"] not in ("SUCCESS", "COMPLETE", "TEXT_SUCCESS", "FIRST_SUCCESS"):
+        return st
+    saved = []
+    core = _core()
+    for tr in st["tracks"]:
+        if not tr.get("audio_url"):
+            continue
+        try:
+            fname = await core.mediagen.fetch_to_upload(tr["audio_url"], ".mp3")
+        except Exception as e:  # noqa: BLE001 — ссылка могла протухнуть
+            continue
+        path = os.path.join(UPLOAD_DIR, fname)
+        t = MusicTrack(owner_id=user.id, source_filename=fname,
+                       source_name=fname, source_ext="mp3",
+                       source_bytes=os.path.getsize(path),
+                       duration_sec=float(tr.get("duration") or 0),
+                       origin="generated", gen_model="suno",
+                       probe_status="queued",
+                       title=(tr.get("title") or "Suno")[:200],
+                       artist="", ai_disclosure="all")
+        db.add(t)
+        db.commit()
+        saved.append(t.id)
+    return {**st, "saved_track_ids": saved}
 
 
 @router.get("/api/music/references")

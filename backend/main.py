@@ -34,12 +34,14 @@ import gate
 import learn
 import mediagen
 import voice
+import music
+import audio_analysis
 import prompts_catalog
 import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, ChangeLog, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, ChangeLog, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -7043,6 +7045,77 @@ async def trim_scene_video(scene_id: int, request: Request,
 
 
 # ─────────────────────────── озвучка (ИИ-блогеры) ───────────────────────────
+
+# ─────────────────────────── аудио-студия (дополнения) ───────────────────
+# Генерация, мастеринг и анализ живут в music_api.py — здесь только то, чего
+# там нет: стемы, тональность и отгрузка на лейбл.
+
+@app.post("/api/tracks/{track_id}/music/key")
+def music_key(track_id: int, user: User = Depends(current_user),
+              db: Session = Depends(db_session)):
+    """Тональность трека клипа в один клик (бесплатно, свой CPU)."""
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(400, "сначала загрузи дорожку")
+    try:
+        return music.detect_key(os.path.join(UPLOAD_DIR, track.audio_filename))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, f"тональность не определилась: {str(e)[:150]}")
+
+
+@app.post("/api/tracks/{track_id}/music/stems")
+async def music_stems(track_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Разложение на вокал и минус (kie Suno vocal removal)."""
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(400, "сначала загрузи дорожку")
+    cost = _points_of_usd(0.05)
+    _charge(db, user, cost, f"стемы трека {track.id}", kind="music")
+    db.commit()
+    url = pub_file_url(track.audio_filename)
+    try:
+        tid = await music.vocal_split_start(url)
+    except RuntimeError as e:
+        _refund(db, user, cost, "стемы не запустились")
+        db.commit()
+        raise HTTPException(502, str(e))
+    return {"ok": True, "task_id": tid, "charged": cost}
+
+
+@app.get("/api/music/stems/{task_id}")
+async def music_stems_status(task_id: str, user: User = Depends(current_user)):
+    try:
+        return await music.vocal_split_status(task_id)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"статус не читается: {str(e)[:150]}")
+
+
+@app.post("/api/tracks/{track_id}/music/release")
+async def music_release(track_id: int, request: Request,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    """«Отгрузить на лейбл» — заявка менеджеру в CRM.
+
+    Прямого API дистрибуции пока нет (нужен аккаунт дистрибьютора и его
+    ключи), поэтому один клик создаёт заявку со ссылкой на трек: менеджер
+    отгружает руками, клиент видит статус. Честная механика вместо кнопки-
+    пустышки."""
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(400, "сначала загрузи или сгенерируй трек")
+    body = await request.json() if await request.body() else {}
+    order = StudioOrder(
+        user_id=user.id, contact=str(body.get("contact") or user.email or user.login or ""),
+        name=f"Релиз: {track.title or 'без названия'}",
+        brief=(f"Отгрузка трека на площадки.\n"
+               f"Трек: {track.title}\nФайл: /api/media/{track.audio_filename}\n"
+               f"Комментарий: {str(body.get('note') or '')[:500]}"),
+        status="new", source="site")
+    db.add(order)
+    db.commit()
+    return {"ok": True, "order_id": order.id}
+
 
 @app.get("/api/voices")
 def voices_list(user: User = Depends(current_user)):
