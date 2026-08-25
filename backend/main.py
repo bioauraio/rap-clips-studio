@@ -41,7 +41,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, ChangeLog, EarnClick, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, ChangeLog, EarnClick, EarnSale, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -1988,6 +1988,23 @@ def list_earn(request: Request, db: Session = Depends(db_session)):
     return {"products": out, "authorized": bool(user)}
 
 
+@app.get("/api/earn/stats")
+def earn_stats(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """Дашборд партнёра: клики, продажи, начислено. Продажи считает менеджер
+    по правилу «только первая продажа клиента» — повторный клиент в таблицу
+    физически не вставляется."""
+    clicks = db.query(func.count(EarnClick.id)).filter(
+        EarnClick.user_id == user.id).scalar() or 0
+    sales = db.query(func.count(EarnSale.id)).filter(
+        EarnSale.partner_id == user.id).scalar() or 0
+    earned = db.query(func.coalesce(func.sum(EarnSale.reward_kopeks), 0)).filter(
+        EarnSale.partner_id == user.id).scalar() or 0
+    paid = db.query(func.coalesce(func.sum(EarnSale.reward_kopeks), 0)).filter(
+        EarnSale.partner_id == user.id, EarnSale.status == "paid").scalar() or 0
+    return {"clicks": int(clicks), "sales": int(sales),
+            "earned_kopeks": int(earned), "paid_kopeks": int(paid)}
+
+
 @app.get("/go/{preset_id}", include_in_schema=False)
 def earn_go(preset_id: int, u: str = "", request: Request = None,
             db: Session = Depends(db_session)):
@@ -2025,7 +2042,7 @@ def list_trends(request: Request, db: Session = Depends(db_session)):
 
 
 @app.post("/api/trends/{preset_id}/make")
-async def make_trend(preset_id: int, photo: UploadFile,
+async def make_trend(preset_id: int, photo: UploadFile, request: Request = None,
                      user: User = Depends(current_user),
                      db: Session = Depends(db_session)):
     """Фото → ролик по шаблону. Единственное действие пользователя."""
@@ -2036,6 +2053,13 @@ async def make_trend(preset_id: int, photo: UploadFile,
     data = await photo.read()
     if len(data) < 1024:
         raise HTTPException(400, "фото не долетело — попробуй ещё раз")
+    # Свой стиль разрешён только в «Заработке»: тренд — фиксированный шаблон,
+    # а партнёрский ролик может быть каким угодно, кроме одного — продукт в
+    # кадре не меняется.
+    user_style = ""
+    if t.kind == "earn":
+        form = await request.form() if hasattr(request, "form") else {}
+        user_style = str(form.get("style") or "")[:1000]
     ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
     fname = f"trend_{uuid.uuid4().hex}{ext}"
     with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
@@ -2044,7 +2068,7 @@ async def make_trend(preset_id: int, photo: UploadFile,
     cost = _trend_dict(t)["cost_points"]
     _charge(db, user, cost, f"тренд «{t.title}»", kind="trend", engine=t.video_engine or "")
     job = TrendJob(preset_id=t.id, user_id=user.id, photo_filename=fname,
-                   charged_points=cost)
+                   user_style=user_style, charged_points=cost)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -2078,12 +2102,25 @@ def _run_trend_job(job_id: int) -> None:
         job.status = "frame"
         db.commit()
         photo = os.path.join(UPLOAD_DIR, job.photo_filename)
-        prompt = (t.image_prompt or "") + (
-            "\n\nThe reference photo is the REAL person to feature: reproduce "
-            "their exact face, hair and build. Do not beautify or restyle them.")
+        prompt = (t.image_prompt or "")
+        refs = [photo]
+        if getattr(job, "user_style", ""):
+            # Стиль партнёра ложится ПОВЕРХ, но продукт неприкосновенен:
+            # это и есть оффер — товар в кадре, остальное как хочешь.
+            prompt += ("\n\nSTYLE REQUESTED BY THE CREATOR (apply fully): "
+                       + job.user_style
+                       + "\nThe PRODUCT itself must stay exactly as in its "
+                         "reference: same packaging, same label text, unchanged.")
+        if t.kind == "earn" and t.poster_filename:
+            ppath = os.path.join(UPLOAD_DIR, t.poster_filename)
+            if os.path.exists(ppath):
+                refs.append(ppath)
+        prompt += ("\n\nThe first reference photo is the REAL person to feature: "
+                   "reproduce their exact face, hair and build. Do not beautify "
+                   "or restyle them.")
         data, mime = asyncio.run(mediagen.generate_image(
-            prompt, reference_path=photo, engine=t.image_engine or "",
-            aspect=t.aspect or "9:16"))
+            prompt, reference_path=refs[0], reference_paths=refs,
+            engine=t.image_engine or "", aspect=t.aspect or "9:16"))
         job.frame_filename = _save_image(data, mime)
         _reg_file(db, job.frame_filename, job.user_id, kind="frames")
         job.status = "video"

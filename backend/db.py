@@ -631,6 +631,7 @@ class TrendPreset(Base):
     kind = Column(String, nullable=False, default="trend")   # trend | earn
     landing_url = Column(String, nullable=False, default="") # куда ведёт продажа
     reward_note = Column(String, nullable=False, default="") # «10% с заказа» — текст оффера
+    reward_pct = Column(Integer, nullable=False, default=10)  # доля партнёра, 10–20
     created_at = Column(DateTime, default=now)
 
 
@@ -647,6 +648,23 @@ class EarnClick(Base):
     created_at = Column(DateTime, default=now)
 
 
+class EarnSale(Base):
+    """Подтверждённая продажа по партнёрской ссылке.
+
+    Правило владельца: оплачивается ТОЛЬКО ПЕРВАЯ продажа клиента — поэтому
+    client_key (хэш телефона/почты покупателя) уникален на всю таблицу:
+    повторная запись того же клиента физически не вставится."""
+    __tablename__ = "earn_sales"
+    id = Column(Integer, primary_key=True)
+    preset_id = Column(Integer, nullable=False, index=True)
+    partner_id = Column(Integer, nullable=False, index=True)
+    client_key = Column(String, nullable=False, unique=True)
+    amount_kopeks = Column(Integer, nullable=False, default=0)
+    reward_kopeks = Column(Integer, nullable=False, default=0)
+    status = Column(String, nullable=False, default="approved")  # approved|paid
+    created_at = Column(DateTime, default=now)
+
+
 class TrendJob(Base):
     """Одна генерация по шаблону: фото человека → его ролик."""
     __tablename__ = "trend_jobs"
@@ -654,6 +672,9 @@ class TrendJob(Base):
     preset_id = Column(Integer, nullable=False, index=True)
     user_id = Column(Integer, nullable=False, index=True)
     photo_filename = Column(String, nullable=False, default="")
+    # Свой стиль партнёра (earn): «мультяшно», «ИИ-блогер в студии» — всё,
+    # кроме самого продукта: продукт в кадре зафиксирован шаблоном.
+    user_style = Column(Text, nullable=False, default="")
     frame_filename = Column(String, nullable=False, default="")
     video_filename = Column(String, nullable=False, default="")
     status = Column(String, nullable=False, default="queued")   # queued|frame|video|done|error

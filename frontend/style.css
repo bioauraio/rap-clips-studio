@@ -3561,3 +3561,16 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 /* Заработок: оффер продукта в карточке. */
 .earn-reward { color: var(--accent-ink); font-size: 12px; font-weight: 700; }
 .earn-link { align-self: stretch; font-size: 11.5px; }
+
+/* Заработок: дашборд партнёра и инструкция. */
+.earn-dash {
+  display: flex; gap: 18px; flex-wrap: wrap; padding: 10px 14px;
+  border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 16px;
+  background: var(--card); margin-bottom: 10px; font-size: 12.5px;
+}
+.earn-dash b { font-family: var(--font-mono); font-size: 15px; }
+.earn-howto { font-size: 12.5px; line-height: 1.6; margin: 0 0 14px; max-width: 72ch; }
+.earn-style {
+  width: 100%; padding: 6px 10px; font-size: 12px;
+  border: 1px solid rgba(var(--ink-rgb), .12); border-radius: 12px;
+}

@@ -365,10 +365,27 @@
       let d;
       try { d = await api("/api/earn"); } catch (e) { failed(body, "trends.failed"); return; }
       body.innerHTML = "";
-      const intro = document.createElement("p");
-      intro.className = "muted";
-      intro.textContent = T("earn.intro",
-        "Сгенерируй ролик с продуктом — любой шаблон, хоть мульт. Запости его со своей ссылкой: все заказы с твоего трафика — твоя выплата.");
+      // Дашборд партнёра — до карточек: свои цифры важнее витрины.
+      if (d.authorized) {
+        try {
+          const st = await api("/api/earn/stats");
+          const dash = document.createElement("div");
+          dash.className = "earn-dash";
+          dash.innerHTML = `
+            <span><b>${st.clicks}</b> ${T("earn.dClicks", "переходов")}</span>
+            <span><b>${st.sales}</b> ${T("earn.dSales", "продаж")}</span>
+            <span><b>${(st.earned_kopeks / 100).toFixed(0)}₽</b> ${T("earn.dEarned", "начислено")}</span>
+            <span><b>${(st.paid_kopeks / 100).toFixed(0)}₽</b> ${T("earn.dPaid", "выплачено")}</span>`;
+          body.appendChild(dash);
+        } catch (e) { /* дашборд не обязателен для витрины */ }
+      }
+      const intro = document.createElement("div");
+      intro.className = "earn-howto muted";
+      intro.innerHTML = T("earn.howto",
+        "<b>Как это работает:</b> 1) выбери продукт — он уже встроен в шаблон, менять его нельзя · "
+        + "2) опиши свой стиль: ИИ-блогер, мульт, 3D — что угодно · "
+        + "3) запости ролик со своей ссылкой · "
+        + "4) получай 10–20% с продаж; оплачивается только ПЕРВАЯ покупка каждого клиента.");
       body.appendChild(intro);
       if (!(d.products || []).length) {
         const empty = document.createElement("p");
@@ -393,6 +410,8 @@
             <span class="earn-reward">${esc(t.reward_note || "")}</span>
             <span class="muted">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
           </div>
+          <input type="text" class="earn-style" maxlength="200"
+                 placeholder="${T("earn.stylePh", "свой стиль: мульт, ИИ-блогер, 3D…")}" />
           ${t.my_link ? `
           <button type="button" class="earn-link ghost">${T("earn.copy", "Скопировать мою ссылку")}</button>` : ""}
           <label class="trend-go">
@@ -483,6 +502,8 @@
     state.textContent = T("trends.uploading", "загружаю фото…");
     const fd = new FormData();
     fd.append("photo", f);
+    const styleEl = card.querySelector(".earn-style");
+    if (styleEl && styleEl.value.trim()) fd.append("style", styleEl.value.trim());
     let job;
     try {
       job = await api(`/api/trends/${t.id}/make`, { method: "POST", body: fd });

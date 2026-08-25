@@ -412,6 +412,52 @@ async def admin_models_save(request: Request, user: User = Depends(admin_user),
     return {"ok": True, "disabled": off}
 
 
+@router.post("/api/admin/earn/sale")
+async def admin_earn_sale(request: Request, user: User = Depends(admin_user),
+                          db: Session = Depends(db_session)):
+    """Менеджер фиксирует продажу по партнёрской ссылке.
+
+    Правило: оплачивается только ПЕРВАЯ продажа клиента — client_key уникален,
+    и повторная запись честно отвечает 409, а не молча дублирует выплату.
+    Партнёру начисляются коины на сумму вознаграждения по нынешнему курсу."""
+    core = _core()
+    body = await request.json()
+    code = str(body.get("partner_code") or "").strip().upper()
+    partner = db.query(User).filter(User.ref_code == code).first()
+    if not partner:
+        raise HTTPException(404, "партнёр с таким кодом не найден")
+    preset = db.get(core.TrendPreset, int(body.get("preset_id") or 0))
+    if not preset or preset.kind != "earn":
+        raise HTTPException(404, "продукт не найден")
+    client_key = str(body.get("client_key") or "").strip().lower()
+    if not client_key:
+        raise HTTPException(400, "нужен ключ клиента (телефон или почта)")
+    import hashlib
+    ck = hashlib.sha256(client_key.encode()).hexdigest()[:24]
+    amount = int(float(body.get("amount_rub") or 0) * 100)
+    if amount <= 0:
+        raise HTTPException(400, "сумма продажи обязательна")
+    pct = max(10, min(20, int(preset.reward_pct or 10)))
+    reward = amount * pct // 100
+    sale = core.EarnSale(preset_id=preset.id, partner_id=partner.id,
+                         client_key=ck, amount_kopeks=amount,
+                         reward_kopeks=reward)
+    db.add(sale)
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001 — уникальный client_key сработал
+        db.rollback()
+        raise HTTPException(409, "этот клиент уже оплачивался — засчитывается только первая продажа")
+    # Вознаграждение — коинами по курсу: рубли → токены → коины.
+    tokens = core._points_of_usd(amount / 100 / max(1.0, core.USD_RUB)) * pct // 100
+    coins = max(1, int(tokens / core.BONUS_RATE))
+    core._grant_bonus(db, partner, coins,
+                      f"продажа «{preset.title[:40]}» ({pct}%)",
+                      ref_type="earn_sale", ref_id=sale.id)
+    return {"ok": True, "sale_id": sale.id, "reward_kopeks": reward,
+            "coins_granted": coins}
+
+
 @router.get("/api/admin/design")
 def admin_design(user: User = Depends(admin_user), db: Session = Depends(db_session)):
     core = _core()
