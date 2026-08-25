@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Response, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func, or_
@@ -41,7 +41,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, ChangeLog, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, ChangeLog, EarnClick, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -1963,11 +1963,62 @@ def theme_css(db: Session = Depends(db_session)):
                     headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/api/earn")
+def list_earn(request: Request, db: Session = Depends(db_session)):
+    """Партнёрские продукты: шаблон любого вида со встроенным продуктом.
+
+    Человек генерирует ролик, постит его со СВОЕЙ ссылкой /go/{id}?u=код —
+    и получает долю с заказов, пришедших по его трафику."""
+    user = _resolve_user(request, db)
+    rows = (db.query(TrendPreset)
+            .filter(TrendPreset.enabled.is_(True), TrendPreset.kind == "earn")
+            .order_by(TrendPreset.position, TrendPreset.id).all())
+    out = []
+    for t in rows:
+        d = _trend_dict(t, user)
+        d["reward_note"] = t.reward_note
+        # Индивидуальная ссылка появляется только у вошедшего: код выдаём
+        # лениво — он же код партнёрки, одна ссылка на всё.
+        if user:
+            if not user.ref_code:
+                user.ref_code = _new_ref_code(db)
+                db.commit()
+            d["my_link"] = f"{PUBLIC_BASE_URL}/go/{t.id}?u={user.ref_code}"
+        out.append(d)
+    return {"products": out, "authorized": bool(user)}
+
+
+@app.get("/go/{preset_id}", include_in_schema=False)
+def earn_go(preset_id: int, u: str = "", request: Request = None,
+            db: Session = Depends(db_session)):
+    """Партнёрский переход: лог клика → лендинг продукта.
+
+    Клик — первичный документ атрибуции: по нему менеджер сводит «чей
+    покупатель» при выплате. ip двигаем в хэш: для атрибуции хватает
+    уникальности, хранить голые адреса незачем."""
+    t = db.get(TrendPreset, preset_id)
+    if not t or t.kind != "earn" or not t.landing_url:
+        raise HTTPException(404, "продукт не найден")
+    owner = _find_ambassador(db, u)
+    if owner:
+        import hashlib
+        ip = (request.client.host if request and request.client else "") or ""
+        db.add(EarnClick(preset_id=t.id, user_id=owner.id,
+                         ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:16]))
+        db.commit()
+    url = t.landing_url
+    if owner and "?" not in url:
+        url += f"?ref={owner.ref_code}"
+    elif owner:
+        url += f"&ref={owner.ref_code}"
+    return RedirectResponse(url, status_code=302)
+
+
 @app.get("/api/trends")
 def list_trends(request: Request, db: Session = Depends(db_session)):
     """Витрина шаблонов. Публичная: карточки с примерами — двигатель захода."""
     user = _resolve_user(request, db)
-    rows = (db.query(TrendPreset).filter(TrendPreset.enabled.is_(True))
+    rows = (db.query(TrendPreset).filter(TrendPreset.enabled.is_(True), TrendPreset.kind != "earn")
             .order_by(TrendPreset.position, TrendPreset.id).all())
     return {"presets": [_trend_dict(t, user) for t in rows],
             "authorized": bool(user)}

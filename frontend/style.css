@@ -3557,3 +3557,7 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   background: var(--card-solid); color: var(--ink);
   box-shadow: 0 1px 3px rgba(var(--ink-rgb), .10);
 }
+
+/* Заработок: оффер продукта в карточке. */
+.earn-reward { color: var(--accent-ink); font-size: 12px; font-weight: 700; }
+.earn-link { align-self: stretch; font-size: 11.5px; }

@@ -459,7 +459,8 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
         t = core.TrendPreset()
         db.add(t)
     for field in ("title", "image_prompt", "motion_prompt",
-                  "image_engine", "video_engine", "aspect"):
+                  "image_engine", "video_engine", "aspect",
+                  "kind", "landing_url", "reward_note"):
         if field in body:
             setattr(t, field, str(body[field] or ""))
     if "duration_sec" in body:

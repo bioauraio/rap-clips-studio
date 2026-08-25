@@ -124,6 +124,15 @@
       open: () => openTrends(),
     },
     {
+      // Заработок: партнёрские продукты — сгенерил ролик, запостил со своей
+      // ссылкой, получаешь долю с заказов. Витрина на механике трендов.
+      id: "earn",
+      label: () => T("nav.sections.earn", "Заработок"),
+      title: () => T("nav.titles.earn", ""),
+      active: () => sheet === "earn",
+      open: () => openEarn(),
+    },
+    {
       id: "academy",
       label: () => T("nav.sections.academy", "Академия"),
       title: () => T("nav.titles.academy", ""),
@@ -349,6 +358,60 @@
   // Ни трека, ни проекта: вся режиссура зашита владельцем в шаблон.
 
   let trendPoll = null;
+
+  function openEarn() {
+    openSheet("earn", T("earn.title", "Заработок с lolq.ai"), async (body) => {
+      busy(body);
+      let d;
+      try { d = await api("/api/earn"); } catch (e) { failed(body, "trends.failed"); return; }
+      body.innerHTML = "";
+      const intro = document.createElement("p");
+      intro.className = "muted";
+      intro.textContent = T("earn.intro",
+        "Сгенерируй ролик с продуктом — любой шаблон, хоть мульт. Запости его со своей ссылкой: все заказы с твоего трафика — твоя выплата.");
+      body.appendChild(intro);
+      if (!(d.products || []).length) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = T("earn.empty", "Продукты скоро появятся.");
+        body.appendChild(empty);
+        return;
+      }
+      const grid = document.createElement("div");
+      grid.className = "trend-grid";
+      d.products.forEach((t) => {
+        const card = document.createElement("div");
+        card.className = "trend-card";
+        card.innerHTML = `
+          ${t.sample_url
+            ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
+                 ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+            : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+            : `<div class="trend-ph"></div>`}
+          <div class="trend-meta">
+            <b>${esc(t.title)}</b>
+            <span class="earn-reward">${esc(t.reward_note || "")}</span>
+            <span class="muted">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
+          </div>
+          ${t.my_link ? `
+          <button type="button" class="earn-link ghost">${T("earn.copy", "Скопировать мою ссылку")}</button>` : ""}
+          <label class="trend-go">
+            <span>${T("earn.make", "Сделать ролик с продуктом")}</span>
+            <input type="file" accept="image/*" hidden />
+          </label>
+          <div class="trend-state hidden"></div>`;
+        const linkBtn = card.querySelector(".earn-link");
+        if (linkBtn) linkBtn.addEventListener("click", async () => {
+          try { await navigator.clipboard.writeText(t.my_link); } catch (e) {}
+          linkBtn.textContent = T("earn.copied", "Скопирована ✓ — вставляй в пост");
+        });
+        const inp = card.querySelector("input");
+        inp.addEventListener("change", () => trendMake(card, t, inp));
+        grid.appendChild(card);
+      });
+      body.appendChild(grid);
+    });
+  }
 
   function openTrends() {
     openSheet("trends", T("trends.title", "Тренды"), async (body) => {

@@ -625,6 +625,25 @@ class TrendPreset(Base):
     duration_sec = Column(Integer, nullable=False, default=6)
     aspect = Column(String, nullable=False, default="9:16")
     enabled = Column(Boolean, nullable=False, default=True)
+    # РЕЖИМ «ЗАРАБОТОК»: kind="earn" превращает шаблон в партнёрский продукт.
+    # Человек генерирует с ним ролик, постит с индивидуальной ссылкой
+    # /go/{id}?u=код — и получает долю с продаж по своему трафику.
+    kind = Column(String, nullable=False, default="trend")   # trend | earn
+    landing_url = Column(String, nullable=False, default="") # куда ведёт продажа
+    reward_note = Column(String, nullable=False, default="") # «10% с заказа» — текст оффера
+    created_at = Column(DateTime, default=now)
+
+
+class EarnClick(Base):
+    """Клик по партнёрской ссылке: чей трафик привёл человека на лендинг.
+
+    Продажу сводит менеджер в CRM (или вебхук магазина позже) — а клик это
+    первичный документ атрибуции, без него спор «чей покупатель» не решить."""
+    __tablename__ = "earn_clicks"
+    id = Column(Integer, primary_key=True)
+    preset_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    ip_hash = Column(String, nullable=False, default="")
     created_at = Column(DateTime, default=now)
 
 

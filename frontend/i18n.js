@@ -154,6 +154,7 @@ const I18N = {
       aria: "Service sections",
       sections: {
         trends: "Trends",
+        earn: "Earn",
         studio: "Studio",
         academy: "Academy",
         prompts: "Prompts",
@@ -1112,6 +1113,12 @@ const I18N = {
       notReady: "Voiceover is not set up yet — the ElevenLabs key is missing.",
       noVoices: "No voices on the ElevenLabs account yet.",
       pick: "Which voice? Enter the number:",
+    },
+    earn: {
+      title: "Earn with lolq.ai",
+      intro: "Generate a clip with the product — any template, even a cartoon. Post it with your link: every order from your traffic pays you.",
+      empty: "Products are coming soon.", copy: "Copy my link",
+      copied: "Copied ✓ — paste it into your post", make: "Make a clip with the product",
     },
     track: {
       audioUrl: "by link",
@@ -2614,6 +2621,7 @@ const I18N = {
       aria: "Разделы сервиса",
       sections: {
         trends: "Тренды",
+        earn: "Заработок",
         studio: "Студия",
         academy: "Академия",
         prompts: "Промты",
@@ -3551,6 +3559,12 @@ const I18N = {
       notReady: "Озвучка пока не настроена — нет ключа ElevenLabs.",
       noVoices: "На аккаунте ElevenLabs ещё нет голосов.",
       pick: "Каким голосом? Введи номер:",
+    },
+    earn: {
+      title: "Заработок с lolq.ai",
+      intro: "Сгенерируй ролик с продуктом — любой шаблон, хоть мульт. Запости со своей ссылкой: заказы с твоего трафика — твоя выплата.",
+      empty: "Продукты скоро появятся.", copy: "Скопировать мою ссылку",
+      copied: "Скопирована ✓ — вставляй в пост", make: "Сделать ролик с продуктом",
     },
     track: {
       audioUrl: "по ссылке",
