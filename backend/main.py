@@ -10788,6 +10788,19 @@ async def billing_create(request: Request, user: User = Depends(current_user),
         r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
                               auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
                               headers={"Idempotence-Key": uuid.uuid4().hex})
+        # МАГАЗИН БЕЗ РЕКУРРЕНТКИ. Пока ЮKassa не включила магазину
+        # автоплатежи, просьба сохранить карту валит ВЕСЬ платёж 403-м —
+        # человек не может купить тариф вовсе. Честный компромисс: проводим
+        # оплату без сохранения. Подписка встаёт, автопродления не будет —
+        # воркер напомнит о ручном продлении, а не спишет сам.
+        if r.status_code == 403 and payload.get("save_payment_method") \
+                and "recurring" in r.text.lower():
+            log.warning("ЮKassa: магазину не включены автоплатежи — "
+                        "провожу оплату без сохранения карты")
+            payload["save_payment_method"] = False
+            r = await client.post("https://api.yookassa.ru/v3/payments", json=payload,
+                                  auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET),
+                                  headers={"Idempotence-Key": uuid.uuid4().hex})
     if r.status_code not in (200, 201):
         raise ApiError(502, "yookassa_failed", f"YooKassa refused: {r.text[:200]}")
     data = r.json() or {}
