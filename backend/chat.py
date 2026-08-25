@@ -425,8 +425,10 @@ def _storage(db: Session, user: User) -> dict:
 @router.get("/api/chat/models")
 def chat_models(user: User = Depends(current_user), db: Session = Depends(db_session)):
     plan_id = _plan_id(user)
+    off = _core()._disabled_models(db)
+    models = [m for m in _models_payload(user) if m.get("id") not in off]
     return {
-        "models": _models_payload(user),
+        "models": models,
         "default_text": _model_id("text", TEXT_MODEL_ID),
         "default_image": _model_id("image", _ctx.plan_image_engine(user)),
         "default_video": _model_id("video", (_allowed_video_engines(user) or ["grok"])[0]),

@@ -73,6 +73,8 @@
       sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
     { id: "styles", ico: "🎨", title: "Стили",
       sub: "Промпт, референсы, файлы и сценарная база каждого стиля. Промпты закрыты: наружу уходят только подпись и описание." },
+    { id: "design", ico: "🎨", title: "Дизайн",
+      sub: "Живые токены дизайн-системы: огненный градиент, фон, стекло. Меняются без переката — theme.css отдаёт их поверх стилей." },
     { id: "market", ico: "🌍", title: "Рынок",
       sub: "Сводная по конкурентам: цены, фишки, модели, дизайн. Публичная копия живёт на /competitors.html." },
     { id: "pricing", ico: "📈", title: "Наценка",
@@ -703,6 +705,7 @@
 
   /* ─────────────────────────── модели ─────────────────────────── */
   async function renderModels(box) {
+    modelsToggleBlock(box);
     try {
       const d = await api("/api/admin/models");
       const table = (title, rows, extra) => `<div class="adm-card">
@@ -859,10 +862,88 @@
     });
   }
 
+  /* ─────────── дизайн-токены ─────────── */
+  /* Тумблеры моделей внутри вкладки «Модели» рисует renderModels ниже;
+     здесь — общий блок сохранения. */
+  async function modelsToggleBlock(box) {
+    let d;
+    try { d = await api("/api/admin/models-toggle"); } catch (e) { return; }
+    const wrap = document.createElement("div");
+    wrap.className = "adm-card";
+    wrap.innerHTML = `<b>Показ моделей клиентам</b>
+      <p class="muted">Выключенная модель пропадает из выбора у клиентов —
+      для экономии токенов и управления ассортиментом. Действует сразу.</p>
+      <div class="adm-mt-list"></div>
+      <div class="adm-price-acts">
+        <button type="button" class="adm-mt-save primary">Применить</button>
+        <span class="adm-price-msg muted"></span></div>`;
+    const list = wrap.querySelector(".adm-mt-list");
+    d.models.forEach((m) => {
+      const l = document.createElement("label");
+      l.className = "adm-mt-row";
+      l.innerHTML = `<input type="checkbox" ${m.enabled ? "checked" : ""}
+        data-id="${m.id}" /> <span>${m.title}</span>
+        <i class="muted">${m.kind}</i>`;
+      list.appendChild(l);
+    });
+    wrap.querySelector(".adm-mt-save").addEventListener("click", async () => {
+      const off = [...list.querySelectorAll("input:not(:checked)")].map((i) => i.dataset.id);
+      const msg = wrap.querySelector(".adm-price-msg");
+      try { await api("/api/admin/models-toggle", { method: "POST", body: { disabled: off } }); }
+      catch (e) { msg.textContent = String(e.message || e); return; }
+      msg.textContent = "применено";
+    });
+    box.prepend(wrap);
+  }
+
+  async function renderDesign(box) {
+    let d;
+    try { d = await api("/api/admin/design"); } catch (e) { return fail(box, e); }
+    const t = d.tokens;
+    box.innerHTML = `
+      <div class="adm-card adm-design">
+        <div class="adm-d-row"><label>Градиент огня</label>
+          <input type="color" data-k="accent_from" value="${t.accent_from}" />
+          <input type="color" data-k="accent_mid" value="${t.accent_mid}" />
+          <input type="color" data-k="accent_to" value="${t.accent_to}" />
+          <span class="adm-d-fire" style="background:linear-gradient(95deg,${t.accent_from},${t.accent_mid},${t.accent_to})"></span>
+        </div>
+        <div class="adm-d-row"><label>Фон бумаги</label>
+          <input type="color" data-k="bg" value="${t.bg}" /></div>
+        <div class="adm-d-row"><label>Размытие стекла</label>
+          <input type="range" data-k="glass_blur" min="0" max="40" value="${t.glass_blur}" />
+          <b>${t.glass_blur}px</b></div>
+        <div class="adm-price-acts">
+          <button type="button" class="adm-d-save primary">Применить</button>
+          <button type="button" class="adm-d-reset ghost">Сбросить к канону</button>
+          <span class="adm-price-msg muted"></span>
+        </div>
+        <p class="muted">Действует на весь сервис сразу: /api/theme.css кладёт
+        токены поверх стилей. Канон — в docs/DESIGN_SYSTEM.md.</p>
+      </div>`;
+    const msg = box.querySelector(".adm-price-msg");
+    const collect = () => {
+      const out = {};
+      box.querySelectorAll("[data-k]").forEach((i) => { out[i.dataset.k] = i.value; });
+      return out;
+    };
+    box.querySelector(".adm-d-save").addEventListener("click", async () => {
+      try { await api("/api/admin/design", { method: "POST", body: collect() }); }
+      catch (e) { msg.textContent = String(e.message || e); return; }
+      msg.textContent = "применено — обнови любую страницу сервиса";
+    });
+    box.querySelector(".adm-d-reset").addEventListener("click", async () => {
+      try { await api("/api/admin/design", { method: "POST", body: d.defaults }); }
+      catch (e) { msg.textContent = String(e.message || e); return; }
+      await renderDesign(box);
+    });
+  }
+
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
     payouts: renderPayouts, ledger: renderLedger, styles: renderStyles,
     models: renderModels, pricing: renderPricing, market: renderMarket,
+    design: renderDesign,
     settings: renderSettings,
   };
 

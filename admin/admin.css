@@ -174,3 +174,15 @@
   border: 1.5px solid rgba(45,33,26,.3); font-size: 13px; }
 .adm-market-frame { width: 100%; height: calc(100vh - 210px); border: 1px solid rgba(45,33,26,.2);
   border-radius: 12px; background: #fff; }
+
+/* Дизайн-токены: строки «подпись — контролы» + живой образец градиента. */
+.adm-design { display: flex; flex-direction: column; gap: 14px; max-width: 560px; }
+.adm-d-row { display: flex; align-items: center; gap: 10px; }
+.adm-d-row label { width: 150px; font-size: 12.5px; font-weight: 700; }
+.adm-d-fire { width: 120px; height: 26px; border-radius: 999px; border: 1px solid rgba(45,33,26,.25); }
+
+/* Тумблеры моделей: плотный список чекбоксов. */
+.adm-mt-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 14px; margin: 10px 0; }
+.adm-mt-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.adm-mt-row i { margin-left: auto; font-size: 10px; }

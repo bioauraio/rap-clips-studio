@@ -20,7 +20,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, Response, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -1889,6 +1889,56 @@ def project_changes(project_id: int, user: User = Depends(current_user),
         "actor": r.actor, "ref_type": r.ref_type, "ref_id": r.ref_id,
         "field": r.field, "old": r.old_value, "new": r.new_value,
     } for r in rows]}
+
+
+# ─────────── живые токены дизайн-системы ───────────
+# Канон: тёплая бумага с разлиновкой + ЕДИНСТВЕННЫЙ акцент — родной
+# жёлто-оранжевый огненный градиент. Ключевые токены владелец крутит в
+# админке, вкладка «Дизайн»; сюда они приезжают CSS-переопределением.
+# Выключенные владельцем модели: не показываются клиентам и не принимаются
+# к генерации. Экономия и управление ассортиментом без переката.
+def _disabled_models(db: Session) -> set:
+    row = db.get(AppSetting, "disabled_models")
+    if not row:
+        return set()
+    try:
+        return set(json.loads(row.value or "[]"))
+    except ValueError:
+        return set()
+
+
+DESIGN_DEFAULTS = {
+    "accent_from": "#e0503a", "accent_mid": "#ea6a34", "accent_to": "#f0913c",
+    "bg": "#faf7f2", "radius_scale": "1.0", "glass_blur": "20",
+}
+
+
+def _design_tokens(db: Session) -> dict:
+    row = db.get(AppSetting, "design_tokens")
+    if not row:
+        return dict(DESIGN_DEFAULTS)
+    try:
+        saved = json.loads(row.value or "{}")
+    except ValueError:
+        saved = {}
+    out = dict(DESIGN_DEFAULTS)
+    out.update({k: str(v)[:40] for k, v in saved.items() if k in DESIGN_DEFAULTS})
+    return out
+
+
+@app.get("/api/theme.css", include_in_schema=False)
+def theme_css(db: Session = Depends(db_session)):
+    t = _design_tokens(db)
+    css = (":root{"
+           f"--fire-ink: linear-gradient(95deg, {t['accent_from']} 0%, "
+           f"{t['accent_mid']} 45%, {t['accent_to']} 100%);"
+           f"--accent: {t['accent_from']};"
+           f"--bg: {t['bg']};"
+           "}"
+           ".topbar,.track-card,.scene-card,.pa-panel,.mode-sheet,.trend-card,"
+           ".modal-box{backdrop-filter: blur(" + t["glass_blur"] + "px) saturate(1.5);}")
+    return Response(css, media_type="text/css",
+                    headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/trends")

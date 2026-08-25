@@ -383,6 +383,56 @@ def admin_user_actions(uid: int, user: User = Depends(admin_user),
 
 # ═══════════════════════ СВОДКА ПО СЕРВИСУ ═══════════════════════
 
+@router.get("/api/admin/models-toggle")
+def admin_models_list(user: User = Depends(admin_user), db: Session = Depends(db_session)):
+    """Все модели сервиса с тумблерами. Выключенная исчезает у клиентов."""
+    core = _core()
+    off = core._disabled_models(db)
+    out = []
+    for eid, spec in core.mediagen.VIDEO_ENGINES.items():
+        out.append({"id": f"video:{eid}", "title": spec.get("title", eid),
+                    "kind": "video", "enabled": f"video:{eid}" not in off})
+    for eid, spec in core.mediagen.IMAGE_ENGINES.items():
+        out.append({"id": f"image:{eid}", "title": spec.get("title", eid),
+                    "kind": "image", "enabled": f"image:{eid}" not in off})
+    return {"models": out}
+
+
+@router.post("/api/admin/models-toggle")
+async def admin_models_save(request: Request, user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    body = await request.json()
+    off = [str(x) for x in (body.get("disabled") or [])][:100]
+    row = db.get(AppSetting, "disabled_models")
+    if row:
+        row.value = json.dumps(off)
+    else:
+        db.add(AppSetting(key="disabled_models", value=json.dumps(off)))
+    db.commit()
+    return {"ok": True, "disabled": off}
+
+
+@router.get("/api/admin/design")
+def admin_design(user: User = Depends(admin_user), db: Session = Depends(db_session)):
+    core = _core()
+    return {"tokens": core._design_tokens(db), "defaults": core.DESIGN_DEFAULTS}
+
+
+@router.post("/api/admin/design")
+async def admin_design_save(request: Request, user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    core = _core()
+    body = await request.json()
+    tokens = {k: str(body.get(k))[:40] for k in core.DESIGN_DEFAULTS if body.get(k)}
+    row = db.get(AppSetting, "design_tokens")
+    if row:
+        row.value = json.dumps(tokens, ensure_ascii=False)
+    else:
+        db.add(AppSetting(key="design_tokens", value=json.dumps(tokens, ensure_ascii=False)))
+    db.commit()
+    return {"ok": True, "tokens": core._design_tokens(db)}
+
+
 @router.get("/api/admin/trends")
 def admin_trends(user: User = Depends(admin_user), db: Session = Depends(db_session)):
     core = _core()

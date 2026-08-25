@@ -8932,6 +8932,29 @@ const chatState = {
   error: "",                // последняя ошибка — под полем, не в alert
 };
 
+/* ─────────── тема: system / light / dark ─────────── */
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode;
+  else { delete root.dataset.theme; mode = "system"; }
+  localStorage.setItem("rc_theme", mode);
+  document.querySelectorAll(".theme-switch button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.themeSet === mode);
+  });
+}
+(function themeBoot() {
+  // Класс os-dark дублирует prefers-color-scheme: селекторам тёмной темы
+  // нужен якорь в DOM, чтобы работать в связке с data-theme-переключателем.
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  const sync = () => document.documentElement.classList.toggle("os-dark", mq.matches);
+  sync(); mq.addEventListener("change", sync);
+  applyTheme(localStorage.getItem("rc_theme") || "system");
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-theme-set]");
+    if (b) applyTheme(b.dataset.themeSet);
+  });
+})();
+
 function chatEl(id) { return document.getElementById(id); }
 
 /* ─────────────────────── ассистент песочницы ───────────────────────
