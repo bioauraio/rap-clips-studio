@@ -1109,7 +1109,7 @@ async function renderAccountPane(pane) {
         <span class="dash-split-part bonus"><b>${escHtml(tNum(a.bonus_points))}</b> ${
           escHtml(t("dash.bonusPart"))}</span>
       </div>
-      <span class="dash-line muted">${escHtml(t("dash.bonusFirst"))}</span>` : ""}
+      <span class="dash-line muted">${escHtml(t("dash.bonusFirst", { rate: a.bonus_rate || 0.68 }))}</span>` : ""}
       <div class="dash-hero-lines">
         <span class="dash-line">${sceneCost > 0
           ? escHtml(t("dash.enough", { n: tNum(scenesLeft),

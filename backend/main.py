@@ -552,7 +552,8 @@ PLANS = {
         "video": ["grok", "seedance", "kling"],
         "engines": {"grok": "grok", "seedance": "seedance-2-5", "kling": "kling-3.0-pro"},
         # Дешёвые сильные модели тарифу тоже открыты — выбором, а не по умолчанию.
-        "extra_engines": ["seedance-2-mini", "seedance-2-5-480", "kling-3.0", "minimax-h3"],
+        "extra_engines": ["seedance-2-mini", "seedance-2-5-480", "kling-3.0",
+                          "minimax-h3", "veo-3.1-fast", "veo-3.1-lite"],
         "image_engine": "nano-banana-pro",
         "priority": False, "badge": "Most popular",
         "note": "Nano Banana Pro frames, Seedance 2.5 and Kling 3.0 Pro",
@@ -577,7 +578,8 @@ PLANS = {
         "video": ["grok", "seedance", "kling"],
         "engines": {"grok": "grok", "seedance": "seedance-2-5", "kling": "kling-3.0-pro"},
         "extra_engines": ["seedance-2-mini", "seedance-2-0", "seedance-2-5-480",
-                          "kling-3.0", "minimax-h3"],
+                          "kling-3.0", "minimax-h3",
+                          "veo-3.1-fast", "veo-3.1", "veo-3.1-lite"],
         "image_engine": "nano-banana-pro",
         # priority — пока ЯРЛЫК ВИТРИНЫ: очередь генераций у нас одна и
         # однопоточная (см. _run_all_videos). Реальный приоритет = отдельная
@@ -707,6 +709,8 @@ POINT_USD = float(os.environ.get("POINT_USD", "0.0125"))
 # 2 токена — символическая плата ровно за это.
 GATEWAY_POINTS = int(os.environ.get("GATEWAY_POINTS", "2"))
 SCENE_SEC = 6              # средняя длина сцены, из claude.py
+# Курс бонусной валюты: один коин покрывает столько токенов стоимости.
+BONUS_RATE = max(0.1, min(1.0, float(os.environ.get("BONUS_RATE", "0.68"))))
 # Меньше килобайта — это не дорожка, а обрыв связи или пустой файл.
 MIN_AUDIO_BYTES = 1024
 
@@ -1386,16 +1390,31 @@ def _move_points(db: Session, user: User, delta: int, what: str, *,
     delta = int(delta or 0)
     if not delta:
         return 0
-    # БОНУСНЫЕ СПИСЫВАЮТСЯ ПЕРВЫМИ. gen_points — общий кошелёк и остаётся
-    # единственной правдой об остатке; bonus_points лишь помечает, какая его
-    # часть заработана приглашениями. Тратим подаренное раньше купленного:
-    # обратный порядок означал бы, что кэшбэк лежит мёртвым грузом, пока
-    # человек проедает свои деньги.
-    if delta < 0:
-        user.bonus_points = max(0, int(user.bonus_points or 0) + delta)
-    elif meta.get("kind") == "bonus":
-        user.bonus_points = int(user.bonus_points or 0) + delta
-    user.gen_points = int(user.gen_points or 0) + delta  # ledger-ok: единственная дверь
+    # КОИНЫ — СВОЯ ВАЛЮТА БОНУСОВ (решение владельца 25.08). bonus_points
+    # хранит коины, и один коин покрывает BONUS_RATE (0.68) токена стоимости.
+    # Реклама честно говорит «500 бонусов», а себестоимость этих бонусов для
+    # нас — 340 токенов: партнёрка перестаёт грозить убытком при вирусном
+    # росте. Коины сгорают первыми; начисление коинов (kind=bonus) НЕ трогает
+    # рублёвый кошелёк gen_points. Уже выданные ранние бонусы остались в
+    # gen_points по курсу 1:1 — обещанного назад не забираем.
+    def _apply(target):
+        """Одна логика движения для основной ветки и фолбэка журнала: раньше
+        фолбэк делал голый += delta и списывал мимо коинов — второй раз."""
+        if delta < 0:
+            need = -delta
+            coins = int(target.bonus_points or 0)
+            cover = min(need, int(coins * BONUS_RATE))
+            if cover > 0:
+                # Округление ВВЕРХ: недожечь коин — подарить стоимость дважды.
+                burn = min(coins, max(1, -(-cover * 100 // int(BONUS_RATE * 100))))
+                target.bonus_points = coins - burn
+            target.gen_points = int(target.gen_points or 0) - (need - cover)  # ledger-ok
+        elif meta.get("kind") == "bonus":
+            target.bonus_points = int(target.bonus_points or 0) + delta
+        else:
+            target.gen_points = int(target.gen_points or 0) + delta  # ledger-ok
+
+    _apply(user)
     try:
         return _log_points(db, user, delta, what, commit=commit, **meta)
     except Exception as e:  # noqa: BLE001
@@ -1406,7 +1425,7 @@ def _move_points(db: Session, user: User, delta: int, what: str, *,
                     what, str(e)[:150])
         fresh = db.get(User, user.id)
         if fresh is not None:
-            fresh.gen_points = int(fresh.gen_points or 0) + delta  # ledger-ok
+            _apply(fresh)   # rollback откатил основную ветку — повторяем той же логикой
             db.commit()
         return 0
 
@@ -1485,8 +1504,9 @@ def _charge(db: Session, user: User, points: int, what: str, **meta) -> int:
     Возвращает id строки журнала — по нему потом привязывается внешняя задача."""
     if user.is_admin or points <= 0:
         return 0
-    if int(user.gen_points or 0) < points:
-        raise NotEnoughPoints(points, int(user.gen_points or 0), _plan_of(user), what)
+    available = int(user.gen_points or 0) + int(int(user.bonus_points or 0) * BONUS_RATE)
+    if available < points:
+        raise NotEnoughPoints(points, available, _plan_of(user), what)
     ev = _move_points(db, user, -int(points), what, **meta)
     log.info("user %s: −%s токенов за %s (осталось %s)", user.id, points, what, user.gen_points)
     return ev
@@ -2053,7 +2073,8 @@ def _user_dict(user: User) -> dict:
             # Из чего сложен остаток: бонусные заработаны приглашениями и
             # тратятся первыми, платные — то, что человек купил сам.
             "bonus_points": int(user.bonus_points or 0),
-            "paid_points": max(0, int(user.gen_points or 0) - int(user.bonus_points or 0)),
+            "bonus_rate": BONUS_RATE,
+            "paid_points": int(user.gen_points or 0),
             "plan": plan_id, "plan_title": PLANS[plan_id]["title"],
             # Ступень объёма и месячная норма ЭТОГО человека: интерфейсу нужно
             # различать u1 и u4, у них разный объём при одном имени тарифа.
@@ -11590,7 +11611,8 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
         # Кошелёк один, но человек должен видеть, что из него заработано
         # приглашениями: иначе кэшбэк выглядит как «просто цифра стала больше».
         "bonus_points": int(user.bonus_points or 0),
-        "paid_points": max(0, int(user.gen_points or 0) - int(user.bonus_points or 0)),
+        "bonus_rate": BONUS_RATE,
+        "paid_points": int(user.gen_points or 0),
         "projects": projects,
         # Сколько клипов по 3 минуты ещё выйдет из остатка. Считаем по рабочей
         # лошадке тарифа (самый дешёвый ПЛАТНЫЙ движок): по самому дорогому на

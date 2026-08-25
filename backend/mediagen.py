@@ -1265,6 +1265,28 @@ VIDEO_ENGINES: dict[str, dict] = {
         "usd_6s": 0.54, "first_last": True, "paid": True,
         "note": "Kling 3.0 Pro, 1080p, первый+последний кадр.",
     },
+    # Veo 3.1 через kie: СВОЙ endpoint (/api/v1/veo/generate), не общий
+    # createTask — поэтому channel "kie_veo" и своя ветка в animate_scene.
+    # Цена ФИКСИРОВАННАЯ за видео (движок отдаёт 8 секунд всегда), сборка
+    # подрежет ролик под слот сцены штатно.
+    "veo-3.1-fast": {
+        "title": "Veo 3.1 Fast · 720p", "family": "veo", "channel": "kie_veo",
+        "model": "veo3_fast", "usd_6s": 0.30, "usd_flat": True,
+        "first_last": False, "paid": True,
+        "note": "Google Veo 3.1 Fast: киношное движение по первому кадру, 8 с.",
+    },
+    "veo-3.1": {
+        "title": "Veo 3.1 Quality · 720p", "family": "veo", "channel": "kie_veo",
+        "model": "veo3", "usd_6s": 1.25, "usd_flat": True,
+        "first_last": False, "paid": True,
+        "note": "Флагман Google: максимум киношности, 8 с, дорого.",
+    },
+    "veo-3.1-lite": {
+        "title": "Veo 3.1 Lite · 720p", "family": "veo", "channel": "kie_veo",
+        "model": "veo3_lite", "usd_6s": 0.15, "usd_flat": True,
+        "first_last": False, "paid": True,
+        "note": "Самый дешёвый Veo — черновики и массовые сцены.",
+    },
     "minimax-h3": {
         "title": "MiniMax H3 · 768p", "family": "seedance", "channel": "kie",
         "model": "minimax-h3/image-to-video", "body": _body_minimax,
@@ -1279,7 +1301,7 @@ def video_engine_usd(engine: str, duration_sec: int = 6) -> float:
     другие длины считаем пропорционально (у kie цена посекундная)."""
     spec = VIDEO_ENGINES.get(engine) or {}
     base = float(spec.get("usd_6s", 0.0))
-    if not duration_sec or duration_sec == 6:
+    if spec.get("usd_flat") or not duration_sec or duration_sec == 6:
         return base
     return round(base * (float(duration_sec) / 6.0), 4)
 
@@ -1289,6 +1311,8 @@ def video_engine_live(engine: str) -> bool:
     spec = VIDEO_ENGINES.get(engine)
     if not spec:
         return False
+    if spec.get("channel") == "kie_veo":
+        return bool(KIE_API_KEY)
     if spec["channel"] == "gateway":
         return True
     if spec["family"] == "kling":
@@ -1332,6 +1356,55 @@ def engine_versions(engine: str) -> list[str]:
         return []
     same = [k for k, v in VIDEO_ENGINES.items() if (v.get("model") or "") == model]
     return same if len(same) > 1 else []
+
+
+async def _animate_veo(engine: str, prompt: str, first_path: str,
+                       aspect: str = DEFAULT_ASPECT) -> str:
+    """Veo 3.1 через выделенный kie-endpoint: generate → поллинг → mp4."""
+    spec = VIDEO_ENGINES[engine]
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0)) as client:
+        image_url = ""
+        if first_path and os.path.exists(first_path):
+            image_url = await _kie_upload(client, first_path)
+        body = {"prompt": prompt[:2000], "model": spec["model"],
+                "aspect_ratio": "9:16" if norm_aspect(aspect) == "9:16" else "16:9"}
+        if image_url:
+            body["imageUrls"] = [image_url]
+        r = await client.post(f"{KIE_API}/api/v1/veo/generate", json=body,
+                              headers=_kie_headers())
+        data = r.json() if r.status_code == 200 else {}
+        if int(data.get("code") or r.status_code) not in (200, 0):
+            msg = str(data.get("msg") or r.text)[:200]
+            if "credit" in msg.lower():
+                raise MediaError(f"kie.ai insufficient_credits: {msg}")
+            raise MediaError(f"veo отказал: {msg}")
+        task_id = (data.get("data") or {}).get("taskId") or ""
+        if not task_id:
+            raise MediaError(f"veo не вернул taskId: {str(data)[:150]}")
+        note_task(task_id)
+        deadline = time.time() + KIE_TIMEOUT_S
+        while time.time() < deadline:
+            await asyncio.sleep(KIE_POLL_S)
+            sr = await client.get(f"{KIE_API}/api/v1/veo/record-info",
+                                  params={"taskId": task_id}, headers=_kie_headers())
+            if sr.status_code != 200:
+                continue
+            sd = (sr.json() or {}).get("data") or {}
+            flag = sd.get("successFlag")
+            if flag in (2, 3):
+                raise MediaError(f"veo: задача упала — {str(sd.get('errorMessage') or '')[:200]}")
+            if flag == 1:
+                resp = sd.get("response") or {}
+                urls = resp.get("resultUrls") or resp.get("videoUrls") or []
+                if isinstance(urls, str):
+                    try:
+                        urls = json.loads(urls)
+                    except ValueError:
+                        urls = [urls]
+                if not urls:
+                    raise MediaError("veo: успех без ссылки на видео")
+                return urls[0]
+    raise MediaError("veo: таймаут ожидания результата")
 
 
 async def _animate_via_kie(engine: str, prompt: str, first_path: str,
@@ -1507,6 +1580,11 @@ async def animate_scene(
         raise MediaError(
             f"{spec['title']} недоступен: нет KIE_API_KEY "
             f"(создай ключ на kie.ai/api-key и добавь в infra/.env)")
+
+    # Veo живёт на своём endpoint — до общего конвейера kie.
+    if spec["channel"] == "kie_veo":
+        url = await _animate_veo(engine_id, prompt, first_path, aspect)
+        return await _fetch_video(url, duration_sec)
 
     # 1. Основной канал — kie.ai.
     if KIE_API_KEY:
