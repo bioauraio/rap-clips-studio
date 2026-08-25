@@ -312,6 +312,12 @@ function showLogin() {
   });
 }
 function showApp() {
+  // Уходя в студию, забываем «покажи главную»: иначе ?home липнет к адресу
+  // и перезагрузка выбрасывает обратно на лендинг.
+  if (new URLSearchParams(location.search).has("home")
+      || ["/home", "/pricing"].includes(location.pathname)) {
+    history.replaceState(null, "", "/studio");
+  }
   // Блокировку проверяем ДО показа студии, а не по первому упавшему запросу:
   // иначе заблокированный успевает увидеть свои проекты и понажимать кнопки.
   const who = me && me.user;
@@ -7401,6 +7407,12 @@ rebuildAddTrackPicker();
   // открывается студия — кроме случая, когда человек пришёл именно на главную
   // (ссылка с ?home или якорь #ld-…): тогда первый экран зовёт в студию.
   if (me.authed && !ldWantsLanding()) showApp(); else showWelcome();
+  // Экран закрепляется в адресе: раньше логотип оставлял ?home, и КАЖДАЯ
+  // перезагрузка снова открывала главную вместо места работы.
+  if (me.authed && !ldWantsLanding()
+      && ["/", "/home", "/pricing"].includes(location.pathname)) {
+    history.replaceState(null, "", "/studio");
+  }
   // Возврат из кассы: ЮKassa приводит на /?paid=<тариф>. Открываем кабинет на
   // вкладке тарифа, чтобы человек своими глазами увидел, что тариф встал.
   const paid = new URLSearchParams(location.search).get("paid");

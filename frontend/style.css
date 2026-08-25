@@ -144,7 +144,7 @@ body {
   display: flex; flex-direction: column; gap: 14px; max-width: 480px; width: 100%;
   background: var(--panel); backdrop-filter: blur(16px);
   border: 2.5px solid var(--ink); border-radius: 22px; padding: 28px 26px 22px;
-  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px var(--ink), 0 20px 40px rgba(212,118,40,.14);
+  box-shadow: 0 6px 24px rgba(var(--ink-rgb), .07);
   text-align: center;
 }
 .welcome-title {
@@ -170,7 +170,7 @@ body {
   width: 100%; max-width: 780px;
   background: var(--panel); backdrop-filter: blur(16px);
   border: 2.5px solid var(--ink); border-radius: 22px; padding: 18px 22px 20px;
-  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px var(--ink), 0 20px 40px rgba(212,118,40,.14);
+  box-shadow: 0 6px 24px rgba(var(--ink-rgb), .07);
   text-align: left;
 }
 .welcome-guide > summary {
@@ -203,9 +203,9 @@ body {
 .guide-title::before {
   content: counter(gstep); flex: none; width: 22px; height: 22px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center;
-  font-family: var(--font-mono); font-size: 11px; font-weight: 800; color: var(--on-fire);
-  background: var(--fire-ink);
-  border: 1px solid rgba(var(--ink-rgb),.28); box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 800;
+  color: var(--ink-muted); background: var(--inset);
+  border: 1px solid rgba(var(--ink-rgb),.18); box-shadow: none;
 }
 .guide-desc { margin: 7px 0 0 31px; font-size: 13.5px; line-height: 1.5; }
 .guide-shot {
@@ -214,7 +214,7 @@ body {
   background: var(--inset); box-shadow: 0 2px 8px rgba(var(--ink-rgb),.10);
   transition: transform .14s, box-shadow .14s;
 }
-.guide-shot:hover { transform: translateY(-2px); box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2px var(--ink); }
+.guide-shot:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10); }
 /* высокие скриншоты ужимаются по высоте — клик открывает оригинал */
 .guide-shot img { display: block; width: auto; max-width: 100%; max-height: 400px; height: auto; margin: 0 auto; }
 
@@ -273,13 +273,10 @@ body {
   border: 2.5px solid var(--ink); border-radius: 22px;
   padding: 16px; margin-bottom: 16px;
   /* «картонный 3D»: жёсткая офсетная тень как второй слой картона */
-  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px var(--ink), 0 20px 40px rgba(212,118,40,.14);
+  box-shadow: 0 6px 24px rgba(var(--ink-rgb), .07);
 }
-.panel::before {
-  content: ""; position: absolute; inset: 0 0 auto 0; height: 6px; border-radius: 22px 22px 0 0;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--gold));
-  opacity: .9;
-}
+/* Градиентная полоса сверху панелей убрана (канон: оранжевый — только
+   акцент действия, а не декор каждого блока). */
 .panel h2 {
   font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .22em;
   text-transform: uppercase; color: var(--accent-2-ink); margin: 0 0 14px;
@@ -326,7 +323,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   position: relative;
   background: var(--card); border: 2.5px solid var(--ink); border-radius: 24px;
   padding: 14px; margin-bottom: 14px;
-  box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px var(--ink);
+  box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
 }
 .track-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .pos {
@@ -603,7 +600,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   border: 1px solid rgba(var(--ink-rgb), .18); background: var(--card-solid);
   corner-shape: squircle;
 }
-.scene-card.active { border-color: var(--accent-2); border-left-color: var(--accent-2); transform: translateY(-2px); box-shadow: 0 6px 0 #f3c99a, 0 6px 0 2px var(--accent-2), 0 14px 34px rgba(255,122,41,.3); }
+.scene-card.active { border-color: var(--accent-2); border-left-color: var(--accent-2); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(255,122,41,.22); }
 /* Цветовое кодирование крупности убрано (канон авг-2026): радуга торцов
    спорила с единственным огненным акцентом. Крупность написана словами. */
 
@@ -812,7 +809,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   position: relative; width: 100%; max-width: 540px;
   max-height: calc(100vh - var(--tb-safe, 0px) - 40px); overflow-y: auto;
   background: var(--card); border: 2.5px solid var(--ink); border-radius: 22px; padding: 20px;
-  box-shadow: 0 7px 0 #e8d8c4, 0 7px 0 2.5px var(--ink), 0 24px 60px rgba(var(--ink-rgb), .35);
+  box-shadow: 0 16px 48px rgba(var(--ink-rgb), .28);
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .modal-title {
@@ -979,9 +976,9 @@ textarea { transition: min-height .15s; }
 .welcome-steps li::before {
   content: counter(step); flex: none; width: 20px; height: 20px; border-radius: 7px;
   display: inline-flex; align-items: center; justify-content: center;
-  font-family: var(--font-mono); font-size: 11px; font-weight: 800; color: var(--on-fire);
-  background: var(--fire-ink);
-  border: 1px solid rgba(var(--ink-rgb),.28); box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 800;
+  color: var(--ink-muted); background: var(--inset);
+  border: 1px solid rgba(var(--ink-rgb),.18); box-shadow: none;
 }
 
 /* компактные этап-табы и плотный стиль-пикер на всю ширину */
@@ -1533,7 +1530,7 @@ button.primary:hover:not(:disabled) {
   display: flex; flex-direction: column; gap: 10px; min-height: 0;
   background: var(--panel); backdrop-filter: blur(16px);
   border: 2.5px solid var(--ink); border-radius: 20px; padding: 12px;
-  box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px var(--ink);
+  box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
 }
 .chat-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .chat-back { font-weight: 700; color: var(--accent-2-ink); padding: 4px 6px; }
@@ -1568,7 +1565,7 @@ button.primary:hover:not(:disabled) {
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   background: var(--panel); backdrop-filter: blur(16px);
   border: 2.5px solid var(--ink); border-radius: 20px;
-  box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px var(--ink);
+  box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
   overflow: hidden;
 }
 .chat-head {
@@ -1808,7 +1805,7 @@ button.primary:hover:not(:disabled) {
   display: flex; flex-direction: column; gap: 10px; min-height: 0;
   background: var(--panel); backdrop-filter: blur(16px);
   border: 2.5px solid var(--ink); border-radius: 20px; padding: 12px;
-  box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px var(--ink);
+  box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
 }
 .mk-groups { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 .mk-group-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
@@ -2183,7 +2180,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .modal-card.modal-wide { max-width: 720px; }
 .dash-hero {
   border: 2.5px solid var(--ink); border-radius: 20px; padding: 16px 18px;
-  background: var(--card); box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2.5px var(--ink);
+  background: var(--card); box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
   margin-bottom: 16px;
 }
 .dash-hero-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
@@ -2225,7 +2222,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 /* График теперь один <svg> на всю ширину, а не тридцать вложенных div'ов:
    растягивается по контейнеру и не пересчитывает пиксельные высоты. */
 .dash-bars {
-  height: 130px; padding: 0; border-bottom: 2px solid rgba(var(--ink-rgb), .18);
+  height: 130px; padding: 0; border-bottom: 1px solid rgba(var(--ink-rgb), .12);
 }
 .dash-svg { width: 100%; height: 100%; display: block; }
 .dash-bar {
@@ -2525,7 +2522,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   z-index: 60; max-width: min(520px, calc(100vw - 24px));
   background: var(--card-solid); border: 1px solid rgba(var(--ink-rgb),.30); border-radius: 20px;
-  box-shadow: 0 6px 0 #e8d8c4, 0 6px 0 2px var(--ink); padding: 12px 14px;
+  box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10); padding: 12px 14px;
   display: flex; gap: 10px; align-items: flex-start;
 }
 .notice-dock b { display: block; font-size: 13.5px; margin-bottom: 3px; }

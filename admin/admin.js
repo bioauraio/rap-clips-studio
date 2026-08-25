@@ -705,41 +705,63 @@
 
   /* ─────────────────────────── модели ─────────────────────────── */
   async function renderModels(box) {
-    modelsToggleBlock(box);
     try {
       const d = await api("/api/admin/models");
+      // Тумблер, использования и заработок — прямо в строках цен: решение
+      // «выключить модель» принимается на тех же цифрах, что его оправдывают.
+      const tgl = (e) => e.toggle_id
+        ? `<label class="adm-sw"><input type="checkbox" data-toggle="${esc(e.toggle_id)}"
+             ${e.enabled ? "checked" : ""} /><i></i></label>` : "";
+      const stat = (e) => `<td class="num">${num(e.uses || 0)}</td>
+        <td class="num">${num(e.earned || 0)}</td>`;
       const table = (title, rows, extra) => `<div class="adm-card">
         <h3>${esc(title)}</h3>
         <table class="adm-table">
-          <thead><tr><th>модель</th><th>канал</th><th>жив</th>
-            <th class="num">токенов</th><th class="num">себестоимость</th>
+          <thead><tr><th>вкл</th><th>модель</th><th>канал</th><th>жив</th>
+            <th class="num">цена, ток</th><th class="num">себес</th>
+            <th class="num">использ.</th><th class="num">принесли ток</th>
             ${extra ? `<th>${esc(extra)}</th>` : ""}</tr></thead>
           <tbody>${rows}</tbody>
         </table></div>`;
       box.innerHTML =
         table("Текстовые модели (блок сценария)", d.text.map((e) => `<tr>
+          <td>${tgl(e)}</td>
           <td><b>${esc(e.title)}</b><br /><span class="muted">${esc(e.note || "")}</span></td>
           <td>${esc(e.channel)}</td>
           <td>${e.live ? '<span class="adm-pill on">жив</span>'
                         : '<span class="adm-pill off">ключа нет</span>'}</td>
           <td class="num">${num(e.points)}</td>
           <td class="num">$${Number(e.usd || 0).toFixed(3)}</td>
+          ${stat(e)}
           <td>с ${esc(e.min_plan)}</td></tr>`).join(""), "тариф")
         + table("Движки кадров", d.images.map((e) => `<tr>
+          <td>${tgl(e)}</td>
           <td><b>${esc(e.title)}</b></td><td>${esc(e.channel)}</td>
           <td>${e.live ? '<span class="adm-pill on">жив</span>'
                         : '<span class="adm-pill off">ключа нет</span>'}</td>
           <td class="num">${num(e.points)}</td>
-          <td class="num">$${Number(e.usd).toFixed(3)}</td></tr>`).join(""))
+          <td class="num">$${Number(e.usd).toFixed(3)}</td>
+          ${stat(e)}</tr>`).join(""))
         + table("Движки видео", d.videos.map((e) => `<tr>
+          <td>${tgl(e)}</td>
           <td><b>${esc(e.title)}</b></td><td>${esc(e.family)}</td>
           <td>${e.live ? '<span class="adm-pill on">жив</span>'
                         : '<span class="adm-pill off">ключа нет</span>'}</td>
           <td class="num">${num(e.points)}</td>
-          <td class="num">$${Number(e.usd).toFixed(3)}</td></tr>`).join(""))
+          <td class="num">$${Number(e.usd).toFixed(3)}</td>
+          ${stat(e)}</tr>`).join(""))
         + `<p class="adm-note">Один токен = $${d.point_usd} себестоимости. Цена в токенах
            выводится из этой константы и долларовых цен движков, поэтому разойтись с
            реальными расходами она не может.</p>`;
+      box.addEventListener("change", async (ev) => {
+        const t = ev.target.closest("[data-toggle]");
+        if (!t) return;
+        const off = [...box.querySelectorAll("[data-toggle]:not(:checked)")]
+          .map((i) => i.dataset.toggle);
+        try {
+          await api("/api/admin/models-toggle", { method: "POST", body: { disabled: off } });
+        } catch (e) { t.checked = !t.checked; alert(String(e.message || e)); }
+      });
     } catch (e) { fail(box, e); }
   }
 

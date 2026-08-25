@@ -4692,6 +4692,41 @@ STREAM_HOSTS = (
 AUDIO_URL_MAX_BYTES = 60 * 1024 * 1024   # 60 МБ — больше песни не бывает
 
 
+def _fetch_stream_audio(url: str) -> str:
+    """Аудио из ролика через yt-dlp → mp3 в хранилище.
+
+    Берём лучший аудиопоток и жмём в mp3. Егресс к площадке идёт через ту же
+    прокладку, что и остальной внешний трафик сервера (WARP/релей): без неё
+    YouTube из РФ недоступен. Ошибки yt-dlp отдаём человеку как есть.
+    """
+    try:
+        import yt_dlp  # noqa: PLC0415
+    except ImportError:
+        raise RuntimeError("загрузка из роликов не собрана: нет yt-dlp в образе")
+    out_base = os.path.join(UPLOAD_DIR, f"yt_{uuid.uuid4().hex}")
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": out_base + ".%(ext)s",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": [{"key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3", "preferredquality": "192"}],
+    }
+    proxy = os.environ.get("EGRESS_PROXY", "")
+    if proxy:
+        opts["proxy"] = proxy
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except Exception as e:  # noqa: BLE001 — текст ошибки полезен человеку
+        raise RuntimeError(f"не вышло забрать звук из ролика: {str(e)[:200]}")
+    mp3 = out_base + ".mp3"
+    if not os.path.exists(mp3) or os.path.getsize(mp3) < MIN_AUDIO_BYTES:
+        raise RuntimeError("ролик скачался, но звук не извлёкся")
+    return os.path.basename(mp3)
+
+
 @app.post("/api/tracks/{track_id}/audio/from-url")
 async def track_audio_from_url(track_id: int, request: Request,
                                user: User = Depends(current_user),
@@ -4711,10 +4746,26 @@ async def track_audio_from_url(track_id: int, request: Request,
         raise HTTPException(400, "нужна ссылка, начинающаяся с http:// или https://")
     host = url.split("//", 1)[1].split("/", 1)[0].lower().lstrip("www.")
     if any(host == h or host.endswith("." + h) for h in STREAM_HOSTS):
-        raise HTTPException(
-            400,
-            "с этой площадки скачивать нельзя — нужна прямая ссылка на файл "
-            "(облако, сайт битмейкера, выгрузка от дистрибьютора)")
+        # По решению владельца площадки-стриминги скачиваются через yt-dlp:
+        # берём ЛУЧШЕЕ аудио и перекодируем в mp3. Ответственность за права на
+        # ролик — на том, кто вставил ссылку (это его сервис и его контент).
+        try:
+            fname = _fetch_stream_audio(url)
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        dur = _ffprobe_duration(os.path.join(UPLOAD_DIR, fname))
+        if dur <= 0:
+            _remove_media(fname)
+            raise HTTPException(400, "звук не извлёкся из ролика")
+        track.audio_filename = fname
+        track.audio_duration_sec = dur
+        _reg_file(db, fname, track.project.owner_id, kind="audio",
+                  project_id=track.project_id, track_id=track.id)
+        track.clip_status = ""; track.clip_error = ""
+        db.commit()
+        threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+        db.refresh(track)
+        return track_dict(track)
     import httpx as _httpx  # noqa: PLC0415 — так же, как в остальных местах файла
 
     try:

@@ -982,25 +982,51 @@ def admin_style_asset_text(asset_id: int, user: User = Depends(admin_user),
 # ═══════════════════════ МОДЕЛИ И НАСТРОЙКИ СЕРВИСА ═══════════════════════
 
 @router.get("/api/admin/models")
-def admin_models(user: User = Depends(admin_user)):
+def admin_models(user: User = Depends(admin_user), db: Session = Depends(db_session)):
     """Витрина правды: что живо, сколько стоит нам и сколько человеку.
     Только чтение — движки правятся кодом и ключами, а не веб-формой."""
     core = _core()
+    off = core._disabled_models(db)
+    # Статистика по каждому движку: сколько раз списывали и на сколько токенов.
+    # Группируем в один проход журнала — по строкам списаний с полем engine.
+    from sqlalchemy import func as _f
+    stats = {}
+    try:
+        rows = (db.query(core.PointEvent.engine,
+                         _f.count(core.PointEvent.id),
+                         _f.coalesce(_f.sum(-core.PointEvent.delta), 0))
+                .filter(core.PointEvent.delta < 0, core.PointEvent.engine != "")
+                .group_by(core.PointEvent.engine).all())
+        stats = {e: {"uses": int(n), "earned": int(pts)} for e, n, pts in rows}
+    except Exception as e:  # noqa: BLE001 — статистика не должна ронять список
+        log.warning("статистика движков не собралась: %s", str(e)[:120])
+
+    def _st(eid):
+        d = stats.get(eid, {})
+        return {"uses": d.get("uses", 0), "earned": d.get("earned", 0)}
+
     text = []
     for row in core.textgen.public_engines("studio", admin=True):
         row["points"] = core.TEXT_COST.get(row["id"], 0)
+        row["enabled"] = f"text:{row['id']}" not in off
+        row["toggle_id"] = f"text:{row['id']}"
+        row.update(_st(row["id"]))
         text.append(row)
     images = [{
         "id": eid, "title": spec["title"], "channel": spec["channel"],
         "live": eid in core.mediagen.image_engines_live(),
         "points": core.FRAME_COST.get(eid, 0),
         "usd": round(core.mediagen.image_engine_usd(eid), 4),
+        "enabled": f"image:{eid}" not in off, "toggle_id": f"image:{eid}",
+        **_st(eid),
     } for eid, spec in core.mediagen.IMAGE_ENGINES.items()]
     videos = [{
         "id": eid, "title": spec["title"], "family": spec["family"],
         "live": core.mediagen.video_engine_live(eid),
         "points": core.VIDEO_COST.get(eid, 0),
         "usd": round(core.mediagen.video_engine_usd(eid, core.SCENE_SEC), 4),
+        "enabled": f"video:{eid}" not in off, "toggle_id": f"video:{eid}",
+        **_st(eid),
     } for eid, spec in core.mediagen.VIDEO_ENGINES.items()]
     return {"text": text, "images": images, "videos": videos,
             "point_usd": core.POINT_USD}

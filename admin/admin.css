@@ -186,3 +186,18 @@
   gap: 6px 14px; margin: 10px 0; }
 .adm-mt-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .adm-mt-row i { margin-left: auto; font-size: 10px; }
+
+/* Тумблер модели прямо в строке цен. */
+.adm-sw { position: relative; display: inline-block; width: 34px; height: 20px; }
+.adm-sw input { opacity: 0; width: 0; height: 0; }
+.adm-sw i {
+  position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
+  background: rgba(45,33,26,.18); transition: background .15s;
+}
+.adm-sw i::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; transition: transform .15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.adm-sw input:checked + i { background: linear-gradient(95deg,#e0503a,#f0913c); }
+.adm-sw input:checked + i::before { transform: translateX(14px); }
