@@ -4294,7 +4294,13 @@ function paintSceneEngineLine(line, tr, sceneId) {
     const gw = document.createElement("span");
     gw.className = "s-engine-gw";
     gw.textContent = "· " + t("engines.viaGateway", { name: engineTitle(usedGw) });
-    gw.title = t("engines.viaGatewayHint");
+    // Причина переключения — прямо в подсказке: «закончились кредиты»
+    // важнее общего объяснения, что такое шлюз.
+    gw.title = (s.image_error && s.image_error.includes("шлюз")
+      ? s.image_error + "\n\n" : "") + t("engines.viaGatewayHint");
+    if (s.image_error && s.image_error.includes("кредит")) {
+      gw.textContent += " · " + (t("engines.credits") || "кончились кредиты");
+    }
     line.appendChild(gw);
   }
 }

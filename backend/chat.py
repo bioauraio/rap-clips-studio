@@ -1433,6 +1433,8 @@ def _agent_apply(db: Session, user: User, act: dict, default_project: int = 0) -
         keys = [k.strip() for k in str(fields.get("style_keys") or "").split(",")
                 if k.strip() in core.prompts_catalog.STYLE_KEYS][:3]
         extra = str(fields.get("style_extra") or "").strip()[:2000]
+        core._log_change(db, user, t.project_id, "track", t.id,
+                         "style_keys", t.style_keys, ",".join(keys), actor="agent")
         t.style_keys = ",".join(keys)
         t.style_extra = extra
         t.style = core.prompts_catalog.fusion(keys, extra)
@@ -1447,6 +1449,8 @@ def _agent_apply(db: Session, user: User, act: dict, default_project: int = 0) -
         touched = []
         for f in allowed:
             if f in fields and str(fields[f]).strip():
+                core._log_change(db, user, sc.track.project_id, "scene", sc.id,
+                                 f, getattr(sc, f, ""), fields[f], actor="agent")
                 setattr(sc, f, str(fields[f]))
                 touched.append(f)
         if "characters" in touched:

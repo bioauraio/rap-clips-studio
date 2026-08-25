@@ -624,7 +624,8 @@ async def generate_image_ex(
                 data = r.json()
                 return {"data": base64.b64decode(data["image_b64"]),
                         "mime": data.get("mime", "image/png"),
-                        "engine": "chatgpt", "native_4k": False}
+                        "engine": "chatgpt", "native_4k": False,
+                        "fallback_reason": "; ".join(errors)[:300]}
             errors.append(f"ChatGPT-шлюз {r.status_code}: {r.text[:150]}")
         except Exception as e:  # noqa: BLE001
             errors.append(f"ChatGPT-шлюз недоступен: {_why(e)}")
@@ -647,7 +648,8 @@ async def generate_image_ex(
                 data = r.json()
                 return {"data": base64.b64decode(data["image_b64"]),
                         "mime": data.get("mime", "image/jpeg"),
-                        "engine": "grok", "native_4k": False}
+                        "engine": "grok", "native_4k": False,
+                        "fallback_reason": "; ".join(errors)[:300]}
             errors.append(f"Grok-шлюз {r.status_code}: {r.text[:150]}")
         except Exception as e:  # noqa: BLE001
             errors.append(f"Grok-шлюз недоступен: {_why(e)}")

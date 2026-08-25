@@ -829,6 +829,7 @@ const I18N = {
 
     // ─────────── движки: один выбор на объект ───────────
     engines: {
+      credits: "credits ran out",
       viaGateway: "{name} is drawing",
       viaGatewayHint: "The paid engine refused, so the owner\u2019s subscription gateway took over: no credits are spent and there are no per-request limits, but it is slower.",
       ownShort: "own",
@@ -3272,6 +3273,7 @@ const I18N = {
 
     // ─────────── движки: один выбор на объект ───────────
     engines: {
+      credits: "кончились кредиты",
       viaGateway: "рисует {name}",
       viaGatewayHint: "Платный движок отказал, работает шлюз по подписке владельца: кредиты не тратятся и лимитов на запросы нет, но получается медленнее.",
       ownShort: "свой",

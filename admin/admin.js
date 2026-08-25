@@ -73,6 +73,8 @@
       sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
     { id: "styles", ico: "🎨", title: "Стили",
       sub: "Промпт, референсы, файлы и сценарная база каждого стиля. Промпты закрыты: наружу уходят только подпись и описание." },
+    { id: "market", ico: "🌍", title: "Рынок",
+      sub: "Сводная по конкурентам: цены, фишки, модели, дизайн. Публичная копия живёт на /competitors.html." },
     { id: "pricing", ico: "📈", title: "Наценка",
       sub: "Наш токен — своя валюта и не равен токену движка. Ползунок задаёт, во сколько раз мы продаём дороже себестоимости. Действует сразу." },
     { id: "models", ico: "⚙️", title: "Модели",
@@ -833,10 +835,35 @@
     });
   }
 
+  /* ─────────────────────────── рынок ─────────────────────────── */
+  function renderMarket(box) {
+    // Страница сравнения встраивается как есть: одна правда в одном файле,
+    // и она же доступна команде по публичной ссылке.
+    box.innerHTML = `
+      <div class="adm-market-bar">
+        <input type="search" class="adm-market-q" placeholder="фильтр по сервису или модели…" />
+        <a href="/competitors.html" target="_blank" class="ghost">открыть отдельно ↗</a>
+      </div>
+      <iframe class="adm-market-frame" src="/competitors.html"></iframe>`;
+    const q = box.querySelector(".adm-market-q");
+    const frame = box.querySelector(".adm-market-frame");
+    q.addEventListener("input", () => {
+      // Интерактив: фильтр прячет строки таблиц внутри встроенной страницы.
+      const doc = frame.contentDocument;
+      if (!doc) return;
+      const needle = q.value.trim().toLowerCase();
+      doc.querySelectorAll("tbody tr").forEach((tr) => {
+        tr.style.display = !needle
+          || tr.textContent.toLowerCase().includes(needle) ? "" : "none";
+      });
+    });
+  }
+
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
     payouts: renderPayouts, ledger: renderLedger, styles: renderStyles,
-    models: renderModels, pricing: renderPricing, settings: renderSettings,
+    models: renderModels, pricing: renderPricing, market: renderMarket,
+    settings: renderSettings,
   };
 
   async function boot() {

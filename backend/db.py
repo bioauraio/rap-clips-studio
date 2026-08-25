@@ -643,6 +643,26 @@ class TrendJob(Base):
     created_at = Column(DateTime, default=now)
 
 
+class ChangeLog(Base):
+    """Журнал изменений настроек проекта: кто, что, с какого на какое.
+
+    Настройки меняют двое — человек и агент, и без журнала спор «почему кадр
+    снят другим движком» не разбирается ничем. Пишем только СМЕНУ значения,
+    не каждое сохранение: журнал читают, а не архивируют.
+    """
+    __tablename__ = "change_log"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(Integer, nullable=False)
+    actor = Column(String, nullable=False, default="user")   # user | agent
+    ref_type = Column(String, nullable=False, default="")    # project|track|scene
+    ref_id = Column(Integer, nullable=False, default=0)
+    field = Column(String, nullable=False, default="")
+    old_value = Column(Text, nullable=False, default="")
+    new_value = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=now)
+
+
 class AppSetting(Base):
     """Настройки, которые правит владелец на ходу, без переката сервиса.
 

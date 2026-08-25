@@ -39,7 +39,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, ChangeLog, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -309,6 +309,31 @@ def _rescue_paid_jobs(db: Session) -> int:
             log.info("спасена оплаченная генерация: сцена %s, задача %s",
                      scene.id, ev.task_id)
     return saved
+
+
+def _fallback_note(res: dict, wanted: str) -> str:
+    """Почему кадр рисовал шлюз, а не заказанный движок — человеку, коротко."""
+    if res.get("engine") == wanted or not res.get("fallback_reason"):
+        return ""
+    reason = res["fallback_reason"]
+    low = reason.lower()
+    if "credit" in low or "insufficient" in low:
+        return "закончились кредиты движков — рисовал шлюз"
+    return "движок отказал — рисовал шлюз: " + reason[:120]
+
+
+def _log_change(db: Session, user: User, project_id: int, ref_type: str,
+                ref_id: int, field: str, old, new, actor: str = "user") -> None:
+    """Смена настройки → строка журнала. Одинаковые значения не пишем."""
+    old_s, new_s = str(old or ""), str(new or "")
+    if old_s == new_s:
+        return
+    try:
+        db.add(ChangeLog(project_id=project_id, user_id=user.id, actor=actor,
+                         ref_type=ref_type, ref_id=ref_id, field=field,
+                         old_value=old_s[:500], new_value=new_s[:500]))
+    except Exception as e:  # noqa: BLE001 — журнал не роняет работу
+        log.warning("журнал изменений не записался: %s", str(e)[:120])
 
 
 def _reset_orphan_jobs() -> None:
@@ -1848,6 +1873,22 @@ def _trend_dict(t: TrendPreset, user: "User | None" = None) -> dict:
         "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
         "cost_points": cost,
     }
+
+
+@app.get("/api/projects/{project_id}/changes")
+def project_changes(project_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """История изменений настроек проекта — человеком и агентом."""
+    pr = db.get(Project, project_id)
+    if not pr or pr.owner_id != user.id:
+        raise HTTPException(404, "проект не найден")
+    rows = (db.query(ChangeLog).filter(ChangeLog.project_id == project_id)
+            .order_by(ChangeLog.id.desc()).limit(100).all())
+    return {"changes": [{
+        "at": r.created_at.isoformat() if r.created_at else "",
+        "actor": r.actor, "ref_type": r.ref_type, "ref_id": r.ref_id,
+        "field": r.field, "old": r.old_value, "new": r.new_value,
+    } for r in rows]}
 
 
 @app.get("/api/trends")
@@ -3716,9 +3757,13 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     # Проверяем по реестру, а не по тарифу: тариф опустит недоступное сам в
     # момент генерации, а стереть уже сделанный выбор из-за смены тарифа нельзя.
     if "video_engine" in body:
+        _log_change(db, user, track.project_id, "track", track.id,
+                    "video_engine", track.video_engine, body.get("video_engine"))
         want = str(body["video_engine"] or "").strip()
         track.video_engine = want if want in mediagen.VIDEO_ENGINES else ""
     if "image_engine" in body:
+        _log_change(db, user, track.project_id, "track", track.id,
+                    "image_engine", track.image_engine, body.get("image_engine"))
         want = str(body["image_engine"] or "").strip()
         track.image_engine = want if want in mediagen.IMAGE_ENGINES else ""
     if "text_engine" in body:
@@ -4385,6 +4430,9 @@ async def set_track_style(track_id: int, request: Request,
     body = await request.json() if await request.body() else {}
 
     raw = body.get("style_keys")
+    _log_change(db, user, track.project_id, "track", track.id,
+                "style_keys", track.style_keys,
+                raw if isinstance(raw, str) else ",".join(raw or []))
     if isinstance(raw, str):
         raw = raw.split(",")
     keys: list[str] = []
@@ -6344,6 +6392,7 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
             first_data, first_mime = res["data"], res["mime"]
             native_4k = res["native_4k"]
             scene.image_engine = res["engine"]
+            scene.image_error = _fallback_note(res, engine)
         if which in ("both", "last"):
             res = asyncio.run(mediagen.generate_image_ex(
                 _frame_prompt(scene, track, "last"), reference,
