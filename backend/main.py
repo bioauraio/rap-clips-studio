@@ -12755,6 +12755,26 @@ def admin_page(request: Request, rest: str = "",
 # отдаст заводской каталог и человек решит, что админка не сохраняет.
 reload_style_overlay()
 
+# ЧЕЛОВЕЧЕСКИЕ АДРЕСА РАЗДЕЛОВ. Приложение — SPA, и до сих пор разделы жили
+# в якорях (#/make, ?home#ld-learn): такие ссылки стыдно слать и невозможно
+# рекламировать. Каждый путь отдаёт тот же index.html, а какой раздел
+# открыть — решает фронт по location.pathname.
+SPA_ROUTES = ("home", "studio", "make", "generator", "trends", "academy",
+              "prompts", "pricing", "music", "login")
+
+
+def _spa_index():
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"),
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+# Роуты регистрируются ЯВНО по одному: catch-all /{section} перехватывал бы
+# и /app.js, и всю статику корня — а mount("/") стоит после роутов.
+for _route in SPA_ROUTES:
+    app.add_api_route(f"/{_route}", _spa_index, methods=["GET"],
+                      include_in_schema=False)
+
+
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")
 
 

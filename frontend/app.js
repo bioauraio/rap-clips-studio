@@ -327,6 +327,18 @@ function showApp() {
   // #/chat продолжает работать: он лежит в закладках владельца и в
   // state.lastStep, и ломать его переименованием нельзя. Проект при этом
   // всё равно грузится фоном: «В проект» нужен список персонажей.
+  // Человеческие адреса разделов: /make, /trends, /academy… Сервер отдаёт
+  // на них index.html, раздел открываем здесь по pathname.
+  const path = location.pathname.replace(/\/+$/, "");
+  if (path === "/make" || path === "/generator") showChat();
+  else if (path === "/music" && typeof showMusic === "function") showMusic();
+  else if (["/trends", "/academy", "/prompts"].includes(path)) {
+    const id = path.slice(1);
+    setTimeout(() => {
+      const btn = document.querySelector(`.sec-btn[data-sec="${id}"]`);
+      if (btn) btn.click();
+    }, 400);
+  }
   if (location.hash === "#/chat" || location.hash === "#/make") showChat();
   // То же для музыки: /#/music — рабочая ссылка, её кладут в закладку.
   if (location.hash === "#/music" && window.QlolMusic) window.QlolMusic.show();
@@ -8827,6 +8839,8 @@ function ldWantsLanding() {
   if (window.TGA && TGA.active) return false;
   try {
     if (new URLSearchParams(location.search).has("home")) return true;
+    // Человеческие адреса лендинга: /home и /pricing ведут на главную.
+    if (["/home", "/pricing"].includes(location.pathname.replace(/\/+$/, ""))) return true;
     const h = location.hash || "";
     return h === "#home" || h.startsWith("#ld-");
   } catch (e) {
