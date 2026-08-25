@@ -1,0 +1,169 @@
+<title>lolq.ai против рынка</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  :root{
+    --bg:#FBF6EF; --card:#FFFDF9; --ink:#2D211A; --muted:#8A7A6C;
+    --accent:#E0503A; --accent-soft:#FBE9E4; --line:#E4D8C9;
+    --ok:#2C7A3F; --us:#FFF3EC; --us-line:#E8A88F;
+  }
+  :root:not([data-theme="light"]){}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#211A14; --card:#2A221B; --ink:#F0E7DC; --muted:#A8988A;
+      --accent:#F07357; --accent-soft:#3D2A22; --line:#3E332A;
+      --ok:#6FBF83; --us:#37281F; --us-line:#7A4B38;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#211A14; --card:#2A221B; --ink:#F0E7DC; --muted:#A8988A;
+    --accent:#F07357; --accent-soft:#3D2A22; --line:#3E332A;
+    --ok:#6FBF83; --us:#37281F; --us-line:#7A4B38;
+  }
+  body{background:var(--bg); color:var(--ink); font:16px/1.55 "Golos Text",system-ui,sans-serif;
+       margin:0; padding:40px 20px 64px;}
+  .wrap{max-width:1080px; margin:0 auto;}
+  .eyebrow{font:700 11px/1 "JetBrains Mono",monospace; letter-spacing:.14em;
+           text-transform:uppercase; color:var(--accent);}
+  h1{font-size:clamp(26px,4vw,38px); line-height:1.15; margin:10px 0 6px; text-wrap:balance;}
+  .sub{color:var(--muted); max-width:62ch; margin:0 0 34px;}
+  h2{font-size:20px; margin:44px 0 4px;}
+  .note{color:var(--muted); font-size:13.5px; margin:0 0 14px; max-width:70ch;}
+  .tbl{overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--card);}
+  table{border-collapse:collapse; width:100%; font-size:13px; min-width:860px;}
+  th,td{padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top;}
+  thead th{font:700 10.5px/1.3 "JetBrains Mono",monospace; letter-spacing:.06em;
+           text-transform:uppercase; color:var(--muted); background:var(--card);
+           position:sticky; top:0;}
+  tbody tr:last-child td{border-bottom:none;}
+  td:first-child, thead th:first-child{position:sticky; left:0; background:var(--card);
+    font-weight:600; min-width:130px; box-shadow:1px 0 0 var(--line);}
+  .num{font-family:"JetBrains Mono",monospace; font-variant-numeric:tabular-nums; font-size:12px;}
+  .us-col{background:var(--us); box-shadow:inset 2px 0 0 var(--us-line);}
+  td.us-col{font-weight:600;}
+  .y{color:var(--ok); font-weight:700;}
+  .n{color:var(--muted);}
+  .p{color:var(--muted);}
+  .q{color:var(--muted); opacity:.6;}
+  .verdict{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+           gap:14px; margin-top:16px;}
+  .v-card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px;}
+  .v-card.hole{border-left:3px solid var(--accent);}
+  .v-card.edge{border-left:3px solid var(--ok);}
+  .v-card h3{margin:0 0 8px; font-size:15px;}
+  .v-card ul{margin:0; padding-left:18px; font-size:13.5px; color:inherit;}
+  .v-card li{margin:5px 0;}
+  .v-card li b{font-weight:600;}
+  .legend{font-size:12px; color:var(--muted); margin:8px 2px 0;}
+  .foot{margin-top:40px; font-size:12px; color:var(--muted); border-top:1px solid var(--line); padding-top:14px;}
+  @media (prefers-reduced-motion: no-preference){ html{scroll-behavior:smooth;} }
+</style>
+<div class="wrap">
+  <div class="eyebrow">Разведка рынка · август 2026</div>
+  <h1>lolq.ai против рынка: цены, фишки, модели</h1>
+  <p class="sub">Тринадцать конкурентов: десять западных агрегаторов, два русских
+  сервиса и наш API-поставщик. Данные с официальных сайтов и свежих обзоров;
+  где страница закрыта логином — стоит «?», ничего не выдумано. Колонка
+  <b>«мы»</b> подсвечена.</p>
+
+  <h2>1 · Цены</h2>
+  <p class="note">Ориентир для сравнения — во что обходится один 5-секундный видеокадр
+  на среднем тарифе сервиса.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Сервис</th><th>Free</th><th>Начальный</th><th>Средний</th><th>Топ</th><th>~5-сек видео</th><th>Модель продаж</th></tr></thead>
+    <tbody>
+      <tr><td>Krea</td><td class="num">100 CU/день</td><td class="num">$9 · 5k CU</td><td class="num">$35 · 20k</td><td class="num">$200 · 80k</td><td class="num">Wan $0.25 · Kling $0.9 · Veo $1.8</td><td>подписка + кредиты</td></tr>
+      <tr><td>Higgsfield</td><td>символический</td><td class="num">$9 · 120 кр</td><td class="num">$23–29 · 600</td><td class="num">$59–99 · до 3k</td><td class="num">Kling $0.3–0.5 · Veo3 $2.3</td><td>подписка + кредиты</td></tr>
+      <tr><td>OpenArt</td><td class="num">40 кр, вотермарк</td><td class="num">$13 · 4k</td><td class="num">$27 · 12k</td><td class="num">$175–240 · 106k</td><td class="num">Kling $1.6 · Veo $3.4–4.9</td><td>подписка + кредиты</td></tr>
+      <tr><td>Pollo</td><td class="num">20 кр/мес</td><td class="num">$10 · 300</td><td class="num">$25 · 800</td><td class="num">$100–200 · до 50k</td><td class="num">$0.3–0.5, проф ×3–4</td><td>подписка</td></tr>
+      <tr><td>Freepik → Magnific</td><td class="q">—</td><td class="num">~$14.5 · 240k/год</td><td class="num">~$34 · 600k/год + фото-анлим</td><td class="num">~$210 · 4M/год</td><td class="q">? (видео кредитами)</td><td>подписка, кредиты живут год</td></tr>
+      <tr><td>fal.ai</td><td class="q">—</td><td colspan="3" class="num">чистый PAYG</td><td class="num">Wan $0.25 · Kling $0.35 · Veo $2</td><td>PAYG</td></tr>
+      <tr><td>Replicate</td><td class="q">—</td><td colspan="3" class="num">чистый PAYG</td><td class="num">≈ паритет fal</td><td>PAYG</td></tr>
+      <tr><td>gVideo</td><td class="num">100 кр</td><td class="num">$9.99 · 250</td><td class="num">$19.99 · 600</td><td class="num">$79.99 · 4k</td><td class="num">$0.33–0.55 · Kling3 $1.3 · Sora $3–4</td><td>подписка</td></tr>
+      <tr><td>DomoAI</td><td>старт-кредиты</td><td class="num">$6.99 · 500</td><td class="num">$19.59 · 1.5k</td><td class="num">$99 · 24k</td><td class="num">~$1</td><td>подписка</td></tr>
+      <tr><td>ImagineArt</td><td class="num">50 кр/день</td><td class="num">$15 · 3.5k</td><td class="num">$30 · 8k</td><td class="num">$250 · 100k</td><td class="num">~$0.4 · Seedance 2.5 анлим (акция)</td><td>подписка</td></tr>
+      <tr><td>Союзлаб 🇷🇺</td><td class="q">?</td><td class="num">1 490₽ · 300 кр</td><td class="num">3 490₽ · 800</td><td class="num">10 590₽ · 2.6k</td><td class="num">Seedance 2.0 ≈ 305–373₽ (~$3.5)</td><td>подписка ₽</td></tr>
+      <tr><td>SYNTX 🇷🇺</td><td class="num">5–15 ток</td><td class="num">~890₽</td><td class="num">~1 690–1 890₽</td><td class="num">~3 990–7 830₽</td><td class="num">15–50 ток (точно — за логином)</td><td>подписка ₽, TG-бот</td></tr>
+      <tr><td>kie.ai (наш API)</td><td class="num">80 кр</td><td colspan="3" class="num">PAYG от $5 (1 кр = $0.005)</td><td class="num">$0.10–0.6</td><td>PAYG</td></tr>
+      <tr><td class="us-col">lolq.ai — мы</td><td class="us-col num">150 ток, без вотермарка</td><td class="us-col">PRO</td><td class="us-col">PRO MAX</td><td class="us-col num">ULTRA $299–2 149 · 10.5k–104k</td><td class="us-col num">Seedance Mini ~$0.5 · Kling ~$0.8 · Seedance 2.5 ~$3.4</td><td class="us-col">подписка + токены</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>2 · Фишки</h2>
+  <p class="note"><span class="y">✓</span> есть · <span class="p">≈</span> частично · <span class="n">—</span> нет · <span class="q">?</span> не удалось проверить</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Фича</th><th>Krea</th><th>Higgs</th><th>OpenArt</th><th>Pollo</th><th>Freepik</th><th>fal / Repl</th><th>gVideo</th><th>Domo</th><th>Imagine</th><th>Союз</th><th>SYNTX</th><th class="us-col">мы</th></tr></thead>
+    <tbody>
+      <tr><td>Шаблоны-пресеты</td><td class="p">≈</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="p">≈</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="us-col y">✓ Тренды</td></tr>
+      <tr><td>Консистентный персонаж</td><td class="y">✓ LoRA</td><td class="y">✓ Soul ID</td><td class="y">✓</td><td class="p">≈</td><td class="p">≈</td><td class="p">≈</td><td class="q">?</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="p">≈</td><td class="us-col y">✓ фото + развороты</td></tr>
+      <tr><td>Таймлайн / монтаж</td><td class="p">≈</td><td class="y">✓</td><td class="p">≈</td><td class="q">?</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="us-col p">≈ сборка + обрезка</td></tr>
+      <tr><td>ИИ-агент</td><td class="y">✓ Node</td><td class="y">✓ MCP</td><td class="y">✓ Director</td><td class="q">?</td><td class="q">?</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓ Suprecomputer</td><td class="p">≈</td><td class="us-col y">✓ агент проекта</td></tr>
+      <tr><td>Академия / обучение</td><td class="q">?</td><td class="y">✓</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="n">—</td><td class="n">—</td><td class="p">≈</td><td class="p">≈</td><td class="n">—</td><td class="y">✓</td><td class="us-col y">✓</td></tr>
+      <tr><td>Партнёрка</td><td class="q">?</td><td class="y">✓</td><td class="y">✓</td><td class="q">?</td><td class="y">✓</td><td class="q">?</td><td class="n">—</td><td class="p">≈</td><td class="y">✓</td><td class="q">?</td><td class="y">✓</td><td class="us-col y">✓ токенами, 2 уровня</td></tr>
+      <tr><td>Remix / шаринг</td><td class="p">≈</td><td class="p">≈</td><td class="y">✓</td><td class="q">?</td><td class="q">?</td><td class="n">—</td><td class="y">✓</td><td class="p">≈</td><td class="y">✓</td><td class="q">?</td><td class="n">—</td><td class="us-col n">— дыра №1</td></tr>
+      <tr><td>API / MCP</td><td class="y">✓</td><td class="y">✓ MCP</td><td class="y">✓ MCP</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="y">✓ MCP</td><td class="p">≈ MCP</td><td class="q">?</td><td class="us-col n">—</td></tr>
+      <tr><td>Мобайл / TG-бот</td><td class="q">?</td><td class="q">?</td><td class="n">—</td><td class="q">?</td><td class="y">✓ app</td><td class="n">—</td><td class="n">—</td><td class="p">≈ Discord</td><td class="y">✓ app</td><td class="n">—</td><td class="y">✓ TG</td><td class="us-col p">≈ TG за ключом</td></tr>
+      <tr><td>Клип под свой трек</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="us-col y">✓ только мы</td></tr>
+      <tr><td>Озвучка</td><td class="n">—</td><td class="q">?</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="p">≈ lip-sync</td><td class="n">—</td><td class="y">✓ Eleven</td><td class="y">✓ Eleven</td><td class="us-col p">≈ за ключом</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>3 · Модели</h2>
+  <p class="note">Каких движков нам не хватает — видно по нижним строкам нашей колонки.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Модель</th><th>Krea</th><th>Higgs</th><th>OpenArt</th><th>Pollo</th><th>Freepik</th><th>fal</th><th>gVideo</th><th>Imagine</th><th>Союз</th><th>SYNTX</th><th>kie</th><th class="us-col">мы</th></tr></thead>
+    <tbody>
+      <tr><td>Seedance 2.x</td><td class="q">?</td><td class="y">✓</td><td class="y">✓</td><td class="q">?</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ анлим</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="us-col y">✓</td></tr>
+      <tr><td>Kling 3.0</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="us-col y">✓</td></tr>
+      <tr><td>Veo 3.x</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ Lite</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="us-col n">—</td></tr>
+      <tr><td>Sora 2</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="q">?</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="us-col n">—</td></tr>
+      <tr><td>Runway</td><td class="y">✓</td><td class="q">?</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="us-col n">—</td></tr>
+      <tr><td>Wan 2.x–3.0</td><td class="y">✓</td><td class="q">?</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="us-col n">—</td></tr>
+      <tr><td>MiniMax / Hailuo</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ H3</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="us-col y">✓ H3</td></tr>
+      <tr><td>Grok Video</td><td class="n">—</td><td class="q">?</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="us-col y">✓ шлюз</td></tr>
+      <tr><td>Nano Banana</td><td class="y">✓ 2</td><td class="y">✓ Pro</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="y">✓ 2</td><td class="y">✓ 2/Pro</td><td class="y">✓</td><td class="y">✓</td><td class="us-col y">✓ /2/Pro</td></tr>
+      <tr><td>Flux</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="y">✓ 2</td><td class="y">✓ 2</td><td class="y">✓</td><td class="y">✓</td><td class="us-col n">—</td></tr>
+      <tr><td>Suno (музыка)</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="us-col n">—</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>4 · Дизайн</h2>
+  <p class="note">По живым интерфейсам (скриншоты владельца, август 2026) — что за
+  школа дизайна у каждого и что из неё стоит взять.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Сервис</th><th>Тема и цвет</th><th>Раскладка</th><th>Что берём себе</th></tr></thead>
+    <tbody>
+      <tr><td>Higgsfield</td><td>Чёрный, один кислотный лайм-акцент, крупный капс</td><td>Слева панель генерации, справа лента работ; History отдельной вкладкой</td><td>Панель «параметры слева — результаты справа» для Генератора; кнопка Generate с ценой прямо на ней</td></tr>
+      <tr><td>SYNTX</td><td>Светлый беж, оранжевый акцент — ближе всех к нам</td><td>Чат в центре, справа стек карточек: модель → версия → формат → качество, у каждой «Сбросить»</td><td>Правая колонка настроек со сворачиваемыми группами; честное предупреждение «токены не возвращаются» у кнопки</td></tr>
+      <tr><td>Dreamina (CapCut)</td><td>Белый минимализм, много воздуха, почти без рамок</td><td>Узкий левый рейл иконок (Explore/Create/Assets/Canvas), контент до краёв, промпт-бар по центру</td><td>Экономия хрома: иконки-рейл вместо широких меню; карточки моделей как первый экран</td></tr>
+      <tr><td>Союзлаб</td><td>Тёмный нейтральный, спокойные карточки</td><td>Чат-центрический «Suprecomputer», список чатов слева</td><td>Единое окно агента как главный вход в сервис</td></tr>
+      <tr><td>Supercomputer-паттерн (общий)</td><td>—</td><td>«Имя, что создаём сегодня?» + строка ввода + плитки скиллов под ней</td><td>Тёплое приветствие агента с готовыми действиями-плитками вместо пустого поля</td></tr>
+      <tr><td class="us-col">lolq.ai — мы</td><td class="us-col">Тёплая бумага, огненный градиент, толстые обводки и «нажимные» тени</td><td class="us-col">Вертикальная студия по шагам + выдвижной агент</td><td class="us-col">Наша боль — ляпистость: слишком много равновесных кнопок. Курс — тоньше линии, меньше теней, иерархия размеров (см. план редизайна)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Выводы</h2>
+  <div class="verdict">
+    <div class="v-card edge">
+      <h3>Наши козыри</h3>
+      <ul>
+        <li><b>Клип под собственный трек</b> с нарезкой по дорожке — ниша не занята никем из тринадцати.</li>
+        <li><b>Цена конкурентна:</b> Seedance Mini ~$0.5 и Kling ~$0.8 — уровень Higgsfield, дешевле OpenArt, втрое дешевле Союзлаба (у них Seedance-ролик ~350₽).</li>
+        <li><b>Партнёрка токенами</b> в два уровня — в таком виде нет ни у кого.</li>
+        <li>Агент проекта — на уровне лидеров (Krea Node, OpenArt Director, «Suprecomputer» Союзлаба).</li>
+      </ul>
+    </div>
+    <div class="v-card hole">
+      <h3>Три дыры</h3>
+      <ul>
+        <li><b>Remix / шаринг</b> — двигатель роста у OpenArt, ImagineArt, gVideo. У нас нет вовсе.</li>
+        <li><b>Veo</b> — есть у всех одиннадцати платформ; kie отдаёт Veo 3 Fast от $0.30 — подключение почти бесплатно по трудозатратам. Заодно Wan (дешевейшее видео, $0.10–0.25).</li>
+        <li><b>MCP / API</b> — Higgsfield, OpenArt, ImagineArt и даже Союзлаб дают звать себя из Claude и других агентов.</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="foot">Источники: официальные страницы цен (openart.ai, fal.ai, replicate.com,
+  gvideo.ai, domoai.app, kie.ai, soyuzlab.ai, magnific.com) и обзоры 2026 года там,
+  где тарифы скрыты за логином (Krea, Higgsfield, Pollo, SYNTX). «?» = проверить
+  не удалось, оценки цен за клип — на среднем тарифе сервиса.</p>
+</div>
