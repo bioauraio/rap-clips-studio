@@ -4976,8 +4976,10 @@ function renderTrack(tr) {
         b.type = "button";
         b.className = "stage-tab" + (key === active ? " on" : "");
         b.dataset.stage = key;
-        b.textContent = t("stages." + key);
-        b.title = String(i + 1);
+        const num = document.createElement("span");
+        num.className = "st-num";
+        num.textContent = String(i + 1);
+        b.append(num, document.createTextNode(t("stages." + key)));
         b.addEventListener("click", () => {
           $$(".stage-tab", jump).forEach((el) => el.classList.toggle("on", el === b));
           // Управляем треком, чья карточка сейчас на экране.
@@ -4994,6 +4996,22 @@ function renderTrack(tr) {
         });
         jump.appendChild(b);
       });
+      // Подсветка следует прокрутке: тумблер показывает блок, который
+      // сейчас на экране, а не последний кликнутый.
+      const spy = () => {
+        const cards = $$(".track-card");
+        const cur = cards.find((c) => c.getBoundingClientRect().bottom > 220) || cards[0];
+        if (!cur) return;
+        const marks = [...STAGES.map((k) => [k, $(`.stage-pane[data-stage="${k}"]`, cur)]),
+                       ["clip", $(".clip-dock", cur)]];
+        let best = "setup";
+        for (const [k, el] of marks) {
+          if (el && el.getBoundingClientRect().top <= 260) best = k;
+        }
+        $$(".stage-tab", jump).forEach((el) =>
+          el.classList.toggle("on", el.dataset.stage === best));
+      };
+      window.addEventListener("scroll", spy, { passive: true });
     }
   }
   // Поле названия проекта переезжает из шапки в блок «Настройка»: в панели
