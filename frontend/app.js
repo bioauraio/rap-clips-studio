@@ -6116,16 +6116,21 @@ function renderScene(s, audioEl, mode = "board") {
     if (imgSeg) {
       buildEngineTabs(imgSeg, liveImageEngines(), "",
         (e) => e.frames_cost,
-        (id) => {
+        async (id) => {
           imgSeg.dataset.engine = id || "";
           $$(".eng-chip", imgSeg).forEach((el) =>
             el.classList.toggle("on", el.dataset.engine === id));
+          try {
+            await api(`/api/scenes/${s.id}`, { method: "PATCH",
+                                               body: { image_engine: id || "" } });
+            s.image_engine = id || "";
+          } catch (e) { fail(e); }
         });
     }
     const seg = $(".s-provider-seg", card);
     if (seg && card.__applyEngine) {
       buildEngineTabs(seg, liveVideoEngines(), "", (e) => e.scene_cost,
-                      card.__applyEngine);
+                      (id) => { card.__applyEngine(id); card.__saveEngine(id); });
     }
   };
   if (imgSeg) {
@@ -6168,6 +6173,18 @@ function renderScene(s, audioEl, mode = "board") {
         $$(".eng-chip", provSeg).forEach((el) =>
           el.classList.toggle("on", el.dataset.engine === id));
       }
+    };
+    // ВЫБОР ДВИЖКА СОХРАНЯЕТСЯ СРАЗУ. Раньше чип менял только память
+    // карточки, и человек искал кнопку «сохранить», которой не было:
+    // выбор доезжал до сервера лишь вместе с запуском генерации.
+    card.__saveEngine = async (id) => {
+      try {
+        await api(`/api/scenes/${s.id}`, { method: "PATCH",
+                                           body: { video_engine: id || "" } });
+        s.video_engine = id || "";
+        const line = $(".s-engine-line", card);
+        if (line) paintSceneEngineLine(line, trackOfScene, s.id);
+      } catch (e) { fail(e); }
     };
     // Чипы соберутся при раскрытии «поменять для этого кадра» — здесь только
     // запоминаем, чем их наполнять.

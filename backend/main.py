@@ -5353,6 +5353,23 @@ async def update_scene(scene_id: int, request: Request, user: User = Depends(cur
     if "attribute_ids" in body:
         ids = body["attribute_ids"] or []
         scene.attribute_ids = ",".join(str(int(i)) for i in ids if str(i).isdigit())
+    # ПЕРЕОПРЕДЕЛЕНИЕ ДВИЖКА КАДРА. Раньше чип жил только в памяти карточки и
+    # доезжал до сервера лишь вместе с запуском генерации — человек искал
+    # кнопку «сохранить», которой не было. Пустая строка = наследование.
+    if "video_engine" in body:
+        want = str(body["video_engine"] or "").strip()
+        if want and want not in mediagen.VIDEO_ENGINES:
+            raise HTTPException(400, f"неизвестный движок видео: {want!r}")
+        _log_change(db, user, scene.track.project_id, "scene", scene.id,
+                    "video_engine", scene.video_engine, want)
+        scene.video_engine = want
+    if "image_engine" in body:
+        want = str(body["image_engine"] or "").strip()
+        if want and want not in mediagen.IMAGE_ENGINES:
+            raise HTTPException(400, f"неизвестный движок кадров: {want!r}")
+        _log_change(db, user, scene.track.project_id, "scene", scene.id,
+                    "image_engine", scene.image_engine, want)
+        scene.image_engine = want
     db.commit()
     return scene_dict(scene)
 

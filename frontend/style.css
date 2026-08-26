@@ -3580,3 +3580,18 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .acc-ref-line .acc-code { flex: none; }
 .acc-ref-line .acc-link { flex: 1; min-width: 0; }
 @media (max-width: 560px) { .acc-ref-line { flex-wrap: wrap; } }
+
+/* ─── Ряд действий карточки кадра: одна строка, иерархия по важности ───
+   «Перегенерировать кадры» — главное действие раскадровки, занимает всю
+   первую позицию. Вторичные (перв./посл./промежуточные) — компактные
+   пилюли одной строкой: они нужны изредка и не должны весить как главные. */
+.scene-card .row:has(.s-gen-frames) { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.scene-card .s-gen-frames { font-size: 12.5px; padding: 9px 12px; }
+.scene-card .s-gen-first, .scene-card .s-gen-last, .scene-card .s-gen-mid {
+  font-size: 10.5px; padding: 5px 8px; box-shadow: none;
+  border: 1px solid rgba(var(--ink-rgb), .18); background: var(--inset);
+}
+/* Три вторичные — в один ряд под главной. */
+.scene-card .row:has(.s-gen-frames) { grid-template-columns: repeat(3, 1fr); }
+.scene-card .s-gen-frames { grid-column: 1 / -1; }
+.scene-card .s-gen-video { font-size: 13px; padding: 10px 12px; }
