@@ -354,13 +354,6 @@ def _reset_orphan_jobs() -> None:
         # готов — забираем его. Иначе каждый деплой сжигал токены за работу,
         # которая была сделана.
         rescued = _rescue_paid_jobs(db)
-        # Однократный бэкфилл светофора: у видео, снятых до появления
-        # video_src_sig, считаем текущие кадры исходными — иначе весь старый
-        # контент разом «пожелтел» бы без единой правки кадров.
-        for sc in (db.query(Scene).filter(Scene.video_filename != "",
-                                          Scene.video_src_sig == "").all()):
-            sc.video_src_sig = "|".join(_scene_frame_chain(sc)) or "-"
-        db.commit()
         note = "прервано перезапуском сервиса — запусти заново"
         n = 0
         for model, pairs in (
@@ -7196,6 +7189,24 @@ def _scene_frame_chain(scene: Scene) -> list[str]:
     return [f for f in out if os.path.exists(os.path.join(UPLOAD_DIR, f))]
 
 
+def _backfill_video_sig() -> None:
+    """Однократный бэкфилл светофора: видео, снятые до появления
+    video_src_sig, считаем снятыми из текущих кадров — иначе весь старый
+    контент разом «пожелтел» бы. Зовётся В КОНЦЕ модуля: на старте процесса
+    _reset_orphan_jobs выполняется раньше определения _scene_frame_chain,
+    и бэкфилл внутри него ронял весь сброс зависших задач."""
+    db = SessionLocal()
+    try:
+        for sc in (db.query(Scene).filter(Scene.video_filename != "",
+                                          Scene.video_src_sig == "").all()):
+            sc.video_src_sig = "|".join(_scene_frame_chain(sc)) or "-"
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — уборка не важнее старта
+        log.warning("бэкфилл video_src_sig не прошёл: %s", e)
+    finally:
+        db.close()
+
+
 def _concat_videos(parts: list[str], dest: str) -> bool:
     """Склейка отрезков сцены без перекодирования."""
     if len(parts) == 1:
@@ -13436,3 +13447,5 @@ class _NoCacheIndex(StaticFiles):
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", _NoCacheIndex(directory=FRONTEND_DIR, html=True), name="static")
+
+_backfill_video_sig()
