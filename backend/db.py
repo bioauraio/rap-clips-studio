@@ -52,6 +52,9 @@ class User(Base):
     # раньше подаренного. Отдельный счётчик нужен только чтобы человек видел,
     # сколько у него своих денег, а сколько заработано приглашениями.
     bonus_points = Column(Integer, nullable=False, default=0)
+    # Команда: доступ к задачнику /team. Отдельно от is_admin — менеджер
+    # видит задачи, но не кассу.
+    is_team = Column(Boolean, nullable=False, default=False)
     # Тариф: free — видео только через Grok (наша подписка, бесплатно),
     # pro — открывается Seedance (платные кредиты владельца сервиса).
     plan = Column(String, nullable=False, default="free")
@@ -701,6 +704,37 @@ class ChangeLog(Base):
     old_value = Column(Text, nullable=False, default="")
     new_value = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=now)
+
+
+class TeamProject(Base):
+    """Именованный отрезок времени для Ганта; задачи ссылаются на него."""
+    __tablename__ = "team_projects"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, default="")
+    color = Column(String, nullable=False, default="#e0503a")
+    start_date = Column(String, nullable=False, default="")   # YYYY-MM-DD
+    end_date = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="active") # active|done|archived
+    created_at = Column(DateTime, default=now)
+
+
+class TeamTask(Base):
+    """Задача команды. Ставит человек или ПМ-агент (author_type=agent)."""
+    __tablename__ = "team_tasks"
+    id = Column(Integer, primary_key=True)
+    title = Column(Text, nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    project_id = Column(Integer, nullable=True, index=True)
+    assignee_id = Column(Integer, nullable=True, index=True)
+    author_type = Column(String, nullable=False, default="user")  # user|agent
+    author_id = Column(Integer, nullable=True)
+    priority = Column(String, nullable=False, default="none")     # none|low|medium|high
+    status = Column(String, nullable=False, default="open")       # open|in_progress|done
+    start_at = Column(String, nullable=False, default="")         # YYYY-MM-DD (Гант)
+    due_at = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=now)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class AppSetting(Base):

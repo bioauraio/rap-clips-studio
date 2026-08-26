@@ -1318,6 +1318,8 @@ AGENT_SYSTEM = (
     "  edit_scene  — поправить кадр: fields из image_prompt, image_prompt_last, "
     "motion_prompt, shot_note, camera_move, characters\n"
     "  new_track   — завести трек в проекте: fields={\"title\", \"comment\"}\n"
+    "  task_add    — поставить задачу команде: fields={\"title\", \"description\", "
+    "\"priority\", \"due_at\"}\n"
     "ПЛАТНЫЕ kinds — вернутся человеку кнопкой, запускает он:\n"
     "  gen_scenes, extend_scenes, gen_frames (scene_id), gen_video (scene_id), "
     "assemble (track_id), image (prompt), video (prompt)\n"
@@ -1404,7 +1406,7 @@ def _core():
     return main
 
 
-AGENT_FREE_KINDS = ("set_style", "edit_scene", "new_track")
+AGENT_FREE_KINDS = ("set_style", "edit_scene", "new_track", "task_add")
 AGENT_PAID_KINDS = ("gen_scenes", "extend_scenes", "gen_frames", "gen_video",
                     "assemble", "image", "video", "open_project", "none")
 
@@ -1461,6 +1463,18 @@ def _agent_apply(db: Session, user: User, act: dict, default_project: int = 0) -
             sc.prompt_stale = False
         db.commit()
         return f"кадр {sc.position} обновлён ({', '.join(touched)})" if touched else "нечего менять"
+    if kind == "task_add":
+        core = _core()
+        title = str(fields.get("title") or act.get("prompt") or "").strip()[:500]
+        if not title:
+            return "у задачи нет названия"
+        db.add(core.TeamTask(title=title,
+                             description=str(fields.get("description") or "")[:2000],
+                             priority=str(fields.get("priority") or "none"),
+                             due_at=str(fields.get("due_at") or "")[:10],
+                             author_type="agent", author_id=user.id))
+        db.commit()
+        return f"задача «{title[:60]}» поставлена в /team"
     if kind == "new_track":
         pr = db.get(Project, _aid(act.get("project_id"), default_project))
         if not pr or pr.owner_id != user.id:

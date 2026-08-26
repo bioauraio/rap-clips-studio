@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>lolq team — задачи</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;800&family=Golos+Text:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --bg:#faf7f2; --card:#fffdf9; --ink:#2d211a; --ink-rgb:45,33,26;
+    --muted:#7d6f61; --line:rgba(45,33,26,.14);
+    --fire:linear-gradient(95deg,#e0503a,#ea6a34,#f0913c);
+    --accent:#e0503a; --ok:#2c7a3f;
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#201a15; --card:#2b231c; --ink:#f0e7dc; --ink-rgb:240,231,220;
+    --muted:#a8988a; --line:rgba(240,231,220,.14);
+  }}
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+       font:14px/1.5 "Golos Text",system-ui,sans-serif; padding:18px;
+       background-image:linear-gradient(rgba(224,80,58,.045) 1px,transparent 1px),
+         linear-gradient(90deg,rgba(224,80,58,.045) 1px,transparent 1px);
+       background-size:34px 34px;}
+  .top{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .top b{font:800 13px/1 "JetBrains Mono",monospace;letter-spacing:.12em;text-transform:uppercase}
+  .top a{color:var(--muted);text-decoration:none;font-size:12px}
+  .spacer{flex:1}
+  .add{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+  .add input,.add select{padding:8px 12px;border:1px solid var(--line);border-radius:14px;
+    background:var(--card);color:var(--ink);font-size:13px}
+  .add input[type=text]{flex:1;min-width:220px}
+  .add button{padding:8px 16px;border:none;border-radius:14px;cursor:pointer;
+    font-weight:700;font-size:13px;color:#fff;background:var(--fire)}
+  .board{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+  @media(max-width:860px){.board{grid-template-columns:1fr}}
+  .col{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:12px;
+    corner-shape:squircle;min-height:120px}
+  .col h3{margin:0 0 10px;font:800 10.5px/1 "JetBrains Mono",monospace;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .task{border:1px solid var(--line);border-radius:16px;padding:10px 12px;margin-bottom:8px;
+    background:var(--bg);cursor:grab}
+  .task b{font-size:13.5px;display:block;margin-bottom:3px}
+  .task .meta{display:flex;gap:8px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+  .task .p-high{color:var(--accent);font-weight:700}
+  .task .agent{color:var(--accent)}
+  .task .acts{margin-top:6px;display:flex;gap:6px}
+  .task .acts button{font-size:10.5px;padding:3px 9px;border-radius:999px;cursor:pointer;
+    border:1px solid var(--line);background:var(--card);color:var(--ink)}
+  .gantt{margin-top:22px;background:var(--card);border:1px solid var(--line);
+    border-radius:20px;padding:14px;overflow-x:auto}
+  .gantt h3{margin:0 0 10px;font:800 10.5px/1 "JetBrains Mono",monospace;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .g-row{display:grid;grid-template-columns:180px 1fr;align-items:center;gap:10px;
+    padding:4px 0;font-size:12px;min-width:640px}
+  .g-track{position:relative;height:18px;background:rgba(var(--ink-rgb),.05);border-radius:9px}
+  .g-bar{position:absolute;top:2px;bottom:2px;border-radius:7px;background:var(--fire);
+    min-width:8px;opacity:.9}
+  .g-bar.done{background:var(--ok)}
+  .g-today{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--accent)}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="top">
+  <b>lolq team</b><a href="/studio">← студия</a><span class="spacer"></span>
+  <span id="who" class="muted"></span>
+</div>
+<div class="add">
+  <input type="text" id="t-title" placeholder="новая задача…" />
+  <select id="t-assignee"></select>
+  <select id="t-priority">
+    <option value="none">без приоритета</option><option value="low">низкий</option>
+    <option value="medium">средний</option><option value="high">высокий</option>
+  </select>
+  <input type="date" id="t-start" title="старт (Гант)" />
+  <input type="date" id="t-due" title="дедлайн" />
+  <button id="t-add">Поставить</button>
+</div>
+<div class="board">
+  <div class="col" data-st="open"><h3>Открыто</h3></div>
+  <div class="col" data-st="in_progress"><h3>В работе</h3></div>
+  <div class="col" data-st="done"><h3>Готово</h3></div>
+</div>
+<div class="gantt"><h3>Гант</h3><div id="g-body"></div></div>
+<script>
+const api = (p, o={}) => fetch(p, {headers:{"content-type":"application/json"},
+  credentials:"include", method:o.method||"GET",
+  body:o.body?JSON.stringify(o.body):undefined})
+  .then(async r=>{ if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail||r.status);
+                   return r.json(); });
+let B = null;
+function esc(v){const d=document.createElement("div");d.textContent=v??"";return d.innerHTML}
+async function load(){
+  try{ B = await api("/api/team/board"); }
+  catch(e){ document.body.innerHTML =
+    "<p style='padding:40px;font-size:15px'>Доступ только для команды. Войди в аккаунт с доступом: <a href='/studio'>в студию</a>.</p>";
+    return; }
+  const sel = document.getElementById("t-assignee");
+  sel.innerHTML = "<option value=''>кому…</option>" +
+    B.members.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("");
+  document.getElementById("who").textContent =
+    (B.members.find(m=>m.id===B.me)||{}).name||"";
+  paint();
+}
+function paint(){
+  document.querySelectorAll(".col").forEach(c=>{
+    c.querySelectorAll(".task").forEach(x=>x.remove());
+    B.tasks.filter(t=>t.status===c.dataset.st).forEach(t=>{
+      const d=document.createElement("div"); d.className="task"; d.draggable=true;
+      d.dataset.id=t.id;
+      d.innerHTML=`<b>${esc(t.title)}</b>
+        <span class="meta">
+          ${t.assignee?`<span>→ ${esc(t.assignee)}</span>`:""}
+          ${t.priority!=="none"?`<span class="p-${t.priority}">${t.priority}</span>`:""}
+          ${t.due_at?`<span>до ${t.due_at}</span>`:""}
+          ${t.author_type==="agent"?`<span class="agent">✦ агент</span>`:""}
+        </span>
+        <span class="acts">
+          ${t.status!=="open"?`<button data-mv="open">← назад</button>`:""}
+          ${t.status==="open"?`<button data-mv="in_progress">в работу</button>`:""}
+          ${t.status==="in_progress"?`<button data-mv="done">готово ✓</button>`:""}
+          <button data-del>✕</button>
+        </span>`;
+      d.querySelectorAll("[data-mv]").forEach(b=>b.onclick=async()=>{
+        await api(`/api/team/tasks/${t.id}`,{method:"PATCH",body:{status:b.dataset.mv}});
+        t.status=b.dataset.mv; paint(); gantt();
+      });
+      d.querySelector("[data-del]").onclick=async()=>{
+        if(!confirm("Удалить задачу?"))return;
+        await api(`/api/team/tasks/${t.id}`,{method:"DELETE"});
+        B.tasks=B.tasks.filter(x=>x.id!==t.id); paint(); gantt();
+      };
+      d.addEventListener("dragstart",ev=>ev.dataTransfer.setData("text",t.id));
+      c.appendChild(d);
+    });
+  });
+  document.querySelectorAll(".col").forEach(c=>{
+    c.ondragover=ev=>ev.preventDefault();
+    c.ondrop=async ev=>{
+      const id=Number(ev.dataTransfer.getData("text"));
+      const t=B.tasks.find(x=>x.id===id); if(!t||t.status===c.dataset.st)return;
+      await api(`/api/team/tasks/${id}`,{method:"PATCH",body:{status:c.dataset.st}});
+      t.status=c.dataset.st; paint(); gantt();
+    };
+  });
+  gantt();
+}
+function gantt(){
+  const rows=[...B.projects.map(p=>({name:p.name,start:p.start_date,end:p.end_date,
+    done:p.status==="done"})),
+    ...B.tasks.filter(t=>t.start_at&&t.due_at).map(t=>({name:t.title,
+    start:t.start_at,end:t.due_at,done:t.status==="done"}))];
+  const box=document.getElementById("g-body"); box.innerHTML="";
+  if(!rows.length){box.innerHTML="<p class='muted'>Задай задачам старт и дедлайн — они лягут полосами.</p>";return;}
+  const ds=rows.flatMap(r=>[r.start,r.end]).filter(Boolean).sort();
+  const min=new Date(ds[0]), max=new Date(ds[ds.length-1]);
+  const span=Math.max(1,(max-min)/86400000+1);
+  const today=(new Date()-min)/86400000/span*100;
+  rows.forEach(r=>{
+    const l=(new Date(r.start)-min)/86400000/span*100;
+    const w=Math.max(2,((new Date(r.end)-new Date(r.start))/86400000+1)/span*100);
+    const row=document.createElement("div"); row.className="g-row";
+    row.innerHTML=`<span title="${esc(r.name)}">${esc(r.name.slice(0,26))}</span>
+      <span class="g-track"><i class="g-bar ${r.done?"done":""}"
+        style="left:${l}%;width:${w}%"></i>
+        ${today>=0&&today<=100?`<i class="g-today" style="left:${today}%"></i>`:""}</span>`;
+    box.appendChild(row);
+  });
+}
+document.getElementById("t-add").onclick=async()=>{
+  const title=document.getElementById("t-title").value.trim();
+  if(!title)return;
+  const t=await api("/api/team/tasks",{method:"POST",body:{
+    title, assignee_id:Number(document.getElementById("t-assignee").value)||null,
+    priority:document.getElementById("t-priority").value,
+    start_at:document.getElementById("t-start").value,
+    due_at:document.getElementById("t-due").value}});
+  B.tasks.push(t); document.getElementById("t-title").value=""; paint();
+};
+load();
+</script>
+</body>
+</html>

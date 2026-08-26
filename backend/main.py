@@ -41,7 +41,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, ChangeLog, EarnClick, EarnSale, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, ChangeLog, EarnClick, EarnSale, TeamProject, TeamTask, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     TrackPhoto, User, init_db, now,
@@ -1961,6 +1961,114 @@ def theme_css(db: Session = Depends(db_session)):
            ".modal-box{backdrop-filter: blur(" + t["glass_blur"] + "px) saturate(1.5);}")
     return Response(css, media_type="text/css",
                     headers={"Cache-Control": "no-cache"})
+
+
+# ─────────────────────────── задачник команды ───────────────────────────
+# Аналог задачника Организма, перенесён в наш стиль: колонки статусов + Гант.
+# Доступ — is_admin или is_team: менеджер видит задачи, но не кассу.
+
+def _team_user(user: User = Depends(current_user)) -> User:
+    if not (user.is_admin or getattr(user, "is_team", False)):
+        raise HTTPException(403, "доступ только для команды")
+    return user
+
+
+def _task_dict(t: TeamTask, names: dict) -> dict:
+    return {"id": t.id, "title": t.title, "description": t.description,
+            "project_id": t.project_id, "assignee_id": t.assignee_id,
+            "assignee": names.get(t.assignee_id, ""),
+            "author_type": t.author_type, "priority": t.priority,
+            "status": t.status, "start_at": t.start_at, "due_at": t.due_at,
+            "sort_order": t.sort_order}
+
+
+@app.get("/api/team/board")
+def team_board(user: User = Depends(_team_user), db: Session = Depends(db_session)):
+    tasks = db.query(TeamTask).order_by(TeamTask.sort_order, TeamTask.id).all()
+    projects = (db.query(TeamProject)
+                .filter(TeamProject.status != "archived")
+                .order_by(TeamProject.start_date).all())
+    members = db.query(User).filter(
+        (User.is_admin.is_(True)) | (User.is_team.is_(True))).all()
+    names = {m.id: (m.name or m.login or f"id{m.id}") for m in members}
+    return {
+        "tasks": [_task_dict(t, names) for t in tasks],
+        "projects": [{"id": p.id, "name": p.name, "color": p.color,
+                      "start_date": p.start_date, "end_date": p.end_date,
+                      "status": p.status} for p in projects],
+        "members": [{"id": m.id, "name": names[m.id]} for m in members],
+        "me": user.id,
+    }
+
+
+@app.post("/api/team/tasks")
+async def team_task_create(request: Request, user: User = Depends(_team_user),
+                           db: Session = Depends(db_session)):
+    body = await request.json()
+    title = str(body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "у задачи нет названия")
+    t = TeamTask(title=title[:500],
+                 description=str(body.get("description") or "")[:4000],
+                 project_id=body.get("project_id") or None,
+                 assignee_id=body.get("assignee_id") or None,
+                 priority=str(body.get("priority") or "none"),
+                 start_at=str(body.get("start_at") or "")[:10],
+                 due_at=str(body.get("due_at") or "")[:10],
+                 author_type="user", author_id=user.id)
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return _task_dict(t, {user.id: user.name or user.login or ""})
+
+
+@app.patch("/api/team/tasks/{task_id}")
+async def team_task_update(task_id: int, request: Request,
+                           user: User = Depends(_team_user),
+                           db: Session = Depends(db_session)):
+    t = db.get(TeamTask, task_id)
+    if not t:
+        raise HTTPException(404, "задача не найдена")
+    body = await request.json()
+    for f in ("title", "description", "priority", "start_at", "due_at"):
+        if f in body:
+            setattr(t, f, str(body[f] or "")[:4000])
+    for f in ("project_id", "assignee_id", "sort_order"):
+        if f in body:
+            setattr(t, f, body[f] or (0 if f == "sort_order" else None))
+    if "status" in body and body["status"] in ("open", "in_progress", "done"):
+        t.status = body["status"]
+        t.completed_at = now() if t.status == "done" else None
+    db.commit()
+    members = db.query(User).filter(
+        (User.is_admin.is_(True)) | (User.is_team.is_(True))).all()
+    return _task_dict(t, {m.id: (m.name or m.login or "") for m in members})
+
+
+@app.delete("/api/team/tasks/{task_id}")
+def team_task_delete(task_id: int, user: User = Depends(_team_user),
+                     db: Session = Depends(db_session)):
+    t = db.get(TeamTask, task_id)
+    if t:
+        db.delete(t)
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/team/projects")
+async def team_project_create(request: Request, user: User = Depends(_team_user),
+                              db: Session = Depends(db_session)):
+    body = await request.json()
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "у проекта нет названия")
+    p = TeamProject(name=name[:160],
+                    color=str(body.get("color") or "#e0503a")[:16],
+                    start_date=str(body.get("start_date") or "")[:10],
+                    end_date=str(body.get("end_date") or "")[:10])
+    db.add(p)
+    db.commit()
+    return {"ok": True, "id": p.id}
 
 
 @app.get("/api/earn")
@@ -13163,6 +13271,12 @@ reload_style_overlay()
 # открыть — решает фронт по location.pathname.
 SPA_ROUTES = ("home", "studio", "make", "generator", "trends", "academy",
               "prompts", "pricing", "music", "login")
+
+
+@app.get("/team", include_in_schema=False)
+def team_page():
+    return FileResponse(os.path.join(FRONTEND_DIR, "team.html"),
+                        headers={"Cache-Control": "no-cache"})
 
 
 def _spa_index():
