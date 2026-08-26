@@ -31,7 +31,7 @@ $SSH $MSK 'cd /opt/rapclips && ./deploy.sh'
 echo "== синк msk -> lolq (5.42.120.67) =="
 $SSH $MSK 'rsync -az --delete /opt/rapclips/backend/  root@5.42.120.67:/opt/qlolvideo/backend/ &&
            rsync -az --delete /opt/rapclips/frontend/ root@5.42.120.67:/opt/qlolvideo/frontend/ &&
-           ssh root@5.42.120.67 "cd /opt/qlolvideo && docker compose up -d --build qlolvideo"'
+           ssh root@5.42.120.67 "cd /opt/qlolvideo/infra && docker compose up -d --build qlolvideo"'
 
 echo "== проверка =="
 curl -fsS -m 15 https://lolq.ai/ | grep -oE 'app\.js\?v=[0-9]+' | head -1
