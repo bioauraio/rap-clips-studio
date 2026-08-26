@@ -227,7 +227,7 @@ body {
    светлом фоне #faf7f2 стекло выцветает в серую кашу. */
 .topbar {
   position: sticky; top: 10px; z-index: 60;
-  display: flex; align-items: center; gap: 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
   margin-bottom: 20px; padding: 7px 13px;
   border: 1px solid rgba(var(--ink-rgb),.12); border-radius: 24px;
   background: linear-gradient(180deg, rgba(255,252,247,.82), rgba(255,244,232,.72));
@@ -254,8 +254,26 @@ body {
 .brand:hover .brand-mark { transform: rotate(-4deg) scale(1.06); }
 .brand-mark { transition: transform .16s ease; }
 
+/* Режимная панель — второй ряд шапки: капсула режима, проект, лента режимов.
+   Отделена волосяной линией от общей навигации сверху. */
+.tb-modeline {
+  display: flex; align-items: center; gap: 10px;
+  flex: 1 1 100%; min-width: 0; order: 20;
+  border-top: 1px solid rgba(var(--ink-rgb),.10);
+  padding-top: 7px;
+}
 .tb-project { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .tb-user { display: flex; align-items: center; gap: 8px; flex: none; }
+/* «Профиль»: круглая ава из Telegram + подпись; без фото — первая буква. */
+.profile-btn { display: inline-flex; align-items: center; gap: 6px; }
+.profile-ava {
+  width: 22px; height: 22px; border-radius: 999px; overflow: hidden; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.16);
+  font-size: 11px; font-weight: 800; line-height: 1; color: var(--ink-muted);
+}
+.profile-ava-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-ava-img:not(.hidden) + .profile-ava-ini { display: none; }
 .tb-sep { width: 2px; align-self: stretch; background: rgba(var(--ink-rgb),.14); border-radius: 2px; }
 .project-name {
   flex: 1; font-family: var(--font-head); font-size: 17px; font-weight: 800;
@@ -482,9 +500,9 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .strip-prev { left: -8px; }
 .strip-next { right: -8px; }
 .scene-card {
-  position: relative; flex: 0 0 280px; scroll-snap-align: start;
-  display: flex; flex-direction: column; gap: 6px;
-  background: var(--card-solid); border: 1px solid rgba(var(--ink-rgb),.12); border-radius: 24px; padding: 12px;
+  position: relative; flex: 0 0 248px; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--card-solid); border: 1px solid rgba(var(--ink-rgb),.12); border-radius: 24px; padding: 9px;
   border-left: none;
   box-shadow: 0 2px 8px rgba(var(--ink-rgb),.10);
   transition: border-color .18s, box-shadow .18s, transform .12s;
@@ -495,13 +513,14 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 /* Все кадры сцены — одна сетка одинаковых плиток: первый, промежуточные,
    последний и карточка «+». Раньше промежуточные жили отдельной полоской
    34×60 и читались как черновики, хотя это такие же опорные точки движения. */
-.s-thumbs {
-  display: grid; gap: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-}
+/* Флекс вместо сетки: у сетки все колонки одной ширины, и пустой «+»
+   занимал столько же места, сколько картинка. Превью — главное на карточке,
+   им отдаём ширину (два в ряд, выше прежнего), «+» жмётся узкой планкой. */
+.s-thumbs { display: flex; flex-wrap: wrap; gap: 6px; }
 .s-thumb {
-  position: relative; aspect-ratio: 9/16; max-height: 170px;
-  border: 1px solid rgba(var(--ink-rgb),.14); border-radius: 20px; overflow: hidden;
+  position: relative; aspect-ratio: 9/16; flex: 0 0 auto;
+  width: 110px; max-height: 196px;
+  border: 1px solid rgba(var(--ink-rgb),.14); border-radius: 16px; overflow: hidden;
   background: var(--inset);
 }
 .s-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -525,8 +544,12 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 @media (hover: none) { .s-thumb-del { opacity: 1; } }
 .s-thumb-add {
   display: flex; align-items: center; justify-content: center;
-  font-size: 26px; line-height: 1; color: rgba(var(--ink-rgb), .5);
+  font-size: 18px; line-height: 1; color: rgba(var(--ink-rgb), .5);
   cursor: pointer; font-family: var(--font-mono);
+  /* Пустой слот — не кадр: узкая планка во всю высоту ряда, а не плитка
+     размером с картинку. */
+  aspect-ratio: auto; width: 30px; max-height: none;
+  align-self: stretch; min-height: 88px;
 }
 .s-thumb-add:hover { color: var(--accent-ink); border-color: var(--accent); }
 /* Верхняя строка кадра: слева референсы и «+ реф», справа — движок видео и
@@ -928,7 +951,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   .strip-arrow { display: none; }
   .stage-tab { font-size: 10.5px; padding: 5px 8px; gap: 5px; }
   .stage-tabs { gap: 4px; }
-  .s-thumb { max-height: 140px; }
+  .s-thumb { max-height: 180px; }
   .final-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
   .row button { flex: 1 1 auto; min-width: 0; }
   .row .status { flex-basis: 100%; }
@@ -1061,11 +1084,13 @@ textarea { transition: min-height .15s; }
 .scene-card .row { gap: 5px; margin-top: 6px; }
 .scene-card select { padding: 4px 7px; font-size: 11px; border-radius: 9px; }
 .scene-card .status { font-size: 10px; }
-.scene-card .s-board-actions { flex-wrap: wrap; }
-/* «перегенерировать кадры» шире соседей, частичные — узкие парой */
-.scene-card .s-gen-frames { flex: 1 1 100%; }
-.scene-card .s-gen-first, .scene-card .s-gen-last { flex: 1 1 calc(50% - 3px); }
-.scene-card .s-gen-mid { flex: 1 1 100%; }
+.scene-card .s-board-actions { flex-wrap: wrap; gap: 4px; }
+/* ОДНА компактная строка мелких кнопок: полные ряды на кнопку раздували
+   карточку по вертикали, а превью — главное — оставались мелкими. */
+.scene-card .s-board-actions button {
+  flex: 0 1 auto; font-size: 10px; padding: 4px 6px; white-space: nowrap;
+}
+.scene-card .s-gen-frames { flex: 1 1 auto; }
 .scene-card .s-gen-video { flex: 1 1 auto; }
 .scene-card .approve-check { font-size: 10.5px; padding: 4px 8px; }
 .scene-card label { margin: 6px 0 3px; font-size: 9.5px; }
@@ -3175,14 +3200,16 @@ details.s-engine-override { border-top: 1px solid rgba(var(--ink-rgb),.14); padd
   .dash-big { font-size: clamp(22px, 7vw, 32px); }
 }
 
-/* Покрытие дорожки: строка появляется, только когда кадров меньше, чем нужно. */
+/* Покрытие дорожки: живёт ПРЯМО в строке кнопок раскадровки (.board-bar),
+   а не отдельной плашкой на всю ширину — мелкая серая подпись + компактная
+   кнопка «дописать». Видно, только когда кадров меньше/больше, чем на трек. */
 .scenes-coverage {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin: -4px 0 12px; padding: 8px 12px; border-radius: 20px;
-  border: 1.5px solid var(--border); background: var(--inset);
-  font-size: 12.5px;
+  display: inline-flex; align-items: center; gap: 8px;
+  flex: 0 1 auto; min-width: 0; font-size: 11.5px;
 }
-.scenes-coverage button { flex: none; font-size: 12px; padding: 6px 12px; }
+.scenes-coverage.hidden { display: none; }
+.scenes-coverage > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scenes-coverage button { flex: none; font-size: 11px; padding: 5px 10px; }
 
 /* «Написать промпт» — вторичное действие внутри раскрытого промпта кадра. */
 .s-gen-prompt {

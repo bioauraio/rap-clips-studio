@@ -2321,6 +2321,9 @@ def _user_dict(user: User) -> dict:
     plan_id = _plan_of(user)
     tier = _tier_of_user(user)
     return {"id": user.id, "name": user.name, "login": user.login,
+            # Ава из Telegram (photo_url в initData/виджете) — для кнопки
+            # «Профиль» в шапке; у почтовых аккаунтов пустая строка.
+            "avatar_url": user.avatar_url or "",
             "is_admin": user.is_admin, "gen_points": user.gen_points,
             # Из чего сложен остаток: бонусные заработаны приглашениями и
             # тратятся первыми, платные — то, что человек купил сам.
@@ -2513,6 +2516,13 @@ async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(d
         db.refresh(user)
     else:
         user = _adopt_guest(db, guest, user)
+    # Ава обновляется и у существующего аккаунта: photo_url приходит с каждым
+    # входом, а записывался раньше только при первой привязке — человек менял
+    # фото в Telegram, а в шапке годами висело старое (или пустота).
+    photo = str(data.get("photo_url") or "")
+    if photo and photo != (user.avatar_url or ""):
+        user.avatar_url = photo
+        db.commit()
     _attach_ref(db, user, ref)
     return _auth_response(user)
 

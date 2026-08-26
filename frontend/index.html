@@ -47,18 +47,18 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=107" />
+<link rel="stylesheet" href="/style.css?v=108" />
 <link rel="stylesheet" href="/api/theme.css" />
-<link rel="stylesheet" href="/landing.css?v=107" />
-<link rel="stylesheet" href="/tg.css?v=107" />
+<link rel="stylesheet" href="/landing.css?v=108" />
+<link rel="stylesheet" href="/tg.css?v=108" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=107" />
+<link rel="stylesheet" href="/music-studio.css?v=108" />
 <!-- Лента разделов, академия и каталог приёмов. ПОСЛЕ style.css: берёт его
      токены и правит шапку только под классом .has-sections — без sections.js
      вёрстка обязана остаться прежней. -->
-<link rel="stylesheet" href="/sections.css?v=107" />
+<link rel="stylesheet" href="/sections.css?v=108" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -76,7 +76,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=107"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=108"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -346,10 +346,17 @@
       <img class="brand-mark" src="/img/logo-mark.svg" width="36" height="36" alt="" />
       <span class="brand-word">lolq<span class="brand-dot">.</span>ai</span>
     </a>
-    <!-- ВЕРХНЯЯ СТРОКА — только режимы: «чем я снимаю». Настройки конкретного
-         проекта уехали строкой ниже (.tb-project), потому что они относятся к
-         режиму клипов и его соседям, а не к сервису целиком. -->
+    <!-- РЕЖИМНАЯ ПАНЕЛЬ — второй ряд шапки, сразу ПОД общей навигацией:
+         капсула режима первой (это ответ «чем я снимаю»), за ней проект и
+         лента режимов. В верхней строке остаётся только общее: марка,
+         разделы, личный блок. -->
+    <div class="tb-modeline">
     <div class="tb-project">
+      <!-- ТУМБЛЕР РЕЖИМОВ, схлопнутый в капсулу — ПЕРВЫМ в режимной строке.
+           id сохранён (его ищет renderProjectBar), клик открывает меню. -->
+      <button type="button" id="project-mode" class="mode-badge mode-switch hidden"
+              aria-haspopup="dialog" aria-expanded="false"
+              data-i18n-title="modes.menu.title"></button>
       <select id="project-select" class="project-select"></select>
       <label id="project-cover" class="cover-slot project-cover" data-i18n-title="top.coverTitle">
         <input id="project-cover-input" type="file" class="hidden" accept="image/jpeg,image/png,image/webp" />
@@ -362,13 +369,6 @@
            проверок. В шапке он скрыт стилем: то же самое написано в карточке
            режима, а место в строке нужно тумблеру. -->
       <span id="project-kind" class="kind-badge"></span>
-      <!-- ТУМБЛЕР РЕЖИМОВ, схлопнутый в капсулу. Это прежний бейдж режима:
-           id сохранён (его ищет renderProjectBar), но теперь это кнопка —
-           клик открывает меню режимов. На широком экране капсула прячется,
-           её место занимает лента #mode-seg. -->
-      <button type="button" id="project-mode" class="mode-badge mode-switch hidden"
-              aria-haspopup="dialog" aria-expanded="false"
-              data-i18n-title="modes.menu.title"></button>
       <!-- Копия проекта. Стоит рядом с «новым проектом» намеренно: копия —
            это тоже способ завести проект, только начиная не с нуля. -->
       <button type="button" id="copy-project-btn" class="tb-copy ghost"
@@ -379,6 +379,7 @@
          на вопрос «чем я снимаю», а не «в каком я проекте». Наполняет
          mode-menu.js из общего реестра modes.js. -->
     <div id="mode-seg" class="mode-seg" role="tablist" data-i18n-aria="modes.menu.title"></div>
+    </div>
     <div class="tb-user">
       <!-- Тема: система / светлая / тёмная. Атрибут ставится на <html>,
            палитра целиком на токенах — стиль и огонь одинаковы в обеих. -->
@@ -396,7 +397,14 @@
       <!-- Музыка — соседний вход, а не пункт внутри студии: там другой объект
            (релиз), другой конвейер и свои состояния. Тот же ярус, что и чат. -->
       <button id="music-btn" class="account-btn" data-i18n-title="top.musicTitle" data-i18n="top.music"></button>
-      <button id="account-btn" class="account-btn hidden" data-i18n-title="top.accountTitle" data-i18n="top.account"></button>
+      <!-- «Профиль» с круглой авой из Telegram: img заполняет renderUserBar
+           из /api/me (avatar_url), запасной вариант — кружок с первой буквой.
+           data-i18n стоит на ВНУТРЕННЕМ span: подпись на самой кнопке
+           затирала бы аву при каждой смене языка. -->
+      <button id="account-btn" class="account-btn profile-btn hidden" data-i18n-title="top.accountTitle">
+        <span class="profile-ava" aria-hidden="true"><img class="profile-ava-img hidden" alt="" /><span class="profile-ava-ini"></span></span>
+        <span class="profile-cap" data-i18n="top.account"></span>
+      </button>
       <!-- Вход в админку. Отдельная страница, а не вкладка кабинета: CRM,
            рассылка, выплаты и редактор стилей — работа над сервисом, а не
            над клипом. Видна только владельцу (is_admin). -->
@@ -960,11 +968,12 @@
           <button class="gen-storyboard" data-i18n="track.genSheet"></button>
           <button class="sb-open ghost" data-i18n-title="track.sheetOpenTitle" data-i18n="track.sheetOpen"></button>
           <button class="slice-storyboard ghost" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
+          <!-- Покрытие дорожки: мелкая подпись + кнопка «дописать» ЖИВУТ В ЭТОЙ
+               ЖЕ строке — отдельная плашка на всю ширину съедала вертикаль. -->
+          <span class="scenes-coverage hidden"></span>
           <span class="scenes-status status"></span>
           <span class="sb-status status"></span>
         </div>
-        <!-- Покрытие дорожки: видно, если кадров меньше, чем нужно на трек. -->
-        <div class="scenes-coverage hidden"></div>
         <!-- Лист раскадровки — контрольный отпечаток, а не полотно на всю
              страницу: миниатюра фиксированной высоты, клик открывает крупно. -->
         <div class="storyboard-block">
@@ -1334,24 +1343,24 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=107"></script>
-<script src="/i18n.js?v=107"></script>
-<script src="/app.js?v=107"></script>
+<script src="/modes.js?v=108"></script>
+<script src="/i18n.js?v=108"></script>
+<script src="/app.js?v=108"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=107"></script>
+<script src="/music-studio.js?v=108"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=107"></script>
+<script src="/mode-menu.js?v=108"></script>
 <!-- ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ. ПОСЛЕ app.js и mode-menu.js: она
      ПЕРЕНОСИТ в свою ленту живые кнопки шапки (#chat-btn, #music-btn,
      #account-btn, #admin-btn) вместе с их обработчиками, поэтому обработчики
      к этому моменту должны быть уже навешаны. -->
-<script src="/sections.js?v=107"></script>
+<script src="/sections.js?v=108"></script>
 <!-- Каталог промтов (четыре слоя и сборка). Отдельным файлом от sections.js:
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
-<script src="/library.js?v=107"></script>
+<script src="/library.js?v=108"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1375,10 +1384,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=107";
+  css.href = "/nav.css?v=108";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=107";
+  js.src = "/nav.js?v=108";
   document.body.appendChild(js);
 })();
 </script>

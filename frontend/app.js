@@ -370,6 +370,18 @@ function renderUserBar() {
   if (admBtn) admBtn.classList.toggle("hidden", !u.is_admin);
   // Кабинет открыт всем, включая гостя: тариф и партнёрка живут на его id.
   if (accBtn) accBtn.classList.remove("hidden");
+  // Ава Telegram в кнопке «Профиль»: сервер отдаёт avatar_url в /api/me,
+  // без фото — кружок с первой буквой имени (гостю достанется «г»).
+  const avaImg = accBtn && $(".profile-ava-img", accBtn);
+  const avaIni = accBtn && $(".profile-ava-ini", accBtn);
+  if (avaImg && avaIni) {
+    const url = u.avatar_url || "";
+    if (url && avaImg.getAttribute("src") !== url) avaImg.src = url;
+    avaImg.classList.toggle("hidden", !url);
+    // Протухшая ссылка Telegram отвечает ошибкой — честно падаем на букву.
+    avaImg.onerror = () => avaImg.classList.add("hidden");
+    avaIni.textContent = (u.name || "?").trim().charAt(0).toUpperCase() || "?";
+  }
   badge.classList.toggle("hidden", Boolean(u.is_admin));
   // В шапке — общий остаток, потому что тратится он одним кошельком. Из чего
   // он сложен, видно в подсказке и подробно в кабинете: смешивать два числа
