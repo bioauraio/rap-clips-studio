@@ -3626,3 +3626,10 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .scene-card .row:has(.s-gen-frames) { grid-template-columns: repeat(3, 1fr); }
 .scene-card .s-gen-frames { grid-column: 1 / -1; }
 .scene-card .s-gen-video { font-size: 13px; padding: 10px 12px; }
+
+/* Светофор состояния кадров в шапке карточки сцены */
+.s-light { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+  margin-left: 6px; flex: none; }
+.s-light-green  { background: #2e9e44; box-shadow: 0 0 6px rgba(46,158,68,.55); }
+.s-light-yellow { background: #e5a50a; box-shadow: 0 0 6px rgba(229,165,10,.5); }
+.s-light-red    { background: #d64545; box-shadow: 0 0 6px rgba(214,69,69,.5); }

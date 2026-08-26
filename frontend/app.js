@@ -5147,7 +5147,7 @@ function renderTrack(tr) {
   const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
   // «(готовый кадр» — служебная метка бэкенда в image_prompt (backend/main.py),
   // не текст для человека: переводить её нельзя, иначе фильтр разъедется.
-  const framesTodo = (tr.scenes || []).filter((s) => !(s.image_url && s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
+  const framesTodo = (tr.scenes || []).filter((s) => !(s.image_url || s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
   allBtn.disabled = framesBusy || !framesTodo;
   allBtn.textContent = framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo });
   allBtn.title = t("track.allFramesTitle");
@@ -5698,6 +5698,15 @@ function renderScene(s, audioEl, mode = "board") {
   const tpl = $("#scene-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".scene-card");
   applyI18n(card);
+  // Светофор: зелёный — видео снято из текущих кадров; жёлтый — кадры
+  // менялись после съёмки (видео устарело) или видео ещё нет; красный — кадров нет.
+  if (s.frames_state) {
+    const dot = document.createElement("span");
+    dot.className = "s-light s-light-" + s.frames_state;
+    dot.title = t("scene.light_" + s.frames_state);
+    const h = tpl.querySelector(".scene-head");
+    if (h) h.appendChild(dot);
+  }
   card.classList.add("mode-" + mode);
   card.dataset.id = s.id;
   card.dataset.start = s.start_sec;

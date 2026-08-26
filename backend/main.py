@@ -354,6 +354,13 @@ def _reset_orphan_jobs() -> None:
         # готов — забираем его. Иначе каждый деплой сжигал токены за работу,
         # которая была сделана.
         rescued = _rescue_paid_jobs(db)
+        # Однократный бэкфилл светофора: у видео, снятых до появления
+        # video_src_sig, считаем текущие кадры исходными — иначе весь старый
+        # контент разом «пожелтел» бы без единой правки кадров.
+        for sc in (db.query(Scene).filter(Scene.video_filename != "",
+                                          Scene.video_src_sig == "").all()):
+            sc.video_src_sig = "|".join(_scene_frame_chain(sc)) or "-"
+        db.commit()
         note = "прервано перезапуском сервиса — запусти заново"
         n = 0
         for model, pairs in (
@@ -2789,6 +2796,15 @@ def _midframe_count(duration_sec: int) -> int:
     return max(0, min(4, round((duration_sec or 0) / 2) - 1))
 
 
+def _frames_state(s: Scene) -> str:
+    chain = _scene_frame_chain(s)
+    if not chain:
+        return "red"
+    if s.video_filename and (s.video_src_sig or "") == "|".join(chain):
+        return "green"
+    return "yellow"
+
+
 def scene_dict(s: Scene) -> dict:
     return {
         # track_id нужен мосту «Доснять в мастерской»: карточка кадра рисуется
@@ -2826,6 +2842,9 @@ def scene_dict(s: Scene) -> dict:
         "audio_url": f"/api/media/{s.audio_filename}" if s.audio_filename else "",
         "approved": s.approved,
         "video_url": f"/api/media/{s.video_filename}" if s.video_filename else "",
+        # Светофор кадров: green — видео снято ровно из текущих кадров,
+        # yellow — кадры менялись после съёмки (или видео ещё нет), red — кадров нет.
+        "frames_state": _frames_state(s),
         "video_status": s.video_status, "video_error": s.video_error,
         "video_provider": s.video_provider,
         # Движки сцены наружу отдавались... никогда: карточка кадра рисовала
@@ -7269,6 +7288,7 @@ def _run_scene_video(scene_id: int) -> None:
                   project_id=track.project_id, track_id=track.id, scene_id=scene.id)
         scene.video_status = "done"
         scene.video_seconds = mediagen.video_duration(fname)
+        scene.video_src_sig = "|".join(_scene_frame_chain(scene))
         # Видео появилось — кадр идёт в клип. Раньше галочку надо было ставить
         # руками на каждый кадр, и оплаченные сцены не попадали в сборку
         # просто потому, что про них забыли. Осознанный отказ (человек сам снял
@@ -7751,7 +7771,8 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
         for i, sid in enumerate(scene_ids, 1):
             db.expire_all()
             s = db.get(Scene, sid)
-            if not (s and s.image_filename and s.image_last_filename):
+            # хотя бы один кадр есть — сцена рабочая (видео умеет идти от одного)
+            if not (s and (s.image_filename or s.image_last_filename)):
                 note(f"кадры: сцена {i}/{total}…")
                 _run_scene_frames(sid, engine=img_engine)
                 db.expire_all()
@@ -7840,7 +7861,7 @@ def supergen(track_id: int, user: User = Depends(current_user), db: Session = De
         def _sg_cost(s: Scene) -> int:
             if not s.video_filename:
                 return per_scene    # полный круг: кадры + видео
-            if not (s.image_filename and s.image_last_filename):
+            if not (s.image_filename or s.image_last_filename):
                 # видео есть, дорисуем недостающие кадры — по цене СВОЕГО движка
                 return _frames_cost(user, s, img_engine)
             return 0                # делать нечего
@@ -9813,7 +9834,7 @@ def _frames_todo(track: Track, force: bool = False, scope: str = "") -> list:
             continue
         if s.image_prompt.startswith("(готовый кадр"):
             continue
-        missing = not (s.image_filename and s.image_last_filename)
+        missing = not (s.image_filename or s.image_last_filename)
         if scope == "all" or missing:
             out.append(s)
             continue
