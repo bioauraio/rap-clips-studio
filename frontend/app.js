@@ -5474,7 +5474,9 @@ function renderTrack(tr) {
     if (key === "board") fillScenes(boardBox, tr, "board", audioEl, card);
     if (key === "anim") fillScenes(animBox, tr, "anim", audioEl, card);
   };
-  card.__ensureStage(active);
+  // Этапы лежат друг под другом — строим ОБЕ ленты сразу (ранний forEach по
+  // STAGES выше отрабатывает до определения __ensureStage и ничего не строит).
+  STAGES.forEach((k) => card.__ensureStage(k));
   bindSceneViews(card, tr, audioEl);
   $$(".strip-wrap", card).forEach(bindStrip);
 
