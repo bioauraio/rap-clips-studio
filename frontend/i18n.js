@@ -1094,6 +1094,7 @@ const I18N = {
       hint: "click to seek, drag to select a piece; vertical lines are frame boundaries",
     },
     agent: {
+      redeploying: "the service is updating — retrying…",
       paTitle: "Project agent",
       paPh: "restyle the track, fix scene 7, what\u2019s next…",
       paSend: "Send",
@@ -3540,6 +3541,7 @@ const I18N = {
       hint: "щелчок — перемотка, протяжка — выделить кусок; вертикали — границы кадров",
     },
     agent: {
+      redeploying: "сервис обновляется — повторяю…",
       paTitle: "Агент проекта",
       paPh: "поменяй стиль, поправь кадр 7, что дальше…",
       paSend: "Отправить",

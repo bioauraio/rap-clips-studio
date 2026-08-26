@@ -8967,14 +8967,23 @@ async function paAsk(text) {
   if (text) paAddMsg("me", text);
   const wait = paAddMsg("bot muted", t("agent.thinking"));
   let d;
+  const call = () => api("/api/chat/agent", {
+    method: "POST",
+    body: { text: text || "", project_id: activeProjectId, scope: "project" },
+  });
   try {
-    d = await api("/api/chat/agent", {
-      method: "POST",
-      body: { text: text || "", project_id: activeProjectId, scope: "project" },
-    });
+    d = await call();
   } catch (e) {
-    wait.textContent = errText(e);
-    return;
+    // 502 почти всегда значит «сервис как раз перекатывается»: одна пауза и
+    // повтор превращают минутный деплой из поломки в задержку.
+    if (String(e.message || e).includes("502")) {
+      wait.textContent = t("agent.redeploying") || "сервис обновляется, повторяю…";
+      await new Promise((ok) => setTimeout(ok, 8000));
+      try { d = await call(); } catch (e2) { wait.textContent = errText(e2); return; }
+    } else {
+      wait.textContent = errText(e);
+      return;
+    }
   }
   wait.remove();
   // Отчёт о сделанном — отдельными строками: человек должен видеть, что
