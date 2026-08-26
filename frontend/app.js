@@ -637,8 +637,10 @@ function accMsg(pane, text, kind = "") {
 
 // Кнопка «скопировать» рядом с кодом и ссылкой — одна на оба места.
 function bindCopy(pane) {
-  $$(".acc-copy", pane).forEach((btn) => {
-    btn.addEventListener("click", () => copyToClipboard(btn.dataset.copy || "", btn));
+  // Копирует и кнопка, и любой элемент с data-copy (код-капсула тоже).
+  $$("[data-copy]", pane).forEach((el) => {
+    el.style.cursor = "pointer";
+    el.addEventListener("click", () => copyToClipboard(el.dataset.copy || "", el));
   });
 }
 
@@ -2696,13 +2698,12 @@ function renderRefCabinet(pane, d) {
   const events = d.events || [];
   const payouts = d.payouts || [];
   pane.innerHTML = `
-    <label>${escHtml(t("ref.codeLabel"))}</label>
-    <div class="acc-copy-row">
-      <span class="acc-code">${escHtml(d.code)}</span>
-      <button type="button" class="acc-copy" data-copy="${escHtml(d.code)}">${escHtml(t("common.copy"))}</button>
-    </div>
-    <label>${escHtml(t("ref.linkLabel"))}</label>
-    <div class="acc-copy-row">
+    <!-- Код и ссылка — В ОДНУ СТРОКУ: два этажа с двумя «скопировать» ели
+         вертикаль вдвое. Клик по коду и по ссылке копирует их сам — кнопка
+         одна, на ссылку (её и шлют чаще). -->
+    <div class="acc-copy-row acc-ref-line">
+      <span class="acc-code" data-copy="${escHtml(d.code)}"
+            title="${escHtml(t("common.copy"))}">${escHtml(d.code)}</span>
       <input class="acc-link" readonly value="${escHtml(link)}" />
       <button type="button" class="acc-copy" data-copy="${escHtml(link)}">${escHtml(t("common.copy"))}</button>
     </div>

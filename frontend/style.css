@@ -3574,3 +3574,9 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   width: 100%; padding: 6px 10px; font-size: 12px;
   border: 1px solid rgba(var(--ink-rgb), .12); border-radius: 12px;
 }
+
+/* Партнёрка компактно: код + ссылка + одна кнопка в строку. */
+.acc-ref-line { flex-wrap: nowrap; }
+.acc-ref-line .acc-code { flex: none; }
+.acc-ref-line .acc-link { flex: 1; min-width: 0; }
+@media (max-width: 560px) { .acc-ref-line { flex-wrap: wrap; } }
