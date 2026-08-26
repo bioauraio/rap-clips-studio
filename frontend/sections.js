@@ -120,7 +120,7 @@
       id: "trends",
       label: () => T("nav.sections.trends", "Тренды"),
       title: () => T("nav.titles.trends", ""),
-      active: () => sheet === "trends",
+      active: () => sheet === "trends" || Boolean($("#trends-page")),
       open: () => openTrends(),
     },
     {
@@ -194,6 +194,7 @@
   function go(id) {
     const s = SECTIONS.find((x) => x.id === id);
     if (!s) return;
+    if (id !== "trends") closeTrendsPage(false);
     if (s.adopt) {
       const node = $(s.adopt);
       if (node) node.click();
@@ -432,9 +433,80 @@
     });
   }
 
+  function closeTrendsPage(updateUrl) {
+    const page = $("#trends-page");
+    if (!page) return;
+    page.remove();
+    const app = $("#app");
+    if (app) app.classList.remove("trends-view");
+    sheet = "";
+    if (updateUrl !== false && location.pathname === "/trends") history.pushState({}, "", "/studio");
+    paint();
+  }
+
+  const NEW_TRENDS = new Set([
+    "agamemnon", "fallen angel", "bullet time", "cyclope", "pigeons",
+    "pearl earring", "argus", "dolphin ride", "skatedog", "monet muse",
+    "puffin ride", "lost in a book", "penguin ride",
+  ]);
+
+  const TREND_TITLES_RU = {
+    "Agamemnon":"Агамемнон", "Earth Zoom":"Зум Земли", "Ink Riot":"Чернильный бунт",
+    "Fallen Angel":"Падший ангел", "Bullet Time":"Замедление времени", "Fairytale Castle":"Сказочный замок",
+    "Comic":"Комикс", "Cold Vision":"Холодное зрение", "Cyclope":"Циклоп", "Particles":"Частицы",
+    "Mighty Fighter":"Могучий боец", "Windows":"Окна", "Canvas":"Холст", "Pigeons":"Голуби",
+    "Tracking":"Трекинг", "Superstar":"Суперзвезда", "Pearl Earring":"Жемчужная серёжка", "LSD":"ЛСД",
+    "Blue Depth":"Синяя глубина", "Palette":"Палитра", "Moonwalk":"Лунная походка",
+    "Knight's Diary":"Дневник рыцаря", "Argus":"Аргус", "Fragments":"Фрагменты",
+    "2000's Paparazzi":"Папарацци нулевых", "Overexposed":"Пересвет", "Dolphin Ride":"На дельфине",
+    "Sticker Peel":"Отклеенная наклейка", "Multiverse":"Мультивселенная", "Skatedog":"Пёс на скейте",
+    "Noir":"Нуар", "Casual Monster Slayer":"Будничный охотник на монстров", "Selfie Twin":"Селфи-двойник",
+    "Sketch":"Эскиз", "Monet Muse":"Муза Моне", "Akrill":"Акрилл", "Puffin Ride":"Верхом на тупике",
+    "Magazine":"Журнал", "Lost in a Book":"Затерянный в книге", "Penguin Ride":"На пингвине",
+    "Cannabis":"Каннабис", "3D Render":"3D-рендер", "Action Figure":"Экшен-фигурка", "Bubbles":"Пузыри",
+    "Orbit 360":"Орбита 360", "Orbital Presence":"Орбитальное присутствие", "Acid":"Кислота",
+    "Race Track":"Гоночная трасса", "Flash Comic":"Флеш-комикс", "Paper":"Бумага",
+    "Random Glow":"Случайное свечение", "Toxic":"Токсичный", "Broken Mirror":"Разбитое зеркало",
+    "Hand Paint":"Ручная роспись", "Lava":"Лава", "Marble":"Мрамор", "Modern":"Модерн",
+    "Ocean":"Океан", "Origami":"Оригами", "Two Color":"Два цвета", "Ultraviolet":"Ультрафиолет",
+    "Vintage":"Винтаж",
+  };
+
+  function trendTitle(title) {
+    if (lang() === "ru") return TREND_TITLES_RU[title] || title;
+    if (title === "Кинотеатр смотрит на тебя") return "The Theater Is Watching You";
+    return title;
+  }
+
+  function trendVisual(title, index) {
+    let hash = 2166136261;
+    for (const ch of String(title || "")) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
+    const hue = Math.abs(hash) % 360;
+    const hue2 = (hue + 70 + (index * 17)) % 360;
+    const variant = Math.abs(hash >> 8) % 8;
+    return `<div class="trend-ph trend-visual" data-visual="${variant}"
+      style="--th:${hue};--th2:${hue2};--td:${-(index % 9) * .19}s">
+      <i></i><i></i><i></i></div>`;
+  }
+
   function openTrends() {
-    openSheet("trends", T("trends.title", "Тренды"), async (body) => {
-      busy(body);
+    closeTrendsPage(false);
+    const app = $("#app");
+    if (!app) return;
+    sheet = "trends";
+    app.classList.add("trends-view");
+    if (location.pathname !== "/trends") history.pushState({}, "", "/trends");
+    const page = document.createElement("main");
+    page.id = "trends-page";
+    page.className = "trends-page";
+    page.innerHTML = `<section class="trends-hero">
+      <h1>${lang() === "ru" ? "вирусные тренды" : "viral trends"}</h1>
+      <div class="trends-filters" role="tablist"></div>
+    </section><section class="trends-catalog"><p class="muted trends-loading">${esc(T("common.loading", "загружаю…"))}</p></section>`;
+    app.appendChild(page);
+    paint();
+    const body = $(".trends-catalog", page);
+    (async () => {
       let d;
       try {
         d = await api("/api/trends");
@@ -443,11 +515,6 @@
         return;
       }
       body.innerHTML = "";
-      const intro = document.createElement("p");
-      intro.className = "muted";
-      intro.textContent = T("trends.intro",
-        "Загрузи одну фотографию — получишь трендовый ролик с собой. Всё остальное уже настроено в шаблоне.");
-      body.appendChild(intro);
       if (!(d.presets || []).length) {
         const empty = document.createElement("p");
         empty.className = "muted";
@@ -457,21 +524,20 @@
       }
       const grid = document.createElement("div");
       grid.className = "trend-grid";
-      d.presets.forEach((t) => {
+      d.presets.forEach((t, index) => {
         const card = document.createElement("div");
-        card.className = "trend-card";
+        card.className = `trend-card trend-tile-${index % 12}`;
+        card.dataset.title = t.title;
+        const displayTitle = trendTitle(t.title);
         card.innerHTML = `
           ${t.sample_url
             ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
                  ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
             : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
-            : `<div class="trend-ph"></div>`}
-          <div class="trend-meta">
-            <b>${esc(t.title)}</b>
-            <span class="muted">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
-          </div>
-          <label class="trend-go">
-            <span>${T("trends.make", "Сделать со мной")}</span>
+            : trendVisual(t.title, index)}
+          <div class="trend-card-name">${esc(displayTitle)}</div>
+          <label class="trend-card-action">
+            <span>${lang() === "ru" ? "Сгенерить" : "Generate"}</span>
             <input type="file" accept="image/*" hidden />
           </label>
           <div class="trend-state hidden"></div>`;
@@ -485,7 +551,22 @@
         grid.appendChild(card);
       });
       body.appendChild(grid);
-    });
+      const filters = $(".trends-filters", page);
+      const tags = [{ title: T("trends.filterAll", "Все"), display: T("trends.filterAll", "Все"), all: true },
+        ...d.presets.map((t) => ({ title: t.title, display: trendTitle(t.title) }))];
+      tags.forEach((item, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "trends-filter" + (i === 0 ? " on" : "");
+        const fresh = NEW_TRENDS.has(String(item.title).toLowerCase());
+        b.innerHTML = `${esc(item.display)}${fresh ? `<small>${lang() === "ru" ? "новое" : "new"}</small>` : ""}`;
+        b.addEventListener("click", () => {
+          $$(".trends-filter", filters).forEach((x) => x.classList.toggle("on", x === b));
+          $$(".trend-card", grid).forEach((c) => c.classList.toggle("hidden", !item.all && c.dataset.title !== item.title));
+        });
+        filters.appendChild(b);
+      });
+    })();
   }
 
   async function trendMake(card, t, inp) {
@@ -496,7 +577,7 @@
       return;
     }
     const state = card.querySelector(".trend-state");
-    const go = card.querySelector(".trend-go");
+    const go = card.querySelector(".trend-card-action, .trend-go");
     go.classList.add("hidden");
     state.classList.remove("hidden");
     state.textContent = T("trends.uploading", "загружаю фото…");
@@ -890,9 +971,13 @@
     trackBarHeight();
     if (typeof window.onLangChange === "function") {
       window.onLangChange(() => {
+        const trendsOpen = Boolean($("#trends-page"));
         relabel();
         academy = null;
         if (window.QlolLibrary) window.QlolLibrary.forget();
+        // Страница трендов собрана JS, поэтому data-i18n её не обновит.
+        // Перестраиваем её на новом языке без перезагрузки и смены URL.
+        if (trendsOpen) openTrends();
         paint();
       });
     }
