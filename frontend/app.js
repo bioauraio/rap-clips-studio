@@ -3716,8 +3716,10 @@ const scrollKeep = new Map();
 
 function scrollKey(el, i) {
   const card = el.closest(".track-card, [data-id]");
+  // Второй класс различает ленты (scenes-board / scenes-anim): обе видимы
+  // одновременно, и общий ключ «scenes» заставлял их затирать позиции друг друга.
   return (card && card.dataset.id ? `t${card.dataset.id}:` : `n${i}:`)
-    + el.className.split(" ")[0];
+    + (el.classList[1] || el.classList[0]);
 }
 
 function saveScroll() {
@@ -5801,6 +5803,9 @@ function sceneRows(tr, mode) {
 }
 
 function fillScenes(box, tr, mode, audioEl, card) {
+  // Позиция ленты переживает ЛЮБУЮ перерисовку — включая точечные, минующие
+  // render(). Иначе каждый чип персонажа отматывал раскадровку к первому кадру.
+  const keepX = box.scrollLeft;
   box.innerHTML = "";
   const view = sceneView(tr.id);
   const rows = sceneRows(tr, mode);
@@ -5842,6 +5847,7 @@ function fillScenes(box, tr, mode, audioEl, card) {
   if (count && mode === "board") {
     count.textContent = t("track.shownOf", { a: shown, b: rows.length });
   }
+  if (keepX > 0) requestAnimationFrame(() => { box.scrollLeft = keepX; });
 }
 
 function bindSceneViews(card, tr, audioEl) {
