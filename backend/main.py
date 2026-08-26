@@ -2113,6 +2113,62 @@ def earn_stats(user: User = Depends(current_user), db: Session = Depends(db_sess
             "earned_kopeks": int(earned), "paid_kopeks": int(paid)}
 
 
+@app.post("/api/trends/jobs/{job_id}/share")
+def trend_job_share(job_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Автор публикует свой ролик: страница /v/{id} становится доступной."""
+    job = db.get(TrendJob, job_id)
+    if not job or job.user_id != user.id:
+        raise HTTPException(404, "ролик не найден")
+    if not job.video_filename:
+        raise HTTPException(400, "ролик ещё не готов")
+    job.is_public = True
+    db.commit()
+    return {"ok": True, "url": f"{PUBLIC_BASE_URL}/v/{job.id}"}
+
+
+@app.get("/v/{job_id}", include_in_schema=False)
+def trend_public_page(job_id: int, db: Session = Depends(db_session)):
+    """Публичная страница ролика — петля Remix: смотришь чужой результат,
+    жмёшь «Сделать так же», загружаешь своё фото. Каждый расшаренный ролик
+    приводит следующего человека."""
+    job = db.get(TrendJob, job_id)
+    if not job or not job.is_public or not job.video_filename:
+        raise HTTPException(404, "ролик не найден")
+    t = db.get(TrendPreset, job.preset_id)
+    title = (t.title if t else "lolq.ai")
+    html = f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — lolq.ai</title>
+<style>
+ body{{margin:0;background:#17120e;color:#f0e7dc;font:15px/1.5 system-ui;
+      display:flex;flex-direction:column;align-items:center;gap:18px;
+      min-height:100vh;justify-content:center;padding:24px}}
+ video{{max-width:min(92vw,420px);border-radius:22px;box-shadow:0 18px 60px rgba(0,0,0,.5)}}
+ a.btn{{display:inline-block;padding:14px 30px;border-radius:999px;font-weight:800;
+      text-decoration:none;color:#fff;font-size:16px;
+      background:linear-gradient(95deg,#e0503a,#ea6a34,#f0913c)}}
+ .brand{{color:#a8988a;font-size:12px;letter-spacing:.14em;text-transform:uppercase}}
+ h1{{font-size:18px;margin:0;text-align:center}}
+</style></head><body>
+<span class="brand">lolq.ai · тренды</span>
+<h1>{title}</h1>
+<video src="/v-media/{job.id}" controls autoplay loop muted playsinline></video>
+<a class="btn" href="/trends">Сделать так же со своим фото →</a>
+</body></html>"""
+    return Response(html, media_type="text/html")
+
+
+@app.get("/v-media/{job_id}", include_in_schema=False)
+def trend_public_media(job_id: int, db: Session = Depends(db_session)):
+    """Видео публичного ролика — отдаётся только когда автор поделился."""
+    job = db.get(TrendJob, job_id)
+    if not job or not job.is_public or not job.video_filename:
+        raise HTTPException(404, "ролик не найден")
+    return FileResponse(os.path.join(UPLOAD_DIR, job.video_filename),
+                        media_type="video/mp4")
+
+
 @app.get("/go/{preset_id}", include_in_schema=False)
 def earn_go(preset_id: int, u: str = "", request: Request = None,
             db: Session = Depends(db_session)):

@@ -528,7 +528,18 @@
       }
       if (st.status === "done" && st.video_url) {
         state.innerHTML = `<video src="${st.video_url}" controls autoplay loop playsinline></video>
-          <a class="trend-dl" href="${st.video_url}" download>${T("trends.download", "Скачать")}</a>`;
+          <a class="trend-dl" href="${st.video_url}" download>${T("trends.download", "Скачать")}</a>
+          <button type="button" class="trend-share ghost">${T("trends.share", "Поделиться ссылкой")}</button>`;
+        // Петля Remix: автор публикует ролик, получает ссылку /v/{id} — на
+        // странице кнопка «Сделать так же», и каждый репост приводит нового.
+        state.querySelector(".trend-share").onclick = async (ev) => {
+          const b = ev.target;
+          try {
+            const r = await api(`/api/trends/jobs/${job.job_id}/share`, { method: "POST" });
+            try { await navigator.clipboard.writeText(r.url); } catch (e) {}
+            b.textContent = T("trends.shared", "Ссылка скопирована ✓ — постись!");
+          } catch (e) { b.textContent = String(e.message || e); }
+        };
         return;
       }
       state.textContent = st.status === "video"

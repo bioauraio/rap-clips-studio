@@ -681,6 +681,10 @@ class TrendJob(Base):
     frame_filename = Column(String, nullable=False, default="")
     video_filename = Column(String, nullable=False, default="")
     status = Column(String, nullable=False, default="queued")   # queued|frame|video|done|error
+    # Публичная страница /v/{id}: включает сам автор кнопкой «Поделиться».
+    # По умолчанию ролик приватен — публикация должна быть решением, а не
+    # сюрпризом.
+    is_public = Column(Boolean, nullable=False, default=False)
     error = Column(Text, nullable=False, default="")
     charged_points = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=now)
