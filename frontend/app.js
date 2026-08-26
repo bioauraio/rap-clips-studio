@@ -6085,51 +6085,7 @@ function renderScene(s, audioEl, mode = "board") {
     const v = $(".s-video-preview", card);
     v.src = s.video_url; v.classList.remove("hidden");
     v.poster = s.image_thumb_url || "";
-  // ОБРЕЗКА ГОТОВОГО РОЛИКА. Границы берём с плеера: человек доводит видео
-  // до нужного места и жмёт «начало здесь» — угадывать секунды не нужно.
-  const trimBox = $(".s-trim", card);
-  if (trimBox && s.video_url) {
-    trimBox.classList.remove("hidden");
-    const full = Number(s.video_seconds || s.duration_sec || 0);
-    let a = 0;
-    let b = full;
-    const range = $(".s-trim-range", trimBox);
-    const doBtn = $(".s-trim-do", trimBox);
-    const resetBtn = $(".s-trim-reset", trimBox);
-    const paint = () => {
-      const touched = a > 0.05 || (full && b < full - 0.05);
-      range.textContent = touched
-        ? `${fmtTime(a)} — ${fmtTime(b)}`
-        : t("scene.trimWhole");
-      doBtn.classList.toggle("hidden", !touched);
-      resetBtn.classList.toggle("hidden", !touched);
-    };
-    const player = () => $(".s-video-preview", card);
-    $(".s-trim-in", trimBox).addEventListener("click", () => {
-      const v = player();
-      a = Math.min(v && v.currentTime ? v.currentTime : 0, Math.max(0, b - 0.5));
-      paint();
-    });
-    $(".s-trim-out", trimBox).addEventListener("click", () => {
-      const v = player();
-      const at = v && v.currentTime ? v.currentTime : full;
-      b = Math.max(at, a + 0.5);
-      if (full) b = Math.min(b, full);
-      paint();
-    });
-    resetBtn.addEventListener("click", () => { a = 0; b = full; paint(); });
-    doBtn.addEventListener("click", async () => {
-      if (!confirm(t("scene.trimAsk", { a: fmtTime(a), b: fmtTime(b) }))) return;
-      doBtn.disabled = true;
-      try {
-        await api(`/api/scenes/${s.id}/trim`, {
-          method: "POST", body: { start: Number(a.toFixed(2)), end: Number(b.toFixed(2)) },
-        });
-      } catch (e) { fail(e); doBtn.disabled = false; return; }
-      await loadProject();
-    });
-    paint();
-  }
+  // Кнопки обрезки с карточки убраны: рез живёт на шкале трека.
   } else if (s.image_url) {
     // Видео ещё нет — в «Анимации» первый кадр стоит постером самого плеера.
     // Отдельной картинки под это больше нет: плитки кадров живут в раскадровке.
