@@ -3696,3 +3696,12 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 }
 .stage-jump .stage-tab.on { background: var(--fire-ink); color: #fff; }
 .stage-jump .stage-tab.on .st-num { background: rgba(255,255,255,.28); color: #fff; }
+
+/* Маленькая «скачать» в шапке карточки сцены */
+.s-dl {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%; margin-left: 4px;
+  border: 1px solid rgba(var(--ink-rgb), .16); color: var(--ink);
+  font-size: 12px; text-decoration: none; flex: none;
+}
+.s-dl:hover { border-color: var(--accent); color: var(--accent-ink); }

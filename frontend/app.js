@@ -5874,6 +5874,20 @@ function renderScene(s, audioEl, mode = "board") {
     const h = tpl.querySelector(".scene-head");
     if (h) h.appendChild(dot);
   }
+  // Маленькая «скачать»: в анимации — видео сцены, в раскадровке — кадр.
+  {
+    const dlUrl = mode === "anim" ? s.video_url : (s.image_url || s.image_last_url);
+    if (dlUrl) {
+      const dl = document.createElement("a");
+      dl.className = "s-dl";
+      dl.href = dlUrl;
+      dl.setAttribute("download", "");
+      dl.title = t("scene.download");
+      dl.textContent = "⬇";
+      const h = tpl.querySelector(".scene-head");
+      if (h) h.appendChild(dl);
+    }
+  }
   card.classList.add("mode-" + mode);
   card.dataset.id = s.id;
   // Ширина карточки — от числа кадров: одна картинка = узкая карточка,
