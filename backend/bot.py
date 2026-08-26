@@ -2637,8 +2637,76 @@ class Bot:
             await self.send(chat_id, t(lang, "cancelled"), lang)
         elif cmd == "/refund" and str(tg_user["id"]) in ADMIN_TG_IDS:
             await self.cmd_refund(msg, lang, args)
+        elif cmd == "/task":
+            # ПМ-функция для группы «lolq team»: /task название | high | 2026-09-01
+            # Пишем прямо в общую базу задач (/team) — бот живёт в том же
+            # образе и томе, что API, отдельный мост тут был бы театром.
+            await self.cmd_task(msg, tg_user, lang, args)
+        elif cmd == "/tasks":
+            await self.cmd_tasks(msg, lang)
         else:
             await self.send(chat_id, t(lang, "help"), lang)
+
+    async def cmd_task(self, msg: dict, tg_user: dict, lang: str, args: str) -> None:
+        """Поставить задачу в /team из чата: /task название | приоритет | дата."""
+        chat_id = msg["chat"]["id"]
+        raw = (args or "").strip()
+        if not raw:
+            await self.send(chat_id,
+                            "Так: /task название | high | 2026-09-01\n"
+                            "Приоритет и дата не обязательны.", lang)
+            return
+        parts = [x.strip() for x in raw.split("|")]
+        title = parts[0][:500]
+        prio = parts[1].lower() if len(parts) > 1 and parts[1].strip() else "none"
+        if prio not in ("none", "low", "medium", "high"):
+            prio = "none"
+        due = parts[2][:10] if len(parts) > 2 else ""
+        who = (tg_user.get("first_name") or tg_user.get("username") or "tg")
+        try:
+            from db import SessionLocal, TeamTask  # noqa: PLC0415 — общий том
+            dbs = SessionLocal()
+            try:
+                dbs.add(TeamTask(title=title,
+                                 description=f"поставлено из Telegram ({who})",
+                                 priority=prio, due_at=due,
+                                 author_type="agent", author_id=None))
+                dbs.commit()
+            finally:
+                dbs.close()
+        except Exception as e:  # noqa: BLE001 — честная ошибка в чат
+            await self.send(chat_id, f"не записалась: {str(e)[:120]}", lang)
+            return
+        extra = (f" · {prio}" if prio != "none" else "") + (f" · до {due}" if due else "")
+        await self.send(chat_id,
+                        f"✅ Задача поставлена: «{title[:80]}»{extra}\n"
+                        f"Доска: {PUBLIC_BASE_URL}/team", lang)
+
+    async def cmd_tasks(self, msg: dict, lang: str) -> None:
+        """Свод открытых задач в чат — быстрый статус без перехода на доску."""
+        chat_id = msg["chat"]["id"]
+        try:
+            from db import SessionLocal, TeamTask  # noqa: PLC0415
+            dbs = SessionLocal()
+            try:
+                rows = (dbs.query(TeamTask).filter(TeamTask.status != "done")
+                        .order_by(TeamTask.priority.desc(), TeamTask.id)
+                        .limit(15).all())
+            finally:
+                dbs.close()
+        except Exception as e:  # noqa: BLE001
+            await self.send(chat_id, f"доска не читается: {str(e)[:120]}", lang)
+            return
+        if not rows:
+            await self.send(chat_id, "Открытых задач нет 🎉", lang)
+            return
+        lines = []
+        for t2 in rows:
+            mark = {"open": "▫️", "in_progress": "🔸"}.get(t2.status, "▫️")
+            tail = (f" · {t2.priority}" if t2.priority != "none" else "") +                    (f" · до {t2.due_at}" if t2.due_at else "")
+            lines.append(f"{mark} {t2.title[:70]}{tail}")
+        await self.send(chat_id, "Открытые задачи:\n" + "\n".join(lines)
+                        + f"\n\nДоска: {PUBLIC_BASE_URL}/team", lang)
 
     async def handle_text(self, msg: dict, tg_user: dict, lang: str, text: str) -> None:
         """Свободный текст читается только когда бот его ЖДЁТ (ForceReply)."""
