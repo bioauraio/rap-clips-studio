@@ -83,6 +83,7 @@
   border-color: rgba(45, 33, 26, .55);
   background: transparent;
 }
+.topbar.has-sections .tb-sec[data-sec="trends"] { text-transform: lowercase; }
 .topbar.has-sections .tb-sec:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 1px;
@@ -152,6 +153,112 @@
   transition: opacity .18s ease, transform .18s ease;
 }
 .sec-toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* Тренды — самостоятельная страница внутри SPA. Шапка остаётся общей, а
+   рабочие панели студии уступают место полноширинной визуальной витрине. */
+#app.trends-view > :not(.topbar):not(.trends-page) { display: none !important; }
+#app.trends-view .topbar > .tb-modeline { display: none; }
+.trends-page {
+  width: 100%; min-height: calc(100vh - 84px); padding: clamp(34px, 6vw, 88px) 0 80px;
+  background: var(--bg); color: var(--text);
+}
+.trends-hero { text-align: center; max-width: none; margin: 0 auto 42px; padding: 0 18px; }
+.trends-kicker {
+  display: inline-block; margin-bottom: 10px; font-family: var(--font-mono); font-size: 11px;
+  font-weight: 800; letter-spacing: .18em; color: var(--fire-ink); text-transform: lowercase;
+}
+.trends-hero h1 { margin: 0; font-family: var(--font-head); font-size: clamp(52px, 9vw, 124px); line-height: .88; letter-spacing: -.065em; text-transform: lowercase; }
+.trends-hero p { max-width: 650px; margin: 22px auto 28px; color: var(--ink-muted); font-size: clamp(14px, 1.5vw, 18px); }
+.trends-filters {
+  display: flex; flex-wrap: wrap; justify-content: center; align-content: center;
+  width: min(1420px, 94vw); margin: 0 auto; gap: 5px 14px;
+}
+.trends-filter {
+  padding: 3px 1px; border: 0; border-radius: 0; background: transparent;
+  color: var(--ink-muted); box-shadow: none; font-size: 13.5px; font-weight: 850;
+  letter-spacing: -.01em; text-transform: lowercase;
+}
+.trends-filter:hover, .trends-filter.on { color: var(--text); border: 0; background: transparent; box-shadow: inset 0 -1px currentColor; }
+.trends-filter small { margin-left: 5px; color: var(--fire-ink); font: 800 8px/1 var(--font-mono); vertical-align: super; }
+.trends-catalog { width: 100%; max-width: none; margin: 0; }
+.trends-page .trend-grid {
+  display: block; column-count: 5; column-gap: 8px;
+}
+.trends-page .trend-card {
+  position: relative; display: inline-block; width: 100%; aspect-ratio: 4 / 5;
+  margin: 0 0 8px; padding: 0; overflow: hidden; break-inside: avoid;
+  border-radius: 20px; background: #070707; border: 0; box-shadow: none;
+}
+/* Разная высота создаёт вертикальную masonry-ленту, а не горизонтальные
+   ряды. Все варианты остаются вертикальными или квадратными. */
+.trends-page .trend-card.trend-tile-1,
+.trends-page .trend-card.trend-tile-6,
+.trends-page .trend-card.trend-tile-10 { aspect-ratio: 3 / 4; }
+.trends-page .trend-card.trend-tile-2,
+.trends-page .trend-card.trend-tile-7 { aspect-ratio: 1 / 1; }
+.trends-page .trend-card.trend-tile-3,
+.trends-page .trend-card.trend-tile-8,
+.trends-page .trend-card.trend-tile-11 { aspect-ratio: 4 / 6; }
+.trends-page .trend-card.trend-tile-4,
+.trends-page .trend-card.trend-tile-9 { aspect-ratio: 5 / 6; }
+.trends-page .trend-card > video, .trends-page .trend-card > img, .trends-page .trend-card > .trend-ph {
+  position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; aspect-ratio: auto; object-fit: cover;
+}
+.trend-card-name {
+  position: absolute; z-index: 4; left: 14px; right: 14px; bottom: 14px; color: white;
+  font: 900 clamp(15px,1.6vw,23px)/1 var(--font-head); letter-spacing: -.025em;
+  text-shadow: 0 2px 18px rgba(0,0,0,.75); text-transform: lowercase;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.trend-card-action {
+  position: absolute; z-index: 6; inset: 0; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: #fff; background: rgba(20,10,5,.28); opacity: 0;
+  backdrop-filter: blur(2px); transition: opacity .18s ease;
+}
+.trend-card-action span {
+  padding: 10px 18px; border: 1px solid rgba(255,255,255,.65); border-radius: 999px;
+  background: rgba(20,10,5,.62); font: 800 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .04em;
+}
+.trend-card:hover .trend-card-action, .trend-card:focus-within .trend-card-action { opacity: 1; }
+.trend-card:hover .trend-card-name, .trend-card:focus-within .trend-card-name { opacity: 0; transform: translateY(8px); }
+.trends-page .trend-state { position: absolute; z-index: 8; inset: 0; padding: 14px; background: var(--card-solid); overflow: auto; }
+
+/* До загрузки настоящего ролика карточка не пустая: это самостоятельная
+   процедурная заставка, собранная из CSS-слоёв. Цвет и геометрия вычисляются
+   из названия — поэтому каталог живой, но не копирует чужие превью. */
+.trend-visual { position: relative; isolation: isolate; overflow: hidden; background: #070707; }
+}
+.trend-visual::before, .trend-visual::after, .trend-visual i { content: ""; position: absolute; display: block; }
+.trend-visual::before { inset: -35%; background: repeating-conic-gradient(from 20deg, transparent 0 12deg, hsla(var(--th2), 100%, 88%, .3) 13deg 15deg); animation: tv-spin 12s linear infinite; animation-delay: var(--td); }
+.trend-visual::after { inset: 0; background: linear-gradient(115deg, transparent 25%, rgba(255,255,255,.33) 48%, transparent 66%); transform: translateX(-120%); animation: tv-scan 3.8s ease-in-out infinite; animation-delay: var(--td); }
+.trend-visual i { width: 54%; aspect-ratio: 1; left: 23%; top: 22%; border: 1px solid rgba(255,255,255,.62); border-radius: 42% 58% 64% 36%; backdrop-filter: blur(7px); animation: tv-float 4.4s ease-in-out infinite alternate; animation-delay: var(--td); }
+.trend-visual i:nth-child(2) { width: 30%; left: 8%; top: 60%; border-radius: 50%; animation-duration: 3.1s; }
+.trend-visual i:nth-child(3) { width: 24%; left: 70%; top: 9%; border-radius: 20%; animation-duration: 5.2s; }
+.trend-visual[data-visual="1"] i { border-radius: 4px; transform: rotate(35deg); }
+.trend-visual[data-visual="2"] { background: repeating-linear-gradient(125deg, hsl(var(--th),75%,15%) 0 18px, hsl(var(--th2),75%,48%) 19px 35px); }
+.trend-visual[data-visual="3"] i { border-radius: 50% 8% 50% 8%; }
+.trend-visual[data-visual="4"]::before { background: repeating-radial-gradient(circle, transparent 0 22px, rgba(255,255,255,.25) 24px 26px); }
+.trend-visual[data-visual="5"] i { width: 78%; left: 11%; border-radius: 50%; }
+.trend-visual[data-visual="6"] { filter: saturate(.25) contrast(1.35); }
+.trend-visual[data-visual="7"]::before { background: linear-gradient(90deg, transparent 48%, rgba(255,255,255,.35) 49% 51%, transparent 52%); animation: tv-scan 2.8s ease-in-out infinite; }
+.trends-page .trend-card[class*="trend-tile-"] .trend-visual::before,
+.trends-page .trend-card[class*="trend-tile-"] .trend-visual::after,
+.trends-page .trend-card[class*="trend-tile-"] .trend-visual i { display: none; animation: none; }
+.trends-page .trend-card .trend-visual { background: #070707; }
+.trends-page .trend-card .trend-card-name { color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,.75); }
+@keyframes tv-spin { to { transform: rotate(360deg) scale(1.08); } }
+@keyframes tv-scan { 45%,100% { transform: translateX(120%); } }
+@keyframes tv-float { to { transform: translateY(-12%) rotate(12deg) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .trend-visual::before, .trend-visual::after, .trend-visual i { animation: none; } }
+@media (max-width: 620px) {
+  .trends-page { padding-top: 30px; }
+  .trends-page .trend-grid { column-count: 2; column-gap: 6px; }
+  .trends-page .trend-card { margin-bottom: 6px; border-radius: 14px; }
+  .trend-card-name { left: 10px; right: 10px; bottom: 10px; font-size: 14px; }
+}
+@media (min-width: 621px) and (max-width: 980px) {
+  .trends-page .trend-grid { column-count: 4; }
+}
 
 /* ═══════════════════════════════ АКАДЕМИЯ ═══════════════════════════════ */
 
