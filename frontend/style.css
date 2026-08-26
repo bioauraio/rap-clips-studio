@@ -2673,10 +2673,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset); cursor: pointer;
   font-size: 12px; line-height: 1.4;
 }
+/* Лента режимов ПЕРЕНОСИТСЯ, а не прокручивается: скрытая прокрутка без
+   индикатора прятала правый край, и группа «маркетинг» (UGC, мокапы) для
+   владельца просто не существовала. Список режимов растёт — все должны
+   быть видны разом. */
 .mode-sheet-rail {
-  display: flex; gap: 4px; padding: 3px; margin-bottom: 12px;
-  border-radius: 999px; border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset);
-  overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity;
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; margin-bottom: 12px;
+  border-radius: 18px; border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset);
+  corner-shape: squircle;
 }
 .mode-sheet-rail::-webkit-scrollbar { display: none; }
 .mode-sheet-rail .mode-seg-btn { height: 28px; scroll-snap-align: start; }
