@@ -4965,8 +4965,35 @@ function renderTrack(tr) {
   // Все этапы разом: карточка работает одной прокручиваемой страницей,
   // а таб-тумблер (sticky) — навигацией по ней.
   card.classList.add("stages-stacked");
+  // Четвёртый пункт тумблера — «Сборка»: финальный клип с его кнопками.
+  {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "stage-tab";
+    b.dataset.stage = "clip";
+    const num = document.createElement("span");
+    num.className = "st-num";
+    num.textContent = "4";
+    b.append(num, document.createTextNode(t("stages.clip")));
+    b.addEventListener("click", () => {
+      $$(".stage-tab", card).forEach((el) => el.classList.toggle("on", el === b));
+      const dock = $(".clip-dock", card);
+      if (dock) dock.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    tabsBox.appendChild(b);
+  }
   setStage(card, active);
   STAGES.forEach((k) => { if (typeof card.__ensureStage === "function") card.__ensureStage(k); });
+  // Каждый блок подписан своим именем — отдельные стеклянные панели должны
+  // читаться с любого места прокрутки.
+  $$(".stage-pane", card).forEach((p) => {
+    if (!$(".pane-head", p)) {
+      const h = document.createElement("div");
+      h.className = "pane-head";
+      h.textContent = t("stages." + p.dataset.stage);
+      p.prepend(h);
+    }
+  });
 
   // «Закрепить ленту»: раскадровка и лента готовых видео листаются вместе —
   // прокрутка зеркалится долей, потому что карточки лент разной ширины.
@@ -4974,11 +5001,21 @@ function renderTrack(tr) {
     const b1 = $(".scenes-board", card), b2 = $(".scenes-anim", card);
     const lockCb = $(".strip-lock-cb", card);
     let syncing = false;
+    // Синк ПО КАДРУ, а не по доле прокрутки: карточки лент разной ширины,
+    // и пропорция уводила ленты на кадр-полтора друг от друга. Ищем сцену
+    // под левым краем видимой области и ставим вторую ленту на ту же сцену
+    // с тем же смещением внутри карточки.
     const mirror = (src, dst) => src.addEventListener("scroll", () => {
       if (!lockCb || !lockCb.checked || syncing) return;
+      const cards = $$(".scene-card, .scene-tile", src);
+      const cur = cards.find((el) =>
+        el.offsetLeft + el.offsetWidth > src.scrollLeft) || cards[0];
+      if (!cur) return;
+      const twin = $(`[data-id="${cur.dataset.id}"]`, dst);
+      if (!twin) return;
       syncing = true;
-      const denom = Math.max(1, src.scrollWidth - src.clientWidth);
-      dst.scrollLeft = (src.scrollLeft / denom) * Math.max(0, dst.scrollWidth - dst.clientWidth);
+      const frac = (src.scrollLeft - cur.offsetLeft) / Math.max(1, cur.offsetWidth);
+      dst.scrollLeft = twin.offsetLeft + frac * twin.offsetWidth;
       requestAnimationFrame(() => { syncing = false; });
     }, { passive: true });
     if (b1 && b2) { mirror(b1, b2); mirror(b2, b1); }
@@ -5777,6 +5814,13 @@ function renderScene(s, audioEl, mode = "board") {
   }
   card.classList.add("mode-" + mode);
   card.dataset.id = s.id;
+  // Ширина карточки — от числа кадров: одна картинка = узкая карточка,
+  // добавили кадры — расширилась. Кнопки ужимаются в эту же ширину.
+  if (mode === "board") {
+    const nTh = (s.image_url ? 1 : 0) + (s.image_last_url ? 1 : 0)
+      + (s.midframes || []).length;
+    card.style.flex = "0 0 " + Math.max(196, nTh * 158 + 30 + 18) + "px";
+  }
   card.dataset.start = s.start_sec;
   card.dataset.duration = s.duration_sec;
   // ПЕРЕСТАНОВКА КАДРОВ. Порядок в раскадровке — он же порядок в клипе:

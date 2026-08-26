@@ -1051,6 +1051,7 @@ const I18N = {
       setup: "Setup",
       board: "Storyboard",
       anim: "Animation",
+      clip: "Final cut",
     },
 
     // ── Онбординг FREE: чеклист «первый клип» ──
@@ -3505,6 +3506,7 @@ const I18N = {
       setup: "Настройка",
       board: "Раскадровка",
       anim: "Анимация",
+      clip: "Сборка",
     },
 
     // ── Онбординг FREE: чеклист «первый клип» ──

@@ -519,7 +519,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .s-thumbs { display: flex; flex-wrap: wrap; gap: 6px; }
 .s-thumb {
   position: relative; aspect-ratio: 9/16; flex: 0 0 auto;
-  width: 110px; max-height: 196px;
+  width: 152px; max-height: 270px;
   border: 1px solid rgba(var(--ink-rgb),.14); border-radius: 16px; overflow: hidden;
   background: var(--inset);
 }
@@ -3634,18 +3634,31 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .s-light-yellow { background: #e5a50a; box-shadow: 0 0 6px rgba(229,165,10,.5); }
 .s-light-red    { background: #d64545; box-shadow: 0 0 6px rgba(214,69,69,.5); }
 
-/* Этапы друг под другом: Настройки → Раскадровка → Анимация одной страницей */
-.stages-stacked .stage-pane { display: block; scroll-margin-top: 108px; }
-.stages-stacked .stage-pane + .stage-pane {
-  margin-top: 18px; padding-top: 14px;
-  border-top: 1px solid rgba(var(--ink-rgb), .08);
+/* Этапы — ОТДЕЛЬНЫЕ стеклянные блоки: Настройки → Раскадровка → Анимация →
+   Сборка. Воздух между панелями, жидкое стекло, подпись у каждого блока. */
+.stages-stacked .stage-pane {
+  display: block; scroll-margin-top: 190px;
+  background: color-mix(in srgb, var(--panel) 74%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  border-radius: 26px; corner-shape: squircle;
+  padding: 16px 16px 18px; margin-top: 24px;
+  box-shadow: 0 8px 28px rgba(var(--ink-rgb), .06);
+}
+.pane-head {
+  font-family: var(--font-mono); text-transform: uppercase;
+  letter-spacing: .14em; font-size: 12px; color: var(--accent-ink);
+  margin: 0 0 12px;
 }
 .track-card .stage-tabs {
-  position: sticky; top: 52px; z-index: 24;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border-radius: 14px; corner-shape: squircle;
+  position: sticky; top: 164px; z-index: 24;
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(var(--ink-rgb), .08);
+  border-radius: 16px; corner-shape: squircle;
+  box-shadow: 0 6px 20px rgba(var(--ink-rgb), .07);
 }
+.clip-dock { scroll-margin-top: 190px; }
 .strip-lock { margin: 2px 0 8px; }
 
 /* Лента прежних версий: мелкие миниатюры, крупно — в модалке */
