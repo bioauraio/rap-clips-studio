@@ -149,7 +149,10 @@ def engine_live(engine: str) -> bool:
     if ch == "gateway":
         return True
     if ch == "anthropic":
-        return bool(ANTHROPIC_API_KEY) and _sdk_available()
+        # Живой всегда: либо прямой API-ключ, либо Claude-шлюз подписки
+        # владельца (ask() выбирает канал сам). Раньше без ключа выбор
+        # Opus/Sonnet молча проваливался в «авто».
+        return True
     if ch == "openrouter":
         return bool(OPENROUTER_API_KEY)
     return False
@@ -219,17 +222,22 @@ def public_engines(plan: str = "free", *, admin: bool = False,
 
 # ────────────────────────────── вызов ──────────────────────────────
 
-async def _ask_gateway(prompt: str, system: str) -> str:
+async def _ask_gateway(prompt: str, system: str, model: str = "") -> str:
     import httpx  # noqa: PLC0415
     timeout = httpx.Timeout(TEXT_TIMEOUT, connect=15.0)
+    payload = {
+        "prompt": prompt,
+        "system": system,
+        "subscription_provider": "claude",
+        "cwd": "rapclips",
+        "timeout": int(TEXT_TIMEOUT) - 20,
+    }
+    # Конкретная модель Claude (sonnet/opus) — когда движок выбран человеком,
+    # а не «авто»: шлюз передаёт её в CLI подписки владельца.
+    if model:
+        payload["model"] = model
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(GATEWAY_URL, json={
-            "prompt": prompt,
-            "system": system,
-            "subscription_provider": "claude",
-            "cwd": "rapclips",
-            "timeout": int(TEXT_TIMEOUT) - 20,
-        })
+        r = await client.post(GATEWAY_URL, json=payload)
     if r.status_code != 200:
         raise TextGenError(f"шлюз ответил {r.status_code}: {r.text[:300]}")
     text = (r.json() or {}).get("text", "")
@@ -332,6 +340,10 @@ async def ask(prompt: str, system: str, engine: str = "") -> str:
     if ch == "gateway":
         return await _ask_gateway(prompt, system)
     if ch == "anthropic":
+        # Без API-ключа канал живёт через Claude-шлюз подписки владельца:
+        # та же модель (sonnet/opus), но по подписке, а не по ключу.
+        if not ANTHROPIC_API_KEY:
+            return await _ask_gateway(prompt, system, model=spec.get("model", ""))
         return await _ask_anthropic(prompt, system, spec)
     if ch == "openrouter":
         return await _ask_openrouter(prompt, system, spec)
