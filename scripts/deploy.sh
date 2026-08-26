@@ -28,6 +28,19 @@ rsync -az --delete -e "$SSH" backend/  $MSK:/opt/rapclips/backend/
 rsync -az --delete -e "$SSH" frontend/ $MSK:/opt/rapclips/frontend/
 $SSH $MSK 'cd /opt/rapclips && ./deploy.sh'
 
+echo "== ждём тишины: рестарт посреди генерации убивает оплаченную работу =="
+for i in $(seq 1 30); do
+  BUSY=$($SSH $MSK "ssh root@5.42.120.67 'docker exec -e PYTHONPATH=/app qlolvideo-api python3 -c \"
+from db import SessionLocal, Scene, Track
+s=SessionLocal()
+n=s.query(Scene).filter(Scene.video_status.in_((\\\"queued\\\",\\\"running\\\"))).count()
+n+=s.query(Scene).filter(Scene.image_status.in_((\\\"queued\\\",\\\"running\\\"))).count()
+print(n)\"'" 2>/dev/null | tail -1)
+  [ "${BUSY:-0}" = "0" ] && break
+  echo "  активных генераций: $BUSY — жду 20с ($i/30)"
+  sleep 20
+done
+
 echo "== синк msk -> lolq (5.42.120.67) =="
 $SSH $MSK 'rsync -az --delete /opt/rapclips/backend/  root@5.42.120.67:/opt/qlolvideo/backend/ &&
            rsync -az --delete /opt/rapclips/frontend/ root@5.42.120.67:/opt/qlolvideo/frontend/ &&

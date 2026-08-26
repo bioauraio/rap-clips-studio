@@ -5014,15 +5014,22 @@ function renderTrack(tr) {
       window.addEventListener("scroll", spy, { passive: true });
     }
   }
-  // Поле названия проекта переезжает из шапки в блок «Настройка»: в панели
-  // ему тесно, а редактировать имя — дело настроек, не навигации.
+  // Название проекта редактируется в «Настройке». Оригинальный input живёт
+  // СКРЫТЫМ в шапке (карточки сносятся при каждой перерисовке — переносить
+  // его сюда значило потерять вместе с картой и уронить рендер шапки, что
+  // и ломало переключение проектов). Здесь — синхронизированная копия.
   {
-    const nameInp = document.querySelector("#project-name");
+    const orig = document.querySelector("#project-name");
     const setupPane = $('.stage-pane[data-stage="setup"]', card);
-    if (nameInp && setupPane && !setupPane.contains(nameInp)) {
-      nameInp.classList.add("project-name-inline");
-      const head = $(".pane-head", setupPane);
-      if (head) head.after(nameInp); else setupPane.prepend(nameInp);
+    if (orig && setupPane && !$(".project-name-inline", setupPane)) {
+      const inp = document.createElement("input");
+      inp.className = "project-name-inline";
+      inp.placeholder = orig.placeholder;
+      inp.value = orig.value;
+      inp.addEventListener("input", () => { orig.value = inp.value; });
+      inp.addEventListener("change", () =>
+        orig.dispatchEvent(new Event("change", { bubbles: true })));
+      setupPane.prepend(inp);
     }
   }
   // Четвёртый пункт тумблера — «Сборка»: финальный клип с его кнопками.
