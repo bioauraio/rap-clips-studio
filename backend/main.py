@@ -7179,11 +7179,17 @@ def _run_scene_video(scene_id: int) -> None:
         scene.video_error = ""
         db.commit()
         track = scene.track
-        first_path = os.path.join(UPLOAD_DIR, scene.image_filename)
-        last_path = (
-            os.path.join(UPLOAD_DIR, scene.image_last_filename)
-            if scene.image_last_filename else None
-        )
+        # Первый кадр мог быть удалён: тогда опорным становится последний, и
+        # движок оживляет его как единственный (без пары «первый→последний»).
+        if scene.image_filename:
+            first_path = os.path.join(UPLOAD_DIR, scene.image_filename)
+            last_path = (
+                os.path.join(UPLOAD_DIR, scene.image_last_filename)
+                if scene.image_last_filename else None
+            )
+        else:
+            first_path = os.path.join(UPLOAD_DIR, scene.image_last_filename)
+            last_path = None
         import asyncio
         mediagen.reset_task()
         owner = db.get(User, track.project.owner_id) if track.project.owner_id else None
@@ -7296,8 +7302,10 @@ def _run_scene_video(scene_id: int) -> None:
 async def generate_scene_video(scene_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(db_session)):
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
-    if not scene.image_filename:
-        raise HTTPException(400, "сначала сгенерируй кадры сцены")
+    # Хватает ЛЮБОГО кадра: удалил первый — видео строится от последнего.
+    # Требование именно первого заставляло перерисовывать то, что и так есть.
+    if not (scene.image_filename or scene.image_last_filename):
+        raise HTTPException(400, "сначала сгенерируй хотя бы один кадр сцены")
     body = await request.json() if await request.body() else {}
     provider = str(body.get("provider") or scene.video_provider or "seedance")
     provider = _allowed_provider(user, provider)

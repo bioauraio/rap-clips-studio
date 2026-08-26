@@ -6202,11 +6202,14 @@ function renderScene(s, audioEl, mode = "board") {
   const vidBtn = $(".s-gen-video", card);
   if (vidBtn) {
   const vidBusy = ["queued", "running"].includes(s.video_status);
-  vidBtn.disabled = vidBusy || !s.image_url;
+  // Любой кадр годится опорным: удалённый первый не должен глушить кнопку,
+  // пока жив последний.
+  const anyFrame = Boolean(s.image_url || s.image_last_url);
+  vidBtn.disabled = vidBusy || !anyFrame;
   vidBtn.textContent = vidBusy ? t("scene.videoBusy")
-    : !s.image_url ? t("scene.videoNoFrame")
+    : !anyFrame ? t("scene.videoNoFrame")
     : s.video_url ? t("scene.regenVideo") : t("scene.genVideo");
-  vidBtn.title = !s.image_url ? t("scene.videoTitleNoFrame") : t("scene.videoTitle");
+  vidBtn.title = !anyFrame ? t("scene.videoTitleNoFrame") : t("scene.videoTitle");
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value, provSel.dataset.engine || ""));
   }
 
