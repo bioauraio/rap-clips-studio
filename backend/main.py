@@ -10353,6 +10353,80 @@ BRAND = os.environ.get("BRAND_NAME", "lolq.ai")  # уходит в выписк�
 SUB_GRACE_DAYS = int(os.environ.get("SUB_GRACE_DAYS", "3"))
 
 
+# ─────────── Робокасса: иностранные карты, цены в долларах ───────────
+# Контур за ключами из ЛК Робокассы (Технические настройки магазина):
+# ROBOKASSA_LOGIN, ROBOKASSA_PASS1 (создание платежа), ROBOKASSA_PASS2
+# (проверка result-вебхука). Без ключей провайдер просто не предлагается.
+ROBOKASSA_LOGIN = os.environ.get("ROBOKASSA_LOGIN", "")
+ROBOKASSA_PASS1 = os.environ.get("ROBOKASSA_PASS1", "")
+ROBOKASSA_PASS2 = os.environ.get("ROBOKASSA_PASS2", "")
+# Иностранный ценник: решение владельца 26.08 — долларовые цены выше базы
+# на 150% (множитель 2.5). Применяется к показу и к списанию валютного
+# контура; рублёвую ЮKassa не трогает.
+FOREIGN_PRICE_MULT = max(1.0, float(os.environ.get("FOREIGN_PRICE_MULT", "2.5")))
+
+
+def _robokassa_enabled() -> bool:
+    return bool(ROBOKASSA_LOGIN and ROBOKASSA_PASS1 and ROBOKASSA_PASS2)
+
+
+def _rk_md5(*parts) -> str:
+    import hashlib
+    return hashlib.md5(":".join(str(x) for x in parts).encode()).hexdigest()
+
+
+def _robokassa_link(user: User, *, kind: str, plan_id: str, period: str,
+                    tier: str, pack_id: str, usd_cents: int) -> dict:
+    """Ссылка на оплату Робокассой в долларах.
+
+    Пользовательские поля едут Shp_-параметрами и входят в подпись по
+    алфавиту — так вебхук получает контекст, не доверяя ему без проверки."""
+    import secrets as _sec
+    inv_id = _sec.randbelow(2_000_000_000) + 1
+    out_sum = f"{usd_cents // 100}.{usd_cents % 100:02d}"
+    shp = {"Shp_kind": kind, "Shp_pack": pack_id or "-", "Shp_period": period,
+           "Shp_plan": plan_id or "-", "Shp_tier": tier or "-",
+           "Shp_uid": str(user.id)}
+    shp_sig = ":".join(f"{k}={shp[k]}" for k in sorted(shp))
+    sig = _rk_md5(ROBOKASSA_LOGIN, out_sum, inv_id, "USD",
+                  ROBOKASSA_PASS1, shp_sig)
+    from urllib.parse import urlencode
+    q = {"MerchantLogin": ROBOKASSA_LOGIN, "OutSum": out_sum, "InvId": inv_id,
+         "OutSumCurrency": "USD", "Description": f"lolq.ai {plan_id or pack_id}",
+         "SignatureValue": sig, **shp}
+    return {"ok": True, "provider": "robokassa", "currency": "usd",
+            "url": "https://auth.robokassa.ru/Merchant/Index.aspx?" + urlencode(q),
+            "payment_id": str(inv_id), "kind": kind, "plan": plan_id,
+            "tier": tier, "pack": pack_id, "period": period}
+
+
+@app.post("/api/billing/robokassa-result")
+async def robokassa_result(request: Request, db: Session = Depends(db_session)):
+    """Result-вебхук Робокассы. Подпись — md5 с Паролем №2, ответ «OKInvId»."""
+    form = dict((await request.form()).items()) if         (request.headers.get("content-type") or "").startswith("application/x-www")         else dict(request.query_params)
+    out_sum = str(form.get("OutSum") or "")
+    inv_id = str(form.get("InvId") or "")
+    got = str(form.get("SignatureValue") or "").lower()
+    shp = {k: str(v) for k, v in form.items() if k.startswith("Shp_")}
+    shp_sig = ":".join(f"{k}={shp[k]}" for k in sorted(shp))
+    want = _rk_md5(out_sum, inv_id, ROBOKASSA_PASS2, shp_sig).lower()
+    if not _robokassa_enabled() or got != want:
+        raise HTTPException(400, "bad sign")
+    user = db.get(User, int(shp.get("Shp_uid") or 0))
+    if not user:
+        raise HTTPException(404, "user not found")
+    cents = int(round(float(out_sum) * 100))
+    _grant_payment(
+        db, user, provider="robokassa", payment_id=inv_id,
+        kind=("topup" if shp.get("Shp_kind") == "topup" else "plan"),
+        plan_id=("" if shp.get("Shp_plan") in ("-", "") else shp["Shp_plan"]),
+        period=shp.get("Shp_period") or "month",
+        pack_id=("" if shp.get("Shp_pack") in ("-", "") else shp["Shp_pack"]),
+        amount_cents=cents, currency="USD",
+        tier=("" if shp.get("Shp_tier") in ("-", "") else shp["Shp_tier"]))
+    return Response(f"OK{inv_id}", media_type="text/plain")
+
+
 def _yookassa_enabled() -> bool:
     return bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET)
 
@@ -10829,7 +10903,8 @@ def _pack_card(pack_id: str) -> dict:
 
 
 def _providers_state() -> dict:
-    return {"stripe": _stripe_enabled(), "yookassa": _yookassa_enabled()}
+    return {"stripe": _stripe_enabled(), "yookassa": _yookassa_enabled(),
+            "robokassa": _robokassa_enabled()}
 
 
 @app.get("/api/billing/plans")
@@ -10871,6 +10946,10 @@ def billing_plans(request: Request, db: Session = Depends(db_session)):
         "providers": providers,
         "stripe_enabled": providers["stripe"],
         "yookassa_enabled": providers["yookassa"],
+        "robokassa_enabled": _robokassa_enabled(),
+        # Витрина в долларах умножает на иностранный множитель здесь же:
+        # цена на кнопке обязана совпадать с ценой списания.
+        "foreign_mult": FOREIGN_PRICE_MULT,
         "currency_default": "usd" if providers["stripe"] else "rub",
         "usd_rub": USD_RUB,
         "year_discount_pct": YEAR_DISCOUNT_PCT,
@@ -10961,15 +11040,20 @@ async def billing_create(request: Request, user: User = Depends(current_user),
 
     currency = str(body.get("currency") or "").strip().lower()
     provider = str(body.get("provider") or "").strip().lower()
-    if provider not in ("stripe", "yookassa"):
+    if provider not in ("stripe", "yookassa", "robokassa"):
         provider = "yookassa" if currency in ("rub", "rur", "₽") else "stripe"
-    # Выключенный провайдер — не тупик: если жив второй, уходим на него.
+    # Выключенный провайдер — не тупик: доллары идут stripe → robokassa,
+    # рубли — yookassa. Иностранные карты живут на Робокассе, пока Stripe
+    # без ключей.
     if provider == "stripe" and not _stripe_enabled():
-        provider = "yookassa"
+        provider = "robokassa" if _robokassa_enabled() else "yookassa"
     elif provider == "yookassa" and not _yookassa_enabled():
-        provider = "stripe"
+        provider = "stripe" if _stripe_enabled() else "robokassa"
+    elif provider == "robokassa" and not _robokassa_enabled():
+        provider = "stripe" if _stripe_enabled() else "yookassa"
     if (provider == "stripe" and not _stripe_enabled()) or \
-       (provider == "yookassa" and not _yookassa_enabled()):
+       (provider == "yookassa" and not _yookassa_enabled()) or \
+       (provider == "robokassa" and not _robokassa_enabled()):
         raise ApiError(503, "payments_disabled", "Payments are not connected yet.")
 
     if kind == "topup":
@@ -11011,7 +11095,18 @@ async def billing_create(request: Request, user: User = Depends(current_user),
     discount_cents = amount_cents * discount_pct // 100
     discount_kopeks = amount_kopeks * discount_pct // 100
 
+    # ИНОСТРАННЫЙ ЦЕННИК. Долларовые платежи (Stripe/Робокасса) идут по цене
+    # ×FOREIGN_PRICE_MULT — решение владельца: зарубежный клиент платит выше
+    # базы, рублёвая ЮKassa остаётся как была.
+    if provider in ("stripe", "robokassa"):
+        amount_cents = int(amount_cents * FOREIGN_PRICE_MULT)
+        discount_cents = int(discount_cents * FOREIGN_PRICE_MULT)
+
     meta_promo = amb.ref_code if amb else ""
+    if provider == "robokassa":
+        pay_cents = amount_cents - discount_cents
+        return _robokassa_link(user, kind=kind, plan_id=plan_id, period=period,
+                               tier=tier, pack_id=pack_id, usd_cents=pay_cents)
     if provider == "stripe":
         coupon = ""
         if discount_pct:
