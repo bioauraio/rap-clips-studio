@@ -47,18 +47,18 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=122" />
+<link rel="stylesheet" href="/style.css?v=123" />
 <link rel="stylesheet" href="/api/theme.css" />
-<link rel="stylesheet" href="/landing.css?v=122" />
-<link rel="stylesheet" href="/tg.css?v=122" />
+<link rel="stylesheet" href="/landing.css?v=123" />
+<link rel="stylesheet" href="/tg.css?v=123" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=122" />
+<link rel="stylesheet" href="/music-studio.css?v=123" />
 <!-- Лента разделов, академия и каталог приёмов. ПОСЛЕ style.css: берёт его
      токены и правит шапку только под классом .has-sections — без sections.js
      вёрстка обязана остаться прежней. -->
-<link rel="stylesheet" href="/sections.css?v=122" />
+<link rel="stylesheet" href="/sections.css?v=123" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -76,7 +76,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=122"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=123"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -299,11 +299,37 @@
 </div>
 
 <div id="login" class="login-screen hidden">
-  <form id="login-form" class="login-box">
+  <div class="login-box">
     <h1 class="login-word">lolq<span class="brand-dot">.</span>ai</h1>
-    <input id="login-login" type="text" data-i18n-ph="auth.loginPh" autocomplete="username" />
-    <input id="login-password" type="password" data-i18n-ph="auth.passwordPh" autofocus autocomplete="current-password" />
-    <button type="submit" data-i18n="auth.submit"></button>
+    <!-- Вкладки способов входа: «Email» и «Телефон» появляются только когда
+         сервер умеет слать письма/SMS (/api/auth/config). -->
+    <div id="auth-tabs" class="auth-tabs hidden" role="tablist">
+      <button type="button" class="on" data-tab="password" data-i18n="auth.tab.password"></button>
+      <button type="button" data-tab="email" class="hidden" data-i18n="auth.tab.email"></button>
+      <button type="button" data-tab="phone" class="hidden" data-i18n="auth.tab.phone"></button>
+    </div>
+    <form id="login-form" class="auth-pane" data-pane="password">
+      <input id="login-login" type="text" data-i18n-ph="auth.loginPh" autocomplete="username" />
+      <input id="login-password" type="password" data-i18n-ph="auth.passwordPh" autofocus autocomplete="current-password" />
+      <button type="submit" data-i18n="auth.submit"></button>
+    </form>
+    <form id="email-form" class="auth-pane hidden" data-pane="email">
+      <input id="em-email" type="email" data-i18n-ph="auth.emailPh" autocomplete="email" />
+      <input id="em-password" type="password" data-i18n-ph="auth.passwordPh" autocomplete="current-password" />
+      <input id="em-code" type="text" inputmode="numeric" class="hidden" data-i18n-ph="auth.codePh" autocomplete="one-time-code" />
+      <p id="em-note" class="auth-note hidden"></p>
+      <button id="em-submit" type="submit" data-i18n="auth.submit"></button>
+      <p class="auth-links">
+        <button type="button" id="em-mode" class="link-btn" data-i18n="auth.wantSignup"></button>
+        <button type="button" id="em-forgot" class="link-btn" data-i18n="auth.forgot"></button>
+      </p>
+    </form>
+    <form id="phone-form" class="auth-pane hidden" data-pane="phone">
+      <input id="ph-phone" type="tel" data-i18n-ph="auth.phonePh" autocomplete="tel" />
+      <input id="ph-code" type="text" inputmode="numeric" class="hidden" data-i18n-ph="auth.codePh" autocomplete="one-time-code" />
+      <p id="ph-note" class="auth-note hidden"></p>
+      <button id="ph-submit" type="submit" data-i18n="auth.sendCode"></button>
+    </form>
     <p id="login-error" class="error hidden"></p>
     <!-- Внешние входы: рисуются из /api/auth/config. Нет ключей — нет кнопок. -->
     <p id="login-auth-label" class="auth-note hidden" data-i18n="auth.orWith"></p>
@@ -319,7 +345,7 @@
       <button type="button" data-lang="en">EN</button>
       <button type="button" data-lang="ru">RU</button>
     </div>
-  </form>
+  </div>
 </div>
 
 <!-- Экран блокировки. Нужен потому, что заблокированному человеку отвечают
@@ -1356,24 +1382,24 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=122"></script>
-<script src="/i18n.js?v=122"></script>
-<script src="/app.js?v=122"></script>
+<script src="/modes.js?v=123"></script>
+<script src="/i18n.js?v=123"></script>
+<script src="/app.js?v=123"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=122"></script>
+<script src="/music-studio.js?v=123"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=122"></script>
+<script src="/mode-menu.js?v=123"></script>
 <!-- ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ. ПОСЛЕ app.js и mode-menu.js: она
      ПЕРЕНОСИТ в свою ленту живые кнопки шапки (#chat-btn, #music-btn,
      #account-btn, #admin-btn) вместе с их обработчиками, поэтому обработчики
      к этому моменту должны быть уже навешаны. -->
-<script src="/sections.js?v=122"></script>
+<script src="/sections.js?v=123"></script>
 <!-- Каталог промтов (четыре слоя и сборка). Отдельным файлом от sections.js:
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
-<script src="/library.js?v=122"></script>
+<script src="/library.js?v=123"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1397,10 +1423,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=122";
+  css.href = "/nav.css?v=123";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=122";
+  js.src = "/nav.js?v=123";
   document.body.appendChild(js);
 })();
 </script>

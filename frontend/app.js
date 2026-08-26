@@ -310,6 +310,15 @@ function showLogin() {
     const label = $("#login-auth-label");
     if (label) label.classList.toggle("hidden", !n);
   });
+  // Вкладки «Email» и «Телефон» — только когда сервер реально умеет слать
+  // письма/SMS. Без ключей экран выглядит ровно как раньше.
+  authConfig().then((cfg) => {
+    const tabs = $("#auth-tabs");
+    if (!tabs) return;
+    tabs.querySelector('[data-tab="email"]').classList.toggle("hidden", !cfg.email);
+    tabs.querySelector('[data-tab="phone"]').classList.toggle("hidden", !cfg.phone);
+    tabs.classList.toggle("hidden", !cfg.email && !cfg.phone);
+  });
 }
 function showApp() {
   // Уходя в студию, забываем «покажи главную»: иначе ?home липнет к адресу
@@ -419,6 +428,110 @@ $("#login-form").addEventListener("submit", async (e) => {
     $("#login-error").textContent = t("auth.fail");
     $("#login-error").classList.remove("hidden");
   }
+});
+
+// ── Вкладки способов входа и формы email/телефон ──
+// Ошибка сервера приходит человеческой фразой в detail — показываем её,
+// а не общее «неверный логин».
+function loginErr(err, fallbackKey) {
+  const el = $("#login-error");
+  const msg = (err && err.data && (err.data.detail || err.data.error)) || "";
+  el.textContent = typeof msg === "string" && msg ? msg : t(fallbackKey || "auth.fail");
+  el.classList.remove("hidden");
+}
+function loginErrHide() { $("#login-error").classList.add("hidden"); }
+
+$("#auth-tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-tab]");
+  if (!btn) return;
+  loginErrHide();
+  $$("#auth-tabs [data-tab]").forEach((b) => b.classList.toggle("on", b === btn));
+  $$("#login .auth-pane").forEach((p) =>
+    p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab));
+});
+
+// Email: режимы signin | signup | forgot; после отправки кода — шаг code.
+const em = { mode: "signin", step: "form" };
+function emRender() {
+  const codeStep = em.step === "code";
+  $("#em-code").classList.toggle("hidden", !codeStep);
+  $("#em-password").classList.toggle("hidden", em.mode === "forgot" && !codeStep);
+  $("#em-email").disabled = codeStep;
+  $("#em-note").classList.toggle("hidden", !codeStep);
+  $("#em-note").textContent = codeStep ? t("auth.codeSentEmail") : "";
+  $("#em-submit").textContent = codeStep ? t("auth.confirm")
+    : em.mode === "signin" ? t("auth.submit")
+    : em.mode === "signup" ? t("auth.signupBtn") : t("auth.sendCode");
+  $("#em-mode").textContent = em.mode === "signin" ? t("auth.wantSignup") : t("auth.wantSignin");
+  $("#em-forgot").classList.toggle("hidden", em.mode !== "signin");
+  $("#em-password").placeholder =
+    (em.mode === "forgot" && codeStep) ? t("auth.newPasswordPh") : t("auth.passwordPh");
+}
+$("#em-mode").addEventListener("click", () => {
+  em.mode = em.mode === "signin" ? "signup" : "signin";
+  em.step = "form"; $("#em-email").disabled = false; loginErrHide(); emRender();
+});
+$("#em-forgot").addEventListener("click", () => {
+  em.mode = "forgot"; em.step = "form"; loginErrHide(); emRender();
+});
+$("#email-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  loginErrHide();
+  const email = $("#em-email").value.trim();
+  const password = $("#em-password").value;
+  const code = $("#em-code").value.trim();
+  const q = refCode ? `?ref=${encodeURIComponent(refCode)}` : "";
+  try {
+    if (em.step === "code") {
+      if (em.mode === "signup") {
+        await api("/api/auth/verify-email", { method: "POST", body: { email, code } });
+      } else if (em.mode === "forgot") {
+        await api("/api/auth/reset", { method: "POST", body: { email, code, password } });
+      }
+      me = await api("/api/me");
+      showApp();
+      return;
+    }
+    if (em.mode === "signin") {
+      await api("/api/login", { method: "POST", body: { login: email, password } });
+      me = await api("/api/me");
+      showApp();
+    } else if (em.mode === "signup") {
+      await api(`/api/auth/register-email${q}`, { method: "POST", body: { email, password } });
+      em.step = "code"; emRender();
+    } else {
+      await api("/api/auth/forgot", { method: "POST", body: { email } });
+      em.step = "code"; $("#em-password").value = ""; emRender();
+    }
+  } catch (err) { loginErr(err); }
+});
+
+// Телефон: сначала «получить код», потом тем же submit — вход по коду.
+const ph = { step: "form" };
+function phRender() {
+  const codeStep = ph.step === "code";
+  $("#ph-code").classList.toggle("hidden", !codeStep);
+  $("#ph-phone").disabled = codeStep;
+  $("#ph-note").classList.toggle("hidden", !codeStep);
+  $("#ph-note").textContent = codeStep ? t("auth.codeSentSms") : "";
+  $("#ph-submit").textContent = codeStep ? t("auth.submit") : t("auth.sendCode");
+}
+$("#phone-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  loginErrHide();
+  const phone = $("#ph-phone").value.trim();
+  const q = refCode ? `?ref=${encodeURIComponent(refCode)}` : "";
+  try {
+    if (ph.step === "code") {
+      await api(`/api/auth/phone/verify${q}`,
+                { method: "POST", body: { phone, code: $("#ph-code").value.trim() } });
+      me = await api("/api/me");
+      showApp();
+      return;
+    }
+    await api("/api/auth/phone/start", { method: "POST", body: { phone } });
+    ph.step = "code"; phRender();
+  } catch (err) { loginErr(err); }
 });
 
 // «Старт» = гостевой аккаунт сразу: без формы, регистрация — потом, по желанию.

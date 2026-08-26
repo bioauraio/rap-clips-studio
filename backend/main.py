@@ -44,7 +44,7 @@ from db import (
     AppSetting, ChangeLog, EarnClick, EarnSale, TeamProject, TeamTask, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
-    TrackPhoto, User, init_db, now,
+    AuthCode, TrackPhoto, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -2380,6 +2380,10 @@ async def login(request: Request, db: Session = Depends(db_session)):
     password = str(body.get("password") or "")
     if login_name:
         user = db.query(User).filter(User.login == login_name).first()
+        # Человек, зарегистрированный по email, логично вводит email —
+        # даже если поле называется «логин».
+        if not user and "@" in login_name:
+            user = db.query(User).filter(User.email == login_name.lower()).first()
         if not user or not user.password_hash or not _verify_password(password, user.password_hash):
             raise HTTPException(401, "неверный логин или пароль")
         return _session_response(user)
@@ -2467,6 +2471,8 @@ def auth_config():
         "telegram_bot": TG_BOT_USERNAME,
         "yandex": bool(YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET),
         "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+        "email": bool(UNISENDER_API_KEY and AUTH_MAIL_FROM),
+        "phone": bool(SMS_GATEWAY_URL and SMS_GATEWAY_TOKEN),
     }
 
 
@@ -2700,6 +2706,276 @@ async def auth_yandex_callback(code: str = "", state: str = "", request: Request
     user = _external_login(db, request, "yandex_id", yid, name,
                            prof.get("default_email") or "", ref=ref_code)
     return _oauth_finish(user, state)
+
+
+# ─────────────── вход по email (код в письме) и телефону (SMS) ───────────────
+# Письма — Unisender Go (транзакционный API организма), SMS — шлюз SMS.RU.
+# Ключи в infra/.env; пока пусты — /api/auth/config отдаёт false и вкладок
+# на экране входа просто нет.
+UNISENDER_API_KEY = os.environ.get("UNISENDER_API_KEY", "").strip()
+UNISENDER_API_URL = os.environ.get(
+    "UNISENDER_API_URL", "https://go2.unisender.ru/ru/transactional/api/v1").rstrip("/")
+# lolq.ai у Unisender не подтверждён — шлём с подтверждённого bioura.io,
+# пока владелец не заведёт домен (см. чек-лист в docs).
+AUTH_MAIL_FROM = os.environ.get("AUTH_MAIL_FROM", "noreply@bioura.io").strip()
+AUTH_MAIL_FROM_NAME = os.environ.get("AUTH_MAIL_FROM_NAME", "lolq.ai").strip()
+SMS_GATEWAY_URL = os.environ.get("SMS_GATEWAY_URL", "").strip()
+SMS_GATEWAY_TOKEN = os.environ.get("SMS_GATEWAY_TOKEN", "").strip()
+SMS_SENDER = os.environ.get("SMS_SENDER", "").strip()
+
+CODE_TTL_S = 3600          # код живёт час
+CODE_MAX_ATTEMPTS = 5      # после пяти промахов код сгорает
+SMS_PER_DAY = 5            # SMS на номер в сутки
+SMS_MIN_INTERVAL_S = 60    # не чаще раза в минуту
+
+
+def _norm_email(raw: str) -> str:
+    e = str(raw or "").strip().lower()
+    if not e or "@" not in e or " " in e or len(e) > 254:
+        return ""
+    return e
+
+
+def _norm_phone(raw: str) -> str:
+    """Только цифры, российская нормализация 8→7, итог 11–15 цифр."""
+    digits = "".join(c for c in str(raw or "") if c.isdigit())
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    if len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+    return digits if 11 <= len(digits) <= 15 else ""
+
+
+def _issue_code(db: Session, kind: str, address: str, user_id: int = 0) -> str:
+    """Новый код гасит прежние живые того же вида: действителен последний."""
+    db.query(AuthCode).filter(AuthCode.kind == kind, AuthCode.address == address,
+                              AuthCode.used == False).update({"used": True})  # noqa: E712
+    code = f"{secrets.randbelow(900000) + 100000}"
+    db.add(AuthCode(kind=kind, address=address, code=code, user_id=user_id))
+    db.commit()
+    return code
+
+
+def _check_code(db: Session, kind: str, address: str, code: str) -> "AuthCode":
+    """Проверить код; кидает HTTPException словами, почему не подошёл."""
+    row = (db.query(AuthCode)
+           .filter(AuthCode.kind == kind, AuthCode.address == address,
+                   AuthCode.used == False)  # noqa: E712
+           .order_by(AuthCode.id.desc()).first())
+    if not row:
+        raise HTTPException(400, "код не запрашивался или уже использован")
+    created = row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None \
+        else row.created_at
+    if (now() - created).total_seconds() > CODE_TTL_S:
+        row.used = True
+        db.commit()
+        raise HTTPException(400, "код устарел — запроси новый")
+    if not code or not hmac.compare_digest(row.code, str(code).strip()):
+        row.attempts += 1
+        if row.attempts >= CODE_MAX_ATTEMPTS:
+            row.used = True
+        db.commit()
+        raise HTTPException(400, "неверный код")
+    row.used = True
+    db.commit()
+    return row
+
+
+async def _send_auth_email(to: str, subject: str, text: str) -> None:
+    """Unisender Go /email/send.json. Ошибка транспорта — честный 502."""
+    if not (UNISENDER_API_KEY and AUTH_MAIL_FROM):
+        raise HTTPException(400, "почтовый вход не настроен")
+    import httpx as _httpx
+    payload = {"message": {
+        "recipients": [{"email": to}],
+        "subject": subject,
+        "body": {"plaintext": text},
+        "from_email": AUTH_MAIL_FROM,
+        "from_name": AUTH_MAIL_FROM_NAME,
+    }}
+    async with _httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{UNISENDER_API_URL}/email/send.json",
+                              headers={"X-API-KEY": UNISENDER_API_KEY}, json=payload)
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    if r.status_code != 200 or data.get("status") != "success":
+        log.warning("auth email fail: %s %s", r.status_code, str(data)[:300])
+        raise HTTPException(502, "письмо не ушло — попробуй позже")
+
+
+async def _send_auth_sms(phone: str, text: str) -> None:
+    """SMS.RU /sms/send тем же протоколом, что bioura.io."""
+    if not (SMS_GATEWAY_URL and SMS_GATEWAY_TOKEN):
+        raise HTTPException(400, "вход по телефону не настроен")
+    import httpx as _httpx
+    data = {"api_id": SMS_GATEWAY_TOKEN, "to": phone, "msg": text, "json": 1}
+    if SMS_SENDER:
+        data["from"] = SMS_SENDER
+    async with _httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(SMS_GATEWAY_URL, data=data)
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    st = (body.get("sms") or {}).get(phone, {}) or {}
+    if body.get("status") != "OK" or st.get("status") != "OK":
+        log.warning("auth sms fail: %s %s", r.status_code, str(body)[:300])
+        raise HTTPException(502, "SMS не ушла — попробуй позже")
+
+
+def _guest_of(request: Request, db: Session) -> "User | None":
+    token = request.cookies.get(QV_COOKIE)
+    if not token:
+        return None
+    try:
+        return db.get(User, int(signer.loads(token, max_age=QV_MAX_AGE).get("uid") or 0))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.post("/api/auth/register-email")
+async def auth_register_email(request: Request, ref: str = "",
+                              db: Session = Depends(db_session)):
+    """Регистрация по email: аккаунт с паролем сразу, кодом подтверждается
+    адрес. Гость с проектами «повышается» до аккаунта, ничего не теряя."""
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    password = str(body.get("password") or "")
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    if len(password) < 6:
+        raise HTTPException(400, "пароль от 6 символов")
+    existing = db.query(User).filter(User.email == email).first()
+    if existing and existing.password_hash:
+        raise HTTPException(400, "этот email уже зарегистрирован — войди или сбрось пароль")
+    guest = _guest_of(request, db)
+    user = existing
+    if not user:
+        fresh_guest = guest and not guest.login and not guest.tg_id \
+            and not guest.yandex_id and not guest.google_id and not guest.email
+        user = guest if fresh_guest else User(name=email.split("@")[0])
+        if not fresh_guest:
+            db.add(user)
+    user.email = email
+    user.email_verified = False
+    user.password_hash = _hash_password(password)
+    if not user.login and not db.query(User).filter(User.login == email).first():
+        user.login = email
+    if not user.name:
+        user.name = email.split("@")[0]
+    db.commit()
+    db.refresh(user)
+    _attach_ref(db, user, ref)
+    code = _issue_code(db, "email_verify", email, user.id)
+    await _send_auth_email(
+        email, "Код подтверждения lolq.ai",
+        f"Твой код подтверждения: {code}\n\nКод действует 1 час. "
+        "Если это не ты — просто удали письмо.")
+    return {"ok": True, "sent": True}
+
+
+@app.post("/api/auth/verify-email")
+async def auth_verify_email(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    row = _check_code(db, "email_verify", email, body.get("code"))
+    user = db.get(User, row.user_id) or db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(400, "аккаунт не найден — зарегистрируйся заново")
+    user.email_verified = True
+    db.commit()
+    return _auth_response(user)
+
+
+@app.post("/api/auth/forgot")
+async def auth_forgot(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    user = db.query(User).filter(User.email == email).first()
+    # Не раскрываем, есть ли такой аккаунт: ответ одинаковый в обе стороны.
+    if user:
+        code = _issue_code(db, "email_reset", email, user.id)
+        await _send_auth_email(
+            email, "Сброс пароля lolq.ai",
+            f"Код для сброса пароля: {code}\n\nКод действует 1 час. "
+            "Если ты не просил сброс — не отвечай на письмо, пароль не изменится.")
+    return {"ok": True, "sent": True}
+
+
+@app.post("/api/auth/reset")
+async def auth_reset(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    password = str(body.get("password") or "")
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    if len(password) < 6:
+        raise HTTPException(400, "пароль от 6 символов")
+    row = _check_code(db, "email_reset", email, body.get("code"))
+    user = db.get(User, row.user_id)
+    if not user:
+        raise HTTPException(400, "аккаунт не найден")
+    user.password_hash = _hash_password(password)
+    user.email_verified = True  # код из письма и есть подтверждение адреса
+    db.commit()
+    return _auth_response(user)
+
+
+@app.post("/api/auth/phone/start")
+async def auth_phone_start(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    phone = _norm_phone(body.get("phone"))
+    if not phone:
+        raise HTTPException(400, "введи телефон в формате +7...")
+    day_ago = now() - timedelta(days=1)
+    recent = (db.query(AuthCode)
+              .filter(AuthCode.kind == "phone", AuthCode.address == phone,
+                      AuthCode.created_at > day_ago)
+              .order_by(AuthCode.id.desc()).all())
+    if len(recent) >= SMS_PER_DAY:
+        raise HTTPException(429, "лимит SMS на сегодня исчерпан — попробуй завтра")
+    if recent:
+        last = recent[0].created_at
+        last = last.replace(tzinfo=timezone.utc) if last.tzinfo is None else last
+        if (now() - last).total_seconds() < SMS_MIN_INTERVAL_S:
+            raise HTTPException(429, "код уже отправлен — подожди минуту")
+    code = _issue_code(db, "phone", phone)
+    await _send_auth_sms(phone, f"Код входа lolq.ai: {code}")
+    return {"ok": True, "sent": True}
+
+
+@app.post("/api/auth/phone/verify")
+async def auth_phone_verify(request: Request, ref: str = "",
+                            db: Session = Depends(db_session)):
+    body = await request.json()
+    phone = _norm_phone(body.get("phone"))
+    if not phone:
+        raise HTTPException(400, "введи телефон в формате +7...")
+    _check_code(db, "phone", phone, body.get("code"))
+    user = db.query(User).filter(User.phone == phone).first()
+    guest = _guest_of(request, db)
+    if not user:
+        fresh_guest = guest and not guest.login and not guest.tg_id \
+            and not guest.yandex_id and not guest.google_id and not guest.email \
+            and not guest.phone
+        user = guest if fresh_guest else User(name=f"+{phone}")
+        if not fresh_guest:
+            db.add(user)
+        user.phone = phone
+        if not user.name:
+            user.name = f"+{phone}"
+        db.commit()
+        db.refresh(user)
+    else:
+        _adopt_guest(db, guest, user)
+    _attach_ref(db, user, ref)
+    return _auth_response(user)
 
 
 @app.post("/api/logout")

@@ -88,6 +88,10 @@ class User(Base):
     yandex_id = Column(String, nullable=False, default="")
     google_id = Column(String, nullable=False, default="")
     email = Column(String, nullable=False, default="")
+    # Email подтверждён кодом из письма. Пустой email + True не бывает.
+    email_verified = Column(Boolean, nullable=False, default=False)
+    # Телефон для входа по SMS-коду, нормализованный: только цифры, "7...".
+    phone = Column(String, nullable=False, default="")
     # Подписка ЮKassa: способ оплаты для автосписания и дата продления.
     pay_method_id = Column(String, nullable=False, default="")
     plan_until = Column(DateTime, nullable=True)
@@ -1406,6 +1410,25 @@ class MusicLead(Base):
     user_agent = Column(String, nullable=False, default="")
     status = Column(String, nullable=False, default="new")  # new | seen | done
     note = Column(Text, nullable=False, default="")
+
+
+class AuthCode(Base):
+    """Одноразовые коды входа: подтверждение email, сброс пароля, SMS-вход.
+
+    kind: email_verify | email_reset | phone. address — email или телефон
+    (нормализованный). Код живёт 1 час, гасится полем used, а не удалением:
+    строка остаётся следом для rate-limit «5 SMS в день на номер»."""
+    __tablename__ = "auth_codes"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    kind = Column(String, nullable=False, default="")
+    address = Column(String, nullable=False, default="", index=True)
+    code = Column(String, nullable=False, default="")
+    user_id = Column(Integer, nullable=False, default=0)
+    used = Column(Boolean, nullable=False, default=False)
+    # Счётчик неверных попыток: после 5 промахов код сгорает — шестизначный
+    # код нельзя дать перебрать.
+    attempts = Column(Integer, nullable=False, default=0)
 
 
 def init_db() -> None:
