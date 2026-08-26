@@ -7072,6 +7072,7 @@ async function approveScene(id, approved) {
 $("#add-track-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = e.target;
+  const btn = form.querySelector('button[type="submit"]');
   const fd = new FormData();
   fd.append("title", form.title.value);
   fd.append("style_keys", form.style_keys.value);
@@ -7079,9 +7080,20 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   fd.append("comment", form.comment.value);
   if (form.format_key && form.format_key.value) fd.append("format_key", form.format_key.value);
   if (form.audio.files[0]) fd.append("audio", form.audio.files[0]);
-  await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
-  form.reset();
-  await loadProject();
+  // Молча падать нельзя: «сингл — второй трек нельзя» и любой другой отказ
+  // человек должен ПРОЧИТАТЬ, а на время долгой загрузки файла — видеть,
+  // что она идёт.
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = t("tracks.uploading"); }
+  try {
+    await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
+    form.reset();
+    await loadProject();
+  } catch (err) {
+    fail(err);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
 });
 
 // Визитка персонажа в ленте: моделька, имя, «главный», счётчик атрибутов.

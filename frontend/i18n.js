@@ -539,6 +539,7 @@ const I18N = {
       lyricsPh: "Lyrics (optional — an instrumental works too: then the comment and the characters carry the idea)",
       commentPh: "Comment: what you meant, the context",
       submit: "Add track",
+      uploading: "uploading…",
     },
 
     // ─────────────────────── РЕЖИМЫ ───────────────────────
@@ -3011,6 +3012,7 @@ const I18N = {
       lyricsPh: "Текст песни (необязательно — можно чисто бит: тогда идею закладывают комментарий и персонажи)",
       commentPh: "Комментарий: что имел в виду, контекст",
       submit: "Добавить трек",
+      uploading: "загружаю трек…",
     },
 
     // ─────────────────────── РЕЖИМЫ ───────────────────────
