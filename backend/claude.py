@@ -368,6 +368,7 @@ async def extend_scenes(
     *, style: str, story: str, characters: list[dict] | None,
     existing_tail: list[dict], count: int, seconds_left: int, slot: int,
     lyrics: str = "", comment: str = "", engine: str = "",
+    random_cast: bool = False,
 ) -> dict:
     """Дописать ХВОСТ раскадровки, не трогая уже готовые кадры.
 

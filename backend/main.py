@@ -9022,6 +9022,7 @@ def _run_scenes_extend(track_id: int, count: int) -> None:
             seconds_left=cov["left_sec"], slot=cov["slot_sec"],
             lyrics=track.lyrics or "", comment=track.comment or "",
             engine=engine,
+            random_cast=bool(getattr(track, "random_cast", False)),
         ))
         pos = max((s.position for s in track.scenes), default=0)
         start = sum(int(s.duration_sec or 0) for s in track.scenes)
