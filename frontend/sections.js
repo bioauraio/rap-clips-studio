@@ -124,13 +124,14 @@
       open: () => openTrends(),
     },
     {
-      // Заработок: партнёрские продукты — сгенерил ролик, запостил со своей
-      // ссылкой, получаешь долю с заказов. Витрина на механике трендов.
-      id: "earn",
-      label: () => T("nav.sections.earn", "Заработок"),
-      title: () => T("nav.titles.earn", ""),
-      active: () => sheet === "earn",
-      open: () => openEarn(),
+      // Маркетинг: всё про продукты и бренды одним хабом — предметная
+      // съёмка (мокапы), UGC-ролики и партнёрский заработок. Раньше здесь
+      // стоял «Заработок»; /earn продолжает открывать его напрямую.
+      id: "marketing",
+      label: () => T("nav.sections.marketing", "Маркетинг"),
+      title: () => T("nav.titles.marketing", ""),
+      active: () => sheet === "earn" || Boolean($("#marketing-page")),
+      open: () => openMarketing(),
     },
     {
       id: "academy",
@@ -195,6 +196,7 @@
     const s = SECTIONS.find((x) => x.id === id);
     if (!s) return;
     if (id !== "trends") closeTrendsPage(false);
+    if (id !== "marketing") closeMarketingPage(false);
     if (s.adopt) {
       const node = $(s.adopt);
       if (node) node.click();
@@ -441,6 +443,81 @@
     if (app) app.classList.remove("trends-view");
     sheet = "";
     if (updateUrl !== false && location.pathname === "/trends") history.pushState({}, "", "/studio");
+    paint();
+  }
+
+  /* ─────────────────────────── маркетинг ───────────────────────────
+     Хаб «всё про продукты и бренды»: три стеклянные карточки — мокапы, UGC
+     и партнёрка. Своя страница на механике трендов (#trends-page): студия
+     прячется классом trends-view, human-URL /marketing, закрытие при уходе
+     в любой другой раздел — через go(). */
+
+  function closeMarketingPage(updateUrl) {
+    const page = $("#marketing-page");
+    if (!page) return;
+    page.remove();
+    const app = $("#app");
+    if (app && !$("#trends-page")) app.classList.remove("trends-view");
+    if (sheet === "marketing") sheet = "";
+    if (updateUrl !== false && location.pathname === "/marketing") {
+      history.pushState({}, "", "/studio");
+    }
+    paint();
+  }
+
+  /* Увести в студию сразу в нужный режим: тот же путь, что клик по чипу
+     режима, — pick() открывает карточку режима с кнопкой «Открыть/Создать». */
+  function goStudioMode(modeId) {
+    closeMarketingPage(false);
+    if (location.pathname === "/marketing") history.pushState({}, "", "/studio");
+    const studio = SECTIONS.find((x) => x.id === "studio");
+    if (studio && studio.open) studio.open();
+    if (window.QlolModeMenu && window.QlolModeMenu.pick) {
+      window.QlolModeMenu.pick(modeId);
+    }
+    paint();
+  }
+
+  function openMarketing() {
+    closeTrendsPage(false);
+    closeMarketingPage(false);
+    const app = $("#app");
+    if (!app) return;
+    sheet = "marketing";
+    app.classList.add("trends-view");
+    if (location.pathname !== "/marketing") history.pushState({}, "", "/marketing");
+    const page = document.createElement("main");
+    page.id = "marketing-page";
+    page.className = "trends-page marketing-page";
+    page.innerHTML = `<section class="trends-hero">
+      <h1>${esc(T("marketing.title", "Маркетинг"))}</h1>
+      <p>${esc(T("marketing.lead", ""))}</p>
+    </section><section class="mk-grid"></section>`;
+    const grid = $(".mk-grid", page);
+    const cards = [
+      { icon: "📦",
+        t: T("marketing.mockups", "Мокапы — предметная съёмка товара"),
+        d: T("marketing.mockupsNote", "Кадры упаковки для карточек и рекламы — по одному фото."),
+        go: () => goStudioMode("mockup") },
+      { icon: "🤳",
+        t: T("marketing.ugc", "UGC / блогеры"),
+        d: T("marketing.ugcNote", "ИИ-блогер рассказывает про твой продукт как живой человек."),
+        go: () => goStudioMode("ugc") },
+      { icon: "💸",
+        t: T("marketing.earn", "Заработок с lolq.ai"),
+        d: T("marketing.earnNote", "Постишь ролики с продуктами — получаешь долю с продаж."),
+        go: () => openEarn() },
+    ];
+    cards.forEach((c) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-card";
+      b.innerHTML = `<span class="mk-ico" aria-hidden="true">${c.icon}</span>
+        <b>${esc(c.t)}</b><span class="mk-note">${esc(c.d)}</span>`;
+      b.addEventListener("click", c.go);
+      grid.appendChild(b);
+    });
+    app.appendChild(page);
     paint();
   }
 
@@ -972,12 +1049,14 @@
     if (typeof window.onLangChange === "function") {
       window.onLangChange(() => {
         const trendsOpen = Boolean($("#trends-page"));
+        const mkOpen = Boolean($("#marketing-page"));
         relabel();
         academy = null;
         if (window.QlolLibrary) window.QlolLibrary.forget();
         // Страница трендов собрана JS, поэтому data-i18n её не обновит.
         // Перестраиваем её на новом языке без перезагрузки и смены URL.
         if (trendsOpen) openTrends();
+        if (mkOpen) openMarketing();
         paint();
       });
     }
@@ -1011,7 +1090,7 @@
      в академии, другое в каталоге. Отсюда же берётся openSheet, поэтому
      подсветка раздела продолжает работать, кто бы лист ни рисовал. */
   window.QlolSections = {
-    mount, go, paint, openAcademy, openLibrary,
+    mount, go, paint, openAcademy, openLibrary, openMarketing, openEarn,
     ui: {
       T, TF, esc, lang, num, plural, toast, errorText, busy, failed,
       planName, tracksOf, sceneOptions, slotFields, readSlots,

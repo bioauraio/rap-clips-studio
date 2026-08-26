@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 import claude
 import formats
@@ -3171,6 +3171,34 @@ def _track_style_keys(t: Track) -> list[str]:
     return prompts_catalog.keys_from_prompt(t.style or "")
 
 
+
+# ─────────────── 3D-облёт товара (режим мокапов) ───────────────
+# Восемь ракурсов по кругу: 0°, 45°, … 315°. Листаются drag'ом на карточке
+# трека и выглядят как вращение 3D-модельки — без единого полигона.
+TURNAROUND_YAWS = (0, 45, 90, 135, 180, 225, 270, 315)
+
+
+def _turnaround_files(t: Track) -> list[str]:
+    try:
+        v = json.loads(t.turnaround_files or "[]")
+        return [str(x) for x in v] if isinstance(v, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _turnaround_cost(t: Track) -> int:
+    """Цена облёта = 8 кадров тем же прайсом, что у кадров сцен (FRAME_COST —
+    цена ПАРЫ, поэтому восемь кадров = четыре пары)."""
+    try:
+        sess = object_session(t)
+        owner = (sess.get(User, t.project.owner_id)
+                 if (sess and t.project.owner_id) else None)
+        eng = _resolve_image_engine(owner, t)
+        return _frames_cost(owner, None, eng) * (len(TURNAROUND_YAWS) // 2)
+    except Exception:  # noqa: BLE001
+        return FRAMES_COST * (len(TURNAROUND_YAWS) // 2)
+
+
 def track_dict(t: Track, with_scenes: bool = False) -> dict:
     keys = _track_style_keys(t)
     d = {
@@ -3243,6 +3271,11 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         # ролика и серии это вертикаль, у мокапа квадрат.
         "aspect": t.aspect or "", "eff_aspect": _track_aspect(t),
         "image_resolution": t.image_resolution or "",
+        # 3D-облёт товара: 8 ракурсов по кругу + цена кнопки.
+        "turnaround_status": t.turnaround_status or "",
+        "turnaround_note": t.turnaround_note or "",
+        "turnaround_urls": [f"/api/media/{f}" for f in _turnaround_files(t)],
+        "turnaround_cost": _turnaround_cost(t),
         # Фото товара (режим мокапов): референс, по которому упаковка обязана
         # совпасть до последней буквы на этикетке.
         "photos": [{"id": ph.id, "position": ph.position, "kind": ph.kind or "photo",
@@ -3585,6 +3618,8 @@ def project_status(project_id: int | None = None, user: User = Depends(current_u
             "supergen_note": t.supergen_note or "",
             "restyle_status": t.restyle_status or "",
             "restyle_note": t.restyle_note or "",
+            "turnaround_status": t.turnaround_status or "",
+            "turnaround_note": t.turnaround_note or "",
             "scenes_count": len(t.scenes),
             "coverage": _scenes_coverage(t),
             "approved_count": sum(1 for s in t.scenes if s.approved),
@@ -8733,6 +8768,116 @@ def del_track_photo(photo_id: int, user: User = Depends(current_user),
     return track_dict(track)
 
 
+# ─────────────── 3D-ОБЛЁТ ТОВАРА: 8 ракурсов по кругу ───────────────
+# Тот же конвейер, что у кадров сцен: референс-фото товара + промпт ракурса →
+# mediagen.generate_image_ex цепочкой «запрос → трек → тариф». Списание — как
+# 8 кадров (4 пары по прайсу FRAME_COST), возврат — за ненарисованное.
+
+
+def _turnaround_ref_path(track: Track) -> str:
+    """Референс товара: последний kind="model", если он есть, иначе первое
+    фото — то же правило, что у кадров сцен мокапа."""
+    photos = sorted(track.photos, key=lambda p: (p.position, p.id))
+    if not photos:
+        return ""
+    model = [p for p in photos if (p.kind or "") == "model"]
+    ph = model[-1] if model else photos[0]
+    path = os.path.join(UPLOAD_DIR, ph.filename)
+    return path if os.path.exists(path) else ""
+
+
+def _run_turnaround(track_id: int, engine: str, cost: int) -> None:
+    db = SessionLocal()
+    files: list[str] = []
+    total = len(TURNAROUND_YAWS)
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        track.turnaround_status = "running"
+        track.turnaround_note = f"0/{total}"
+        db.commit()
+        ref_path = _turnaround_ref_path(track)
+        if not ref_path:
+            raise RuntimeError("нет фото товара")
+        old = _turnaround_files(track)
+        img_res = (track.image_resolution or "").strip()
+        import asyncio
+        mediagen.reset_task()
+        for i, yaw in enumerate(TURNAROUND_YAWS, start=1):
+            prompt = (
+                "same exact product as in the reference photo, studio product "
+                "photography, clean seamless light background, the camera is "
+                "orbiting the product on a turntable, view from "
+                f"{yaw} degrees yaw around the product, identical soft studio "
+                "lighting in every shot, the product perfectly centered, same "
+                "distance and framing, every label letter identical to the "
+                "reference, square frame")
+            res = asyncio.run(mediagen.generate_image_ex(
+                prompt, ref_path, engine=engine,
+                resolution=img_res, aspect="1:1"))
+            fname = _save_image(res["data"], res["mime"])
+            _reg_file(db, fname, track.project.owner_id, kind="turnaround",
+                      project_id=track.project_id, track_id=track.id)
+            files.append(fname)
+            track.turnaround_note = f"{i}/{total}"
+            db.commit()
+        track.turnaround_files = json.dumps(files)
+        track.turnaround_status = "done"
+        track.turnaround_note = ""
+        db.commit()
+        # Старый облёт уезжает только ПОСЛЕ успешного нового: упавшая
+        # перегенерация не должна оставить трек вовсе без вьюера.
+        for f in old:
+            _remove_media(f, db)
+        db.commit()
+        log.info("3D-облёт трека %s готов (%s ракурсов)", track_id, total)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        track = db.get(Track, track_id)
+        if track:
+            track.turnaround_status = "error"
+            track.turnaround_note = _err_text(e, 300)
+            db.commit()
+            # Возврат за ненарисованные ракурсы — с точностью до кадра.
+            owner = (db.get(User, track.project.owner_id)
+                     if track.project.owner_id else None)
+            left = cost * (total - len(files)) // total
+            if owner and left > 0:
+                _refund(db, owner, left, f"3D-облёт товара {track_id}: не вышло",
+                        ref_type="track", ref_id=track_id,
+                        track_id=track_id, project_id=track.project_id)
+        log.warning("3D-облёт трека %s упал: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/turnaround")
+def generate_turnaround(track_id: int, engine: str = "",
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    _guard_disk()
+    track = _own_track(db, user, track_id)
+    if not track.photos:
+        raise HTTPException(400, "сначала добавь фото товара")
+    if track.turnaround_status in ("queued", "running"):
+        raise HTTPException(409, "облёт уже генерируется")
+    engine = _resolve_image_engine(user, track, engine)
+    pairs = len(TURNAROUND_YAWS) // 2
+    cost = _frames_cost(user, None, engine) * pairs
+    _charge(db, user, cost, f"3D-облёт товара «{track.title or track.id}»",
+            kind="frames", engine=engine,
+            cost_cents=_cost_cents("frames", engine, count=pairs,
+                                   resolution=(track.image_resolution or "").strip()),
+            ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id)
+    track.turnaround_status = "queued"
+    track.turnaround_note = ""
+    db.commit()
+    _spawn_gen(user, _run_turnaround, track.id, engine, cost, kind="frames")
+    return {"ok": True, "charged": cost}
+
+
 # Как человек подписал ракурс своего фото. Классификатора ракурса у нас нет и
 # городить его незачем: подпись над зоной загрузки даёт генератору ровно то,
 # чего никакой автоотбор из свалки селфи не даст.
@@ -13681,7 +13826,7 @@ reload_style_overlay()
 # рекламировать. Каждый путь отдаёт тот же index.html, а какой раздел
 # открыть — решает фронт по location.pathname.
 SPA_ROUTES = ("home", "studio", "make", "generator", "trends", "academy",
-              "prompts", "pricing", "music", "login")
+              "prompts", "pricing", "music", "login", "marketing", "earn")
 
 
 @app.get("/team", include_in_schema=False)

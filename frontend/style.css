@@ -2955,6 +2955,20 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-photos { display: flex; flex-direction: column; gap: 6px; }
 .ms-photos-hint { margin: 0; font-size: 11.5px; line-height: 1.45; }
 .ms-photos-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+/* 3D-облёт товара: квадратный вьюер, drag по горизонтали листает ракурсы. */
+.ms-turnaround { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.ms-ta-viewer {
+  position: relative; width: min(320px, 100%); aspect-ratio: 1; overflow: hidden;
+  flex-basis: 100%; border-radius: 20px; background: var(--card-solid);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  cursor: ew-resize; touch-action: pan-y; user-select: none;
+}
+.ms-ta-viewer img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.ms-ta-hint {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+  padding: 3px 10px; border-radius: 999px; background: rgba(0,0,0,.42);
+  color: #fff; font-size: 11px; pointer-events: none; white-space: nowrap;
+}
 .ms-photo {
   position: relative; width: 78px; height: 78px; border-radius: 20px;
   overflow: hidden; border: 1px solid rgba(var(--ink-rgb),.12); background: var(--card);

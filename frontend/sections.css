@@ -1018,3 +1018,28 @@
 }
 .pb-else-go:hover:not(:disabled) { background: #fff; }
 .pb-else-go:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* ─────────────────────────── маркетинг: хаб ─────────────────────────── */
+/* Три стеклянные карточки в ряд; на телефоне — колонкой. Огня нет: карточки
+   — навигация, а не главное действие экрана. */
+.mk-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  width: min(1080px, 94vw); margin: 0 auto; padding: 0 4px;
+}
+.mk-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 26px 24px 24px; text-align: left; cursor: pointer;
+  background: var(--card); border: 1px solid rgba(var(--ink-rgb), .10);
+  border-radius: 28px; box-shadow: none; color: var(--text);
+  transition: transform .16s ease, border-color .16s ease;
+}
+.mk-card:hover { transform: translateY(-2px); border-color: rgba(var(--ink-rgb), .22); }
+.mk-ico { font-size: 30px; line-height: 1; }
+.mk-card b {
+  font-family: var(--font-head); font-size: clamp(19px, 2vw, 24px);
+  line-height: 1.06; letter-spacing: -.035em; text-transform: lowercase;
+}
+.mk-note { color: var(--ink-muted); font-size: 13.5px; line-height: 1.45; }
+@media (max-width: 700px) {
+  .mk-grid { grid-template-columns: 1fr; }
+}

@@ -521,6 +521,13 @@ class Track(Base):
     # массовка или чистый пейзаж.
     random_cast = Column(Boolean, nullable=False, default=False)
 
+    # 3D-облёт товара (режим мокапов): 8 ракурсов по кругу, листаются drag'ом
+    # как вращение модельки. Файлы — JSON-список имён в UPLOAD_DIR; статус —
+    # те же '' | queued | running | done | error, note — живой прогресс «3/8».
+    turnaround_status = Column(String, nullable=False, default="")
+    turnaround_note = Column(Text, nullable=False, default="")
+    turnaround_files = Column(Text, nullable=False, default="")
+
     # «Супергенерация»: конвейер сюжет→сцены→кадры→видео→сборка одним нажатием.
     # note — живой прогресс для строки статуса на карточке трека.
     supergen_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error

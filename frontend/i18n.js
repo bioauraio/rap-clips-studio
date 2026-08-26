@@ -168,11 +168,13 @@ const I18N = {
       sections: {
         trends: "Trends",
         earn: "Earn",
+        marketing: "Marketing",
         studio: "Studio",
         academy: "Academy",
         prompts: "Prompts",
       },
       titles: {
+        marketing: "product shots, UGC creators and the partner program",
         studio: "projects, tracks, storyboard and assembly",
         academy: "courses, lessons and ready-made shot kits",
         prompts: "shots: first frame, last frame, motion — copy or apply",
@@ -666,6 +668,10 @@ const I18N = {
       photosHint: "The silhouette, the label layout and every readable word are taken from these photos and never redrawn.",
       photosAdd: "+ add a photo",
       needPhoto: "upload a packshot first — the product is matched against it",
+      turnaround: "3D orbit (8 angles)",
+      turnaroundRedo: "Reshoot the 3D orbit",
+      turnaroundNeed: "add a product photo first",
+      turnaroundDrag: "drag to rotate",
       forecast: "{scenes} frames ≈ {total} ⚡",
     },
 
@@ -1129,6 +1135,16 @@ const I18N = {
       notReady: "Voiceover is not set up yet — the ElevenLabs key is missing.",
       noVoices: "No voices on the ElevenLabs account yet.",
       pick: "Which voice? Enter the number:",
+    },
+    marketing: {
+      title: "Marketing",
+      lead: "Everything about products and brands: packshots, UGC creators and earning with lolq.ai.",
+      mockups: "Mockups — product photography",
+      mockupsNote: "Packshot frames for listings and ads — from a single photo.",
+      ugc: "UGC / creators",
+      ugcNote: "An AI creator talks about your product like a real person.",
+      earn: "Earn with lolq.ai",
+      earnNote: "Post clips with our products — get a share of every sale.",
     },
     earn: {
       title: "Earn with lolq.ai",
@@ -2659,11 +2675,13 @@ const I18N = {
       sections: {
         trends: "Тренды",
         earn: "Заработок",
+        marketing: "Маркетинг",
         studio: "Студия",
         academy: "Академия",
         prompts: "Промты",
       },
       titles: {
+        marketing: "предметная съёмка, UGC-блогеры и партнёрская программа",
         studio: "проекты, треки, раскадровка и сборка",
         academy: "курсы, уроки и готовые наборы приёмов",
         prompts: "приёмы: первый кадр, последний, движение — скопировать или применить",
@@ -3141,6 +3159,10 @@ const I18N = {
       photosHint: "Силуэт, раскладка этикетки и каждое читаемое слово берутся с этих фото и не перерисовываются.",
       photosAdd: "+ добавить фото",
       needPhoto: "сначала загрузи фото упаковки — по нему совпадает товар",
+      turnaround: "3D-облёт (8 ракурсов)",
+      turnaroundRedo: "Переснять 3D-облёт",
+      turnaroundNeed: "сначала добавь фото товара",
+      turnaroundDrag: "потяни, чтобы повращать",
       forecast: "{scenes} кадров ≈ {total} ⚡",
     },
 
@@ -3599,6 +3621,16 @@ const I18N = {
       notReady: "Озвучка пока не настроена — нет ключа ElevenLabs.",
       noVoices: "На аккаунте ElevenLabs ещё нет голосов.",
       pick: "Каким голосом? Введи номер:",
+    },
+    marketing: {
+      title: "Маркетинг",
+      lead: "Всё про продукты и бренды: предметная съёмка, UGC-блогеры и заработок с lolq.ai.",
+      mockups: "Мокапы — предметная съёмка товара",
+      mockupsNote: "Кадры упаковки для карточек и рекламы — по одному фото.",
+      ugc: "UGC / блогеры",
+      ugcNote: "ИИ-блогер рассказывает про твой продукт как живой человек.",
+      earn: "Заработок с lolq.ai",
+      earnNote: "Постишь ролики с продуктами — получаешь долю с продаж.",
     },
     earn: {
       title: "Заработок с lolq.ai",

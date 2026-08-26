@@ -347,11 +347,20 @@ function showApp() {
   const path = location.pathname.replace(/\/+$/, "");
   if (path === "/make" || path === "/generator") showChat();
   else if (path === "/music" && typeof showMusic === "function") showMusic();
-  else if (["/trends", "/academy", "/prompts"].includes(path)) {
+  else if (["/trends", "/academy", "/prompts", "/marketing"].includes(path)) {
     const id = path.slice(1);
     setTimeout(() => {
-      const btn = document.querySelector(`.sec-btn[data-sec="${id}"]`);
+      // Кнопка раздела есть и в шапке (.tb-sec), и в рельсе верстака
+      // (.sec-btn) — ищем по data-sec, чтобы работали обе разметки.
+      const btn = document.querySelector(`[data-sec="${id}"]`);
       if (btn) btn.click();
+    }, 400);
+  }
+  // /earn остаётся прямым входом в партнёрку, хотя пункт навигации теперь
+  // «Маркетинг»: ссылка разошлась по постам, ломать её нельзя.
+  else if (path === "/earn") {
+    setTimeout(() => {
+      if (window.QlolSections && window.QlolSections.openEarn) window.QlolSections.openEarn();
     }, 400);
   }
   if (location.hash === "#/chat" || location.hash === "#/make") showChat();
@@ -3377,6 +3386,7 @@ function projectBusy() {
         // Перерисовка идёт очередью в фоне — без неё поллер гаснет, и
         // прогресс «12 из 30» замирает на нуле до ручной перезагрузки.
         ["queued", "running"].includes(t.restyle_status) ||
+        ["queued", "running"].includes(t.turnaround_status) ||
         (t.scenes || []).some(sceneBusy),
     );
 }
@@ -3480,6 +3490,18 @@ function trackStatus(tr, ts, card) {
     tr.restyle_note = ts.restyle_note;
     const rn = $(".t-restyle-status", card);
     if (rn) rn.textContent = ts.restyle_note || "";
+  }
+  // 3D-облёт товара: прогресс «3/8» рисуем на месте, полная перезагрузка —
+  // только когда облёт доделался и приехали файлы ракурсов.
+  if (tr.turnaround_status !== ts.turnaround_status) {
+    const finished = busy(tr.turnaround_status) && !busy(ts.turnaround_status);
+    tr.turnaround_status = ts.turnaround_status;
+    if (finished) reload = true;
+  }
+  if (card && tr.turnaround_note !== ts.turnaround_note) {
+    tr.turnaround_note = ts.turnaround_note;
+    const el = $(".ta-status", card);
+    if (el && busy(ts.turnaround_status)) el.textContent = ts.turnaround_note || "";
   }
   if (card && tr.supergen_note !== ts.supergen_note) {
     tr.supergen_note = ts.supergen_note;
@@ -4795,6 +4817,70 @@ function msPhotos(card, tr, mode) {
     st.textContent = "";
     await loadProject();
   });
+  msTurnaround(card, tr);
+}
+
+/* 3D-облёт товара: 8 ракурсов по кругу, листаются drag'ом по горизонтали —
+   выглядит как вращение 3D-модельки. Кнопка живёт рядом с фото товара:
+   без референса облёт — фантазия, поэтому она мертва до первого фото. */
+function msTurnaround(card, tr) {
+  const box = $(".ms-turnaround", card);
+  if (!box) return;
+  const btn = $(".ms-ta-btn", card);
+  const st = $(".ta-status", card);
+  const busy = ["queued", "running"].includes(tr.turnaround_status);
+  const hasPhoto = Boolean((tr.photos || []).length);
+  const urls = tr.turnaround_urls || [];
+  btn.textContent = (urls.length ? t("modeSetup.turnaroundRedo") : t("modeSetup.turnaround"))
+    + (tr.turnaround_cost ? ` · ⚡ ${tr.turnaround_cost}` : "");
+  btn.disabled = busy || !hasPhoto;
+  btn.title = hasPhoto ? "" : t("modeSetup.turnaroundNeed");
+  st.textContent = busy
+    ? (tr.turnaround_note || t("status.running"))
+    : (tr.turnaround_status === "error" ? (tr.turnaround_note || "") : "");
+  st.classList.toggle("err", tr.turnaround_status === "error");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    st.classList.remove("err");
+    st.textContent = t("status.queued");
+    try {
+      await api(`/api/tracks/${tr.id}/turnaround`, { method: "POST" });
+    } catch (e) { fail(e); st.textContent = ""; btn.disabled = false; return; }
+    tr.turnaround_status = "queued";
+    schedulePoll();
+  });
+  const view = $(".ms-ta-viewer", card);
+  view.innerHTML = "";
+  view.classList.toggle("hidden", urls.length < 2);
+  if (urls.length < 2) return;
+  // Прелоад всех ракурсов: drag листает картинки мгновенно, без миганий.
+  urls.forEach((u) => { const im = new Image(); im.src = u; });
+  const img = document.createElement("img");
+  img.src = urls[0];
+  img.alt = "";
+  img.draggable = false;
+  view.appendChild(img);
+  const hint = document.createElement("span");
+  hint.className = "ms-ta-hint";
+  hint.textContent = t("modeSetup.turnaroundDrag");
+  view.appendChild(hint);
+  let idx = 0, downX = null, startIdx = 0;
+  const show = (i) => {
+    idx = ((i % urls.length) + urls.length) % urls.length;
+    img.src = urls[idx];
+  };
+  view.addEventListener("pointerdown", (e) => {
+    downX = e.clientX; startIdx = idx;
+    try { view.setPointerCapture(e.pointerId); } catch (err) { /* не критично */ }
+    e.preventDefault();
+  });
+  view.addEventListener("pointermove", (e) => {
+    if (downX == null) return;
+    show(startIdx + Math.round((e.clientX - downX) / 28));
+  });
+  const up = () => { downX = null; };
+  view.addEventListener("pointerup", up);
+  view.addEventListener("pointercancel", up);
 }
 
 /* Шапка блока: одна строка, по которой видно всё решение целиком — режим,
