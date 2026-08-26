@@ -4169,6 +4169,14 @@ function setStage(card, key) {
   // а раньше рисовались обе плюс витрина клипа.
   if (typeof card.__ensureStage === "function") card.__ensureStage(key);
   $$(".stage-tab", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
+  // ЭТАПЫ ДРУГ ПОД ДРУГОМ. Блоки не сменяют друг друга, а лежат подряд:
+  // Настройки → Раскадровка → Анимация. Закреплённый тумблер сверху не
+  // прячет панели, а прокручивает страницу к нужному блоку.
+  if (card.classList.contains("stages-stacked")) {
+    const pane = $(`.stage-pane[data-stage="${key}"]`, card);
+    if (pane) pane.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   $$(".stage-pane", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
 }
 
@@ -4954,7 +4962,67 @@ function renderTrack(tr) {
     });
     tabsBox.appendChild(b);
   });
+  // Все этапы разом: карточка работает одной прокручиваемой страницей,
+  // а таб-тумблер (sticky) — навигацией по ней.
+  card.classList.add("stages-stacked");
   setStage(card, active);
+  STAGES.forEach((k) => { if (typeof card.__ensureStage === "function") card.__ensureStage(k); });
+
+  // «Закрепить ленту»: раскадровка и лента готовых видео листаются вместе —
+  // прокрутка зеркалится долей, потому что карточки лент разной ширины.
+  {
+    const b1 = $(".scenes-board", card), b2 = $(".scenes-anim", card);
+    const lockCb = $(".strip-lock-cb", card);
+    let syncing = false;
+    const mirror = (src, dst) => src.addEventListener("scroll", () => {
+      if (!lockCb || !lockCb.checked || syncing) return;
+      syncing = true;
+      const denom = Math.max(1, src.scrollWidth - src.clientWidth);
+      dst.scrollLeft = (src.scrollLeft / denom) * Math.max(0, dst.scrollWidth - dst.clientWidth);
+      requestAnimationFrame(() => { syncing = false; });
+    }, { passive: true });
+    if (b1 && b2) { mirror(b1, b2); mirror(b2, b1); }
+  }
+
+  // Прежние версии всех сцен — общей лентой миниатюр под анимацией.
+  {
+    const dock = $(".versions-dock", card);
+    const total = (tr.scenes || []).reduce((n, s) => n + Number(s.versions || 0), 0);
+    if (dock && total) {
+      dock.classList.remove("hidden");
+      $(".versions-dock-sum", card).textContent = t("track.versionsDock", { n: total });
+      let loaded = false;
+      dock.addEventListener("toggle", async () => {
+        if (!dock.open || loaded) return;
+        loaded = true;
+        const strip = $(".versions-strip", card);
+        for (const s of (tr.scenes || [])) {
+          if (!Number(s.versions || 0)) continue;
+          try {
+            const d = await api(`/api/scenes/${s.id}/versions`);
+            (d.versions || []).filter((v) => v.video_url).forEach((v) => {
+              const cell = document.createElement("button");
+              cell.type = "button";
+              cell.className = "ver-thumb";
+              cell.title = t("track.verOpen", { n: s.position + 1 });
+              const vid = document.createElement("video");
+              vid.src = v.video_url; vid.muted = true; vid.preload = "metadata";
+              cell.appendChild(vid);
+              cell.addEventListener("click", () => {
+                openModal(t("track.verOpen", { n: s.position + 1 }), (body) => {
+                  const big = document.createElement("video");
+                  big.src = v.video_url; big.controls = true; big.autoplay = true;
+                  big.className = "ver-modal-video";
+                  body.appendChild(big);
+                });
+              });
+              strip.appendChild(cell);
+            });
+          } catch (_) { /* сцена без доступа к версиям не роняет ленту */ }
+        }
+      });
+    }
+  }
 
   // Свайп влево/вправо по контенту = соседний этап (ленты сцен и поля не трогаем).
   const panes = $(".stage-panes", card);
@@ -6145,6 +6213,11 @@ function renderScene(s, audioEl, mode = "board") {
             await api(`/api/scenes/${s.id}`, { method: "PATCH",
                                                body: { image_engine: id || "" } });
             s.image_engine = id || "";
+            // Выбор применён — говорим об этом делом: строка движка обновилась,
+            // раскрытый список сложился. Без этого клик выглядел «в никуда».
+            if (engLine && trackOfScene) paintSceneEngineLine(engLine, trackOfScene, s.id);
+            const det = $(".s-engine-override", card);
+            if (det) det.open = false;
           } catch (e) { fail(e); }
         });
     }
@@ -6205,6 +6278,8 @@ function renderScene(s, audioEl, mode = "board") {
         s.video_engine = id || "";
         const line = $(".s-engine-line", card);
         if (line) paintSceneEngineLine(line, trackOfScene, s.id);
+        const det = $(".s-engine-override", card);
+        if (det) det.open = false;
       } catch (e) { fail(e); }
     };
     // Чипы соберутся при раскрытии «поменять для этого кадра» — здесь только
