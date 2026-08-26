@@ -7918,7 +7918,7 @@ def text_models(project_id: int | None = None,
 
 
 @app.get("/api/providers")
-def providers(user: User = Depends(current_user)):
+def providers(user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Честная картина движков: что открыто тарифом, что реально живо по
     ключам и сколько стоит сцена на каждом.
 
@@ -7965,6 +7965,12 @@ def providers(user: User = Depends(current_user)):
             "aspect": bool(spec.get("aspect")),
             "resolutions": list(spec.get("resolutions") or ()),
         })
+    # ТУМБЛЕРЫ ВЛАДЕЛЬЦА. Выключенная в админке модель не должна светиться у
+    # клиентов — раньше фильтр стоял только в Генераторе, а витрина студии
+    # шла этим путём и показывала всё.
+    off = _disabled_models(db)
+    engines = [e for e in engines if f"video:{e['id']}" not in off]
+    images = [i for i in images if f"image:{i['id']}" not in off]
     return {
         # Легаси-контракт фронта: семейства движков и два булевых флага.
         "video": avail or ["grok"], "plan": plan_id,
