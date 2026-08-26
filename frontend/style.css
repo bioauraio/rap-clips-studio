@@ -3705,3 +3705,9 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   font-size: 12px; text-decoration: none; flex: none;
 }
 .s-dl:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+/* Аним-карточка обнимает видео, а не тянется на ширину раскадровочной */
+.scene-card.mode-anim { flex: 0 0 auto; width: fit-content; min-width: 0; max-width: 300px; }
+.scene-card.mode-anim .s-video-box { max-height: none; }
+.scene-card.mode-anim video { width: 240px; aspect-ratio: 9/16; object-fit: cover;
+  border-radius: 16px; display: block; }
