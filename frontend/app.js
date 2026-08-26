@@ -4963,8 +4963,50 @@ function renderTrack(tr) {
     tabsBox.appendChild(b);
   });
   // Все этапы разом: карточка работает одной прокручиваемой страницей,
-  // а таб-тумблер (sticky) — навигацией по ней.
+  // а таб-тумблер — навигацией по ней. Сам тумблер живёт в ЗАКРЕПЛЁННОЙ
+  // верхней панели (#stage-jump): владелец просил навигацию у названия,
+  // а не полосой посреди карточки.
   card.classList.add("stages-stacked");
+  {
+    const jump = document.querySelector("#stage-jump");
+    if (jump && jump.dataset.for !== String(tr.id) && !jump.childElementCount) {
+      jump.dataset.for = String(tr.id);
+      [...STAGES, "clip"].forEach((key, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "stage-tab" + (key === active ? " on" : "");
+        b.dataset.stage = key;
+        b.textContent = t("stages." + key);
+        b.title = String(i + 1);
+        b.addEventListener("click", () => {
+          $$(".stage-tab", jump).forEach((el) => el.classList.toggle("on", el === b));
+          // Управляем треком, чья карточка сейчас на экране.
+          const cards = $$(".track-card");
+          const cur = cards.find((c) => c.getBoundingClientRect().bottom > 220) || cards[0];
+          if (!cur) return;
+          if (key === "clip") {
+            const dock = $(".clip-dock", cur);
+            if (dock) dock.scrollIntoView({ behavior: "smooth", block: "start" });
+          } else {
+            trackStages.set(tr.id, key);
+            setStage(cur, key);
+          }
+        });
+        jump.appendChild(b);
+      });
+    }
+  }
+  // Поле названия проекта переезжает из шапки в блок «Настройка»: в панели
+  // ему тесно, а редактировать имя — дело настроек, не навигации.
+  {
+    const nameInp = document.querySelector("#project-name");
+    const setupPane = $('.stage-pane[data-stage="setup"]', card);
+    if (nameInp && setupPane && !setupPane.contains(nameInp)) {
+      nameInp.classList.add("project-name-inline");
+      const head = $(".pane-head", setupPane);
+      if (head) head.after(nameInp); else setupPane.prepend(nameInp);
+    }
+  }
   // Четвёртый пункт тумблера — «Сборка»: финальный клип с его кнопками.
   {
     const b = document.createElement("button");

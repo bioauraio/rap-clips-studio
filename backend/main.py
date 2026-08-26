@@ -6816,10 +6816,38 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
             scene.image_engine = res["engine"]
             scene.image_error = _fallback_note(res, engine)
         if which in ("both", "last"):
+            # ПОСЛЕДНИЙ КАДР ВИДИТ ПЕРВЫЙ. Раньше это были два независимых
+            # запроса с общим текстом — движок рисовал «два рандомных кадра»,
+            # а не начало и конец одного плана. Теперь первый кадр идёт
+            # референсом к последнему с прямым наказом держать место и свет.
+            last_ref, last_refs = reference, list(ref_list)
+            tmp_first = ""
+            if first_data is not None:
+                ext = "png" if "png" in (first_mime or "") else "jpg"
+                tmp_first = os.path.join(UPLOAD_DIR, f"tmp_first_{scene.id}.{ext}")
+                with open(tmp_first, "wb") as fh:
+                    fh.write(first_data)
+            elif scene.image_filename:
+                p = os.path.join(UPLOAD_DIR, scene.image_filename)
+                tmp_first = p if os.path.exists(p) else ""
+            prompt_last = _frame_prompt(scene, track, "last")
+            if tmp_first:
+                if multi:
+                    last_refs.append(tmp_first)
+                else:
+                    last_ref = tmp_first
+                prompt_last += ("\n\nВАЖНО: это ПОСЛЕДНИЙ кадр той же сцены, "
+                                "чей ПЕРВЫЙ кадр приложен референсом. Та же "
+                                "локация, свет, персонажи, одежда и стиль — "
+                                "покажи развитие действия между кадрами, а не "
+                                "новую сцену.")
             res = asyncio.run(mediagen.generate_image_ex(
-                _frame_prompt(scene, track, "last"), reference,
-                reference_paths=ref_list, engine=engine,
+                prompt_last, last_ref,
+                reference_paths=last_refs, engine=engine,
                 resolution=img_res, aspect=aspect))
+            if tmp_first.startswith(os.path.join(UPLOAD_DIR, "tmp_first_")):
+                try: os.remove(tmp_first)
+                except OSError: pass
             last_data, last_mime = res["data"], res["mime"]
             native_4k = native_4k or res["native_4k"]
             scene.image_engine = res["engine"]
