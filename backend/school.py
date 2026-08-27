@@ -212,6 +212,13 @@ def _course_card(db: Session, user: User | None, c: Course) -> dict:
     }
 
 
+def _is_stub(l: Lesson) -> bool:  # noqa: E741
+    """Урок-заглушка сида: тела ещё нет, честная метка — «скоро», а не
+    полноправный урок с датой и галочкой «пройдено»."""
+    body = (l.body_md or "").strip()
+    return len(body) < 120 or "скоро появится" in body
+
+
 def _lesson_row(l: Lesson, *, done: bool, unlocked: bool) -> dict:  # noqa: E741
     return {
         "id": l.id,
@@ -226,6 +233,7 @@ def _lesson_row(l: Lesson, *, done: bool, unlocked: bool) -> dict:  # noqa: E741
         "has_video": bool(l.video_url or l.video_filename),
         "done": done,
         "locked": not unlocked,
+        "soon": _is_stub(l),
     }
 
 
