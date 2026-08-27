@@ -5459,22 +5459,53 @@ async function msCinemaBar(card, tr, mode) {
     b.addEventListener("click", onClick);
     return b;
   };
+  // Подпись берём из общего словаря, а если ключа там нет — из запасной
+  // пары ru/en рядом. Правка i18n.js под каждую подпись бара — это правка
+  // общего файла на 5000 строк ради двух слов.
+  const ct = (key, ru, en) => t(key) || (LANG === "ru" ? ru : en);
   box.innerHTML = `
-    <div class="mk-bar">
-      <div class="cine-wrap">
-        <textarea class="cine-prompt" rows="2" placeholder="${escHtml(t("cine.promptPh"))}"></textarea>
-        <div class="cine-ac hidden"></div>
-      </div>
-      <div class="mk-bar-row">
+    <div class="mk-bar cine-card">
+      <span class="cine-title">${escHtml(ct("cine.title", "Свободная сцена",
+        "Free scene"))}</span>
+      <div class="cine-line">
+        <div class="cine-wrap">
+          <textarea class="cine-prompt" rows="1"
+            placeholder="${escHtml(t("cine.promptPh"))}"></textarea>
+          <div class="cine-ac hidden"></div>
+        </div>
         <div class="mk-chips cine-kind"></div>
-        <div class="mk-chips cine-camera"></div>
-        <div class="mk-chips cine-light"></div>
-        <div class="mk-chips cine-palette"></div>
-        <div class="mk-chips cine-dur"></div>
         <button type="button" class="mk-go cine-go"></button>
+      </div>
+      <div class="cine-foot">
+        <button type="button" class="cine-more" aria-expanded="false">⚙ ${
+          escHtml(ct("cine.more", "Настройки кадра", "Shot settings"))}</button>
+        <span class="cine-sum"></span>
+      </div>
+      <div class="cine-opts hidden">
+        <label class="cine-opt"><span>${escHtml(ct("cine.camera", "Камера", "Camera"))}</span>
+          <select class="cine-camera"></select></label>
+        <label class="cine-opt"><span>${escHtml(ct("cine.light", "Свет", "Light"))}</span>
+          <select class="cine-light"></select></label>
+        <label class="cine-opt"><span>${escHtml(ct("cine.palette", "Палитра", "Palette"))}</span>
+          <select class="cine-palette"></select></label>
+        <label class="cine-opt"><span>${escHtml(ct("cine.dur", "Длительность", "Duration"))}</span>
+          <select class="cine-dur"></select></label>
       </div>
       <span class="cine-status status"></span>
     </div>`;
+  {
+    // Параметры свёрнуты по умолчанию: на виду только «опиши сцену» и
+    // «сгенерировать». Две строки чипов вперемешку («камера: авто…»,
+    // «свет…», «5s 6s 8s 10s») — это панель настроек, выданная за строку
+    // ввода; выбирают из них раз в двадцать сцен.
+    const more = $(".cine-more", box);
+    const opts = $(".cine-opts", box);
+    more.addEventListener("click", () => {
+      const open = opts.classList.toggle("hidden") === false;
+      more.setAttribute("aria-expanded", String(open));
+      more.classList.toggle("on", open);
+    });
+  }
   const promptEl = $(".cine-prompt", box);
   if (st.prompt) promptEl.value = st.prompt;
   const ac = $(".cine-ac", box);
@@ -5512,33 +5543,48 @@ async function msCinemaBar(card, tr, mode) {
   promptEl.addEventListener("blur", () => setTimeout(acHide, 150));
 
   const goEl = $(".cine-go", box);
+  const CAM = [["", "camAuto"], ["static", "camStatic"], ["push", "camPush"],
+               ["orbit", "camOrbit"], ["track", "camTrack"]];
+  const LIGHT = [["", "lightAuto"], ["day", "lightDay"], ["neon", "lightNeon"],
+                 ["sunset", "lightSunset"], ["studio", "lightStudio"]];
+  const PAL = [["", "palAuto"], ["warm", "palWarm"], ["cold", "palCold"],
+               ["bw", "palBw"]];
+  /* Дропдаун вместо полосы чипов: пять вариантов камеры в ряд — это пять
+     кнопок, из которых четыре всегда лишние. Свёрнутый селект показывает
+     ровно выбранное. */
+  const fillSel = (sel, items, cur, onPick) => {
+    sel.innerHTML = items.map(([v, label]) =>
+      `<option value="${escHtml(v)}"${v === cur ? " selected" : ""}>${
+        escHtml(label)}</option>`).join("");
+    sel.onchange = () => onPick(sel.value);
+  };
   const paintBar = () => {
     const kind = $(".cine-kind", box);
     kind.innerHTML = "";
     kind.append(
       chip(t("mk.image"), !st.video, () => { st.video = false; paintBar(); }),
       chip(t("mk.video"), st.video, () => { st.video = true; paintBar(); }));
-    const cam = $(".cine-camera", box);
-    cam.innerHTML = "";
-    [["", "camAuto"], ["static", "camStatic"], ["push", "camPush"],
-     ["orbit", "camOrbit"], ["track", "camTrack"]]
-      .forEach(([v, k]) => cam.appendChild(chip(t(`cine.${k}`), st.camera === v,
-        () => { st.camera = v; paintBar(); })));
-    const li = $(".cine-light", box);
-    li.innerHTML = "";
-    [["", "lightAuto"], ["day", "lightDay"], ["neon", "lightNeon"],
-     ["sunset", "lightSunset"], ["studio", "lightStudio"]]
-      .forEach(([v, k]) => li.appendChild(chip(t(`cine.${k}`), st.light === v,
-        () => { st.light = v; paintBar(); })));
-    const pa = $(".cine-palette", box);
-    pa.innerHTML = "";
-    [["", "palAuto"], ["warm", "palWarm"], ["cold", "palCold"], ["bw", "palBw"]]
-      .forEach(([v, k]) => pa.appendChild(chip(t(`cine.${k}`), st.palette === v,
-        () => { st.palette = v; paintBar(); })));
-    const du = $(".cine-dur", box);
-    du.innerHTML = "";
-    [5, 6, 8, 10].forEach((v) => du.appendChild(chip(`${v}s`, st.dur === v,
-      () => { st.dur = v; paintBar(); })));
+    fillSel($(".cine-camera", box), CAM.map(([v, k]) => [v, t(`cine.${k}`)]),
+      st.camera, (v) => { st.camera = v; paintBar(); });
+    fillSel($(".cine-light", box), LIGHT.map(([v, k]) => [v, t(`cine.${k}`)]),
+      st.light, (v) => { st.light = v; paintBar(); });
+    fillSel($(".cine-palette", box), PAL.map(([v, k]) => [v, t(`cine.${k}`)]),
+      st.palette, (v) => { st.palette = v; paintBar(); });
+    fillSel($(".cine-dur", box), [5, 6, 8, 10].map((v) => [String(v), `${v}s`]),
+      String(st.dur), (v) => { st.dur = Number(v); paintBar(); });
+    // Свёрнутый вид всё равно обязан отвечать, ЧТО выбрано: иначе «наезд
+    // камерой» живёт только в закрытой панели и всплывает в готовом кадре.
+    const picked = [];
+    const nameOf = (list, v) => {
+      const row = list.find(([val]) => val === v);
+      return row ? t(`cine.${row[1]}`) : "";
+    };
+    if (st.camera) picked.push(nameOf(CAM, st.camera));
+    if (st.light) picked.push(nameOf(LIGHT, st.light));
+    if (st.palette) picked.push(nameOf(PAL, st.palette));
+    if (st.video) picked.push(`${st.dur}s`);
+    $(".cine-sum", box).textContent = picked.join(" · ");
+    $(".cine-opts", box).classList.toggle("has-picked", picked.length > 0);
     goEl.textContent = `${t("mk.generate")} · ⚡ ${tNum(st.video ? fullCost : framesCost)}`;
   };
   paintBar();
