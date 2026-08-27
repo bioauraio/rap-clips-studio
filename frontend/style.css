@@ -2081,7 +2081,7 @@ button.primary:hover:not(:disabled) {
   .cc-bar { flex-wrap: wrap; gap: 6px; padding: 0 2px 2px; }
   .cc-attach span { width: 34px; height: 34px; }
   /* Селект модели делит строку с «+» и «Отправить» и не выпихивает их. */
-  .cc-bar .cc-model { flex: 1 1 0; min-width: 0; max-width: none; height: 34px; font-size: 12.5px; }
+  .cc-bar .cc-model { flex: 1 1 120px; min-width: 96px; max-width: none; height: 34px; font-size: 12.5px; }
   .cc-send { order: 3; height: 34px; padding: 0 14px; font-size: 13px; margin-left: 0; }
   .cc-attach { order: 1; }
   .cc-bar .cc-model { order: 2; }
@@ -2092,6 +2092,17 @@ button.primary:hover:not(:disabled) {
      а строку она занимает. Цена и так стоит на кнопке. */
   .cc-note { display: none; }
   .chat-retention { display: none; }
+  /* «Напишите, что нужно сделать» — подсказка-объяснялка: плейсхолдер поля
+     говорит то же самое, а строку она съедала. */
+  .mk-error.hint { display: none; }
+  /* «Промты» — иконкой-книжкой: слово в строке контролов ело треть ширины. */
+  #mk-lib { font-size: 0; padding: 0 8px; }
+  #mk-lib::before {
+    content: ""; display: inline-block; width: 17px; height: 17px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5v-15z'/><path d='M4 20.5A2.5 2.5 0 0 1 6.5 18H20'/></svg>") center / contain no-repeat;
+    mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5v-15z'/><path d='M4 20.5A2.5 2.5 0 0 1 6.5 18H20'/></svg>") center / contain no-repeat;
+  }
   /* Пузырь агента на экране Генератора не нужен: это и есть агент. */
   body:has(#chat:not(.hidden)) .pa-bubble,
   body:has(#chat:not(.hidden)) .pa-panel { display: none !important; }
