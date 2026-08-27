@@ -14425,6 +14425,14 @@ import music_api  # noqa: E402
 music_api.mount(app)
 
 
+# ─────────────────────────── раздел «Школа»: курсы ───────────────────────────
+# Витрина курсов, доступ (тариф или токены), авторы, кейсы, отзывы. Как и
+# музыка, подключается ДО mount("/") и не заводит своей авторизации и кассы.
+import school  # noqa: E402
+
+school.mount(app)
+
+
 # ─────────────────────────── ВХОД В АДМИНКУ ───────────────────────────
 # Отдельная страница /admin, а не вкладки внутри модалки кабинета. Владелец
 # просил дословно: «дай ссылку на админку где у меня срм система и другие
@@ -14485,7 +14493,8 @@ reload_mockup_overlay()
 # рекламировать. Каждый путь отдаёт тот же index.html, а какой раздел
 # открыть — решает фронт по location.pathname.
 SPA_ROUTES = ("home", "studio", "make", "generator", "trends", "academy",
-              "prompts", "pricing", "music", "login", "marketing", "earn")
+              "prompts", "pricing", "music", "login", "marketing", "earn",
+              "school")
 
 
 @app.get("/team", include_in_schema=False)
@@ -14504,6 +14513,15 @@ def _spa_index():
 for _route in SPA_ROUTES:
     app.add_api_route(f"/{_route}", _spa_index, methods=["GET"],
                       include_in_schema=False)
+
+# Страница курса: /school/course/{id}. Отдельным роутом, а не catch-all'ом —
+# по той же причине, по какой разделы регистрируются по одному.
+def _spa_course(course_id: int):  # noqa: ARG001 — путь читает фронт
+    return _spa_index()
+
+
+app.add_api_route("/school/course/{course_id}", _spa_course, methods=["GET"],
+                  include_in_schema=False)
 
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")

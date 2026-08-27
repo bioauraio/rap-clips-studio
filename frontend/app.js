@@ -345,6 +345,13 @@ function showApp() {
   // Человеческие адреса разделов: /make, /trends, /academy… Сервер отдаёт
   // на них index.html, раздел открываем здесь по pathname.
   const path = location.pathname.replace(/\/+$/, "");
+  // Школа — свой раздел со страницей курса: /school и /school/course/{id}.
+  // Она сама разбирает адрес, поэтому здесь только зовём её.
+  if (path.indexOf("/school") === 0) {
+    setTimeout(() => {
+      if (window.QlolSchool) window.QlolSchool.fromPath();
+    }, 400);
+  }
   if (path === "/make" || path === "/generator") showChat();
   else if (path === "/music" && typeof showMusic === "function") showMusic();
   else if (["/trends", "/academy", "/prompts", "/marketing"].includes(path)) {

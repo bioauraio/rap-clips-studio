@@ -3791,6 +3791,35 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   #app { padding-bottom: 84px; }
 }
 
+/* ─────── Десктоп: тумблер этапов — вертикальная панель у правого края ───────
+   В шапке он занимал строку и уезжал под название проекта, а на широком
+   экране справа простаивает пустое поле. Панель закреплена по центру высоты:
+   этап видно, не отматывая наверх. Мобильная капсула снизу (≤700px) и
+   шапка на средних экранах (700–1100px) остаются как были — там места
+   справа нет, и такая панель накрыла бы карточку сцены. */
+@media (min-width: 1100px) {
+  .stage-jump {
+    position: fixed; right: 16px; top: 50%; transform: translateY(-50%);
+    z-index: 45; flex-direction: column; align-items: stretch; gap: 3px;
+    padding: 6px; border-radius: 20px; corner-shape: squircle;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(var(--ink-rgb), .12);
+    box-shadow: 0 10px 30px rgba(var(--ink-rgb), .14);
+  }
+  .stage-jump .stage-tab {
+    justify-content: flex-start; gap: 8px; padding: 8px 12px;
+    border-radius: 14px; corner-shape: squircle; white-space: nowrap;
+  }
+  /* Контенту — воздух справа, иначе панель ложится на карточки сцен. */
+  #app { padding-right: 132px; }
+  /* Пустой тумблер — это стеклянная пилюля ни о чём: пока этапов нет
+     (школа, тренды, маркетинг, ещё не выбранный трек), панели нет вовсе. */
+  .stage-jump:empty { display: none; }
+  .trends-view .stage-jump { display: none; }
+  .trends-view#app, #app.trends-view { padding-right: 0; }
+}
+
 /* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */
 .mk-studio { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
 .mk-title { font-weight: 700; }

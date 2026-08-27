@@ -134,11 +134,16 @@
       open: () => openMarketing(),
     },
     {
+      // «Школа» — полноценная страница с курсами и базой знаний. Модалка
+      // академии осталась жива и открывается по клику на урок базы знаний:
+      // текст урока-маркдауна читается в шторке, курс — на странице.
       id: "academy",
-      label: () => T("nav.sections.academy", "Академия"),
+      label: () => T("nav.sections.academy", "Школа"),
       title: () => T("nav.titles.academy", ""),
-      active: () => sheet === "academy",
-      open: () => openAcademy(),
+      active: () => sheet === "academy"
+        || Boolean(window.QlolSchool && window.QlolSchool.visible()),
+      open: () => (window.QlolSchool
+        ? window.QlolSchool.open("courses") : openAcademy()),
     },
     {
       id: "prompts",
@@ -202,6 +207,9 @@
     if (!s) return;
     if (id !== "trends") closeTrendsPage(false);
     if (id !== "marketing") closeMarketingPage(false);
+    // Школа — такая же страница внутри #app: уходя в другой раздел, её
+    // нужно убрать, иначе два раздела окажутся открыты одновременно.
+    if (id !== "academy" && window.QlolSchool) window.QlolSchool.close(false);
     if (s.adopt) {
       const node = $(s.adopt);
       if (node) node.click();
@@ -544,6 +552,7 @@
   }
 
   function openMarketing() {
+    if (window.QlolSchool) window.QlolSchool.close(false);
     closeTrendsPage(false);
     closeMarketingPage(false);
     const app = $("#app");
@@ -665,6 +674,7 @@
   }
 
   function openTrends() {
+    if (window.QlolSchool) window.QlolSchool.close(false);
     closeTrendsPage(false);
     const app = $("#app");
     if (!app) return;
@@ -1287,6 +1297,14 @@
     boot();
   }
 
+  /* Закрыть все страницы-разделы. Нужна школе (и любому будущему разделу
+     со своей страницей): убрать чужой узел напрямую значит оставить раздел
+     подсвеченным, а его запись — в адресной строке. */
+  function closePages() {
+    closeTrendsPage(false);
+    closeMarketingPage(false);
+  }
+
   /* Обвязка листа отдаётся library.js ЦЕЛИКОМ, а не переписывается там заново.
      Тост, перевод, экранирование, список треков и диалоги применения приёма и
      набора — это ровно те места, где две копии означали бы два поведения: одно
@@ -1294,6 +1312,7 @@
      подсветка раздела продолжает работать, кто бы лист ни рисовал. */
   window.QlolSections = {
     mount, go, paint, openAcademy, openLibrary, openMarketing, openEarn,
+    closePages, toast,
     ui: {
       T, TF, esc, lang, num, plural, toast, errorText, busy, failed,
       planName, tracksOf, sceneOptions, slotFields, readSlots,
