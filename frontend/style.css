@@ -3602,11 +3602,79 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   --card: rgba(43, 35, 28, .92);
   --inset: rgba(255, 255, 255, .05);
   --text: #f0e7dc;
-  --ink-muted: #b5a696;
+  --ink-muted: #c2b3a2;
   --gold-ink: #f2c069;
   --gold-wash: rgba(242, 192, 105, .14);
   --panel: rgba(38, 31, 25, .80);
+  /* ЭТИ ТОКЕНЫ РАНЬШЕ НЕ ПЕРЕОПРЕДЕЛЯЛИСЬ — и тянулись из светлой темы.
+     --surface-2 (#f6f1e9) в ночи давал молочные полки под сегмент-контролами
+     и селектами, --accent-ink (#b04d12) на тёмном читается 2.4:1, то есть
+     подписи марки тонули. Отсюда «плоские тёмно-коричневые панели» на скрине
+     владельца: половина поверхностей была из чужой палитры. */
+  --surface: #2b231c;
+  --surface-2: #362c23;
+  --muted: #7c6c5d;
+  --border: rgba(255, 255, 255, .10);
+  --border-bright: rgba(255, 168, 90, .48);
+  --accent-ink: #ffa465;
+  --accent-2-ink: #ff9a6a;
+  --ok-ink: #4fd6a0;
+  --danger-ink: #ff8a86;
+  --accent-wash: rgba(255, 122, 41, .12);
+  --ok-wash: rgba(20, 160, 107, .18);
+  --danger-wash: rgba(229, 72, 77, .18);
   color-scheme: dark;
+}
+
+/* ВЫПУКЛОЕ СТЕКЛО В НОЧИ. Панель без верхнего блика и без внешней тени —
+   это просто тёмный прямоугольник; выпуклость делают ровно две вещи:
+   светлая кромка сверху внутри и мягкая тень снаружи. Здесь они добавлены
+   тем поверхностям, которые в светлой теме уже стеклянные, а в тёмной
+   оставались плоскими. */
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .mk-bar,
+:root[data-theme="dark"] .cine-card,
+:root[data-theme="dark"] .sch-card,
+:root[data-theme="dark"] .sch-mod,
+:root[data-theme="dark"] .sch-block,
+:root[data-theme="dark"] .sch-side,
+:root[data-theme="dark"] .chat-side,
+:root[data-theme="dark"] .chat-main,
+:root[data-theme="dark"] .tb-pmenu,
+:root.os-dark:not([data-theme="light"]) .panel,
+:root.os-dark:not([data-theme="light"]) .mk-bar,
+:root.os-dark:not([data-theme="light"]) .cine-card,
+:root.os-dark:not([data-theme="light"]) .sch-card,
+:root.os-dark:not([data-theme="light"]) .sch-mod,
+:root.os-dark:not([data-theme="light"]) .sch-block,
+:root.os-dark:not([data-theme="light"]) .sch-side,
+:root.os-dark:not([data-theme="light"]) .chat-side,
+:root.os-dark:not([data-theme="light"]) .chat-main,
+:root.os-dark:not([data-theme="light"]) .tb-pmenu {
+  background: linear-gradient(180deg, rgba(52, 43, 34, .74), rgba(38, 31, 25, .66));
+  border: 1px solid rgba(255, 255, 255, .09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07),
+              0 10px 30px rgba(0, 0, 0, .38);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+}
+/* Поля ввода в ночи: чуть светлее подложки, кромка волосяная. Инпут темнее
+   панели читается как дырка, а не как место, куда пишут. */
+:root[data-theme="dark"] input:not([type="range"]),
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] select,
+:root.os-dark:not([data-theme="light"]) input:not([type="range"]),
+:root.os-dark:not([data-theme="light"]) textarea,
+:root.os-dark:not([data-theme="light"]) select {
+  background: rgba(255, 255, 255, .055);
+  border-color: rgba(255, 255, 255, .12);
+  color: var(--text);
+}
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder,
+:root.os-dark:not([data-theme="light"]) input::placeholder,
+:root.os-dark:not([data-theme="light"]) textarea::placeholder {
+  color: rgba(var(--ink-rgb), .42);
 }
 :root[data-theme="dark"] .topbar,
 :root[data-theme="dark"] .track-card,
