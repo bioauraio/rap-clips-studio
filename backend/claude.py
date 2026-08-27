@@ -657,8 +657,14 @@ handheld subtle shake, low-angle tilt up, high-angle tilt down.
 
 ПОЛЯ КАЖДОГО КАДРА:
 - "act": один из cold_open / act1 / act2 / act3 / tag — к какому акту кадр.
-- "speaker": имя того, кто говорит в кадре ("" — никто не говорит).
-- "line": его реплика, 12–20 слов, по-русски. Пусто у немых кадров и б-ролла.
+- "dialogue": массив реплик кадра [{"who":"Имя","line":"текст"}] — ПЕРСОНАЖИ
+  РАЗГОВАРИВАЮТ. Реплики короткие (8–20 слов) и двигают сюжет: вопрос, ответ,
+  решение, укол — не «атмосферные» фразы. В кадре 0–3 реплики; их авторы
+  ОБЯЗАНЫ стоять в characters этого кадра, а в shot_note напиши, кто говорит.
+  Длинный обмен режь на соседние кадры (восьмёрка: по 1–2 реплики на кадр).
+  lyric_line НЕ используется — это сериал, а не клип.
+- "speaker": имя автора ПЕРВОЙ реплики ("" — немой кадр).
+- "line": текст первой реплики (дубль dialogue[0].line — для сборки).
 - "duration_sec": 3–10.
 - "shot_size", "camera_move": см. выше.
 - "shot_note": по-русски, 1-2 фразы — что в кадре и зачем именно так снято.
@@ -672,7 +678,8 @@ handheld subtle shake, low-angle tilt up, high-angle tilt down.
   среду не описывай повторно — они уже на картинке.
 
 Выведи СТРОГО один JSON без markdown-обёртки:
-{"scenes":[{"act":"act1","speaker":"Имя","line":"...","duration_sec":6,
+{"scenes":[{"act":"act1","dialogue":[{"who":"Имя","line":"..."}],
+"speaker":"Имя","line":"...","duration_sec":6,
 "shot_size":"close-up","camera_move":"slow push-in","shot_note":"...",
 "characters":["Имя"],"image_prompt":"...","image_prompt_last":"...",
 "motion_prompt":"..."}]}"""

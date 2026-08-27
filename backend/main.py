@@ -3129,6 +3129,15 @@ def characters_payload(project: Project) -> list[dict]:
     ]
 
 
+def _scene_dialogue(s: Scene) -> list[dict]:
+    """dialogue_json → список реплик; битый JSON = пусто."""
+    try:
+        data = json.loads(getattr(s, "dialogue_json", "") or "[]")
+        return data if isinstance(data, list) else []
+    except ValueError:
+        return []
+
+
 def _midframes(s: Scene) -> list[dict]:
     """midframes_json → список; битый/пустой JSON = пустой список."""
     try:
@@ -3218,6 +3227,7 @@ def scene_dict(s: Scene) -> dict:
         "video_stale": bool(s.video_stale and s.video_filename),
         # Режимы «сериалы» и «UGC»: акт серии и кто говорит в кадре.
         "act": s.act or "", "speaker": s.speaker or "",
+        "dialogue": _scene_dialogue(s),
     }
 
 
@@ -4235,6 +4245,10 @@ async def create_episodes(project_id: int, request: Request,
             key = t.format_key
             break
     pos = max((t.position for t in project.tracks), default=0)
+    # ЕДИНЫЙ СТИЛЬ СЕЗОНА: новая серия жёстко наследует стиль первой серии
+    # со стилем — сериал не имеет права менять картинку между сериями.
+    donor = next((t for t in sorted(project.tracks, key=lambda x: x.position)
+                  if (t.style or "").strip() or (t.style_keys or "").strip()), None)
     made = 0
     for i, r in enumerate(rows, 1):
         no = int(r.get("no") or i)
@@ -4252,6 +4266,11 @@ async def create_episodes(project_id: int, request: Request,
             title=str(r.get("title") or f"Серия {no}"),
             comment=comment, format_key=key,
             season_no=season, episode_no=no,
+            style=donor.style if donor else "",
+            style_keys=donor.style_keys if donor else "",
+            style_extra=donor.style_extra if donor else "",
+            image_engine=donor.image_engine if donor else "",
+            video_engine=donor.video_engine if donor else "",
         ))
         made += 1
     db.commit()
@@ -5988,12 +6007,16 @@ def _scenes_for_series(db: Session, track: Track, engine: str = "") -> dict:
                   .filter(Doc.track_id == track.id, Doc.kind == "script").first())
     if not script_doc or not (script_doc.body or "").strip():
         raise RuntimeError("у серии нет сценария — сгенерируй его на шаге «Серия»")
+    # Стиль серии: свой, иначе — стиль первой серии проекта (единый сезон).
+    style = (track.style or "").strip() or next(
+        (t.style for t in sorted(project.tracks, key=lambda x: x.position)
+         if (t.style or "").strip()), "")
     return asyncio.run(claude.generate_series_scenes(
         engine=engine,
         script=script_doc.body,
         character_bible=project.character_bible,
         episode_beats=formats.beats_block(catalog, key, "episode_beats"),
-        style=track.style,
+        style=style,
         duration_sec=_track_duration(track),
         rules=formats.rules(catalog),
         characters=characters_payload(project),
@@ -6302,9 +6325,24 @@ def _run_scene_generation(track_id: int) -> None:
             # поле под текст завело бы три способа сказать одно и то же.
             speaker = str(sc.get("speaker") or "")
             line = str(sc.get("line") or sc.get("lyric_line") or "")
+            # Диалог кадра (сериалы): несколько реплик; speaker/line дублируют
+            # первую, авторы реплик обязаны попасть в characters.
+            dialogue = [
+                {"who": str(d.get("who") or "").strip(),
+                 "line": str(d.get("line") or "").strip()}
+                for d in (sc.get("dialogue") or [])
+                if isinstance(d, dict) and str(d.get("line") or "").strip()
+            ]
+            if dialogue and not speaker:
+                speaker = dialogue[0]["who"]
+            if dialogue and not line:
+                line = dialogue[0]["line"]
             chars = [str(n) for n in (sc.get("characters") or []) if str(n).strip()]
             if speaker and speaker not in chars:
                 chars.append(speaker)
+            for d in dialogue:
+                if d["who"] and d["who"] not in chars:
+                    chars.append(d["who"])
             # Имена от модели сводим к реальным персонажам проекта: выдуманная
             # роль («Гонщик» вместо «лол4к») не находится и молча откатывает
             # кадр на главного героя — весь клип выходит с одним человеком.
@@ -6314,6 +6352,7 @@ def _run_scene_generation(track_id: int) -> None:
                 lyric_line=line,
                 characters=names,
                 act=str(sc.get("act") or ""),
+                dialogue_json=json.dumps(dialogue, ensure_ascii=False) if dialogue else "",
                 speaker=speaker,
                 shot_size=str(sc.get("shot_size") or ""),
                 camera_move=str(sc.get("camera_move") or ""),
@@ -7447,6 +7486,14 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "Reference images define composition, framing energy and character identity ONLY — "
         "do not copy their color grade, lighting or background.",
     ]
+    # СЕРИАЛ: консистентность между сериями — тот же визуальный мир, гардероб
+    # и лица, что и в предыдущих сериях сезона.
+    if _catalog_of(project) == "series":
+        parts.append(
+            "Series continuity (mandatory): same visual style, wardrobe and "
+            "character appearance as established in previous episodes of this "
+            "series — identical faces, hair, outfits and overall look; no "
+            "redesigns between episodes.")
     # Персонажи кадра: их канонические описания обязаны попасть в промпт
     # (внешность НЕ переизобретается, меняется только стилистика подачи).
     # Легенда «какая картинка чей герой» — ДО описаний персонажей, чтобы

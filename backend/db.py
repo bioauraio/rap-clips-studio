@@ -794,6 +794,10 @@ class Scene(Base):
     camera_move = Column(String, nullable=False, default="")
     # Акт серии: cold_open | act1 | act2 | act3 | tag (у клипа и UGC пусто).
     act = Column(String, nullable=False, default="")
+    # Диалог кадра (режим «сериалы»): JSON-список [{"who": имя, "line": текст}].
+    # Несколько коротких реплик на кадр; speaker/lyric_line дублируют ПЕРВУЮ
+    # реплику для совместимости со старым кодом (сборка, подписи, озвучка).
+    dialogue_json = Column(Text, nullable=False, default="")
     # Кто говорит в кадре. РЕПЛИКА при этом лежит в lyric_line — второго поля
     # под текст не заводим: у клипа это строка трека, у серии — реплика, и
     # различие ровно в подписи. Слот в 6 секунд держит одну фразу, диалог
