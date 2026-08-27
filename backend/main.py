@@ -6291,11 +6291,21 @@ def _run_storyboard(track_id: int) -> None:
             # Модель сама выбирала раскладку («аккуратной сеткой»), и лист
             # выходил то 4x2, то 3x3 — нарезка резала мимо. Диктуем жёстко.
             _c, _r = sheet_grid(len(track.scenes))
-            prompt = (f"{prompt}\n\nGRID (mandatory): exactly {_c} columns by {_r} rows, "
-                      f"{_c * _r} equal rectangular panels of identical size, "
-                      f"filling the whole image edge to edge. No outer margin, no gaps "
-                      f"between panels, no rounded corners, no page background visible. "
-                      f"Panels are numbered left to right, top to bottom.")
+            # ЖЁСТКАЯ СЕТКА. Нарезка режет лист чистой математикой
+            # (ширина/колонки, высота/строки), поэтому промпт диктует
+            # геометрию буквально: равные прямоугольные ячейки по фиксированным
+            # координатам и тонкие белые разделители ровно на границах — их
+            # съедает внутренний отступ нарезки.
+            prompt = (f"{prompt}\n\nGRID (mandatory, exact geometry): a strict uniform grid of "
+                      f"exactly {_c} columns by {_r} rows = {_c * _r} panels. Every panel is a "
+                      f"perfect rectangle of IDENTICAL size: width = image width / {_c}, "
+                      f"height = image height / {_r}. Panel boundaries sit at exact fractions "
+                      f"of the image ({'/'.join(str(i) + '/' + str(_c) for i in range(1, _c))} of the width; "
+                      f"same logic for rows). Separate panels ONLY with thin straight white "
+                      f"divider lines (2-3 px) exactly on those boundaries. Zero outer margin, "
+                      f"zero padding, no rounded corners, no page background, no frames of "
+                      f"varying size, no panel may cross a divider. Panels are numbered left "
+                      f"to right, top to bottom.")
         if not prompt:
             raise RuntimeError("Claude не вернул промпт листа раскадровки")
         # Лист: референсом идёт КОЛЛАЖ моделек всех героев трека (до 3) — так
@@ -6398,6 +6408,20 @@ def _guard_sheet_fresh(track: Track) -> None:
                        scenes=len(track.scenes))
 
 
+# ДОЛЯ ВНУТРЕННЕГО ОТСТУПА ЯЧЕЙКИ. Нарезка идёт чистой математикой
+# (ширина/колонки), а не «детектом» панелей; крохотный отступ внутрь ячейки
+# срезает белые разделители сетки и миллиметровые неточности рисовальщика.
+CELL_INSET = 0.012
+
+
+def _cell_crop(cols: int, rows: int, cx: int, cy: int) -> str:
+    """ffmpeg-фильтр ячейки (cx, cy): математический крой с отступом внутрь."""
+    return (f"crop=iw/{cols}*{1 - 2 * CELL_INSET:.4f}"
+            f":ih/{rows}*{1 - 2 * CELL_INSET:.4f}"
+            f":({cx}+{CELL_INSET:.4f})*iw/{cols}"
+            f":({cy}+{CELL_INSET:.4f})*ih/{rows}")
+
+
 @app.post("/api/tracks/{track_id}/storyboard-cells")
 def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Режет лист на ячейки и отдаёт их превью — БЕЗ записи в сцены.
@@ -6418,15 +6442,14 @@ def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Sess
         fname = f"cell_{uuid.uuid4().hex}.png"
         dst = os.path.join(UPLOAD_DIR, fname)
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", src, "-vf",
-             f"crop=iw/{cols}:ih/{rows}:{cx}*iw/{cols}:{cy}*ih/{rows}", dst],
+            ["ffmpeg", "-y", "-i", src, "-vf", _cell_crop(cols, rows, cx, cy), dst],
             capture_output=True, timeout=120,
         )
         if r.returncode != 0 or not os.path.exists(dst):
             continue
         _reg_file(db, fname, track.project.owner_id, kind="frame",
                   project_id=track.project_id, track_id=track.id)
-        cells.append({"index": i + 1, "filename": fname,
+        cells.append({"index": i + 1, "filename": fname, "scene_hint": i,
                       "url": f"/api/media/{fname}", "thumb_url": f"/api/thumb/{fname}"})
     db.commit()
     return {"ok": True, "grid": f"{cols}x{rows}", "cells": cells}
@@ -6503,9 +6526,7 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
         fname = f"slice_{uuid.uuid4().hex}.png"
         dst = os.path.join(UPLOAD_DIR, fname)
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", src, "-vf",
-             f"crop=iw/{cols}:ih/{rows}:{cx}*iw/{cols}:{cy}*ih/{rows}",
-             dst],
+            ["ffmpeg", "-y", "-i", src, "-vf", _cell_crop(cols, rows, cx, cy), dst],
             capture_output=True, timeout=120,
         )
         if r.returncode != 0 or not os.path.exists(dst):
