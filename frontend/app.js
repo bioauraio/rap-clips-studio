@@ -4247,6 +4247,17 @@ function renderInner() {
   }
 
   const container = $("#tracks");
+  /* ПЕРЕРИСОВКА БЕЗ ДЁРГАНЬЯ. Лента треков строится заново целиком, и без
+     этих двух мер каждый клик по кнопке карточки выглядел как «мигнуло и
+     ускакало»:
+       1) scrollLeft каждой горизонтальной ленты (раскадровка, версии,
+          персонажи) запоминается по номеру появления и возвращается после
+          перерисовки — ленты не отматываются к началу;
+       2) вертикальный скролл страницы прибивается на время замены DOM —
+          браузер не «догоняет» изменившуюся высоту. */
+  const stripPos = $$(".scenes, .versions-strip, .s-thumbs, .chars", container)
+    .map((el) => el.scrollLeft);
+  const pageY = window.scrollY;
   container.innerHTML = "";
   const mode = curMode();
   if (mode.group_by === "season_no") {
@@ -4273,6 +4284,9 @@ function renderInner() {
     container.appendChild(empty);
   }
   renderMockupStudio();
+  $$(".scenes, .versions-strip, .s-thumbs, .chars", container)
+    .forEach((el, i) => { if (stripPos[i]) el.scrollLeft = stripPos[i]; });
+  window.scrollTo({ top: pageY, behavior: "instant" });
 }
 
 
