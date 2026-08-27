@@ -3625,6 +3625,12 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
   border: 1px solid rgba(var(--ink-rgb),.12); box-shadow: 0 1px 3px rgba(var(--ink-rgb),.16); cursor: pointer;
 }
 .pa-bubble:active { transform: translateY(1px); box-shadow: none; }
+/* Телефон: пузырь агента поднимается НАД нижним доком разделов — иначе он
+   накрывает «Школу» и «Музыку», то есть закрывает навигацию собой. */
+@media (max-width: 700px) {
+  .pa-bubble { bottom: 86px; right: 12px; width: 46px; height: 46px; font-size: 18px; }
+  .pa-panel { bottom: 140px; right: 10px; }
+}
 .pa-panel {
   position: fixed; right: 18px; bottom: 82px; z-index: 60;
   width: min(380px, calc(100vw - 36px)); height: min(520px, calc(100vh - 120px));

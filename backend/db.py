@@ -322,6 +322,10 @@ class Character(Base):
     # проекту: в сериале реплики серии озвучиваются голосом того, кто говорит,
     # а не «общим диктором», иначе герой меняет голос между сериями.
     voice_id = Column(String, nullable=False, default="")
+    # Голосовая манера по умолчанию: эмоция/темп словами («спокойно, с ленцой»,
+    # «агрессивно, быстро»). Из неё выводятся настройки stability/style TTS,
+    # если запрос озвучки не задал эмоцию явно.
+    voice_note = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
