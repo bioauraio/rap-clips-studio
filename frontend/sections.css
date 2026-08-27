@@ -190,12 +190,18 @@
 }
 /* Средние ширины: жмём личный блок, а не разделы — «выйти» есть в кабинете,
    а тема и язык переключаются значками. */
-@media (max-width: 1300px) {
+@media (max-width: 1500px) {
   .topbar.has-sections #logout-btn { display: none; }
   .topbar.has-sections .theme-switch { transform: scale(.9); transform-origin: right center; }
   .topbar.has-sections .lang-switch button { padding: 0 6px; }
   .topbar.has-sections .profile-btn .profile-cap { display: none; }
   .topbar.has-sections #save-account-btn { display: none; }
+  /* Капсула режима — значок и короткая подпись: полное «🎬 RAP CLIPS ▾»
+     на средней ширине выталкивает личный блок за правый край. */
+  .topbar.has-sections .mode-badge {
+    max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .topbar.has-sections .project-select { max-width: 120px; }
 }
 /* Лента режимов — третий ярус; в одной полосе для неё места нет, а режим уже
    назван капсулой рядом с проектом. */
