@@ -6162,8 +6162,10 @@ function renderTrack(tr) {
 
   // ── этап 2: раскадровка
   $(".add-scene", card).addEventListener("click", () => addManualScene(tr.id));
-  msCinemaBar(card, tr, modeNow);
-  msHowto(card, modeNow);
+  // curMode() здесь напрямую: const modeNow объявлен НИЖЕ по функции, и
+  // обращение к нему отсюда роняло весь рендер треков (TDZ) — лента пустела.
+  msCinemaBar(card, tr, curMode());
+  msHowto(card, curMode());
   const allBtn = $(".gen-all-frames", card);
   const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
   // «(готовый кадр» — служебная метка бэкенда в image_prompt (backend/main.py),
