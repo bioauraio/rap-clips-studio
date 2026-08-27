@@ -369,7 +369,6 @@
     justify-content: center; overflow: hidden;
   }
   .tb-pmenu { right: 0; left: auto; min-width: 190px; }
-  .topbar.has-sections > .tb-modeline { order: 3; flex: 1 1 100%; }
 }
 
 /* Мобильная раскладка шапки и нижний док живут ВЫШЕ, в одном блоке 700px.
@@ -911,28 +910,10 @@
 .topbar.has-sections .tb-sections #admin-btn::before,
 .topbar.has-sections .tb-sections .tb-sec::before { content: none; }
 
-@media (max-width: 900px) {
-  /* ТЕЛЕФОН: У ЛЕНТЫ СВОЙ РЯД, И ЭТО НЕ ОТСТУПЛЕНИЕ ОТ «ОДНОЙ СТРОКИ».
-     Требование «шапка в одну строку» — про саму ленту: она обязана быть одной
-     прокручиваемой строкой, а не переноситься кубиками. Делить же ряд с
-     личным блоком на 375px нельзя физически: остаток токенов, «сохранить
-     аккаунт» и выход занимают около 290px из 375, ленте достаётся 25 — и она
-     не читается вообще, а сжатый .tb-user своей крайней кнопкой наезжает на
-     неё слева (у .tb-user стоит min-width:min-content, ниже содержимого он
-     не сжимается и переливается поверх соседа).
-
-     Поэтому ряда три, и у каждого своя роль: кто я (марка и личное),
-     куда иду (разделы), над чем работаю (проект и режим). */
-  .topbar.has-sections > #brand { order: 1; }
-  .topbar.has-sections > .tb-user { order: 2; margin-left: auto; flex-wrap: nowrap; }
-  .topbar.has-sections > .tb-sections { order: 3; flex: 1 1 100%; min-width: 0; }
-  .topbar.has-sections > .tb-project { order: 4; flex: 1 1 100%; }
-  .topbar.has-sections .tb-sections #chat-btn,
-  .topbar.has-sections .tb-sections #music-btn,
-  .topbar.has-sections .tb-sections #account-btn,
-  .topbar.has-sections .tb-sections #admin-btn,
-  .topbar.has-sections .tb-sections .tb-sec { font-size: 12.5px; padding: 0 9px; }
-}
+/* Прежний трёхрядный блок 900px удалён 28.08: он стоял ПОЗЖЕ однорядного
+   и молча перебивал порядок строк (личное прыгало влево от режима),
+   а копию проекта возвращал на экран. Однорядная мобильная шапка и нижний
+   док заданы одним блоком 700px выше. */
 
 /* «Админка» больше НЕ кнопка в строке — ни на телефоне, ни на десктопе:
    она пункт меню профиля (см. profileMenu в sections.js). Отдельная
