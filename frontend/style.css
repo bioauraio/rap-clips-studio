@@ -3807,15 +3807,15 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   #app.chat-view ~ #chat { height: calc(100dvh - var(--tbh, 64px)); }
 }
 
-/* ─────── Десктоп: тумблер этапов — вертикальная панель у правого края ───────
+/* ─────── Десктоп: тумблер этапов — вертикальная панель у ЛЕВОГО края ───────
    В шапке он занимал строку и уезжал под название проекта, а на широком
    экране справа простаивает пустое поле. Панель закреплена по центру высоты:
-   этап видно, не отматывая наверх. Мобильная капсула снизу (≤700px) и
-   шапка на средних экранах (700–1100px) остаются как были — там места
-   справа нет, и такая панель накрыла бы карточку сцены. */
-@media (min-width: 1100px) {
+   этап видно, не отматывая наверх. В шапке тумблера больше нет вовсе: после
+   перехода на одну полосу он вылезал поверх «Профиля» и «выйти». Мобильная
+   капсула снизу (≤700px) осталась как была — сбоку на телефоне места нет. */
+@media (min-width: 701px) {
   .stage-jump {
-    position: fixed; right: 16px; top: 50%; transform: translateY(-50%);
+    position: fixed; left: 16px; right: auto; top: 50%; transform: translateY(-50%);
     z-index: 45; flex-direction: column; align-items: stretch; gap: 3px;
     padding: 6px; border-radius: 20px; corner-shape: squircle;
     background: color-mix(in srgb, var(--panel) 88%, transparent);
@@ -3827,13 +3827,24 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
     justify-content: flex-start; gap: 8px; padding: 8px 12px;
     border-radius: 14px; corner-shape: squircle; white-space: nowrap;
   }
-  /* Контенту — воздух справа, иначе панель ложится на карточки сцен. */
-  #app { padding-right: 132px; }
+  /* Контенту — воздух СЛЕВА, иначе панель ложится на карточки сцен.
+     Панель уехала налево 27.08: справа она наезжала на «Профиль» и «выйти»
+     в шапке — правый угол занят личным блоком, а левое поле пустует. */
+  #app { padding-left: 132px; }
+  /* Планшет: панель ужимается до цифр — 132px поля там четверть экрана. */
+  @media (max-width: 1099px) {
+    .stage-jump .stage-tab { font-size: 0; padding: 8px; gap: 0; }
+    .stage-jump .stage-tab .st-num { font-size: 11px; }
+    #app { padding-left: 62px; }
+  }
   /* Пустой тумблер — это стеклянная пилюля ни о чём: пока этапов нет
      (школа, тренды, маркетинг, ещё не выбранный трек), панели нет вовсе. */
   .stage-jump:empty { display: none; }
   .trends-view .stage-jump { display: none; }
-  .trends-view#app, #app.trends-view { padding-right: 0; }
+  .trends-view#app, #app.trends-view { padding-left: 0; }
+  /* Генератор шириной во весь экран: этапов там нет, а поле слева съело бы
+     колонку лент. */
+  #app.chat-view { padding-left: 0; }
 }
 
 /* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */
