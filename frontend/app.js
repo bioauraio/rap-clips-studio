@@ -6048,7 +6048,11 @@ function renderTrack(tr) {
         $$(".stage-tab", jump).forEach((el) =>
           el.classList.toggle("on", el.dataset.stage === best));
       };
-      window.addEventListener("scroll", spy, { passive: true });
+      // capture на document, а не window.scroll: после переезда на блоки
+      // прокрутка бывает внутри контейнера, и window-событие не приходит —
+      // тумблер залипал на «Настройке» при любом положении страницы.
+      document.addEventListener("scroll", spy, { passive: true, capture: true });
+      spy();
     }
   }
   // Название проекта редактируется в «Настройке». Оригинальный input живёт
