@@ -4987,7 +4987,7 @@ function applyMockupLayout(on) {
       set.className = "panel mkp-settings";
       set.innerHTML = ["world", "chars", "goods"].map((k) =>
         `<details class="ms-howto mkp-set" data-set="${k}">
-           <summary>${esc(t("mkp.set_" + k))}</summary>
+           <summary>${escHtml(t("mkp.set_" + k))}</summary>
            <div class="mkp-set-body" data-body="${k}"></div>
          </details>`).join("");
       const studio = $("#mockup-studio");
@@ -5033,13 +5033,13 @@ function openMkpViewer(sc) {
   openModal(t("mkp.frame"), (body) => {
     const vidBusy = ["queued", "running"].includes(sc.video_status);
     body.innerHTML = `<div class="mkp-view">
-      ${sc.video_url ? `<video src="${esc(sc.video_url)}" controls autoplay loop muted playsinline></video>`
-                     : `<img src="${esc(sc.image_url)}" alt="" />`}
+      ${sc.video_url ? `<video src="${escHtml(sc.video_url)}" controls autoplay loop muted playsinline></video>`
+                     : `<img src="${escHtml(sc.image_url)}" alt="" />`}
       <div class="row">
-        <a class="ghost mkp-btn" href="${esc(sc.image_url)}" download>${esc(t("mkp.download"))}</a>
+        <a class="ghost mkp-btn" href="${escHtml(sc.image_url)}" download>${escHtml(t("mkp.download"))}</a>
         <button type="button" class="primary mkp-anim" ${vidBusy ? "disabled" : ""}>
-          ${esc(vidBusy ? t("scene.videoBusy") : (sc.video_url ? t("scene.regenVideo") : t("mkp.animate")))}</button>
-        <button type="button" class="mkp-del">${esc(t("common.del"))}</button>
+          ${escHtml(vidBusy ? t("scene.videoBusy") : (sc.video_url ? t("scene.regenVideo") : t("mkp.animate")))}</button>
+        <button type="button" class="mkp-del">${escHtml(t("common.del"))}</button>
       </div></div>`;
     $(".mkp-anim", body).addEventListener("click", async () => {
       try {
@@ -5122,13 +5122,13 @@ async function renderMockupStudio() {
     cell.type = "button";
     cell.className = "mkp-item";
     if (sc.image_url) {
-      cell.innerHTML = `<img src="${esc(sc.image_url)}" alt="" loading="lazy" />`
+      cell.innerHTML = `<img src="${escHtml(sc.image_url)}" alt="" loading="lazy" />`
         + (sc.video_url ? '<span class="mkp-badge">▶</span>' : "")
-        + (["queued", "running"].includes(sc.video_status) ? `<span class="mkp-busy">${esc(t("status.running"))}</span>` : "");
+        + (["queued", "running"].includes(sc.video_status) ? `<span class="mkp-busy">${escHtml(t("status.running"))}</span>` : "");
       cell.addEventListener("click", () => openMkpViewer(sc));
     } else if (sc.image_status === "error") {
       cell.classList.add("err");
-      cell.innerHTML = `<span class="mkp-ph">⚠</span><i>${esc(t("mkp.failed"))}</i>`;
+      cell.innerHTML = `<span class="mkp-ph">⚠</span><i>${escHtml(t("mkp.failed"))}</i>`;
       cell.addEventListener("click", async () => {
         if (!confirm(t("scene.delConfirm"))) return;
         try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
@@ -5136,7 +5136,7 @@ async function renderMockupStudio() {
       });
     } else {
       cell.classList.add("busy");
-      cell.innerHTML = `<span class="mkp-ph">✨</span><i>${esc(t("status.running"))}</i>`;
+      cell.innerHTML = `<span class="mkp-ph">✨</span><i>${escHtml(t("status.running"))}</i>`;
     }
     gal.appendChild(cell);
   });
@@ -5194,15 +5194,15 @@ async function msMarketingStudio(card, tr, mode) {
     return b;
   };
   box.innerHTML = `
-    <label class="mk-title">${esc(t("mk.title"))}</label>
+    <label class="mk-title">${escHtml(t("mk.title"))}</label>
     <div class="mk-bar">
-      <textarea class="mk-prompt" rows="2" placeholder="${esc(t("mk.promptPh"))}"></textarea>
+      <textarea class="mk-prompt" rows="2" placeholder="${escHtml(t("mk.promptPh"))}"></textarea>
       <div class="mk-bar-row">
         <div class="mk-chips mk-kind"></div>
         <div class="mk-chips mk-camera"></div>
         <div class="mk-chips mk-aspect"></div>
         <div class="mk-slots"></div>
-        <button type="button" class="mk-go">${esc(t("mk.generate"))} · ⚡ ${frameCost}</button>
+        <button type="button" class="mk-go">${escHtml(t("mk.generate"))} · ⚡ ${frameCost}</button>
       </div>
       <span class="mk-status status"></span>
     </div>
@@ -5224,12 +5224,12 @@ async function msMarketingStudio(card, tr, mode) {
     const kind = $(".mk-kind", box);
     kind.innerHTML = "";
     kind.append(
-      chip(esc(t("mk.image")), !st.video, () => { st.video = false; paintBar(); }),
-      chip(esc(t("mk.video")), false, () => { mkToast(t("mk.videoSoon")); }, "soon"));
+      chip(escHtml(t("mk.image")), !st.video, () => { st.video = false; paintBar(); }),
+      chip(escHtml(t("mk.video")), false, () => { mkToast(t("mk.videoSoon")); }, "soon"));
     const cam = $(".mk-camera", box);
     cam.innerHTML = "";
     [["", "camAuto"], ["closeup", "camCloseup"], ["medium", "camMedium"], ["wide", "camWide"]]
-      .forEach(([v, k]) => cam.appendChild(chip(esc(t(`mk.${k}`)), st.camera === v,
+      .forEach(([v, k]) => cam.appendChild(chip(escHtml(t(`mk.${k}`)), st.camera === v,
         () => { st.camera = v; paintBar(); })));
     const asp = $(".mk-aspect", box);
     asp.innerHTML = "";
@@ -5246,8 +5246,8 @@ async function msMarketingStudio(card, tr, mode) {
     cSlot.className = "mk-slot" + (ch ? " filled" : "");
     cSlot.title = ch ? ch.name : t("mk.slotChar");
     cSlot.innerHTML = ch
-      ? (ch.photo_url ? `<img src="${esc(ch.photo_url)}" alt="" />` : `<b>${esc((ch.name || "?")[0])}</b>`)
-      : `<span>👤</span><i>${esc(t("mk.slotChar"))}</i>`;
+      ? (ch.photo_url ? `<img src="${escHtml(ch.photo_url)}" alt="" />` : `<b>${escHtml((ch.name || "?")[0])}</b>`)
+      : `<span>👤</span><i>${escHtml(t("mk.slotChar"))}</i>`;
     cSlot.addEventListener("click", () => {
       if (!chars.length) { mkToast(t("mk.noChars")); return; }
       const idx = chars.findIndex((c) => c.id === st.charId);
@@ -5264,8 +5264,8 @@ async function msMarketingStudio(card, tr, mode) {
     pSlot.className = "mk-slot" + (st.useProduct && prod ? " filled" : "");
     pSlot.title = prod ? prod.title : t("mk.slotProduct");
     pSlot.innerHTML = (st.useProduct && prod)
-      ? `<img src="${esc(prod.url)}" alt="" />`
-      : `<span>📦</span><i>${esc(t("mk.slotProduct"))}</i>`;
+      ? `<img src="${escHtml(prod.url)}" alt="" />`
+      : `<span>📦</span><i>${escHtml(t("mk.slotProduct"))}</i>`;
     pSlot.addEventListener("click", () => {
       if (!products.length) {
         const input = $(".ms-photo-input", card);
@@ -5291,9 +5291,9 @@ async function msMarketingStudio(card, tr, mode) {
   const grid = $(".mk-tpl-grid", box);
   const paintGrid = () => {
     filt.innerHTML = "";
-    filt.appendChild(chip(esc(t("mk.catAll")), !st.cat,
+    filt.appendChild(chip(escHtml(t("mk.catAll")), !st.cat,
       () => { st.cat = ""; paintGrid(); }));
-    cats.forEach((c) => filt.appendChild(chip(esc(t(`mk.cat_${c}`)), st.cat === c,
+    cats.forEach((c) => filt.appendChild(chip(escHtml(t(`mk.cat_${c}`)), st.cat === c,
       () => { st.cat = c; paintGrid(); })));
     grid.innerHTML = "";
     tpls.filter((x) => !st.cat || x.category === st.cat).forEach((x) => {
@@ -5302,10 +5302,10 @@ async function msMarketingStudio(card, tr, mode) {
       b.className = "mk-tpl" + (st.tplId === x.id ? " on" : "");
       const name = LANG === "ru" ? x.ru : x.en;
       b.innerHTML = (x.preview_url
-        ? `<img src="${esc(x.preview_url)}" alt="" loading="lazy" />`
+        ? `<img src="${escHtml(x.preview_url)}" alt="" loading="lazy" />`
         : `<span class="mk-tpl-ph">${x.emoji}</span>`)
-        + `<span class="mk-tpl-cap"><b>${esc(name)}</b>`
-        + `<i>${esc(t(`mk.cat_${x.category}`))}${x.motion ? " · 🎬" : ""}</i></span>`;
+        + `<span class="mk-tpl-cap"><b>${escHtml(name)}</b>`
+        + `<i>${escHtml(t(`mk.cat_${x.category}`))}${x.motion ? " · 🎬" : ""}</i></span>`;
       b.addEventListener("click", () => {
         st.tplId = st.tplId === x.id ? "" : x.id;
         st.prompt = st.tplId ? x.prompt : "";
@@ -5398,7 +5398,7 @@ async function msCinemaBar(card, tr, mode) {
   box.innerHTML = `
     <div class="mk-bar">
       <div class="cine-wrap">
-        <textarea class="cine-prompt" rows="2" placeholder="${esc(t("cine.promptPh"))}"></textarea>
+        <textarea class="cine-prompt" rows="2" placeholder="${escHtml(t("cine.promptPh"))}"></textarea>
         <div class="cine-ac hidden"></div>
       </div>
       <div class="mk-bar-row">
@@ -5430,8 +5430,8 @@ async function msCinemaBar(card, tr, mode) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "cine-ac-item";
-      b.innerHTML = (c.photo_url ? `<img src="${esc(c.photo_url)}" alt="" />` : "👤")
-        + `<span>${esc(c.name)}</span>`;
+      b.innerHTML = (c.photo_url ? `<img src="${escHtml(c.photo_url)}" alt="" />` : "👤")
+        + `<span>${escHtml(c.name)}</span>`;
       b.addEventListener("mousedown", (e) => {
         e.preventDefault();
         const pos = promptEl.selectionStart;
