@@ -7073,6 +7073,27 @@ function renderScene(s, audioEl, mode = "board") {
       });
       chipsBox.appendChild(chip);
     });
+    /* ВОСЕМЬ ПЕРСОНАЖЕЙ — ЭТО ПОЛ-КАРТОЧКИ ЧИПАМИ. Показываем первые пять
+       и выбранных (их прятать нельзя — по ним читается состав кадра),
+       остальные раскрываются кнопкой. */
+    const LIMIT = 5;
+    const chips = Array.from(chipsBox.children);
+    if (chips.length > LIMIT + 1) {
+      const hidden = chips.filter((c, i) => i >= LIMIT && !c.classList.contains("on"));
+      hidden.forEach((c) => c.classList.add("char-chip-more"));
+      if (hidden.length) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "style-chip char-chip char-more";
+        more.textContent = LANG === "ru"
+          ? `показать всех (${hidden.length})` : `show all (${hidden.length})`;
+        more.addEventListener("click", () => {
+          hidden.forEach((c) => c.classList.remove("char-chip-more"));
+          more.remove();
+        });
+        chipsBox.appendChild(more);
+      }
+    }
   } else {
     chipsBox.classList.add("hidden");
   }
@@ -7140,6 +7161,24 @@ function renderScene(s, audioEl, mode = "board") {
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
+  {
+    // Меню «⋯»: закрывается кликом мимо и Esc — оставлять его открытым,
+    // пока человек ушёл в другую карточку, значит держать на экране два
+    // пульта сразу.
+    const more = $(".s-more", card);
+    const menu = $(".s-more-menu", card);
+    if (more && menu) {
+      more.addEventListener("click", (e) => {
+        e.stopPropagation();
+        document.querySelectorAll(".s-more-menu").forEach((m) => {
+          if (m !== menu) m.classList.add("hidden");
+        });
+        const open = menu.classList.toggle("hidden") === false;
+        more.setAttribute("aria-expanded", String(open));
+      });
+      menu.addEventListener("click", () => menu.classList.add("hidden"));
+    }
+  }
   $(".s-save", card).addEventListener("click", () => saveScene(s.id, card));
   // ⧉ — копия кадра, ⟶ — ПРОДОЛЖЕНИЕ: следующий кадр начинается там, где
   // этот закончился. Оба удлиняют раскадровку, поэтому оба спрашивают, что
@@ -10436,7 +10475,23 @@ function applyTheme(mode) {
   document.querySelectorAll(".theme-switch button").forEach((b) => {
     b.classList.toggle("on", b.dataset.themeSet === mode);
   });
+  // Внутри Telegram цвет клиента (шапка, фон, нижняя полоса) красится нашим
+  // --bg: без этой строки смена темы перекрашивала приложение, а хром
+  // мини-аппа оставался светлым — те самые белые прогалы вокруг панелей.
+  if (window.TGA && window.TGA.repaint) window.TGA.repaint();
 }
+// Меню «⋯» карточки кадра гасим кликом мимо и по Esc — один слушатель на
+// документ вместо слушателя в каждой карточке (их на треке тридцать).
+document.addEventListener("click", () => {
+  document.querySelectorAll(".s-more-menu:not(.hidden)")
+    .forEach((m) => m.classList.add("hidden"));
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  document.querySelectorAll(".s-more-menu:not(.hidden)")
+    .forEach((m) => m.classList.add("hidden"));
+});
+
 (function themeBoot() {
   // Класс os-dark дублирует prefers-color-scheme: селекторам тёмной темы
   // нужен якорь в DOM, чтобы работать в связке с data-theme-переключателем.

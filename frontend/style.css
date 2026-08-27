@@ -625,6 +625,8 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 /* персонажи сцены — чипы поверх скрытого input.s-chars */
 .s-chars-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .s-chars-chips:empty { display: none; }
+.char-chip-more { display: none; }
+.char-more { border-style: dashed; color: var(--ink-muted); }
 .char-chip { padding: 3px 9px; font-size: 10.5px; border-radius: 999px; box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12); }
 .char-chip.on,
 .char-chip.on:hover:not(:disabled) {
@@ -661,6 +663,19 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   font-family: var(--font-mono); font-weight: 800; font-size: 13px;
   color: var(--accent-2-ink); white-space: nowrap; flex: none;
 }
+/* Меню «⋯» карточки кадра. */
+.s-more-wrap { position: relative; margin-left: auto; flex: none; }
+.s-more { padding: 2px 7px; font-size: 15px; line-height: 1; box-shadow: none; }
+.s-more-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+  display: flex; gap: 2px; padding: 4px;
+  border-radius: 14px; corner-shape: squircle;
+  background: var(--card-solid); border: 1px solid var(--border);
+  box-shadow: 0 10px 26px rgba(var(--ink-rgb), .18);
+}
+.s-more-menu.hidden { display: none; }
+.s-more-menu button { padding: 4px 7px; box-shadow: none; }
+
 .s-time {
   font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
   flex: 1 1 auto; min-width: 0; white-space: nowrap;
