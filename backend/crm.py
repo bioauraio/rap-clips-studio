@@ -492,6 +492,11 @@ def admin_trends(user: User = Depends(admin_user), db: Session = Depends(db_sess
         "duration_sec": t.duration_sec, "aspect": t.aspect,
         "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
         "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
+        # Партнёрские поля: без них вкладка «Заработок» не смогла бы отличить
+        # продукт от тренда и показывала бы пустые награду и ссылку.
+        "kind": t.kind or "trend", "landing_url": t.landing_url or "",
+        "reward_note": t.reward_note or "", "reward_pct": int(t.reward_pct or 10),
+        "position": t.position,
     } for t in rows]}
 
 
@@ -510,6 +515,8 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
                   "kind", "landing_url", "reward_note"):
         if field in body:
             setattr(t, field, str(body[field] or ""))
+    if "reward_pct" in body:
+        t.reward_pct = max(1, min(50, int(body["reward_pct"] or 10)))
     if "duration_sec" in body:
         t.duration_sec = max(2, min(12, int(body["duration_sec"] or 6)))
     if "enabled" in body:

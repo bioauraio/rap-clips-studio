@@ -402,30 +402,38 @@
         body.appendChild(empty);
         return;
       }
+      // СВОЯ сетка, а не .trend-grid: та — masonry из абсолютных плиток под
+      // витрину трендов, и партнёрская карточка в ней разъезжалась (пустое
+      // превью 9:16 и текст враспор). Здесь карточка товарная: превью
+      // фиксированной высоты, компактный блок текста, действия одной строкой.
       const grid = document.createElement("div");
-      grid.className = "trend-grid";
+      grid.className = "earn-grid";
       d.products.forEach((t) => {
         const card = document.createElement("div");
-        card.className = "trend-card";
+        card.className = "earn-card";
         card.innerHTML = `
-          ${t.sample_url
-            ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
-                 ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
-            : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
-            : `<div class="trend-ph"></div>`}
-          <div class="trend-meta">
-            <b>${esc(t.title)}</b>
-            <span class="earn-reward">${esc(t.reward_note || "")}</span>
-            <span class="muted">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
+          <div class="earn-shot">
+            ${t.sample_url
+              ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
+                   ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+              : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+              : `<span class="earn-ph">📦</span>`}
+            ${t.reward_note ? `<span class="earn-reward">${esc(t.reward_note)}</span>` : ""}
           </div>
-          <input type="text" class="earn-style" maxlength="200"
-                 placeholder="${T("earn.stylePh", "свой стиль: мульт, ИИ-блогер, 3D…")}" />
-          ${t.my_link ? `
-          <button type="button" class="earn-link ghost">${T("earn.copy", "Скопировать мою ссылку")}</button>` : ""}
-          <label class="trend-go">
-            <span>${T("earn.make", "Сделать ролик с продуктом")}</span>
-            <input type="file" accept="image/*" hidden />
-          </label>
+          <div class="earn-body">
+            <b class="earn-name">${esc(t.title)}</b>
+            <span class="muted earn-meta">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
+            <input type="text" class="earn-style" maxlength="200"
+                   placeholder="${T("earn.stylePh", "свой стиль: мульт, ИИ-блогер, 3D…")}" />
+            <div class="earn-acts">
+              <label class="trend-go earn-go">
+                <span>${T("earn.make", "Сделать ролик с продуктом")}</span>
+                <input type="file" accept="image/*" hidden />
+              </label>
+              ${t.my_link ? `
+              <button type="button" class="earn-link ghost">${T("earn.copy", "Скопировать мою ссылку")}</button>` : ""}
+            </div>
+          </div>
           <div class="trend-state hidden"></div>`;
         const linkBtn = card.querySelector(".earn-link");
         if (linkBtn) linkBtn.addEventListener("click", async () => {
@@ -456,6 +464,58 @@
      и партнёрка. Своя страница на механике трендов (#trends-page): студия
      прячется классом trends-view, human-URL /marketing, закрытие при уходе
      в любой другой раздел — через go(). */
+
+  /* Общая база предметов/персонажей: сетка карточек с фото и поиском.
+     Правка открывает ТЕ ЖЕ модалки студии (openItemModal / досье героя) —
+     второго редактора не заводим. */
+  async function openBase(kind) {
+    const isItems = kind === "items";
+    const title = isItems ? T("marketing.items", "Предметы")
+                          : T("marketing.chars", "Персонажи");
+    openSheet("base", title, async (body) => {
+      busy(body);
+      let rows = [];
+      try {
+        rows = isItems
+          ? (await api("/api/items/all")).items || []
+          : (await api("/api/characters/all")).characters || [];
+      } catch (e) { failed(body, "trends.failed"); return; }
+      body.innerHTML = `
+        <input type="search" class="base-search"
+               placeholder="${T("common.search", "поиск…")}" />
+        <div class="base-grid"></div>`;
+      const grid = $(".base-grid", body);
+      const paintRows = () => {
+        const q = ($(".base-search", body).value || "").trim().toLowerCase();
+        grid.innerHTML = "";
+        const list = rows.filter((r) =>
+          !q || ((r.title || r.name || "").toLowerCase().includes(q)));
+        if (!list.length) {
+          grid.innerHTML = `<p class="muted">${T("base.empty", "пока пусто")}</p>`;
+          return;
+        }
+        list.forEach((r) => {
+          const url = isItems ? r.url : r.photo_url;
+          const name = r.title || r.name || "—";
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "base-card";
+          b.innerHTML = (url
+            ? `<img src="${url}" alt="" loading="lazy" />`
+            : `<span class="base-ph">${isItems ? "📦" : "👤"}</span>`)
+            + `<span class="base-cap">${esc(name)}</span>`;
+          b.addEventListener("click", () => {
+            // Правка живёт в студии: уходим туда и открываем досье.
+            if (isItems && window.qlolOpenItem) window.qlolOpenItem(r.track_id);
+            else if (!isItems && window.qlolOpenChar) window.qlolOpenChar(r.id);
+          });
+          grid.appendChild(b);
+        });
+      };
+      paintRows();
+      $(".base-search", body).addEventListener("input", paintRows);
+    });
+  }
 
   function closeMarketingPage(updateUrl) {
     const page = $("#marketing-page");
@@ -513,6 +573,15 @@
         t: T("marketing.earn", "Заработок с lolq.ai"),
         d: T("marketing.earnNote", "Постишь ролики с продуктами — получаешь долю с продаж."),
         go: () => openEarn() },
+      // Общие базы: те же сущности, что в студии, отдельным входом.
+      { icon: "🧴",
+        t: T("marketing.items", "Предметы"),
+        d: T("marketing.itemsNote", "Общая база предметов всех проектов: фото, описание, модельки."),
+        go: () => openBase("items") },
+      { icon: "👥",
+        t: T("marketing.chars", "Персонажи"),
+        d: T("marketing.charsNote", "Общая база героев: лица держатся во всех проектах и режимах."),
+        go: () => openBase("chars") },
     ];
     cards.forEach((c, i) => {
       const b = document.createElement("button");

@@ -77,6 +77,8 @@
       sub: "Авторские пресеты по чужим роликам (инста/рилс). Те же карточки и промпты, плюс ссылка на исходник; в генерации работают как обычные стили, на витрине пользователей ничего не меняется." },
     { id: "design", ico: "🎨", title: "Дизайн",
       sub: "Живые токены дизайн-системы: огненный градиент, фон, стекло. Меняются без переката — theme.css отдаёт их поверх стилей." },
+    { id: "earn", ico: "💸", title: "Заработок",
+      sub: "Партнёрские продукты витрины /earn: название, награда, ссылка на лендинг и фото товара. Всё, что здесь включено, сразу видно партнёрам." },
     { id: "market", ico: "🌍", title: "Рынок",
       sub: "Сводная по конкурентам: цены, фишки, модели, дизайн. Публичная копия живёт на /competitors.html." },
     { id: "pricing", ico: "📈", title: "Наценка",
@@ -420,6 +422,114 @@
      Промпт, референсы, файлы с промптами и сценарная база — то, что просил
      владелец. Закрытые поля приезжают ТОЛЬКО сюда и только по явному
      запросу карточки; списком они не ходят. */
+  /* ─────────── партнёрские продукты (витрина «Заработок») ───────────
+     Тот же TrendPreset, но kind="earn": продукт встроен в шаблон, партнёр
+     подставляет только свой стиль. Фото товара — постер шаблона. */
+  async function renderEarnAdmin(box) {
+    let d;
+    try { d = await api("/api/admin/trends"); }
+    catch (e) { return fail(box, e); }
+    const rows = (d.presets || []).filter((x) => (x.kind || "trend") === "earn");
+    box.innerHTML = `
+      <div class="adm-card">
+        <div class="adm-row">
+          <h3>Партнёрские продукты <span class="adm-count">${rows.length}</span></h3>
+          <span style="flex:1"></span>
+          <button type="button" class="primary e-new">+ продукт</button>
+        </div>
+        <p class="adm-note">Награда партнёру считается от заказа и платится за ПЕРВУЮ
+          покупку клиента. Фото товара = постер карточки на витрине.</p>
+        <div class="e-list"></div>
+      </div>`;
+    const list = $(".e-list", box);
+    const draw = (t) => {
+      const card = document.createElement("div");
+      card.className = "adm-card e-item";
+      card.innerHTML = `
+        <div class="adm-row">
+          <div class="e-shot">${t.poster_url
+            ? `<img src="${esc(t.poster_url)}" alt="" />`
+            : '<span class="e-ph">📦</span>'}</div>
+          <div class="adm-fields" style="flex:1">
+            <div class="adm-row">
+              <div class="adm-field" style="flex:1"><label>Название</label>
+                <input class="e-title" value="${esc(t.title || "")}" /></div>
+              <div class="adm-field"><label>Награда, %</label>
+                <input class="e-pct" type="number" min="1" max="50"
+                       value="${Number(t.reward_pct || 10)}" style="width:90px" /></div>
+              <div class="adm-field"><label>Показывать</label>
+                <input class="e-on" type="checkbox" ${t.enabled ? "checked" : ""} /></div>
+            </div>
+            <div class="adm-row">
+              <div class="adm-field" style="flex:1"><label>Подпись награды</label>
+                <input class="e-note" value="${esc(t.reward_note || "")}" /></div>
+              <div class="adm-field" style="flex:1"><label>Ссылка на товар</label>
+                <input class="e-url" value="${esc(t.landing_url || "")}" /></div>
+            </div>
+            <div class="adm-row">
+              <label class="e-upload">фото товара
+                <input type="file" class="e-file" accept="image/*" hidden /></label>
+              <button type="button" class="primary e-save">Сохранить</button>
+              <button type="button" class="ghost danger e-del">Удалить</button>
+              <span class="e-msg"></span>
+            </div>
+          </div>
+        </div>`;
+      const msg = $(".e-msg", card);
+      $(".e-save", card).addEventListener("click", async () => {
+        msg.textContent = "сохраняю…";
+        try {
+          await api("/api/admin/trends", { method: "POST", body: {
+            id: t.id, kind: "earn",
+            title: $(".e-title", card).value,
+            reward_note: $(".e-note", card).value,
+            reward_pct: Number($(".e-pct", card).value || 10),
+            landing_url: $(".e-url", card).value,
+            enabled: $(".e-on", card).checked } });
+          msg.className = "e-msg adm-ok";
+          msg.textContent = "сохранено";
+        } catch (e) { msg.className = "e-msg adm-err"; msg.textContent = e.message; }
+      });
+      $(".e-file", card).addEventListener("change", async (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        msg.className = "e-msg";
+        msg.textContent = "загружаю фото…";
+        const fd = new FormData();
+        fd.append("file", f);
+        try {
+          await api(`/api/admin/trends/${t.id}/media?kind=poster`,
+                    { method: "POST", body: fd });
+          renderEarnAdmin(pane());
+        } catch (err) { msg.className = "e-msg adm-err"; msg.textContent = err.message; }
+      });
+      $(".e-del", card).addEventListener("click", async () => {
+        if (!confirm("Удалить продукт с витрины?")) return;
+        try {
+          await api(`/api/admin/trends/${t.id}`, { method: "DELETE" });
+          renderEarnAdmin(pane());
+        } catch (e) { alert(e.message); }
+      });
+      return card;
+    };
+    rows.forEach((t) => list.appendChild(draw(t)));
+    if (!rows.length) list.innerHTML = '<p class="muted">продуктов пока нет</p>';
+    $(".e-new", box).addEventListener("click", async () => {
+      const title = prompt("Название продукта");
+      if (!title) return;
+      try {
+        await api("/api/admin/trends", { method: "POST", body: {
+          kind: "earn", title, reward_pct: 10, reward_note: "10% с заказа",
+          landing_url: "https://bioura.io", enabled: true,
+          image_prompt: "the exact product from the reference photo, held by the "
+            + "person from the second reference, lifestyle shot, natural light",
+          motion_prompt: "the person shows the product to the camera, subtle motion",
+          duration_sec: 6, aspect: "9:16" } });
+        renderEarnAdmin(pane());
+      } catch (e) { alert(e.message); }
+    });
+  }
+
   let styleKey = null;
   let styleTab = "card";
   let styleCatalog = null;
@@ -1076,7 +1186,7 @@
 
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
-    payouts: renderPayouts, ledger: renderLedger,
+    payouts: renderPayouts, ledger: renderLedger, earn: renderEarnAdmin,
     styles: (box) => renderStyles(box, "style"),
     refstyles: (box) => renderStyles(box, "reference"),
     models: renderModels, pricing: renderPricing, market: renderMarket,

@@ -610,7 +610,11 @@ const I18N = {
                 save: "Save video", style: "Video style", chars: "Channel characters" },
         episode: { one: "episode", many: "Episodes", add: "+ add episode", empty: "no episodes yet",
                    save: "Save episode", style: "Series style", chars: "Series characters" },
-        item: { one: "item", many: "Items", add: "+ add item", empty: "no items yet",
+        base: {
+      empty: "nothing here yet",
+      otherProject: "This character lives in another project — open it there",
+    },
+    item: { one: "item", many: "Items", add: "+ add item", empty: "no items yet",
                 save: "Save item", style: "Shooting style", chars: "Brand characters" },
       },
       steps: {
@@ -1136,6 +1140,10 @@ const I18N = {
       noVoices: "No voices on the ElevenLabs account yet.",
       pick: "Which voice? Enter the number:",
     },
+    base: {
+      empty: "пока пусто",
+      otherProject: "Этот герой живёт в другом проекте — открой его там",
+    },
     item: {
       title: "Item",
       newTitle: "New item",
@@ -1148,6 +1156,8 @@ const I18N = {
       photosTitle: "Item photos",
       photosHint: "they lock the shape, the cap and every letter on the label",
       upload: "upload photos",
+      byPhoto: "📷 Make an item from a photo",
+      modelQueued: "Rendering a clean item model — it will appear in the list",
       delConfirm: "Delete this item together with its frames?",
     },
     mkp: {
@@ -1196,6 +1206,10 @@ const I18N = {
       ugcNote: "An AI creator talks about your product like a real person.",
       earn: "Earn with lolq.ai",
       earnNote: "Post clips with our products — get a share of every sale.",
+      items: "Items",
+      itemsNote: "Shared library of items across all projects: photos, descriptions, models.",
+      chars: "Characters",
+      charsNote: "Shared library of characters: faces stay consistent everywhere.",
     },
     earn: {
       title: "Earn with lolq.ai",
@@ -3694,6 +3708,8 @@ const I18N = {
       photosTitle: "Фото предмета",
       photosHint: "по ним совпадут форма, крышка и каждая буква на этикетке",
       upload: "загрузить фото",
+      byPhoto: "📷 Сделать предмет по фото",
+      modelQueued: "Делаю чистую модельку предмета — появится в списке",
       delConfirm: "Удалить предмет вместе с его кадрами?",
     },
     mkp: {
@@ -3742,6 +3758,10 @@ const I18N = {
       ugcNote: "ИИ-блогер рассказывает про твой продукт как живой человек.",
       earn: "Заработок с lolq.ai",
       earnNote: "Постишь ролики с продуктами — получаешь долю с продаж.",
+      items: "Предметы",
+      itemsNote: "Общая база предметов всех проектов: фото, описание, модельки.",
+      chars: "Персонажи",
+      charsNote: "Общая база героев: лица держатся во всех проектах и режимах.",
     },
     earn: {
       title: "Заработок с lolq.ai",

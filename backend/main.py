@@ -8861,6 +8861,100 @@ async def add_track_photo(track_id: int, photo: UploadFile,
     return track_dict(track)
 
 
+def _run_item_from_photo(track_id: int, src_path: str, engine: str, cost: int) -> None:
+    """Чистая моделька предмета по живому фото: один кадр, нейтральный фон.
+    Результат ложится ФОТО предмета (kind="model") — дальше он работает
+    референсом во всех генерациях, как разворот у персонажа."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        prompt = (
+            "the exact product from the reference photo, isolated on a clean "
+            "neutral light-grey background, studio product photography, soft "
+            "even lighting, subtle contact shadow, no props, no text overlays, "
+            "the whole product in frame, every label letter and proportion "
+            "identical to the reference, square frame")
+        import asyncio
+        mediagen.reset_task()
+        res = asyncio.run(mediagen.generate_image_ex(
+            prompt, src_path, engine=engine,
+            resolution=(track.image_resolution or "").strip(), aspect="1:1"))
+        fname = _save_image(res["data"], res["mime"])
+        _reg_file(db, fname, track.project.owner_id, kind="model",
+                  project_id=track.project_id, track_id=track.id)
+        max_pos = max((p.position for p in track.photos), default=0)
+        db.add(TrackPhoto(track_id=track.id, position=max_pos + 1,
+                          filename=fname, kind="model"))
+        track.turnaround_status = ""
+        track.turnaround_note = ""
+        db.commit()
+        log.info("моделька предмета %s готова", track_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        track = db.get(Track, track_id)
+        if track:
+            track.turnaround_status = "error"
+            track.turnaround_note = _err_text(e, 200)
+            owner = (db.get(User, track.project.owner_id)
+                     if track.project.owner_id else None)
+            db.commit()
+            if owner and cost > 0:
+                _refund(db, owner, cost, f"моделька предмета {track_id}: не вышло",
+                        ref_type="track", ref_id=track_id,
+                        track_id=track_id, project_id=track.project_id)
+        log.warning("моделька предмета %s упала: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/items/from-photo")
+async def item_from_photo(photo: UploadFile, project_id: int,
+                          title: str = "", user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """«Сделать предмет по фото»: живой снимок → чистый предметный рендер,
+    сохранённый как ПРЕДМЕТ. Цена — один кадр."""
+    _guard_disk()
+    project = db.get(Project, int(project_id))
+    if not project or not _owned(user, project):
+        raise HTTPException(404, "проект не найден")
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"item_{uuid.uuid4().hex}{ext}"
+    src_path = os.path.join(UPLOAD_DIR, fname)
+    with open(src_path, "wb") as f:
+        f.write(await photo.read())
+
+    track = Track(
+        project_id=project.id,
+        position=(db.query(func.coalesce(func.max(Track.position), 0))
+                  .filter(Track.project_id == project.id).scalar() or 0) + 1,
+        title=(title or "").strip() or "Предмет",
+        lyrics="", comment="", style="", style_keys="",
+    )
+    db.add(track)
+    db.flush()
+    _reg_file(db, fname, project.owner_id, kind="photo",
+              project_id=project.id, track_id=track.id)
+    db.add(TrackPhoto(track_id=track.id, position=1, filename=fname, kind="photo"))
+
+    engine = _resolve_image_engine(user, track)
+    cost = _mockup_frame_cost(user, engine)
+    _charge(db, user, cost, f"моделька предмета «{track.title}»",
+            kind="frames", engine=engine,
+            cost_cents=_cost_cents("image", engine),
+            ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=project.id)
+    track.turnaround_status = "running"
+    track.turnaround_note = "моделька…"
+    db.commit()
+    _spawn_gen(user, _run_item_from_photo, track.id, src_path, engine, cost,
+               kind="frames")
+    return {"ok": True, "charged": cost, "track_id": track.id}
+
+
 @app.delete("/api/track-photos/{photo_id}")
 def del_track_photo(photo_id: int, user: User = Depends(current_user),
                     db: Session = Depends(db_session)):

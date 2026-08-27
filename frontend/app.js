@@ -5053,6 +5053,12 @@ function applyMockupLayout(on) {
       b.className = "mkp-add-item primary";
       b.textContent = t("item.add");
       b.addEventListener("click", () => addItemFlow());
+      const byPhoto = document.createElement("button");
+      byPhoto.type = "button";
+      byPhoto.className = "mkp-add-item ghost";
+      byPhoto.textContent = t("item.byPhoto");
+      byPhoto.addEventListener("click", () => itemFromPhotoFlow());
+      goods.prepend(byPhoto);
       goods.prepend(b);
     }
   } else if (set) {
@@ -8380,6 +8386,44 @@ async function openItemModal(trackId) {
     });
   });
 }
+
+/* «Сделать предмет по фото»: живой снимок → чистый предметный рендер на
+   нейтральном фоне, сохранённый как ПРЕДМЕТ. Дальше он работает референсом
+   во всех генерациях (кадры, мокапы, атрибуты персонажей). */
+function itemFromPhotoFlow(cost) {
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/jpeg,image/png,image/webp";
+  inp.addEventListener("change", async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("photo", f);
+    mkToast(t("item.modelQueued"));
+    try {
+      await api(`/api/items/from-photo?project_id=${activeProjectId}`,
+                { method: "POST", body: fd });
+    } catch (e) { fail(e); return; }
+    mkItems = null; mkProducts = null;
+    schedulePoll();
+    await loadProject();
+  });
+  inp.click();
+  return cost;
+}
+
+// Мосты для общих баз из маркетинг-хаба (sections.js): правка сущности
+// живёт в студии, второго редактора не заводим.
+window.qlolOpenItem = (trackId) => {
+  closeModal();
+  openItemModal(trackId);
+};
+window.qlolOpenChar = (charId) => {
+  closeModal();
+  const c = (project.characters || []).find((x) => x.id === charId);
+  if (c) openCharacterModal(c);
+  else mkToast(t("base.otherProject"));
+};
 
 /* «+ добавить предмет»: заводим объект с именем и сразу открываем досье —
    ровно как у персонажа, без формы трека со стилями клипа. */

@@ -1109,3 +1109,69 @@
   .topbar.has-sections .tb-sections #chat-btn,
   .topbar.has-sections .tb-sections #music-btn { font-size: 9.5px; padding: 3px 10px; }
 }
+
+/* ─────────── «Заработок»: товарные карточки, а не masonry-плитки ─────────── */
+.earn-grid {
+  display: grid; gap: 12px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+.earn-card {
+  position: relative; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 22px; background: var(--card);
+  box-shadow: 0 4px 16px rgba(var(--ink-rgb), .08);
+}
+.earn-shot {
+  position: relative; height: 200px; flex: none; background: var(--surface-2);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.earn-shot img, .earn-shot video { width: 100%; height: 100%; object-fit: cover; }
+.earn-ph { font-size: 2.4rem; opacity: .5; }
+.earn-reward {
+  position: absolute; left: 10px; top: 10px; z-index: 2;
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800;
+  color: var(--on-fire); background: var(--fire-ink);
+}
+.earn-body { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 14px; }
+.earn-name { font-size: 15px; line-height: 1.2; }
+.earn-meta { font-size: 12px; }
+.earn-style {
+  width: 100%; padding: 7px 11px; font: inherit; font-size: 13px;
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 12px;
+  background: var(--inset); color: var(--text);
+}
+.earn-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.earn-acts .earn-go {
+  flex: 1 1 auto; justify-content: center; cursor: pointer; text-align: center;
+  padding: 9px 12px; border-radius: 12px; font-size: 12.5px; font-weight: 700;
+  color: var(--on-fire); background: var(--fire-ink);
+  border: 1px solid rgba(var(--ink-rgb), .12);
+}
+.earn-acts .earn-link { flex: 0 0 auto; font-size: 12px; padding: 8px 12px; }
+@media (max-width: 560px) {
+  .earn-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .earn-shot { height: 150px; }
+}
+
+/* ─────────── Общие базы (предметы / персонажи) из маркетинга ─────────── */
+.base-search {
+  width: 100%; margin-bottom: 12px; padding: 9px 13px; font: inherit;
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 14px;
+  background: var(--inset); color: var(--text);
+}
+.base-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+.base-card {
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 18px; background: var(--card);
+  cursor: pointer; text-align: left;
+}
+.base-card img, .base-card .base-ph {
+  width: 100%; height: 120px; object-fit: cover; display: block;
+}
+.base-card .base-ph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem; background: var(--surface-2);
+}
+.base-cap { padding: 8px 10px; font-size: 12.5px; font-weight: 700; }
