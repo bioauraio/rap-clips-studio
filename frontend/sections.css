@@ -108,15 +108,16 @@
 .topbar.has-sections > .tb-user { order: 3; }
 .topbar.has-sections > .tb-modeline { order: 4; flex: 1 1 100%; }
 
-/* Разделитель между разделами и личным блоком — волосяная линия, не рамка. */
-.topbar.has-sections > .tb-user::before {
-  content: "";
-  align-self: center;
-  width: 1px;
-  height: 18px;
-  margin-right: 4px;
-  background: rgba(45, 33, 26, .16);
+/* Разделитель-линию перед личным блоком УБРАЛИ: рядом со стеклянными
+   капсулами она читалась не как разделитель, а как обрезок чужой рамки —
+   те самые «линии-артефакты» со скрина владельца. Капсулы разделяют себя
+   сами. Туда же — рамка второго ряда у .tb-project (style.css оставляет ей
+   border-top + padding-top от старой двухэтажной шапки). */
+.topbar.has-sections > .tb-user::before { content: none; }
+.topbar.has-sections .tb-project {
+  border-top: none; padding-top: 0; margin: 0;
 }
+.topbar.has-sections > .tb-modeline { padding: 0; margin: 0; border: none; }
 
 
 /* ─────── СЕГМЕНТ-ТУМБЛЕР РАЗДЕЛОВ: капсула с ездящей подложкой ─────── */
@@ -125,6 +126,8 @@
    светлая кромка сверху (внутренний блик) дают ту самую выпуклость. */
 .topbar.has-sections .tb-sections {
   position: relative;
+  align-self: center;
+  height: var(--cap-h);
   padding: 4px;
   gap: 1px;
   border-radius: 999px;
@@ -149,6 +152,10 @@
    бейдж токенов своей заливки, шестерёнка отдельной кнопкой. Приводим всё
    к одному: высота 34, стеклянный фон, волосяная рамка, один радиус. */
 .topbar.has-sections .tb-user { gap: 8px; align-items: center; flex-wrap: nowrap; }
+/* ЕДИНЫЙ РОСТ ВСЕЙ СТРОКИ. Все капсулы — 40px, как пилюля навигации:
+   строка из блоков трёх разных высот читалась лесенкой (скрин владельца
+   27.08). Ось задаёт align-items: center на самой шапке. */
+.topbar.has-sections { --cap-h: 40px; align-items: center; }
 .topbar.has-sections .tb-user > .theme-switch,
 .topbar.has-sections .tb-user > .lang-switch,
 .topbar.has-sections .tb-user > .points-badge,
@@ -157,7 +164,8 @@
 .topbar.has-sections .tb-modeline .project-select,
 .topbar.has-sections .tb-modeline .tb-new,
 .topbar.has-sections .tb-modeline .tb-copy {
-  height: 34px; min-height: 34px; padding: 0 12px;
+  height: var(--cap-h); min-height: var(--cap-h); padding: 0 12px;
+  margin: 0; align-self: center;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 999px; corner-shape: squircle;
   border: 1px solid rgba(var(--ink-rgb), .12);
@@ -170,7 +178,7 @@
 .topbar.has-sections .tb-user > .lang-switch { padding: 0 3px; gap: 1px; }
 .topbar.has-sections .tb-user .theme-switch button,
 .topbar.has-sections .tb-user .lang-switch button {
-  height: 26px; border: none; box-shadow: none; background: transparent;
+  height: calc(var(--cap-h) - 10px); border: none; box-shadow: none; background: transparent;
   border-radius: 999px; color: var(--ink-muted);
 }
 /* Активный язык и тема — мягкая подложка, а НЕ чёрная/белая обводка. */
@@ -182,7 +190,7 @@
 }
 .topbar.has-sections .tb-user > .points-badge { padding-left: 30px; }
 .topbar.has-sections .tb-modeline .tb-new,
-.topbar.has-sections .tb-modeline .tb-copy { width: 34px; padding: 0; }
+.topbar.has-sections .tb-modeline .tb-copy { width: var(--cap-h); padding: 0; }
 
 /* Меню профиля: «выйти» и «админка» ушли с правого края шапки сюда. */
 .tb-user { position: relative; }
@@ -312,31 +320,48 @@
     background: var(--card-solid);
   }
   .topbar.has-sections > .tb-sections {
-    position: fixed; left: 8px; right: 8px; bottom: 8px; top: auto;
-    z-index: 60; order: 0; flex: none; width: auto; max-width: none;
-    justify-content: space-around; gap: 0; padding: 6px 4px;
-    border-radius: 24px; corner-shape: squircle;
+    position: fixed; left: 50%; right: auto; top: auto;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    width: max-content; max-width: calc(100vw - 24px);
+    z-index: 60; order: 0; flex: none; height: auto;
+    justify-content: center; gap: 0; padding: 5px 6px;
+    border-radius: 22px; corner-shape: squircle;
     background: color-mix(in srgb, var(--card-solid) 82%, transparent);
     backdrop-filter: blur(22px) saturate(1.2);
     -webkit-backdrop-filter: blur(22px) saturate(1.2);
     border: 1px solid rgba(var(--ink-rgb), .12);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35),
-                0 -6px 26px rgba(var(--ink-rgb), .16);
+                0 8px 24px rgba(var(--ink-rgb), .14);
     overflow-x: auto;
+    scrollbar-width: none;
   }
+  .topbar.has-sections > .tb-sections::-webkit-scrollbar { display: none; }
   .topbar.has-sections .tb-sec {
-    flex-direction: column; gap: 2px; height: auto; padding: 6px 8px;
-    font-size: 9.5px; font-weight: 700; line-height: 1.1;
+    flex-direction: column; gap: 2px; height: auto; padding: 5px 9px;
+    font-size: 9px; font-weight: 700; line-height: 1.1;
   }
   .topbar.has-sections .tb-sec[data-ico]::before {
     content: attr(data-ico); font-size: 17px; margin: 0;
   }
   /* Подложка ездит и здесь — она считается по offsetLeft/Top кнопки. */
   #app { padding-bottom: 86px; }
-  /* Шапка на телефоне минимальна: марка, тема, токены, ава. Служебное —
-     админка, кабинет, выход — собрано ПОД АВОЙ, в меню профиля: три кнопки
-     в строке шириной 375px не помещаются никак, а нужны они редко. */
-  .topbar.has-sections > .tb-user { order: 2; margin-left: auto; }
+  /* Шапка на телефоне — ОДНА строка: [лого][режим][проект][+] … [тема][ава].
+     Вторая строка исчезает: между логотипом и правым блоком было пусто,
+     а режим и проект жили этажом ниже. Копия проекта (⧉) на мобилке
+     скрыта совсем — редкое действие не заслуживает места в строке. */
+  .topbar.has-sections { flex-wrap: nowrap; --cap-h: 36px; gap: 6px; }
+  .topbar.has-sections > .tb-modeline {
+    order: 2; flex: 1 1 auto; min-width: 0; margin: 0;
+    display: flex; justify-content: flex-start;
+  }
+  .topbar.has-sections .tb-project { gap: 6px; min-width: 0; }
+  .topbar.has-sections .tb-copy { display: none; }
+  .topbar.has-sections .project-select {
+    max-width: 34vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  .topbar.has-sections .tb-user > .points-badge { display: none; }
+  .topbar.has-sections > .tb-user { order: 3; margin-left: auto; flex: none; }
   .topbar.has-sections #admin-btn { display: none; }
   .topbar.has-sections .profile-btn .profile-cap { display: none; }
   .topbar.has-sections .profile-btn {
