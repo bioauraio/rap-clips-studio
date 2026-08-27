@@ -5277,14 +5277,9 @@ def _generate_layer_preview(db: Session, layer: str, card: dict,
     return fname
 
 
-@app.post("/api/admin/prompts/{layer}/previews")
-def admin_layer_previews_batch(layer: str, user: User = Depends(current_user),
-                               db: Session = Depends(db_session)):
-    """Догенерить превью ВСЕМ карточкам слоя без превью (бесплатный шлюз)."""
-    if not user.is_admin:
-        raise HTTPException(403, "только для админа")
-    if layer not in prompts_library.LAYERS:
-        raise HTTPException(404, "нет такого слоя")
+def generate_layer_previews(db: Session, layer: str) -> dict:
+    """Догенерить превью ВСЕМ карточкам слоя без превью (бесплатный шлюз).
+    Зовётся из админ-роута и из CLI."""
     done, failed = [], []
     previews = _layer_previews()
     for card in prompts_library.layer_rows(layer):
@@ -5301,6 +5296,16 @@ def admin_layer_previews_batch(layer: str, user: User = Depends(current_user),
             failed.append(f"{key}: {_err_text(e, 120)}")
             log.warning("превью %s/%s не вышло: %s", layer, key, e)
     return {"done": done, "failed": failed}
+
+
+@app.post("/api/admin/prompts/{layer}/previews")
+def admin_layer_previews_batch(layer: str, user: User = Depends(current_user),
+                               db: Session = Depends(db_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    return generate_layer_previews(db, layer)
 
 
 @app.post("/api/admin/prompts/{layer}/{key}/preview-generate")
@@ -5328,18 +5333,15 @@ def admin_layer_preview_generate(layer: str, key: str,
     return {"ok": True, "preview_url": f"/api/media/{fname}"}
 
 
-@app.post("/api/admin/cameras/seed-refs")
-def admin_camera_seed_refs(user: User = Depends(current_user),
-                           db: Session = Depends(db_session)):
+def seed_camera_refs(db: Session) -> dict:
     """Разложить кадры Тони из camera_refs/ по пресетам как превью-галереи.
 
     Файлы КОПИРУЮТСЯ в корень хранилища (подпапки /api/media не отдаёт) и
     регистрируются; исходники в camera_refs/ остаются нетронутыми. Повторный
-    запуск идемпотентен: уже назначенный пресет не трогаем."""
-    if not user.is_admin:
-        raise HTTPException(403, "только для админа")
+    запуск идемпотентен: уже назначенный пресет не трогаем. Зовётся из
+    админ-роута и из CLI (docker exec … python3 -c)."""
     if not os.path.isdir(CAMERA_REFS_DIR):
-        raise HTTPException(404, f"нет папки {CAMERA_REFS_DIR}")
+        raise RuntimeError(f"нет папки {CAMERA_REFS_DIR}")
     previews = _layer_previews()
     out, unmatched = {}, []
     files = sorted(os.listdir(CAMERA_REFS_DIR))
@@ -5391,6 +5393,17 @@ def admin_camera_seed_refs(user: User = Depends(current_user),
         seeded[f"motions:{mkey}"] = 1
     _layer_previews_save(previews)
     return {"ok": True, "seeded": seeded, "unmatched": unmatched}
+
+
+@app.post("/api/admin/cameras/seed-refs")
+def admin_camera_seed_refs(user: User = Depends(current_user),
+                           db: Session = Depends(db_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    try:
+        return seed_camera_refs(db)
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.post("/api/admin/prompts/{layer}/{key}/preview-main")
