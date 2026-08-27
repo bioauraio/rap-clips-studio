@@ -3028,6 +3028,10 @@ async def me(request: Request, db: Session = Depends(db_session)):
 def attribute_dict(a: CharacterAttribute) -> dict:
     return {
         "id": a.id, "name": a.name, "description": a.description,
+        # Привязка к ПРЕДМЕТУ (треку мокап-проекта): если она есть, фото
+        # предмета показываются в атрибуте и уходят в кадр — заводить вещи
+        # дважды не нужно.
+        "item_track_id": int(getattr(a, "item_track_id", 0) or 0),
         "photos": [
             {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in a.photos
         ],
@@ -6499,6 +6503,21 @@ def _scene_selected_attributes(scene: Scene, chars: list[Character]) -> list[Cha
     return [a for c in chars for a in c.attributes if a.id in ids]
 
 
+def _attr_item_photo(a: CharacterAttribute) -> str | None:
+    """Фото ПРЕДМЕТА, привязанного к атрибуту (см. CharacterAttribute
+    .item_track_id). Сессию берём у самого атрибута: функция зовётся из
+    цепочки референсов, куда db не протаскивается."""
+    tid = int(getattr(a, "item_track_id", 0) or 0)
+    if not tid:
+        return None
+    sess = object_session(a)
+    tr = sess.get(Track, tid) if sess else None
+    if not tr:
+        return None
+    paths = _track_photo_paths(tr, 1)
+    return paths[0] if paths else None
+
+
 def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
     """Референс-АТРИБУТ: если текст сцены упоминает фирменную вещь персонажа
     (шляпу, квадрик, тачку) — кадр строится вокруг предмета, и референсом
@@ -6506,6 +6525,11 @@ def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
     ЭТОЙ сцены; совпадение — регистронезависимое вхождение имени атрибута."""
     # Явно выбранные вещи имеют приоритет над поиском имени в тексте.
     for a in _scene_selected_attributes(scene, chars):
+        # Атрибут привязан к ПРЕДМЕТУ — берём фото предмета: там ракурсов
+        # больше, и вещь в кадре совпадает с той, что снята в мокапах.
+        item = _attr_item_photo(a)
+        if item:
+            return item
         for ph in a.photos:
             path = os.path.join(UPLOAD_DIR, ph.filename)
             if os.path.exists(path):
@@ -6521,6 +6545,9 @@ def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
             name = a.name.strip().lower()
             if not name or name not in haystack:
                 continue
+            item = _attr_item_photo(a)
+            if item:
+                return item
             # Первое фото атрибута — каноническая моделька предмета.
             for ph in a.photos:
                 path = os.path.join(UPLOAD_DIR, ph.filename)
@@ -9223,6 +9250,44 @@ def generate_mockup_previews(ids: list[str] | None = None,
         db.close()
 
 
+def _own_item_id(db: Session, user: User, raw) -> int:
+    """Проверка «предмет мой»: id трека владельца или 0. Чужой id молча в
+    ноль не превращаем — это была бы тихая потеря привязки."""
+    tid = int(raw or 0)
+    if not tid:
+        return 0
+    tr = db.get(Track, tid)
+    if not tr or tr.project.owner_id != user.id:
+        raise HTTPException(404, "нет такого предмета")
+    return tid
+
+
+def _item_dict(tr: Track) -> dict:
+    photos = sorted(tr.photos, key=lambda x: (x.position, x.id))
+    return {
+        "id": tr.id, "track_id": tr.id, "project_id": tr.project_id,
+        "title": tr.title or f"#{tr.id}",
+        "name": tr.title or f"#{tr.id}",
+        "description": tr.comment or "",
+        "photos": [{"id": p.id, "url": f"/api/media/{p.filename}",
+                    "kind": p.kind or "photo"} for p in photos],
+        "url": f"/api/media/{photos[0].filename}" if photos else "",
+        "turnaround_urls": [f"/api/media/{f}" for f in _turnaround_files(tr)],
+    }
+
+
+@app.get("/api/items/all")
+def items_all(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """ОБЩАЯ БАЗА ПРЕДМЕТОВ: все треки мокап-проектов владельца. Предмет
+    заводится один раз и виден отовсюду — из маркетинг-бара, из атрибутов
+    персонажа, из другого проекта."""
+    rows = (db.query(Track).join(Project, Project.id == Track.project_id)
+            .filter(Project.owner_id == user.id).order_by(Track.id.desc()).all())
+    out = [_item_dict(tr) for tr in rows
+           if formats.mode_of_kind(tr.project.kind)["id"] == "mockup"]
+    return {"items": out}
+
+
 @app.get("/api/characters/all")
 def characters_all(user: User = Depends(current_user),
                    db: Session = Depends(db_session)):
@@ -9645,6 +9710,7 @@ async def create_attribute(char_id: int, request: Request, user: User = Depends(
         character_id=ch.id, position=max_pos + 1,
         name=str(body.get("name") or "Без имени"),
         description=str(body.get("description") or ""),
+        item_track_id=_own_item_id(db, user, body.get("item_track_id")),
     )
     db.add(attr)
     db.commit()
@@ -9660,6 +9726,8 @@ async def update_attribute(attr_id: int, request: Request, user: User = Depends(
         attr.name = str(body["name"])
     if "description" in body:
         attr.description = str(body["description"])
+    if "item_track_id" in body:
+        attr.item_track_id = _own_item_id(db, user, body["item_track_id"])
     db.commit()
     return attribute_dict(attr)
 

@@ -3228,7 +3228,11 @@ async function loadProject() {
 function renderProjectBar() {
   const sel = $("#project-select");
   sel.innerHTML = "";
-  for (const p of projects) {
+  // ПРОЕКТЫ РАЗНЫХ РЕЖИМОВ — РАЗНЫЕ СПИСКИ. Одним списком клипы и мокапы
+  // читались как один проект с двумя лицами: человек выбирал «товар» и
+  // попадал в раскадровку песни. Группируем через optgroup, свой режим —
+  // первым, остальные ниже.
+  const mkOpt = (p) => {
     const o = document.createElement("option");
     o.value = p.id;
     o.textContent = p.name;
@@ -3237,8 +3241,24 @@ function renderProjectBar() {
     o.dataset.kind = p.kind || "album";
     o.dataset.mode = p.mode || "clip";
     if (p.id === activeProjectId) o.selected = true;
-    sel.appendChild(o);
-  }
+    return o;
+  };
+  const nowMode = (project && project.mode) || "clip";
+  const byMode = new Map();
+  projects.forEach((p) => {
+    const id = p.mode || "clip";
+    if (!byMode.has(id)) byMode.set(id, []);
+    byMode.get(id).push(p);
+  });
+  const order = [nowMode, ...[...byMode.keys()].filter((x) => x !== nowMode)];
+  order.forEach((id) => {
+    const rows = byMode.get(id);
+    if (!rows || !rows.length) return;
+    const g = document.createElement("optgroup");
+    g.label = t(`modes.${id}.title`) || id;
+    rows.forEach((p) => g.appendChild(mkOpt(p)));
+    sel.appendChild(g);
+  });
   $("#project-kind").textContent = kindLabel(project.kind);
   // Режим — не второй вид проекта, а его прочтение: album/single читаются как
   // «rap clips». Раньше здесь красился статичный бейдж; теперь тот же узел —
@@ -3770,7 +3790,10 @@ function applyMode() {
   const charsTitle = $("[data-i18n='chars.title']");
   if (charsTitle) charsTitle.textContent = objT("chars", m) || t("chars.title");
   const addPanel = $("#add-track-panel");
-  addPanel.classList.toggle("hidden", !canAddObject());
+  // В МОКАПАХ ЭТОЙ ФОРМЫ НЕТ. Форма добавления трека несёт стиль клипа,
+  // текст песни и аудио — у предмета нет ничего из этого. Там своя кнопка
+  // «+ добавить предмет» (addItemFlow), как у персонажа.
+  addPanel.classList.toggle("hidden", !canAddObject() || m.id === "mockup");
   const summary = $("#add-track-panel .add-track > summary");
   if (summary) summary.textContent = objT("add", m);
   // Лирика и аудио — свойства клипа: у ролика реплики пишет генератор, у
@@ -4906,6 +4929,20 @@ function msPhotos(card, tr, mode) {
     await loadProject();
   });
   msTurnaround(card, tr);
+  // В мокапах имя объекта — вход в досье предмета (фото, описание), а не
+  // просто поле ввода: заводили и правили его тем же интерфейсом.
+  if (mode.id === "mockup") {
+    const openBtn = $(".ms-open-item", card) || document.createElement("button");
+    if (!openBtn.dataset.bound) {
+      openBtn.type = "button";
+      openBtn.className = "ms-open-item ghost";
+      openBtn.textContent = t("item.open");
+      openBtn.dataset.bound = "1";
+      openBtn.addEventListener("click", () => openItemModal(tr.id));
+      const holder = $(".ms-photos", card);
+      if (holder) holder.prepend(openBtn);
+    }
+  }
 }
 
 /* 3D-облёт товара: 8 ракурсов по кругу, листаются drag'ом по горизонтали —
@@ -5008,6 +5045,16 @@ function applyMockupLayout(on) {
       if (body) body.appendChild(el);
       el.classList.add("mkp-inset");
     });
+    // «+ добавить предмет» — своя кнопка рядом со списком предметов.
+    const goods = $('[data-body="goods"]', set);
+    if (goods && !$(".mkp-add-item", goods)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mkp-add-item primary";
+      b.textContent = t("item.add");
+      b.addEventListener("click", () => addItemFlow());
+      goods.prepend(b);
+    }
   } else if (set) {
     pairs.forEach(([sel]) => {
       const el = $(sel);
@@ -8167,6 +8214,15 @@ function renderAttribute(a, onDone = null) {
   name.className = "attr-name";
   name.textContent = a.name;
   name.title = (a.description ? a.description + " — " : "") + t("character.attrEditTitle");
+  if (a.item_track_id) {
+    // Привязка к предмету видна прямо на чипе: иначе «почему в кадре другая
+    // вещь» выясняется только по картинке.
+    const link = document.createElement("span");
+    link.className = "attr-item-mark";
+    link.textContent = "📦";
+    link.title = t("character.attrItemMark");
+    name.appendChild(link);
+  }
   name.addEventListener("click", () => openAttributeModal(null, a, onDone));
   chip.appendChild(name);
 
@@ -8226,6 +8282,150 @@ function renderAttribute(a, onDone = null) {
 // Одна модалка на создание (charId) и редактирование (attr) атрибута.
 // onDone — куда вернуться после сохранения: из досье персонажа это оно само,
 // иначе просто закрытие модалки.
+/* ─────────── ПРЕДМЕТ: досье как у персонажа ───────────
+   Предмет физически остаётся треком мокап-проекта (в нём живут фото, сцены
+   и облёт), но заводится и правится он как персонаж: имя, описание,
+   галерея фото. Форма добавления ТРЕКА со стилями клипа здесь была прямым
+   багом — у предмета нет ни стиля клипа, ни текста песни. */
+let mkItems = null;   // общая база предметов (все проекты владельца)
+
+async function loadItems(force = false) {
+  if (mkItems && !force) return mkItems;
+  try { mkItems = (await api("/api/items/all")).items || []; }
+  catch (e) { mkItems = []; }
+  return mkItems;
+}
+
+async function openItemModal(trackId) {
+  const items = await loadItems(true);
+  const it = items.find((x) => x.track_id === trackId);
+  if (!it) return;
+  openModal(it.title || t("item.title"), (body) => {
+    body.dataset.itemId = String(trackId);
+    body.innerHTML = `
+      <div class="char-edit item-edit">
+        <div class="char-head">
+          <input class="i-name" value="${escHtml(it.title || "")}"
+                 placeholder="${escHtml(t("item.namePh"))}" />
+          <button class="i-del ghost danger" title="${escHtml(t("common.del"))}">✕</button>
+        </div>
+        <label>${escHtml(t("item.descLabel"))}</label>
+        <textarea class="i-desc" rows="3">${escHtml(it.description || "")}</textarea>
+        <div class="char-row-head">
+          <span class="char-row-title">${escHtml(t("item.photosTitle"))}</span>
+          <span class="char-row-hint muted">${escHtml(t("item.photosHint"))}</span>
+        </div>
+        <div class="char-photos i-photos"></div>
+        <div class="row">
+          <button class="i-save primary">${escHtml(t("common.save"))}</button>
+          <label class="c-upload-label">
+            <input type="file" class="i-photo-input hidden" accept="image/*" multiple />
+            <span class="c-upload-btn">${escHtml(t("item.upload"))}</span>
+          </label>
+          <span class="i-msg status"></span>
+        </div>
+      </div>`;
+    const photos = $(".i-photos", body);
+    (it.photos || []).forEach((ph) => {
+      const wrap = document.createElement("div");
+      wrap.className = "char-photo";
+      const img = document.createElement("img");
+      img.src = ph.url + `?t=${ph.id}`;
+      img.loading = "lazy";
+      wrap.appendChild(img);
+      const del = document.createElement("button");
+      del.className = "ghost danger char-photo-del";
+      del.textContent = "✕";
+      del.addEventListener("click", async () => {
+        try { await api(`/api/track-photos/${ph.id}`, { method: "DELETE" }); }
+        catch (e) { fail(e); return; }
+        mkItems = null; mkProducts = null;
+        await loadProject();
+        openItemModal(trackId);
+      });
+      wrap.appendChild(del);
+      photos.appendChild(wrap);
+    });
+    $(".i-photo-input", body).addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      $(".i-msg", body).textContent = t("common.loading");
+      for (const f of files) {
+        const fd = new FormData();
+        fd.append("photo", f);
+        try { await api(`/api/tracks/${trackId}/photos`, { method: "POST", body: fd }); }
+        catch (err) { fail(err); break; }
+      }
+      mkItems = null; mkProducts = null;
+      await loadProject();
+      openItemModal(trackId);
+    });
+    $(".i-save", body).addEventListener("click", async () => {
+      try {
+        await api(`/api/tracks/${trackId}`, { method: "PATCH", body: {
+          title: $(".i-name", body).value.trim(),
+          comment: $(".i-desc", body).value } });
+      } catch (e) { fail(e); return; }
+      mkItems = null; mkProducts = null;
+      closeModal();
+      await loadProject();
+    });
+    $(".i-del", body).addEventListener("click", async () => {
+      if (!confirm(t("item.delConfirm"))) return;
+      try { await api(`/api/tracks/${trackId}`, { method: "DELETE" }); }
+      catch (e) { fail(e); return; }
+      mkItems = null; mkProducts = null;
+      closeModal();
+      await loadProject();
+    });
+  });
+}
+
+/* «+ добавить предмет»: заводим объект с именем и сразу открываем досье —
+   ровно как у персонажа, без формы трека со стилями клипа. */
+async function addItemFlow() {
+  openModal(t("item.newTitle"), (body) => {
+    body.innerHTML = `
+      <label>${escHtml(t("item.nameLabel"))}</label>
+      <input class="ni-name" placeholder="${escHtml(t("item.namePh"))}" />
+      <div class="row">
+        <button type="button" class="primary ni-save">${escHtml(t("common.create"))}</button>
+        <span class="ni-error error hidden"></span>
+      </div>`;
+    const nameEl = $(".ni-name", body);
+    const errEl = $(".ni-error", body);
+    const btn = $(".ni-save", body);
+    const save = async () => {
+      const name = nameEl.value.trim();
+      if (!name) {
+        errEl.textContent = t("item.nameRequired");
+        errEl.classList.remove("hidden");
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append("title", name);
+        fd.append("style_keys", "");
+        fd.append("lyrics", "");
+        fd.append("comment", "");
+        const tr = await api(`/api/tracks?project_id=${activeProjectId}`,
+                             { method: "POST", body: fd });
+        mkItems = null; mkProducts = null;
+        await loadProject();
+        openItemModal(tr.id);
+      } catch (e) {
+        errEl.textContent = errText(e);
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+      }
+    };
+    btn.addEventListener("click", save);
+    nameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    nameEl.focus();
+  });
+}
+
 function openAttributeModal(charId, attr = null, onDone = null) {
   openModal(t(attr ? "modal.attribute.editTitle" : "modal.attribute.newTitle"), (body) => {
     body.innerHTML = `
@@ -8233,6 +8433,9 @@ function openAttributeModal(charId, attr = null, onDone = null) {
       <input class="at-name" placeholder="${escHtml(t("modal.attribute.namePh"))}" />
       <label>${escHtml(t("modal.attribute.descLabel"))}</label>
       <textarea class="at-desc" rows="2"></textarea>
+      <label>${escHtml(t("modal.attribute.itemLabel"))}</label>
+      <select class="at-item"><option value="0">${escHtml(t("modal.attribute.itemNone"))}</option></select>
+      <p class="muted" style="margin:4px 0 0;font-size:12px">${escHtml(t("modal.attribute.itemHint"))}</p>
       <div class="row">
         <button type="button" class="primary at-save">${escHtml(t(attr ? "common.save" : "common.create"))}</button>
         <span class="at-error error hidden"></span>
@@ -8242,6 +8445,18 @@ function openAttributeModal(charId, attr = null, onDone = null) {
     if (attr) { nameInput.value = attr.name; descInput.value = attr.description || ""; }
     const errEl = $(".at-error", body);
     const saveBtn = $(".at-save", body);
+    // Общая база предметов: вещь заводится один раз и цепляется к любому
+    // герою в любом проекте.
+    const itemSel = $(".at-item", body);
+    loadItems().then((items) => {
+      items.forEach((x) => {
+        const o = document.createElement("option");
+        o.value = String(x.track_id);
+        o.textContent = x.title + (x.photos && x.photos.length ? ` · ${x.photos.length}📷` : "");
+        itemSel.appendChild(o);
+      });
+      if (attr && attr.item_track_id) itemSel.value = String(attr.item_track_id);
+    });
     const save = async () => {
       const name = nameInput.value.trim();
       if (!name) {
@@ -8251,7 +8466,8 @@ function openAttributeModal(charId, attr = null, onDone = null) {
       }
       saveBtn.disabled = true;
       try {
-        const payload = { name, description: descInput.value.trim() };
+        const payload = { name, description: descInput.value.trim(),
+                          item_track_id: Number(itemSel.value || 0) };
         if (attr) await api(`/api/attributes/${attr.id}`, { method: "PATCH", body: payload });
         else await api(`/api/characters/${charId}/attributes`, { method: "POST", body: payload });
         if (onDone) { await onDone(); } else { closeModal(); await loadProject(); }

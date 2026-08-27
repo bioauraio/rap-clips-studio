@@ -386,6 +386,12 @@ class CharacterAttribute(Base):
     position = Column(Integer, nullable=False, default=0)
     name = Column(String, nullable=False, default="")
     description = Column(Text, nullable=False, default="")
+    # ССЫЛКА НА ПРЕДМЕТ (трек мокап-проекта). Атрибут и предмет — одна и та же
+    # вещь с двух сторон: у персонажа она «фирменная вещь», в мокапах —
+    # объект съёмки. Связав их, кадр берёт фото ПРЕДМЕТА (их там ракурсами
+    # больше), а не редкие фото атрибута, и герой с вещью совпадают всегда.
+    # 0 = самостоятельный атрибут, как было раньше.
+    item_track_id = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
