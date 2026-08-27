@@ -5288,6 +5288,7 @@ async function renderMockupStudio() {
     });
   }
   msMarketingStudio(box, tr, mode);
+  mkpStageNav();
   // «Мои генерации»: кадры всех товаров проекта одной masonry-галереей.
   const gal = $("#mkp-gallery");
   if (!gal) return;
@@ -5311,10 +5312,23 @@ async function renderMockupStudio() {
       cell.addEventListener("click", () => openMkpViewer(sc));
     } else if (sc.image_status === "error") {
       cell.classList.add("err");
-      cell.innerHTML = `<span class="mkp-ph">⚠</span><i>${escHtml(t("mkp.failed"))}</i>`;
-      cell.addEventListener("click", async () => {
-        if (!confirm(t("scene.delConfirm"))) return;
-        try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
+      // Клик по упавшей карточке ПОВТОРЯЕТ генерацию — промпт у сцены уже
+      // есть. Удаление — маленьким крестиком, а не главным жестом.
+      cell.innerHTML = `<span class="mkp-ph">⚠</span>
+        <i>${escHtml(t("mkp.failed"))} · ${escHtml(LANG === "ru" ? "повторить" : "retry")}</i>
+        <span class="mkp-del" title="${escHtml(t("common.delTitle"))}">✕</span>`;
+      cell.addEventListener("click", async (ev) => {
+        if (ev.target.closest(".mkp-del")) {
+          if (!confirm(t("scene.delConfirm"))) return;
+          try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
+          await loadProject();
+          return;
+        }
+        cell.classList.remove("err");
+        cell.classList.add("busy");
+        try { await api(`/api/scenes/${sc.id}/generate-frames`, { method: "POST" }); }
+        catch (e) { fail(e); }
+        schedulePoll();
         await loadProject();
       });
     } else {
@@ -5322,6 +5336,45 @@ async function renderMockupStudio() {
       cell.innerHTML = `<span class="mkp-ph">✨</span><i>${escHtml(t("status.running"))}</i>`;
     }
     gal.appendChild(cell);
+  });
+}
+
+/* Левая вертикальная панель (#stage-jump) в режиме мокапов: клиповые этапы
+   «Настройка/Раскадровка/Анимация/Сборка» здесь чужие. Тот же узел и тот же
+   стиль, но пункты — блоки СТРАНИЦЫ МОКАПОВ, якорями-скроллами. Принцип
+   владельца: у каждого режима своя навигация, чужие этапы не показываем. */
+function mkpStageNav() {
+  const jump = document.querySelector("#stage-jump");
+  if (!jump || jump.dataset.kind === "mockup") return;
+  jump.dataset.kind = "mockup";
+  jump.dataset.for = "";
+  jump.innerHTML = "";
+  const items = [
+    [LANG === "ru" ? "Продукт" : "Product",
+      () => {
+        const d = document.querySelector('#mockup-settings [data-set="goods"]');
+        if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      }],
+    [LANG === "ru" ? "Шаблоны" : "Templates",
+      () => { const el = $(".mk-tpl-grid"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
+    [LANG === "ru" ? "Мои генерации" : "My renders",
+      () => { const el = $("#mkp-gallery"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
+    [LANG === "ru" ? "Настройки" : "Settings",
+      () => { const el = $("#mockup-settings"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
+  ];
+  items.forEach(([cap, goTo], i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "stage-tab";
+    const num = document.createElement("span");
+    num.className = "st-num";
+    num.textContent = String(i + 1);
+    b.append(num, document.createTextNode(cap));
+    b.addEventListener("click", () => {
+      $$(".stage-tab", jump).forEach((el) => el.classList.toggle("on", el === b));
+      goTo();
+    });
+    jump.appendChild(b);
   });
 }
 
@@ -5521,15 +5574,38 @@ async function msMarketingStudio(card, tr, mode) {
     if (tpl && text === tpl.prompt) body.template_id = tpl.id;
     else body.prompt = text;
     go.disabled = true;
+    const goWas = go.textContent;
+    go.textContent = LANG === "ru" ? "генерирую…" : "generating…";
     stEl.textContent = t("status.queued");
+    // МГНОВЕННАЯ ОБРАТНАЯ СВЯЗЬ. «Нажал — и всё куда-то пропало» — потому
+    // что результат появлялся в галерее за экраном. Плейсхолдер встаёт в
+    // «Мои генерации» ДО ответа сервера, и страница сама едет к нему.
+    const gal = $("#mkp-gallery");
+    let ph = null;
+    if (gal) {
+      ph = document.createElement("div");
+      ph.className = "mkp-item busy mkp-pending";
+      ph.innerHTML = `<span class="mkp-ph mkp-spin">✦</span>
+        <i>${escHtml(tpl ? (tpl.name || tpl.id) : text.slice(0, 40))}</i>`;
+      gal.prepend(ph);
+      ph.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
     try {
       await api(`/api/tracks/${tr.id}/marketing-gen`, { method: "POST", body });
       mkToast((tpl && tpl.motion) ? t("mk.addedMotion") : t("mk.added"));
       stEl.textContent = "";
       schedulePoll();
       await loadProject();
-    } catch (e) { fail(e); stEl.textContent = ""; }
+      // Перерисовка заменила плейсхолдер серверной busy-карточкой — едем к ней.
+      const cell = document.querySelector("#mkp-gallery .mkp-item.busy");
+      if (cell) cell.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e) {
+      if (ph) ph.remove();
+      fail(e);
+      stEl.textContent = "";
+    }
     go.disabled = false;
+    go.textContent = goWas;
   });
 }
 
@@ -6061,7 +6137,12 @@ function renderTrack(tr) {
   card.classList.add("stages-stacked");
   {
     const jump = document.querySelector("#stage-jump");
-    if (jump && jump.dataset.for !== String(tr.id) && !jump.childElementCount) {
+    if (jump && curMode().id !== "mockup" && jump.dataset.kind === "mockup") {
+      jump.dataset.kind = "";
+      jump.innerHTML = "";
+    }
+    if (jump && curMode().id !== "mockup"
+        && jump.dataset.for !== String(tr.id) && !jump.childElementCount) {
       jump.dataset.for = String(tr.id);
       [...STAGES, "clip"].forEach((key, i) => {
         const b = document.createElement("button");
@@ -11281,13 +11362,20 @@ function mkRenderNote() {
   const note = chatEl("cc-note");
   if (box) {
     const err = chatState.error;
-    const hint = chatState.hint;
+    // «Напишите, что нужно сделать» дублирует плейсхолдер поля и съедала
+    // строку в капсуле — такую подсказку не показываем вовсе; остальные
+    // (про тариф, лимиты) живут как жили.
+    const hint = chatState.hint === t("chat.needText") ? "" : chatState.hint;
     const text = err || hint;
     box.textContent = text;
     box.classList.toggle("hidden", !text);
     box.classList.toggle("hint", !err && Boolean(hint));
   }
-  if (note) note.textContent = t("chat.payNote");
+  // «Цена видна до отправки… токены возвращаются» — не строка, а (i) у цены:
+  // читают её один раз, а место она занимала всегда.
+  if (note) note.textContent = "";
+  const price = chatEl("cc-price");
+  if (price) price.title = t("chat.payNote");
 }
 
 // Единая точка «не получилось» ВНУТРИ мастерской: строка под полем вместо
@@ -12904,7 +12992,17 @@ function chatRenderCompose() {
   const meter = chatEl("cc-meter");
   const active = chatState.chats.find((c) => c.id === chatState.activeId);
   const spent = active ? Number(active.spent || 0) : 0;
-  if (meter) meter.textContent = t("chat.meter", { n: tNum(spent), unit: chatUnit(spent) });
+  if (meter) {
+    meter.textContent = t("chat.meter", { n: tNum(spent), unit: chatUnit(spent) });
+    // Расход разговора — служебная строка ШАПКИ, а не второй заголовок над
+    // полем ввода: в капсуле он выглядел как ещё одно поле.
+    const head = document.querySelector("#chat .chat-head");
+    const wrap = meter.closest(".cc-meter") || meter;
+    if (head && wrap.parentElement !== head) {
+      wrap.classList.add("in-head");
+      head.insertBefore(wrap, chatEl("chat-points"));
+    }
+  }
   mkRenderSideFoot();
   const points = chatEl("chat-points");
   if (points && chatState.meta) {
