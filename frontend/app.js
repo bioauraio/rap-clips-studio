@@ -6729,6 +6729,29 @@ function renderTrack(tr) {
   if (tr.storyboard_stale) sliceBtn.title = t("track.sheetStaleTitle");
   sliceBtn.addEventListener("click", () => openCellsModal(tr));
 
+  // ── «Озвучить серию»: реплики всех кадров голосами их персонажей.
+  if (curMode().id === "series") {
+    const bar = $(".board-bar", card);
+    if (bar && !$(".t-voiceover", card)) {
+      const vo = document.createElement("button");
+      vo.type = "button";
+      vo.className = "ghost t-voiceover";
+      vo.textContent = t("track.voiceAll");
+      vo.title = t("track.voiceAllTitle");
+      vo.disabled = !tr.scenes_count;
+      vo.addEventListener("click", async () => {
+        vo.disabled = true;
+        try {
+          const r = await api(`/api/tracks/${tr.id}/voiceover`, { method: "POST" });
+          alert(t("track.voiceAllQueued", { n: r.queued }));
+        } catch (e) { fail(e); } finally { vo.disabled = false; }
+      });
+      const slice = $(".slice-storyboard", card);
+      if (slice && slice.parentElement === bar) bar.insertBefore(vo, slice.nextSibling);
+      else bar.appendChild(vo);
+    }
+  }
+
   // ── «Нарезать под бит»: границы сцен — к ближайшим сильным долям.
   const beatBtn = $(".beat-align", card);
   if (beatBtn) {
@@ -7201,7 +7224,7 @@ function renderScene(s, audioEl, mode = "board") {
   // ОЗВУЧКА — только в режимах с ведущим (UGC, ИИ-блогеры): там реплика
   // кадра и есть звук ролика. В клипах звук — трек, кнопка не нужна.
   const modeId = curMode().id;
-  if (modeId === "ugc" || modeId === "blogger") {
+  if (modeId === "ugc" || modeId === "blogger" || modeId === "series") {
     const vo = document.createElement("button");
     vo.type = "button";
     vo.className = "ghost s-voice board-only";

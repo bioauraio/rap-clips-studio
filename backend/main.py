@@ -8734,6 +8734,103 @@ def voices_list(user: User = Depends(current_user)):
     return {"enabled": True, "voices": asyncio.run(voice.list_voices())}
 
 
+def _char_voice(project: Project, name: str) -> tuple[str, str]:
+    """(voice_id, voice_note) персонажа по имени; пусто — голос не закреплён."""
+    for c in project.characters:
+        if c.name.strip().lower() == (name or "").strip().lower():
+            return (c.voice_id or "").strip(), getattr(c, "voice_note", "") or ""
+    return "", ""
+
+
+def _scene_voice_fallback(scene: Scene) -> tuple[str, str]:
+    """Голос кадра, когда автор реплики не указан: speaker → персонажи кадра."""
+    project = scene.track.project
+    wanted = ([scene.speaker] if scene.speaker else [])         + [x.strip() for x in (scene.characters or "").split(",") if x.strip()]
+    for name in wanted:
+        vid, note = _char_voice(project, name)
+        if vid:
+            return vid, note
+    return "", ""
+
+
+async def _voice_scene_audio(scene: Scene, *, text: str = "",
+                             voice_id: str = "", emotion: str = "") -> str:
+    """Озвучка кадра → имя mp3. Диалог из нескольких реплик склеивается
+    по порядку с паузами 0.35с; каждая реплика — голосом СВОЕГО персонажа.
+    Явные text/voice_id из запроса главнее диалога (ручной режим)."""
+    project = scene.track.project
+    segments: list[tuple[str, str, str]] = []  # (text, voice_id, voice_note)
+    if text or voice_id:
+        line = (text or scene.lyric_line or scene.shot_note or "").strip()
+        vid, note = (voice_id or ""), ""
+        if not vid:
+            vid, note = _scene_voice_fallback(scene)
+        if not line:
+            raise RuntimeError("у кадра нет реплики — напиши текст")
+        if not vid:
+            raise RuntimeError("выбери голос — или закрепи голос за персонажем в его досье")
+        segments.append((line, vid, note))
+    else:
+        dialogue = _scene_dialogue(scene)
+        if dialogue:
+            for d in dialogue:
+                line = str(d.get("line") or "").strip()
+                if not line:
+                    continue
+                vid, note = _char_voice(project, str(d.get("who") or ""))
+                if not vid:
+                    vid, note = _scene_voice_fallback(scene)
+                if not vid:
+                    raise RuntimeError(
+                        f"у персонажа «{d.get('who') or '?'}» не закреплён голос — "
+                        f"выбери его в досье персонажа")
+                segments.append((line, vid, note))
+        else:
+            line = (scene.lyric_line or "").strip()
+            vid, note = _scene_voice_fallback(scene)
+            if not line:
+                raise RuntimeError("у кадра нет реплики")
+            if not vid:
+                raise RuntimeError("закрепи голос за персонажем в его досье")
+            segments.append((line, vid, note))
+    if not segments:
+        raise RuntimeError("озвучивать нечего")
+    files = []
+    try:
+        for line, vid, note in segments:
+            files.append(await voice.tts(
+                line, vid, UPLOAD_DIR,
+                voice.settings_for(note, emotion)))
+        if len(files) == 1:
+            return files.pop()
+        # Склейка реплик с паузами: apad на всех, кроме последней.
+        out = f"voice_{uuid.uuid4().hex}.mp3"
+        args = ["ffmpeg", "-y"]
+        for f in files:
+            args += ["-i", os.path.join(UPLOAD_DIR, f)]
+        flt = "".join(
+            f"[{i}:a]apad=pad_dur=0.35[a{i}];" if i < len(files) - 1
+            else f"[{i}:a]anull[a{i}];"
+            for i in range(len(files)))
+        flt += "".join(f"[a{i}]" for i in range(len(files)))
+        flt += f"concat=n={len(files)}:v=0:a=1[out]"
+        args += ["-filter_complex", flt, "-map", "[out]",
+                 os.path.join(UPLOAD_DIR, out)]
+        r = subprocess.run(args, capture_output=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"склейка реплик не вышла: {r.stderr.decode()[-150:]}")
+        result, files_to_drop = out, files
+        for f in files_to_drop:
+            _remove_media(f)
+        files = []
+        return result
+    finally:
+        # Сюда с непустым files попадает только незаконченная работа
+        # (успех либо pop'ает единственный файл, либо чистит список сам).
+        for f in files:
+            _remove_media(f)
+
+
 @app.post("/api/scenes/{scene_id}/voiceover")
 async def scene_voiceover(scene_id: int, request: Request,
                           user: User = Depends(current_user),
@@ -8751,31 +8848,15 @@ async def scene_voiceover(scene_id: int, request: Request,
         raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
-    text = str(body.get("text") or body.get("dialogue")
-               or scene.lyric_line or scene.shot_note or "").strip()
-    if not text:
-        raise HTTPException(400, "у кадра нет реплики — напиши текст")
-    voice_id = str(body.get("voice_id") or "").strip()
-    voice_note = ""
-    if not voice_id:
-        # Голос персонажа сцены: говорящий главнее просто присутствующих.
-        wanted = [n for n in ([scene.speaker] if scene.speaker else [])
-                  + [x.strip() for x in (scene.characters or "").split(",")]
-                  if n and n.strip()]
-        chars = {c.name: c for c in scene.track.project.characters}
-        for name in wanted:
-            c = chars.get(name.strip())
-            if c and (c.voice_id or "").strip():
-                voice_id = c.voice_id.strip()
-                voice_note = getattr(c, "voice_note", "") or ""
-                break
-    if not voice_id:
-        raise HTTPException(400, "выбери голос — или закрепи голос за персонажем в его досье")
-    settings = voice.settings_for(voice_note, str(body.get("emotion") or ""))
     try:
-        fname = await voice.tts(text, voice_id, UPLOAD_DIR, settings)
+        fname = await _voice_scene_audio(
+            scene,
+            text=str(body.get("text") or "").strip(),
+            voice_id=str(body.get("voice_id") or "").strip(),
+            emotion=str(body.get("emotion") or ""))
     except RuntimeError as e:
-        raise HTTPException(502, str(e))
+        code = 400 if ("голос" in str(e) or "реплик" in str(e)) else 502
+        raise HTTPException(code, str(e))
     old = scene.audio_filename
     scene.audio_filename = fname
     _reg_file(db, fname, scene.track.project.owner_id, kind="audio",
@@ -8786,6 +8867,56 @@ async def scene_voiceover(scene_id: int, request: Request,
         _remove_media(old, db)
         db.commit()
     return {"ok": True, "audio_url": f"/api/media/{fname}"}
+
+
+def _run_track_voiceover(track_id: int) -> None:
+    """Озвучить серию пакетом: кадр за кадром, ошибки не роняют пакет."""
+    import asyncio
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        done, skipped = 0, 0
+        for scene in sorted(track.scenes, key=lambda x: x.position):
+            has_lines = bool(_scene_dialogue(scene)) or bool(
+                (scene.lyric_line or "").strip() and scene.speaker)
+            if not has_lines:
+                continue
+            try:
+                fname = asyncio.run(_voice_scene_audio(scene))
+            except Exception as e:  # noqa: BLE001
+                skipped += 1
+                log.info("озвучка кадра %s пропущена: %s", scene.id, e)
+                continue
+            old = scene.audio_filename
+            scene.audio_filename = fname
+            _reg_file(db, fname, track.project.owner_id, kind="audio",
+                      project_id=track.project_id, track_id=track.id,
+                      scene_id=scene.id)
+            db.commit()
+            if old and old != fname:
+                _remove_media(old, db)
+                db.commit()
+            done += 1
+        log.info("озвучка серии %s: %s кадров, пропущено %s", track_id, done, skipped)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/voiceover")
+def track_voiceover(track_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """«Озвучить серию»: все кадры с репликами — голосами их персонажей."""
+    if not voice.available():
+        raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
+    track = _own_track(db, user, track_id)
+    todo = [s for s in track.scenes
+            if _scene_dialogue(s) or ((s.lyric_line or "").strip() and s.speaker)]
+    if not todo:
+        raise HTTPException(400, "в кадрах нет реплик — сначала сгенерируй раскадровку серии")
+    _spawn_gen(user, _run_track_voiceover, track_id, kind="voice")
+    return {"ok": True, "queued": len(todo)}
 
 
 @app.post("/api/scenes/{scene_id}/approve")
