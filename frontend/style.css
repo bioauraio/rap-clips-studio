@@ -3748,7 +3748,7 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 
 /* ─────────── Мобилка: шапка компактная, ничего не вылезает вбок ─────────── */
 @media (max-width: 700px) {
-  html, body { overflow-x: hidden; }
+  html, body { overflow-x: clip; }
   .topbar { padding: 8px 10px; gap: 6px; }
   /* Навигация и режимная панель — одна строка с горизонтальной прокруткой,
      а не лестница на пол-экрана и не вылет за правый край. */
@@ -3772,4 +3772,21 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   .clip-dock-body { flex-direction: column; }
   /* Модалки на весь экран */
   .modal { width: 96vw; max-width: 96vw; max-height: 92vh; }
+}
+
+/* Мобилка: шапка липнет, тумблер этапов — круглый нижний таб-бар */
+@media (max-width: 700px) {
+  .topbar { position: sticky; top: 0; z-index: 40; }
+  /* Тумблер уезжает вниз, как навигация приложения: закреплён над нижним краем */
+  .stage-jump {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    z-index: 60; max-width: 94vw; overflow-x: auto; scrollbar-width: none;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    box-shadow: 0 10px 30px rgba(var(--ink-rgb), .18);
+    border: 1px solid rgba(var(--ink-rgb), .12);
+  }
+  .stage-jump::-webkit-scrollbar { display: none; }
+  /* Контенту — воздух под нижним меню, чтобы последние кнопки не прятались */
+  #app { padding-bottom: 84px; }
 }
