@@ -3930,10 +3930,14 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 /* Мобилка: шапка липнет, тумблер этапов — круглый нижний таб-бар */
 @media (max-width: 700px) {
   .topbar { position: sticky; top: 0; z-index: 40; }
-  /* Тумблер уезжает вниз, как навигация приложения: закреплён над нижним краем */
+  /* Нижний край телефона занят ГЛАВНОЙ навигацией (нижний док разделов,
+     sections.css): постоянное место у большого пальца принадлежит разделам
+     сервиса, а не этапам одного трека. Этапы — липкий горизонтальный
+     степпер сразу под шапкой, там же, где контент, к которому он ведёт. */
   .stage-jump {
-    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 60; max-width: 94vw; overflow-x: auto; scrollbar-width: none;
+    position: sticky; top: var(--tbh, 56px); left: auto; bottom: auto;
+    transform: none; margin: 0 0 8px;
+    z-index: 39; max-width: 100%; overflow-x: auto; scrollbar-width: none;
     background: color-mix(in srgb, var(--panel) 88%, transparent);
     backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
     box-shadow: 0 10px 30px rgba(var(--ink-rgb), .18);
@@ -3945,8 +3949,8 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   body:has(#chat:not(.hidden)) #stage-jump,
   body:has(#music:not(.hidden)) #stage-jump,
   body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
-  /* Контенту — воздух под нижним меню, чтобы последние кнопки не прятались */
-  #app { padding-bottom: 84px; }
+  /* Воздух под нижним доком разделов, чтобы последние кнопки не прятались. */
+  #app { padding-bottom: 92px; }
 }
 
 /* ─────── Генератор под общей шапкой ───────
