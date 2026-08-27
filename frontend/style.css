@@ -379,11 +379,27 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-head .stage-tabs::-webkit-scrollbar { display: none; }
 .track-head .stage-tab { flex: none; }
 .order-btns { display: flex; gap: 2px; }
-/* Дорожка — НА ВСЮ ШИРИНУ блока, комментарий и заметка под ней. Половина
-   ширины на волну означала, что метки кадров стояли в двух пикселях друг от
-   друга и попасть в границу было нечем. */
+/* ФОРМА ТРЕКА. Мобилка и средние экраны — колонкой; десктоп — две колонки
+   в линию: слева дорожка и высокий «Текст песни», справа компактные
+   «Комментарий», «Библия героя» и свёрнутая заметка. Поля не тянутся во
+   весь экран: ширина колонок ограничена, читать строку в 1600px нельзя. */
 .track-body { display: grid; grid-template-columns: 1fr; gap: 14px; }
-.track-body .track-left { min-width: 0; }
+.track-body .track-left, .track-body .track-right { min-width: 0; }
+.track-body textarea { resize: vertical; }
+@media (min-width: 1100px) {
+  .track-body {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+    gap: 22px; max-width: 1160px; align-items: start;
+  }
+  .track-body .t-lyrics { min-height: 240px; }
+  /* Правая колонка компактная: 3–4 строки, дальше внутренний скролл. */
+  .track-body .t-comment { max-height: 140px; overflow-y: auto; }
+  .track-body .ms-bible-text { max-height: 120px; overflow-y: auto; }
+}
+@media (max-width: 1099px) {
+  /* Поля не выше 40vh: «Текст песни» на телефоне не должен быть простынёй. */
+  .track-body textarea { max-height: 40vh; }
+}
 @media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
 .t-audio { width: 100%; }
 .t-duration { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); }
@@ -2916,6 +2932,13 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-row > label { margin: 0; min-width: 120px; flex: none; }
 .ms-frame-note:empty { display: none; }
 .ms-foot { margin: 0; }
+/* «Сохранить трек» — маленькая вторичная: поля и так сохраняются по уходу
+   фокуса, кнопка — страховка. Главное действие экрана — «Супергенерация»
+   в строке трека, и второй крупной кнопке рядом с ней делать нечего. */
+.ms-foot .save-track {
+  background: transparent; border: 1px solid var(--border); box-shadow: none;
+  color: var(--ink-muted); font-size: 12.5px; padding: 6px 12px;
+}
 
 /* ТЕКСТОВАЯ МОДЕЛЬ — в первом блоке сценария, тем же примитивом чипов, что
    и движки картинок: это тоже «чем и почём», просто про текст. Своей формы
