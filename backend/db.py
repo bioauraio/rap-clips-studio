@@ -638,10 +638,17 @@ class TrendPreset(Base):
     id = Column(Integer, primary_key=True)
     position = Column(Integer, nullable=False, default=0)
     title = Column(String, nullable=False, default="")
+    # Английский дубль названия для витрины (title — русский, его правит
+    # владелец; en генерится переводом при сохранении, можно поправить руками).
+    title_en = Column(String, nullable=False, default="")
     # Промпт КАДРА: как вписать человека с фото в сцену шаблона.
     image_prompt = Column(Text, nullable=False, default="")
     # Промпт ДВИЖЕНИЯ: что происходит в ролике.
     motion_prompt = Column(Text, nullable=False, default="")
+    # Русские исходники промптов: владелец правит по-русски, в модель уходит
+    # английский перевод (генерится при сохранении).
+    image_prompt_ru = Column(Text, nullable=False, default="")
+    motion_prompt_ru = Column(Text, nullable=False, default="")
     poster_filename = Column(String, nullable=False, default="")   # обложка карточки
     sample_filename = Column(String, nullable=False, default="")   # ролик-пример
     image_engine = Column(String, nullable=False, default="")      # пусто = по тарифу

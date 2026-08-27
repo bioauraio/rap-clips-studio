@@ -753,7 +753,6 @@
           <textarea class="l-ru" data-f="${f}" rows="4"
             placeholder="правь по-русски — переведём сами">${esc(rv)}</textarea>
           <div class="adm-row" style="margin:6px 0">
-            <button type="button" class="ghost l-tr" data-f="${f}">Перевести → EN</button>
             <button type="button" class="ghost l-toggle" data-f="${f}">Показать английский</button>
             <span class="l-tr-msg muted" data-f="${f}"></span>
           </div>
@@ -866,22 +865,8 @@
       b.textContent = bx.classList.contains("hidden")
         ? "Показать английский" : "Скрыть английский";
     }));
-    $$(".l-tr", box).forEach((b) => b.addEventListener("click", async () => {
-      const f = b.dataset.f;
-      const src = $(`.l-ru[data-f="${f}"]`, box).value;
-      const m = $(`.l-tr-msg[data-f="${f}"]`, box);
-      if (!src.trim()) return;
-      m.className = "l-tr-msg muted";
-      m.textContent = "перевожу…";
-      try {
-        const r = await api("/api/admin/translate", { method: "POST", body: { text: src } });
-        $(`.l-en-box[data-f="${f}"] .l-f`, box).value = r.en || "";
-        enTouched.add(f);
-        $(`.l-en-box[data-f="${f}"]`, box).classList.remove("hidden");
-        m.className = "l-tr-msg adm-ok";
-        m.textContent = "переведено";
-      } catch (e) { m.className = "l-tr-msg adm-err"; m.textContent = e.message; }
-    }));
+    // «Перевести → EN» убрана: перевод происходит сам при сохранении,
+    // когда русский текст правлен, а английский не трогали руками.
     const collect = () => {
       const out = { translate: [] };
       $$(".l-f", box).forEach((el) => {
@@ -959,10 +944,13 @@
         <div class="adm-row">
           <h3>Шаблоны трендов <span class="adm-count">${rows.length}</span></h3>
           <span style="flex:1"></span>
+          <button type="button" class="ghost t-ru-all">Перевести каталог на русский</button>
           <button type="button" class="primary t-new">+ тренд</button>
         </div>
-        <p class="adm-note">Промпт кадра и промпт движения уходят в модель как есть.
-          Постер — то, что человек видит на витрине /trends до генерации.</p>
+        <p class="adm-note">Правь ПО-РУССКИ: в модель уходит английский перевод,
+          он пересобирается сам при сохранении. Постер — то, что человек видит
+          на витрине /trends до генерации: прикрепи свой или сгенерируй по
+          промпту кадра.</p>
         <div class="t-list"></div>
       </div>`;
     const list = $(".t-list", box);
@@ -986,13 +974,25 @@
               <div class="adm-field"><label>Показывать</label>
                 <input class="t-on" type="checkbox" ${t.enabled ? "checked" : ""} /></div>
             </div>
-            <div class="adm-field"><label>Промпт кадра</label>
-              <textarea class="t-img" rows="3">${esc(t.image_prompt || "")}</textarea></div>
-            <div class="adm-field"><label>Промпт движения</label>
-              <textarea class="t-mot" rows="3">${esc(t.motion_prompt || "")}</textarea></div>
+            <div class="adm-field"><label>Промпт кадра — по-русски</label>
+              <textarea class="t-img-ru" rows="3"
+                placeholder="${t.image_prompt && !t.image_prompt_ru ? "русского ещё нет — нажми «Перевести каталог на русский» сверху" : "правь по-русски — переведём сами"}">${esc(t.image_prompt_ru || "")}</textarea></div>
+            <div class="adm-field"><label>Промпт движения — по-русски</label>
+              <textarea class="t-mot-ru" rows="3"
+                placeholder="${t.motion_prompt && !t.motion_prompt_ru ? "русского ещё нет — нажми «Перевести каталог на русский» сверху" : "правь по-русски — переведём сами"}">${esc(t.motion_prompt_ru || "")}</textarea></div>
+            <details class="t-en-box">
+              <summary class="muted">английский (уходит в модель) — для сверки</summary>
+              <div class="adm-field"><label>Название (EN, витрина)</label>
+                <input class="t-title-en" value="${esc(t.title_en || "")}" /></div>
+              <div class="adm-field"><label>Промпт кадра (EN)</label>
+                <textarea class="t-img" rows="3">${esc(t.image_prompt || "")}</textarea></div>
+              <div class="adm-field"><label>Промпт движения (EN)</label>
+                <textarea class="t-mot" rows="3">${esc(t.motion_prompt || "")}</textarea></div>
+            </details>
             <div class="adm-row">
-              <label class="e-upload">постер
+              <label class="e-upload">прикрепить постер
                 <input type="file" class="t-file" accept="image/*" hidden /></label>
+              <button type="button" class="ghost t-prev">Сгенерировать превью ⚡0</button>
               <button type="button" class="primary t-save">Сохранить</button>
               <button type="button" class="ghost danger t-del">Удалить</button>
               <span class="t-msg"></span>
@@ -1000,20 +1000,42 @@
           </div>
         </div>`;
       const msg = $(".t-msg", card);
+      let tEnTouched = false;
+      [$(".t-img", card), $(".t-mot", card)].forEach((el) =>
+        el.addEventListener("input", () => { tEnTouched = true; }));
       $(".t-save", card).addEventListener("click", async () => {
         msg.className = "t-msg muted";
-        msg.textContent = "сохраняю…";
+        const ruEdited = $(".t-img-ru", card).value.trim() || $(".t-mot-ru", card).value.trim();
+        const body = {
+          id: t.id, kind: t.kind || "trend",
+          title: $(".t-title", card).value,
+          title_en: $(".t-title-en", card).value,
+          image_prompt_ru: $(".t-img-ru", card).value,
+          motion_prompt_ru: $(".t-mot-ru", card).value,
+          duration_sec: Number($(".t-dur", card).value || 6),
+          aspect: $(".t-aspect", card).value,
+          enabled: $(".t-on", card).checked,
+        };
+        // Английский правили руками — уважаем; нет — пересоберём из русского.
+        if (tEnTouched || !ruEdited) {
+          body.image_prompt = $(".t-img", card).value;
+          body.motion_prompt = $(".t-mot", card).value;
+        } else {
+          body.translate = true;
+        }
+        msg.textContent = body.translate ? "перевожу и сохраняю…" : "сохраняю…";
         try {
-          await api("/api/admin/trends", { method: "POST", body: {
-            id: t.id, kind: t.kind || "trend",
-            title: $(".t-title", card).value,
-            image_prompt: $(".t-img", card).value,
-            motion_prompt: $(".t-mot", card).value,
-            duration_sec: Number($(".t-dur", card).value || 6),
-            aspect: $(".t-aspect", card).value,
-            enabled: $(".t-on", card).checked } });
+          await api("/api/admin/trends", { method: "POST", body });
           msg.className = "t-msg adm-ok";
           msg.textContent = "сохранено";
+        } catch (e) { msg.className = "t-msg adm-err"; msg.textContent = e.message; }
+      });
+      $(".t-prev", card).addEventListener("click", async () => {
+        msg.className = "t-msg muted";
+        msg.textContent = "рисую превью по промпту кадра (до минуты)…";
+        try {
+          await api(`/api/admin/trends/${t.id}/preview-generate`, { method: "POST" });
+          renderTrends(box);
         } catch (e) { msg.className = "t-msg adm-err"; msg.textContent = e.message; }
       });
       $(".t-file", card).addEventListener("change", async (e) => {
@@ -1038,6 +1060,16 @@
       list.appendChild(card);
     });
     if (!rows.length) list.innerHTML = '<p class="muted">трендов пока нет</p>';
+    $(".t-ru-all", box).addEventListener("click", async () => {
+      const btn = $(".t-ru-all", box);
+      btn.disabled = true;
+      btn.textContent = "перевожу каталог (минуты)…";
+      try {
+        const r = await api("/api/admin/trends/translate-ru", { method: "POST" });
+        alert(`Переведено записей: ${r.translated}${(r.failed || []).length ? "; ошибок: " + r.failed.length : ""}`);
+        renderTrends(box);
+      } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = "Перевести каталог на русский"; }
+    });
     $(".t-new", box).addEventListener("click", async () => {
       const title = prompt("Название тренда");
       if (!title) return;
@@ -1120,7 +1152,6 @@
               <textarea class="m-ru" rows="3"
                 placeholder="правь по-русски — переведём сами">${esc(t.prompt_ru || "")}</textarea>
               <div class="adm-row" style="margin:6px 0">
-                <button type="button" class="ghost m-tr">Перевести → EN</button>
                 <button type="button" class="ghost m-toggle">Показать английский</button>
               </div>
             </div>
@@ -1147,20 +1178,7 @@
         e.target.textContent = bx.classList.contains("hidden")
           ? "Показать английский" : "Скрыть английский";
       });
-      $(".m-tr", card).addEventListener("click", async () => {
-        const src = $(".m-ru", card).value;
-        if (!src.trim()) return;
-        msg.className = "m-msg muted";
-        msg.textContent = "перевожу…";
-        try {
-          const r = await api("/api/admin/translate", { method: "POST", body: { text: src } });
-          $(".m-prompt", card).value = r.en || "";
-          mEnTouched = true;
-          $(".m-en-box", card).classList.remove("hidden");
-          msg.className = "m-msg adm-ok";
-          msg.textContent = "переведено — проверь и сохрани";
-        } catch (e) { msg.className = "m-msg adm-err"; msg.textContent = e.message; }
-      });
+      // перевод — сам при сохранении (см. body().translate)
       const body = () => {
         const promptRu = $(".m-ru", card).value;
         const out = {
@@ -1403,7 +1421,6 @@
                 <textarea class="f-prompt-ru" rows="10"
                   placeholder="правь по-русски — переведём сами">${esc(d.prompt_ru || "")}</textarea>
                 <div class="adm-row" style="margin-top:6px">
-                  <button type="button" class="ghost f-tr">Перевести → EN</button>
                   <button type="button" class="ghost f-toggle-en">Показать английский</button>
                   <span class="f-tr-msg muted"></span>
                 </div>
@@ -1495,20 +1512,7 @@
         ? "Показать английский" : "Скрыть английский";
     });
     const trMsg = $(".f-tr-msg", box);
-    $(".f-tr", box).addEventListener("click", async () => {
-      if (!ru.value.trim()) return;
-      trMsg.className = "f-tr-msg muted";
-      trMsg.textContent = "перевожу…";
-      try {
-        const r = await api("/api/admin/translate", { method: "POST", body: { text: ru.value } });
-        en.value = r.en || "";
-        enTouched = true;
-        enBox.classList.remove("hidden");
-        paintLen();
-        trMsg.className = "f-tr-msg adm-ok";
-        trMsg.textContent = "переведено — проверь и сохрани";
-      } catch (e) { trMsg.className = "f-tr-msg adm-err"; trMsg.textContent = e.message; }
-    });
+    // перевод — сам при сохранении
     const orig = $(".f-orig", box);
     if (orig) orig.addEventListener("click", () => {
       en.value = d.builtin_prompt || ""; enTouched = true; paintLen();

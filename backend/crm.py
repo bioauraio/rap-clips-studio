@@ -489,7 +489,10 @@ def admin_trends(user: User = Depends(admin_user), db: Session = Depends(db_sess
         core.TrendPreset.position, core.TrendPreset.id).all()
     return {"presets": [{
         "id": t.id, "title": t.title, "enabled": t.enabled,
+        "title_en": getattr(t, "title_en", "") or "",
         "image_prompt": t.image_prompt, "motion_prompt": t.motion_prompt,
+        "image_prompt_ru": getattr(t, "image_prompt_ru", "") or "",
+        "motion_prompt_ru": getattr(t, "motion_prompt_ru", "") or "",
         "image_engine": t.image_engine, "video_engine": t.video_engine,
         "duration_sec": t.duration_sec, "aspect": t.aspect,
         "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
@@ -512,11 +515,24 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
     if not t:
         t = core.TrendPreset()
         db.add(t)
-    for field in ("title", "image_prompt", "motion_prompt",
+    for field in ("title", "title_en", "image_prompt", "motion_prompt",
+                  "image_prompt_ru", "motion_prompt_ru",
                   "image_engine", "video_engine", "aspect",
                   "kind", "landing_url", "reward_note"):
         if field in body:
             setattr(t, field, str(body[field] or ""))
+    # Автоперевод при сохранении: владелец правит по-русски, английский
+    # пересобирается сам (если его не трогали руками — флаг translate).
+    if body.get("translate"):
+        try:
+            if (t.image_prompt_ru or "").strip():
+                t.image_prompt = await translate_to_en(t.image_prompt_ru)
+            if (t.motion_prompt_ru or "").strip():
+                t.motion_prompt = await translate_to_en(t.motion_prompt_ru)
+            if (t.title or "").strip() and not (t.title_en or "").strip():
+                t.title_en = await translate_to_en(t.title)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
     if "reward_pct" in body:
         t.reward_pct = max(1, min(50, int(body["reward_pct"] or 10)))
     if "duration_sec" in body:
@@ -554,6 +570,64 @@ async def admin_trend_media(preset_id: int, kind: str = "poster",
         t.poster_filename = fname
     db.commit()
     return {"ok": True, "url": f"/api/media/{fname}"}
+
+
+@router.post("/api/admin/trends/translate-ru")
+async def admin_trends_translate_ru(user: User = Depends(admin_user),
+                                    db: Session = Depends(db_session)):
+    """Разовая миграция: английские промпты трендов → русские исходники.
+    Трогает только записи, где русского ещё нет; английский не меняется."""
+    core = _core()
+    rows = db.query(core.TrendPreset).all()
+    done, failed = 0, []
+    for t in rows:
+        try:
+            changed = False
+            if (t.image_prompt or "").strip() and not (t.image_prompt_ru or "").strip():
+                t.image_prompt_ru = await translate_to_ru(t.image_prompt)
+                changed = True
+            if (t.motion_prompt or "").strip() and not (t.motion_prompt_ru or "").strip():
+                t.motion_prompt_ru = await translate_to_ru(t.motion_prompt)
+                changed = True
+            if changed:
+                db.commit()
+                done += 1
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            failed.append(f"{t.id}: {str(e)[:100]}")
+    return {"ok": True, "translated": done, "failed": failed}
+
+
+@router.post("/api/admin/trends/{preset_id}/preview-generate")
+def admin_trend_preview_generate(preset_id: int, user: User = Depends(admin_user),
+                                 db: Session = Depends(db_session)):
+    """Постер тренда ПО ЕГО ПРОМПТУ КАДРА, бесплатным шлюзом (⚡0).
+
+    Референс-фото человека у превью нет — фразу про него подменяем
+    нейтральным героем, чтобы шлюз не искал несуществующую картинку."""
+    import asyncio
+    core = _core()
+    t = db.get(core.TrendPreset, preset_id)
+    if not t:
+        raise HTTPException(404, "шаблон не найден")
+    prompt = (t.image_prompt or "").strip()
+    if not prompt:
+        raise HTTPException(400, "у тренда пуст промпт кадра")
+    prompt = re.sub(r"the person from the reference photo",
+                    "a stylish young person", prompt, flags=re.I)
+    prompt += " No text, no watermark."
+    try:
+        core.mediagen.reset_task()
+        res = asyncio.run(core.mediagen.generate_image_ex(
+            prompt, None, engine="chatgpt",
+            aspect=(t.aspect or "9:16")))
+        fname = core._save_image(res["data"], res["mime"], upscale=False)
+        core._reg_file(db, fname, None, kind="trend_poster")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"превью не вышло: {str(e)[:200]}")
+    t.poster_filename = fname
+    db.commit()
+    return {"ok": True, "poster_url": f"/api/media/{fname}"}
 
 
 @router.delete("/api/admin/trends/{preset_id}")
@@ -827,6 +901,24 @@ TRANSLATE_SYSTEM = (
     "художественные детали, порядок и структуру. Верни ТОЛЬКО перевод, "
     "без пояснений, без кавычек и без заголовков."
 )
+
+
+TRANSLATE_RU_SYSTEM = (
+    "Переведи промпт для image-генерации на русский язык. Сохрани все "
+    "художественные детали, порядок и структуру. Верни ТОЛЬКО перевод, "
+    "без пояснений, без кавычек и без заголовков."
+)
+
+
+async def translate_to_ru(text: str) -> str:
+    """Английский промпт → русский: разовая миграция каталогов, чтобы
+    владелец читал и правил по-русски."""
+    import textgen  # noqa: PLC0415
+    src = (text or "").strip()
+    if not src:
+        return ""
+    out = await textgen.ask(src, TRANSLATE_RU_SYSTEM)
+    return (out or "").strip()
 
 
 async def translate_to_en(text: str) -> str:
