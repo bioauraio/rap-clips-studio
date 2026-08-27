@@ -1225,6 +1225,9 @@ async function renderAccountPane(pane) {
       <div class="acc-who">
         <b>${escHtml(a.name || t("account.guest"))}</b>
         <span class="muted">${escHtml(a.email || a.login || t("account.noContacts"))}</span>
+        ${a.tg_linked
+          ? `<span class="muted acc-tg-ok">✓ Telegram${a.tg_username ? " @" + escHtml(a.tg_username) : ""}</span>`
+          : `<span class="acc-tg-link"></span>`}
       </div>
     </div>
 
@@ -1314,6 +1317,14 @@ async function renderAccountPane(pane) {
   // сих пор не знал вообще, и это прямой источник обиды: накопил, оплатил,
   // часть сгорела. Теперь он видит её заранее, а не постфактум.
   const lim = usage && usage.limits;
+  // «Привязать Telegram» из кабинета: тот же виджет, что на входе; бэкенд
+  // видит живую сессию и привязывает tg_id к текущему аккаунту.
+  const tgSlot = $(".acc-tg-link", pane);
+  if (tgSlot) {
+    api("/api/auth/config").then((cfg) => {
+      if (cfg.telegram && cfg.telegram_bot) tgSlot.appendChild(tgWidget(cfg.telegram_bot));
+    }).catch(() => {});
+  }
   if (lim) {
     const box = document.createElement("div");
     box.className = "lim-grid";

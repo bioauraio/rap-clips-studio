@@ -2325,6 +2325,9 @@ def _user_dict(user: User) -> dict:
             # Ава из Telegram (photo_url в initData/виджете) — для кнопки
             # «Профиль» в шапке; у почтовых аккаунтов пустая строка.
             "avatar_url": user.avatar_url or "",
+            # Привязка Telegram: кабинету нужно знать, показывать ли кнопку
+            # «привязать» и что показывать привязанным.
+            "tg_linked": bool(user.tg_id), "tg_username": user.tg_username or "",
             "is_admin": user.is_admin, "gen_points": user.gen_points,
             # Из чего сложен остаток: бонусные заработаны приглашениями и
             # тратятся первыми, платные — то, что человек купил сам.
@@ -2509,8 +2512,10 @@ async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(d
             guest = None
     name = " ".join(x for x in [data.get("first_name"), data.get("last_name")] if x) or "гость"
     if not user:
-        # Гость без внешних привязок просто «становится» этим аккаунтом.
-        if guest and not guest.login and not guest.tg_id and not guest.yandex_id:
+        # Залогиненный аккаунт БЕЗ телеграма — это ПРИВЯЗКА, а не новый юзер:
+        # человек жмёт «привязать Telegram» из кабинета и должен остаться на
+        # своём аккаунте с проектами, есть у него логин/почта или нет.
+        if guest and not guest.tg_id:
             user = guest
         else:
             user = User(name=name)
