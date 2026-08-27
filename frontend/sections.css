@@ -174,6 +174,25 @@
 }
 .topbar.has-sections .tb-new::after { content: "+"; font-size: 17px; font-weight: 800; }
 .topbar.has-sections > .tb-user { order: 5; margin-left: auto; }
+
+/* ОДНА СТРОКА НА ДЕСКТОПЕ, БЕЗ ВТОРОГО ЭТАЖА. Перенос был разрешён
+   (flex-wrap: wrap) — и личный блок уезжал под капсулу режима, ровно тот
+   второй ярус, который убирали. Теперь строка не переносится: сжимается
+   лента разделов (она умеет прокручиваться), а не ломается раскладка. */
+@media (min-width: 901px) {
+  .topbar.has-sections { flex-wrap: nowrap; }
+  .topbar.has-sections > .tb-sections { flex: 1 1 auto; min-width: 0; }
+  .topbar.has-sections > .tb-modeline { flex: 0 0 auto; }
+  .topbar.has-sections > .tb-user { flex: 0 0 auto; }
+}
+/* Средние ширины: жмём личный блок, а не разделы — «выйти» есть в кабинете,
+   а тема и язык переключаются значками. */
+@media (max-width: 1300px) {
+  .topbar.has-sections #logout-btn { display: none; }
+  .topbar.has-sections .theme-switch { transform: scale(.9); transform-origin: right center; }
+  .topbar.has-sections .lang-switch button { padding: 0 6px; }
+  .topbar.has-sections .profile-btn .profile-cap { display: none; }
+}
 /* Лента режимов — третий ярус; в одной полосе для неё места нет, а режим уже
    назван капсулой рядом с проектом. */
 .topbar.has-sections .mode-seg { display: none; }

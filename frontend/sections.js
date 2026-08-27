@@ -204,6 +204,14 @@
     ind.setAttribute("aria-hidden", "true");
     nav.prepend(ind);
 
+    /* Тумблер этапов ВЫНОСИМ ИЗ ШАПКИ В BODY. Он закреплён position:fixed,
+       а у шапки есть backdrop-filter — любой backdrop-filter у предка делает
+       его containing block для fixed-потомков, и панель прилипала к шапке
+       вместо края экрана (лезла на «Профиль» сверху и на режимную строку на
+       телефоне). Узел тот же, id тот же: app.js ищет его глобально. */
+    const jump = $("#stage-jump");
+    if (jump && jump.parentNode !== document.body) document.body.appendChild(jump);
+
     const brand = $("#brand");
     if (brand && brand.parentNode === bar) brand.after(nav);
     else bar.prepend(nav);
