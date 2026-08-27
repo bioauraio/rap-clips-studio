@@ -2328,6 +2328,9 @@ def _user_dict(user: User) -> dict:
             # Привязка Telegram: кабинету нужно знать, показывать ли кнопку
             # «привязать» и что показывать привязанным.
             "tg_linked": bool(user.tg_id), "tg_username": user.tg_username or "",
+            # Привязка телефона: кабинет показывает «✓ +7 962 •••• 55» или
+            # кнопку «привязать»; сам номер целиком наружу не уходит.
+            "phone_linked": bool(user.phone), "phone_masked": _mask_phone(user.phone),
             "is_admin": user.is_admin, "gen_points": user.gen_points,
             # Из чего сложен остаток: бонусные заработаны приглашениями и
             # тратятся первыми, платные — то, что человек купил сам.
@@ -2752,6 +2755,14 @@ def _norm_phone(raw: str) -> str:
     return digits if 11 <= len(digits) <= 15 else ""
 
 
+def _mask_phone(phone: str) -> str:
+    """«+79623446955» → «+7 962 •••• 55»: середина скрыта, узнать свой можно."""
+    p = str(phone or "")
+    if len(p) < 7:
+        return f"+{p}" if p else ""
+    return f"+{p[0]} {p[1:4]} •••• {p[-2:]}"
+
+
 def _issue_code(db: Session, kind: str, address: str, user_id: int = 0) -> str:
     """Новый код гасит прежние живые того же вида: действителен последний."""
     db.query(AuthCode).filter(AuthCode.kind == kind, AuthCode.address == address,
@@ -2965,6 +2976,18 @@ async def auth_phone_verify(request: Request, ref: str = "",
         raise HTTPException(400, "введи телефон в формате +7...")
     _check_code(db, "phone", phone, body.get("code"))
     user = db.query(User).filter(User.phone == phone).first()
+    # РЕЖИМ ПРИВЯЗКИ: запрос из кабинета (body.link) с живой сессией цепляет
+    # номер к ТЕКУЩЕМУ аккаунту, а не логинит в другой. Иначе «привязать
+    # телефон» молча пересаживало бы человека на чужой пустой аккаунт.
+    if body.get("link"):
+        me_user = _resolve_user(request, db)
+        if not me_user:
+            raise HTTPException(401, "сессия не найдена — войди и попробуй снова")
+        if user and user.id != me_user.id:
+            raise HTTPException(409, "этот номер уже привязан к другому аккаунту")
+        me_user.phone = phone
+        db.commit()
+        return {"ok": True, "linked": True, "phone_masked": _mask_phone(phone)}
     guest = _guest_of(request, db)
     if not user:
         fresh_guest = guest and not guest.login and not guest.tg_id \
@@ -12848,6 +12871,8 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
                                             max(_plan_engines(plan).values())),
         "linked": {"telegram": bool(user.tg_id), "yandex": bool(user.yandex_id),
                    "google": bool(user.google_id), "password": bool(user.login)},
+        "tg_linked": bool(user.tg_id), "tg_username": user.tg_username or "",
+        "phone_linked": bool(user.phone), "phone_masked": _mask_phone(user.phone),
         "ambassador": {
             "is_ambassador": bool(user.is_ambassador),
             "ref_code": user.ref_code or "",

@@ -1217,7 +1217,21 @@ async function renderAccountPane(pane) {
   const scenesLeft = sceneCost > 0 ? Math.floor((a.points || 0) / sceneCost) : 0;
   const burn = usage ? usage.burn_day : 0;
 
+  const saveVisible = !$("#save-account-btn").classList.contains("hidden");
   pane.innerHTML = `
+    <div class="acc-settings row">
+      <div class="theme-switch" role="group" aria-label="Тема">
+        <button type="button" data-theme-set="system" title="как в системе">🖥</button>
+        <button type="button" data-theme-set="light" title="светлая">☀️</button>
+        <button type="button" data-theme-set="dark" title="тёмная">🌙</button>
+      </div>
+      <div class="lang-switch" role="group">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="ru">RU</button>
+      </div>
+      ${saveVisible ? `<button type="button" class="acc-save-btn ghost">${escHtml(t("top.saveAccount"))}</button>` : ""}
+      <button type="button" class="acc-logout ghost">${escHtml(t("top.logout"))}</button>
+    </div>
     <div class="acc-head">
       ${a.avatar_url
         ? `<img class="acc-avatar" src="${escHtml(a.avatar_url)}" alt="" />`
@@ -1228,6 +1242,19 @@ async function renderAccountPane(pane) {
         ${a.tg_linked
           ? `<span class="muted acc-tg-ok">✓ Telegram${a.tg_username ? " @" + escHtml(a.tg_username) : ""}</span>`
           : `<span class="acc-tg-link"></span>`}
+        ${a.phone_linked
+          ? `<span class="muted acc-phone-ok">✓ ${escHtml(a.phone_masked || "")}</span>`
+          : `<span class="acc-phone-wrap">
+               <button type="button" class="acc-phone-btn ghost">${escHtml(t("account.phoneLink"))}</button>
+               <span class="acc-phone-flow hidden">
+                 <input class="acc-phone-num" type="tel" inputmode="tel" placeholder="+7 900 000-00-00" />
+                 <button type="button" class="acc-phone-send ghost">${escHtml(t("account.phoneSend"))}</button>
+                 <input class="acc-phone-code hidden" inputmode="numeric" maxlength="8"
+                        placeholder="${escHtml(t("account.phoneCodePh"))}" />
+                 <button type="button" class="acc-phone-verify primary hidden">${escHtml(t("account.phoneVerify"))}</button>
+                 <span class="acc-phone-msg status"></span>
+               </span>
+             </span>`}
       </div>
     </div>
 
@@ -1324,6 +1351,52 @@ async function renderAccountPane(pane) {
     api("/api/auth/config").then((cfg) => {
       if (cfg.telegram && cfg.telegram_bot) tgSlot.appendChild(tgWidget(cfg.telegram_bot));
     }).catch(() => {});
+  }
+  // Строка настроек кабинета: тема и язык работают общими делегатами на
+  // document; выход и «сохранить аккаунт» жмут свои кнопки шапки.
+  const accLogout = $(".acc-logout", pane);
+  if (accLogout) accLogout.addEventListener("click", () => {
+    closeModal();
+    $("#logout-btn").click();
+  });
+  const accSave = $(".acc-save-btn", pane);
+  if (accSave) accSave.addEventListener("click", () => {
+    closeModal();
+    $("#save-account-btn").click();
+  });
+  // «Привязать телефон»: SMS-код → verify с link:true — номер цепляется к
+  // ТЕКУЩЕМУ аккаунту (сервер отвечает 409, если номер занят другим).
+  const phoneBtn = $(".acc-phone-btn", pane);
+  if (phoneBtn) {
+    const flow = $(".acc-phone-flow", pane);
+    const pmsg = $(".acc-phone-msg", pane);
+    phoneBtn.addEventListener("click", () => {
+      phoneBtn.classList.add("hidden");
+      flow.classList.remove("hidden");
+      $(".acc-phone-num", pane).focus();
+    });
+    $(".acc-phone-send", pane).addEventListener("click", async () => {
+      pmsg.textContent = "";
+      try {
+        await api("/api/auth/phone/start", {
+          method: "POST", body: { phone: $(".acc-phone-num", pane).value } });
+        pmsg.textContent = t("account.phoneSent");
+        $(".acc-phone-code", pane).classList.remove("hidden");
+        $(".acc-phone-verify", pane).classList.remove("hidden");
+        $(".acc-phone-code", pane).focus();
+      } catch (e) { pmsg.textContent = errText(e); }
+    });
+    $(".acc-phone-verify", pane).addEventListener("click", async () => {
+      pmsg.textContent = "";
+      try {
+        const r = await api("/api/auth/phone/verify", {
+          method: "POST",
+          body: { phone: $(".acc-phone-num", pane).value,
+                  code: $(".acc-phone-code", pane).value, link: true } });
+        $(".acc-phone-wrap", pane).innerHTML =
+          `<span class="muted acc-phone-ok">✓ ${escHtml(r.phone_masked || "")}</span>`;
+      } catch (e) { pmsg.textContent = errText(e); }
+    });
   }
   if (lim) {
     const box = document.createElement("div");

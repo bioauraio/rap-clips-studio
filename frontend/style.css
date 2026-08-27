@@ -3969,3 +3969,13 @@ body.mode-mockup .track-card .s-supergen,
 body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
   display: none !important;
 }
+
+/* Кабинет: строка настроек (тема · язык · сохранить · выйти) + телефон */
+.acc-settings { justify-content: flex-end; margin-bottom: 12px; gap: 8px; }
+.acc-settings .theme-switch, .acc-settings .lang-switch { display: inline-flex; }
+.acc-phone-wrap { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.acc-phone-flow { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.acc-phone-flow.hidden { display: none; }
+.acc-phone-num { width: 150px; }
+.acc-phone-code { width: 76px; }
+.acc-phone-btn { font-size: 12px; padding: 4px 10px; }

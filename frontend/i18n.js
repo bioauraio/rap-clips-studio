@@ -1525,6 +1525,11 @@ const I18N = {
     },
 
     account: {
+      phoneLink: "Link phone",
+      phoneSend: "Send code",
+      phoneSent: "Code sent by SMS",
+      phoneCodePh: "code",
+      phoneVerify: "Confirm",
       title: "Account",
       tabs: {
         account: "Account",
@@ -4049,6 +4054,11 @@ const I18N = {
     },
 
     account: {
+      phoneLink: "Привязать телефон",
+      phoneSend: "Получить код",
+      phoneSent: "Код отправлен по SMS",
+      phoneCodePh: "код",
+      phoneVerify: "Подтвердить",
       title: "Кабинет",
       tabs: {
         account: "Аккаунт",

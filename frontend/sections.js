@@ -148,8 +148,8 @@
       open: () => openLibrary(),
     },
     { id: "music", adopt: "#music-btn", active: () => shown("#music") },
-    { id: "account", adopt: "#account-btn", active: () => false },
-    { id: "admin", adopt: "#admin-btn", active: () => false },
+    // «Профиль» и «Админка» НЕ в ленте: профиль — правый угол шапки
+    // (капсула с авой в .tb-user), админка — компактная шестерёнка рядом.
   ];
 
   /* ───────────────────────────── лента разделов ───────────────────────────── */
@@ -162,12 +162,16 @@
     nav.className = "tb-sections";
     nav.setAttribute("aria-label", T("nav.aria", "Разделы сервиса"));
 
+    // Иконка раздела — для мобильного сегмента (подпись мелко под значком).
+    const ICONS = { studio: "🎬", make: "✨", trends: "🔥", marketing: "📦",
+                    academy: "🎓", prompts: "📝", music: "🎵" };
     SECTIONS.forEach((s) => {
       if (s.adopt) {
         const node = $(s.adopt);
         if (!node) return;
         node.classList.add("tb-sec");
         node.dataset.sec = s.id;
+        if (ICONS[s.id]) node.dataset.ico = ICONS[s.id];
         nav.appendChild(node);        // ПЕРЕНОС: обработчики и .hidden целы
         return;
       }
@@ -176,6 +180,7 @@
       b.className = "tb-sec";
       b.id = "sec-" + s.id;
       b.dataset.sec = s.id;
+      if (ICONS[s.id]) b.dataset.ico = ICONS[s.id];
       b.textContent = s.label();
       if (s.title()) b.title = s.title();
       b.addEventListener("click", () => go(s.id));

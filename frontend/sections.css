@@ -1043,3 +1043,69 @@
 @media (max-width: 700px) {
   .mk-grid { grid-template-columns: 1fr; }
 }
+
+/* ─────────── Шапка v131: профиль в правом углу, огонь на активном ─────────── */
+/* Активный раздел — заливка пастельным огнём (как .stage-tab.on), а не рамка. */
+.topbar.has-sections .tb-sec.on {
+  background: var(--fire-ink);
+  color: var(--on-fire);
+  border-color: rgba(45, 33, 26, .12);
+}
+/* «Профиль» — капсула на стекле в правом углу, ава покрупнее. */
+.topbar #account-btn.profile-btn {
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 3px 12px 3px 4px;
+  box-shadow: none;
+}
+.topbar .profile-ava { width: 28px; height: 28px; font-size: 12px; }
+/* «Админка» — компактная шестерёнка рядом с профилем. */
+.topbar #admin-btn.admin-gear {
+  font-size: 15px; line-height: 1; padding: 0 9px;
+  border-radius: 999px;
+}
+
+@media (max-width: 700px) {
+  /* Строка 1: лого · тема · токены · ава-профиль. Язык, выход и «сохранить
+     аккаунт» уезжают в кабинет — в шапке им тесно и делать нечего. */
+  .topbar .lang-switch,
+  .topbar #logout-btn,
+  .topbar #save-account-btn { display: none !important; }
+  .topbar .theme-switch { transform: scale(.92); transform-origin: right center; }
+  /* Ава вместо «👤»-заглушки из style.css: у профиля есть настоящее лицо. */
+  .topbar #account-btn::before { content: none !important; }
+  .topbar #account-btn.profile-btn { padding: 2px; }
+  .topbar #account-btn .profile-ava { width: 30px; height: 30px; }
+  .topbar #account-btn .profile-ava-ini { font-size: 12px; }
+  .topbar #account-btn .profile-cap { display: none; }
+
+  /* Строка 2: навигация — сегмент-капсула со скроллом, значок + мелкая
+     подпись. content: attr(data-ico) отменяет "content: none" выше по файлу —
+     каскад по порядку в файле, специфичность одинаковая. */
+  .topbar.has-sections > .tb-sections {
+    background: var(--inset);
+    border: 1px solid rgba(45, 33, 26, .12);
+    border-radius: 16px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .topbar.has-sections .tb-sections .tb-sec {
+    flex-direction: column;
+    gap: 1px;
+    height: auto;
+    min-height: 40px;
+    padding: 3px 10px;
+    font-size: 9.5px;
+    border-radius: 12px;
+  }
+  .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
+    content: attr(data-ico);
+    font-size: 14px;
+    line-height: 1.15;
+  }
+  /* Перенесённые кнопки (Генератор/Музыка): вернуть подпись поверх
+     font-size:0 из style.css и убрать их старые эмодзи-псевдоэлементы. */
+  .topbar.has-sections .tb-sections #chat-btn,
+  .topbar.has-sections .tb-sections #music-btn { font-size: 9.5px; padding: 3px 10px; }
+}
