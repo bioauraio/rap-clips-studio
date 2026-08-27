@@ -2050,6 +2050,21 @@ button.primary:hover:not(:disabled) {
   .char-photo-model { width: 140px; }
 }
 
+/* ─── ТЕЛЕФОН: строка трека в ОДНУ строку ───
+   [обложка][#1][название][⚡Супергенерация]. Стрелки, копия и удаление —
+   только на десктопе: на 375px они превращали шапку трека в три этажа. */
+@media (max-width: 700px) {
+  #tracks .track-card > .track-head { flex-wrap: nowrap; gap: 6px; padding: 6px 8px; }
+  .track-head .order-btns { display: none; }
+  .track-head .cover-slot { width: 30px; height: 30px; flex: none; }
+  .track-head .pos { min-width: 0; font-size: 12px; }
+  .track-head .t-title { flex: 1 1 0; min-width: 0; font-size: 13px; padding: 6px 8px; }
+  .track-head .s-supergen { flex: none; font-size: 11px; padding: 6px 9px; }
+  /* Панели студии — одно стекло, одна сетка отступов. */
+  .panel { padding: 12px; border-radius: 20px; margin-bottom: 12px; }
+  .theme-switch { display: none; }
+}
+
 /* ─── ТЕЛЕФОН: Генератор в ширину экрана, ввод одной строкой ───
    На 375px капсула ввода разваливалась этажами с гигантскими зазорами,
    «Отправить» накрывал плавающий пузырь агента, а нижний док ложился на
@@ -2073,7 +2088,10 @@ button.primary:hover:not(:disabled) {
   /* Вторая строка: сервисные иконки + цена. */
   .cc-bar .mk-mini { order: 4; height: 30px; min-width: 30px; padding: 0 8px; font-size: 11.5px; }
   .cc-bar .cc-price { order: 5; font-size: 11px; margin-left: auto; }
-  .cc-note { font-size: 10px; margin-top: 4px; }
+  /* «Цена видна до отправки…» — объяснялка: на телефоне её не читают,
+     а строку она занимает. Цена и так стоит на кнопке. */
+  .cc-note { display: none; }
+  .chat-retention { display: none; }
   /* Пузырь агента на экране Генератора не нужен: это и есть агент. */
   body:has(#chat:not(.hidden)) .pa-bubble,
   body:has(#chat:not(.hidden)) .pa-panel { display: none !important; }
@@ -2956,6 +2974,8 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
    решения человека и цена; 3 и 5 схлопнуты, потому что это уточнения. */
 .mode-setup { display: flex; flex-direction: column; gap: 12px; }
 .ms-summary {
+  font-size: 11.5px; color: var(--ink-muted); white-space: nowrap;
+  font-family: var(--font-mono);
   font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
   padding: 8px 12px; border-radius: 20px;
   border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset);
@@ -3936,6 +3956,21 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 }
 
 .scene-card .s-gen-video { font-size: 13px; padding: 10px 12px; }
+
+/* ─── ВЕДУЩАЯ КНОПКА (.next-step): дизайн ведёт, текст молчит ───
+   Один очевидный следующий шаг на трек: огонь + мягкое дыхание тени.
+   Пульс тенью, а не размером — прыгающая кнопка сдвигала бы соседей. */
+.next-step {
+  color: var(--on-fire) !important;
+  background: var(--fire-ink) !important;
+  border-color: transparent !important;
+  animation: next-breath 2.2s ease-in-out infinite;
+}
+@keyframes next-breath {
+  0%, 100% { box-shadow: 0 2px 12px rgba(221, 106, 80, .30); }
+  50%      { box-shadow: 0 2px 22px rgba(221, 106, 80, .58); }
+}
+@media (prefers-reduced-motion: reduce) { .next-step { animation: none; } }
 
 /* ─── «КАК ЧАСЫ»: микро-анимации карточки кадра ───
    Кнопки отвечают на палец (hover приподнимает, active прижимает), картинки

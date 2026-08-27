@@ -262,6 +262,28 @@
         menu.appendChild(item(save.textContent || T("top.saveAccount", ""),
           () => save.click()));
       }
+      // Тема — пунктом меню: с мобильной шапки переключатель убран совсем,
+      // а прятать настройку глубже кабинета незачем. Клик листает по кругу
+      // авто → светлая → тёмная; «авто» — тёмная после 21:00 и до 8:00.
+      {
+        const names = { auto: ["авто", "auto"], light: ["светлая", "light"],
+                        dark: ["тёмная", "dark"], system: ["системная", "system"] };
+        const cur = () => localStorage.getItem("rc_theme") || "auto";
+        const label = () => (T("nav.themeWord", "Тема") + ": "
+          + (names[cur()] || names.auto)[LANG === "ru" ? 0 : 1]);
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-pitem";
+        b.textContent = label();
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();               // меню не закрываем: листают подряд
+          const next = { auto: "light", light: "dark", dark: "auto" }[cur()] || "auto";
+          if (typeof window.applyTheme === "function") window.applyTheme(next);
+          else localStorage.setItem("rc_theme", next);
+          b.textContent = label();
+        });
+        menu.appendChild(b);
+      }
       const out = $("#logout-btn");
       if (out) {
         menu.appendChild(item(out.textContent || T("top.logout", "выйти"),

@@ -415,7 +415,17 @@ function renderUserBar() {
   // В шапке — общий остаток, потому что тратится он одним кошельком. Из чего
   // он сложен, видно в подсказке и подробно в кабинете: смешивать два числа
   // в бейдже значит заставлять человека считать в уме на каждом экране.
-  badge.textContent = `${tNum(u.gen_points)} ${t("top.pointsUnit")}`;
+  badge.textContent = window.matchMedia("(max-width: 700px)").matches
+    ? `⚡${tNum(u.gen_points)}`
+    : `${tNum(u.gen_points)} ${t("top.pointsUnit")}`;
+  if (!badge.dataset.wired) {
+    badge.dataset.wired = "1";
+    badge.style.cursor = "pointer";
+    badge.addEventListener("click", () => {
+      const acc = $("#account-btn");
+      if (acc) acc.click();
+    });
+  }
   badge.title = u.bonus_points
     ? t("top.pointsSplit", { paid: tNum(u.paid_points), bonus: tNum(u.bonus_points) })
     : "";
@@ -5761,25 +5771,18 @@ function msHowto(card, mode) {
    каркас, стиль, движок и прогноз расхода. Она и есть ответ на «что я
    вообще собрал», ради которого раньше приходилось листать пять мест. */
 function msSummary(card, tr, mode) {
+  /* Минимализм по прямому решению владельца 28.08: режим, пресет, стиль и
+     движок видно в их собственных местах, а плашка оставляет одно число,
+     которого больше нигде нет, — прогноз расхода. Мелко, muted, без
+     переносов. */
   const box = $(".ms-summary", card);
   if (!box) return;
-  const parts = [];
-  parts.push(`${mode.icon || "🎬"} ${t(`modes.${mode.id}.title`)}`);
-  const pk = mode.id === "clip" ? (tr.clip_preset_key || "") : (tr.format_key || "");
-  if (pk) {
-    const items = mode.id === "clip"
-      ? ((stylesCatalog && stylesCatalog.presets) || []) : modeFormats(mode);
-    const p = items.find((x) => x.key === pk);
-    if (p) parts.push(typeof p.label === "string" ? p.label : ((p.label && (p.label[LANG] || p.label.en)) || pk));
-  }
-  if (tr.style_label) parts.push(tr.style_label);
   const vid = videoEngineById(effVideoEngine(tr));
-  if (vid) parts.push(vid.title);
   const img = imageEngineById(effImageEngine(tr));
   const scenes = tr.scenes_count || (mode.scenes && mode.scenes.typ) || 30;
   const per = (img ? img.frames_cost : 0) + (vid ? vid.video_cost : 0);
-  if (per > 0) parts.push(t("modeSetup.forecast", { scenes, total: tNum(scenes * per) }));
-  box.textContent = parts.join(" · ");
+  box.textContent = per > 0
+    ? t("modeSetup.forecast", { scenes, total: tNum(scenes * per) }) : "";
 }
 
 /* Сборка блока. Зовётся из renderTrack после движков и полей режима: к этому
@@ -6692,6 +6695,30 @@ function renderTrack(tr) {
   asmBtn.textContent = asmBusy ? t("track.assembleBusy")
     : tr.clip_url ? t("track.reassemble") : t("track.assemble");
   asmBtn.addEventListener("click", () => assembleClip(tr.id));
+
+  /* ─── ВЕДУЩАЯ КНОПКА: дизайн ведёт, текст молчит ───
+     В каждый момент у трека ОДИН очевидный следующий шаг, и он горит огнём
+     с мягким пульсом (.next-step). Состояние читается из tr.*, никакой
+     новой логики: нет аудио → «загрузи трек»; аудио есть, сцен нет →
+     «Сгенерировать сцены»; сцены без кадров → «Кадры всех сцен»; кадры
+     без видео → «Видео всех сцен»; видео есть → «Собрать клип». */
+  {
+    const scenes = tr.scenes || [];
+    const withImg = scenes.filter((x) => x.image_url).length;
+    const withVid = scenes.filter((x) => x.video_url).length;
+    const needsAudio = curMode().needs_audio !== false;
+    let sel = "";
+    if (needsAudio && !tr.audio_filename) sel = ".t-audio-swap";
+    else if (!scenes.length) sel = ".t-gen-scenes, .gen-scenes";
+    else if (!withImg) sel = ".gen-all-frames";
+    else if (!withVid) sel = ".gen-all-videos";
+    else if (tr.approved_count && !["queued", "running"].includes(tr.clip_status)
+             && !tr.clip_url) sel = ".assemble";
+    if (sel) {
+      const btn = sel.split(",").map((q) => $(q.trim(), card)).find(Boolean);
+      if (btn && !btn.disabled) btn.classList.add("next-step");
+    }
+  }
 
   // Автосборка: флаг живёт в localStorage, работу делает autoAssembleTick
   // на общем поллинге. Здесь только галочка и её сообщение.
@@ -10612,7 +10639,15 @@ const chatState = {
 function applyTheme(mode) {
   const root = document.documentElement;
   if (mode === "light" || mode === "dark") root.dataset.theme = mode;
-  else { delete root.dataset.theme; mode = "system"; }
+  else if (mode === "system") delete root.dataset.theme;
+  else {
+    // АВТО ПО ВРЕМЕНИ СУТОК — умолчание: после 21:00 и до 8:00 тёмная,
+    // днём светлая. Руками выбранная тема (light/dark/system) это правило
+    // выключает — авто живёт, только пока человек не решил сам.
+    mode = "auto";
+    const h = new Date().getHours();
+    root.dataset.theme = (h >= 21 || h < 8) ? "dark" : "light";
+  }
   localStorage.setItem("rc_theme", mode);
   document.querySelectorAll(".theme-switch button").forEach((b) => {
     b.classList.toggle("on", b.dataset.themeSet === mode);
@@ -10622,6 +10657,7 @@ function applyTheme(mode) {
   // мини-аппа оставался светлым — те самые белые прогалы вокруг панелей.
   if (window.TGA && window.TGA.repaint) window.TGA.repaint();
 }
+window.applyTheme = applyTheme;   // меню профиля (sections.js) листает тему
 // Меню «⋯» карточки кадра гасим кликом мимо и по Esc — один слушатель на
 // документ вместо слушателя в каждой карточке (их на треке тридцать).
 document.addEventListener("click", () => {
@@ -10640,7 +10676,12 @@ document.addEventListener("keydown", (e) => {
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   const sync = () => document.documentElement.classList.toggle("os-dark", mq.matches);
   sync(); mq.addEventListener("change", sync);
-  applyTheme(localStorage.getItem("rc_theme") || "system");
+  applyTheme(localStorage.getItem("rc_theme") || "auto");
+  // Авто-тема обязана перещёлкнуться в 21:00 без перезагрузки: раз в
+  // полчаса дёшево, а вкладка у людей живёт вечерами часами.
+  setInterval(() => {
+    if ((localStorage.getItem("rc_theme") || "auto") === "auto") applyTheme("auto");
+  }, 30 * 60 * 1000);
   document.addEventListener("click", (e) => {
     const b = e.target.closest("[data-theme-set]");
     if (b) applyTheme(b.dataset.themeSet);
