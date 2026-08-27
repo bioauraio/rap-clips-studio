@@ -33,6 +33,7 @@ import formats
 import gate
 import learn
 import mediagen
+import mockup_catalog
 import voice
 import music
 import audio_analysis
@@ -8876,6 +8877,313 @@ def generate_turnaround(track_id: int, engine: str = "",
     db.commit()
     _spawn_gen(user, _run_turnaround, track.id, engine, cost, kind="frames")
     return {"ok": True, "charged": cost}
+
+
+# ─────────────── Маркетинг-студия: шаблоны мокапов ───────────────
+# Каталог готовых предметных сцен (mockup_catalog.py): человек выбирает
+# шаблон или пишет свой промпт, референсами едут фото товара и/или моделька
+# персонажа, результат ложится ОБЫЧНОЙ сценой трека — дальше его можно
+# оживить и собрать в клип штатным конвейером.
+
+MOCKUP_PREVIEWS_FILE = os.path.join(UPLOAD_DIR, "mockup_previews.json")
+MARKETING_CAMERAS = {
+    "closeup": "Extreme close-up framing, the product fills most of the frame, macro detail.",
+    "medium": "Medium shot framing, the product prominent with some scene context around it.",
+    "wide": "Wide shot framing, the full scene visible, the product a clear focal point.",
+    "": "",
+}
+MARKETING_ASPECTS = ("9:16", "3:4", "1:1")
+
+
+def _mockup_previews() -> dict:
+    try:
+        with open(MOCKUP_PREVIEWS_FILE, encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _mockup_previews_save(m: dict) -> None:
+    tmp = MOCKUP_PREVIEWS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False)
+    os.replace(tmp, MOCKUP_PREVIEWS_FILE)
+
+
+def _mockup_frame_cost(user: User, engine: str) -> int:
+    """Цена ОДНОГО кадра. FRAME_COST — прайс пары (см. _frames_cost),
+    поэтому одиночный кадр = половина, но не меньше 1."""
+    return max(1, _frames_cost(user, None, engine) // 2)
+
+
+@app.get("/api/mockup/templates")
+def mockup_templates(user: User = Depends(current_user)):
+    del user  # каталог одинаков для всех, но виден только своим
+    previews = _mockup_previews()
+    out = []
+    for tpl in mockup_catalog.TEMPLATES:
+        fname = previews.get(tpl["id"]) or ""
+        out.append({
+            "id": tpl["id"], "ru": tpl["ru"], "en": tpl["en"],
+            "category": tpl["category"], "tara": tpl["tara"],
+            "emoji": tpl["emoji"], "motion": bool(tpl.get("motion")),
+            "prompt": mockup_catalog.scene_prompt(tpl),
+            "preview_url": f"/api/media/{fname}" if fname else "",
+        })
+    return {"templates": out, "categories": list(mockup_catalog.CATEGORIES)}
+
+
+def _run_marketing_frame(track_id: int, scene_id: int, prompt: str,
+                         ref_paths: list[str], engine: str, aspect: str,
+                         cost: int) -> None:
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        scene = db.get(Scene, scene_id)
+        if not track or not scene:
+            return
+        scene.image_status = "running"
+        db.commit()
+        img_res = (track.image_resolution or "").strip()
+        # Шлюзы берут одну картинку — несколько референсов склеиваем в
+        # коллаж (как _scene_reference_photo); Nano Banana получит список.
+        single = ref_paths[0] if ref_paths else None
+        if len(ref_paths) > 1:
+            single = _ref_collage(db, ref_paths[:4],
+                                  track.project.owner_id) or ref_paths[0]
+        import asyncio
+        mediagen.reset_task()
+        res = asyncio.run(mediagen.generate_image_ex(
+            prompt, single, reference_paths=ref_paths,
+            engine=engine, resolution=img_res, aspect=aspect))
+        fname = _save_image(res["data"], res["mime"])
+        _reg_file(db, fname, track.project.owner_id, kind="frame",
+                  project_id=track.project_id, track_id=track.id,
+                  scene_id=scene.id)
+        scene.image_filename = fname
+        scene.image_engine = res.get("engine") or engine
+        scene.image_status = ""
+        scene.image_error = ""
+        scene.style_keys = track.style_keys or ""
+        db.commit()
+        log.info("маркетинг-кадр сцены %s трека %s готов", scene_id, track_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        scene = db.get(Scene, scene_id)
+        if scene:
+            scene.image_status = "error"
+            scene.image_error = _err_text(e, 300)
+            db.commit()
+        track = db.get(Track, track_id)
+        if track:
+            owner = (db.get(User, track.project.owner_id)
+                     if track.project.owner_id else None)
+            if owner and cost > 0:
+                _refund(db, owner, cost, f"маркетинг-кадр трека {track_id}: не вышло",
+                        ref_type="scene", ref_id=scene_id,
+                        track_id=track_id, project_id=track.project_id)
+        log.warning("маркетинг-кадр сцены %s упал: %s", scene_id, e)
+    finally:
+        db.close()
+
+
+def _marketing_generate(db: Session, user: User, track: Track, *,
+                        template_id: str = "", prompt: str = "",
+                        camera: str = "", aspect: str = "",
+                        character_id: int = 0, use_product: bool = True,
+                        product_track_id: int = 0) -> dict:
+    """Общая механика POST marketing-gen / mockup-from-template."""
+    _guard_disk()
+    tpl = mockup_catalog.get(template_id) if template_id else None
+    if template_id and not tpl:
+        raise HTTPException(404, "нет такого шаблона")
+    base = mockup_catalog.scene_prompt(tpl) if tpl else (prompt or "").strip()
+    if not base:
+        raise HTTPException(400, "нужен шаблон или свой промпт")
+    if prompt and tpl:
+        base = base + " " + prompt.strip()
+    cam = MARKETING_CAMERAS.get((camera or "").strip(), "")
+    if cam:
+        base = base + " " + cam
+    aspect = (aspect or "").strip() or "1:1"
+    if aspect not in MARKETING_ASPECTS:
+        aspect = "1:1"
+
+    refs: list[str] = []
+    if use_product:
+        # Товар можно взять из ЛЮБОГО своего проекта: база предметов общая.
+        src = track
+        if product_track_id and int(product_track_id) != track.id:
+            src = db.get(Track, int(product_track_id))
+            if not src or src.project.owner_id != user.id:
+                raise HTTPException(404, "нет такого товара")
+        refs += _track_photo_paths(src, 4)
+        if not refs:
+            raise HTTPException(400, "сначала добавь фото товара")
+        base = mockup_catalog.PRODUCT_CLAUSE + base \
+            if not tpl else base  # у шаблона охрана этикетки уже вшита
+    char = None
+    if character_id:
+        # База героев ОБЩАЯ: персонаж может жить в любом проекте владельца.
+        char = db.get(Character, int(character_id))
+        char_proj = db.get(Project, char.project_id) if char else None
+        if not char or not char_proj or char_proj.owner_id != user.id:
+            raise HTTPException(404, "нет такого персонажа")
+        cpaths = _character_model_paths([char], 3, prefer_photo=True)
+        if not cpaths:
+            raise HTTPException(400, "у персонажа нет фото")
+        refs += cpaths
+        base += (f" The person in the scene is '{char.name}' — match the face "
+                 "and look of that person exactly as in the reference photos.")
+    if not refs:
+        raise HTTPException(400, "нужен хотя бы один референс: товар или персонаж")
+    seen: set[str] = set()
+    refs = [p for p in refs if not (p in seen or seen.add(p))][:8]
+
+    engine = _resolve_image_engine(user, track)
+    cost = _mockup_frame_cost(user, engine)
+    what = (f"кадр по шаблону «{tpl['ru']}»" if tpl else "маркетинг-кадр") \
+        + f" — «{track.title or track.id}»"
+    _charge(db, user, cost, what, kind="frames", engine=engine,
+            cost_cents=_cost_cents("image", engine,
+                                   resolution=(track.image_resolution or "").strip()),
+            ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id)
+
+    scene = Scene(
+        track_id=track.id,
+        position=(max((s.position for s in track.scenes), default=0) + 1),
+        duration_sec=6,
+        image_prompt=base,
+        shot_note=(f"готовый кадр по шаблону «{tpl['ru']}»" if tpl
+                   else "маркетинг-кадр по своему промпту"),
+        image_status="queued",
+        image_engine=engine,
+        charged_points=cost,
+        characters=(char.name if char else ""),
+    )
+    db.add(scene)
+    db.commit()
+    _spawn_gen(user, _run_marketing_frame, track.id, scene.id, base,
+               refs, engine, aspect, cost, kind="frames")
+    return {"ok": True, "charged": cost, "scene_id": scene.id}
+
+
+@app.post("/api/tracks/{track_id}/marketing-gen")
+async def marketing_gen(track_id: int, request: Request,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    body = await request.json()
+    track = _own_track(db, user, track_id)
+    return _marketing_generate(
+        db, user, track,
+        template_id=str(body.get("template_id") or ""),
+        prompt=str(body.get("prompt") or ""),
+        camera=str(body.get("camera") or ""),
+        aspect=str(body.get("aspect") or ""),
+        character_id=int(body.get("character_id") or 0),
+        use_product=bool(body.get("use_product", True)),
+        product_track_id=int(body.get("product_track_id") or 0),
+    )
+
+
+@app.post("/api/tracks/{track_id}/mockup-from-template")
+async def mockup_from_template(track_id: int, request: Request,
+                               user: User = Depends(current_user),
+                               db: Session = Depends(db_session)):
+    body = await request.json()
+    track = _own_track(db, user, track_id)
+    return _marketing_generate(
+        db, user, track,
+        template_id=str(body.get("template_id") or ""),
+        use_product=True,
+    )
+
+
+def generate_mockup_previews(ids: list[str] | None = None,
+                             engine: str = "chatgpt") -> dict:
+    """Превью каталога нейтральной бутылкой через бесплатный шлюз.
+
+    Зовётся из админ-эндпоинта и из CLI (docker exec … python3 -c). Без ids
+    генерит витринные (showcase) шаблоны без превью; ids=["*"] — все."""
+    db = SessionLocal()
+    done, failed = [], []
+    try:
+        previews = _mockup_previews()
+        todo = []
+        for tpl in mockup_catalog.TEMPLATES:
+            if previews.get(tpl["id"]):
+                continue
+            if ids and "*" not in ids and tpl["id"] not in ids:
+                continue
+            if not ids and not tpl.get("showcase"):
+                continue
+            todo.append(tpl)
+        import asyncio
+        for tpl in todo:
+            try:
+                mediagen.reset_task()
+                res = asyncio.run(mediagen.generate_image_ex(
+                    mockup_catalog.preview_prompt(tpl), None,
+                    engine=engine, aspect="3:4"))
+                fname = _save_image(res["data"], res["mime"], upscale=False)
+                _reg_file(db, fname, None, kind="mockup_preview")
+                db.commit()
+                previews = _mockup_previews()
+                previews[tpl["id"]] = fname
+                _mockup_previews_save(previews)
+                done.append(tpl["id"])
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{tpl['id']}: {_err_text(e, 120)}")
+                log.warning("превью шаблона %s не вышло: %s", tpl["id"], e)
+        return {"done": done, "failed": failed}
+    finally:
+        db.close()
+
+
+@app.get("/api/characters/all")
+def characters_all(user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    """Общая база героев: персонажи ВСЕХ проектов владельца — для слотов
+    маркетинг-бара и @-автокомплита, а не только текущего проекта."""
+    rows = (db.query(Character).join(Project, Project.id == Character.project_id)
+            .filter(Project.owner_id == user.id).order_by(Character.id).all())
+    out = []
+    for c in rows:
+        photo = ""
+        for ph in sorted(c.photos, key=lambda x: (x.position, x.id)):
+            if os.path.exists(os.path.join(UPLOAD_DIR, ph.filename)):
+                photo = f"/api/media/{ph.filename}"
+                break
+        out.append({"id": c.id, "name": c.name, "project_id": c.project_id,
+                    "photo_url": photo})
+    return {"characters": out}
+
+
+@app.get("/api/mockup/products")
+def mockup_products(user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Общая база товаров: по одному фото с каждого трека владельца, где
+    загружены фото продукта, — слот «продукт» выбирает из любого проекта."""
+    rows = (db.query(Track).join(Project, Project.id == Track.project_id)
+            .filter(Project.owner_id == user.id).order_by(Track.id).all())
+    out = []
+    for tr in rows:
+        paths = _track_photo_paths(tr, 1)
+        if not paths:
+            continue
+        out.append({"track_id": tr.id, "title": tr.title or f"#{tr.id}",
+                    "url": f"/api/media/{os.path.basename(paths[0])}"})
+    return {"products": out}
+
+
+@app.post("/api/admin/mockup/previews")
+def admin_mockup_previews(all: int = 0,  # noqa: A002
+                          user: User = Depends(current_user)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    return generate_mockup_previews(["*"] if all else None)
 
 
 # Как человек подписал ракурс своего фото. Классификатора ракурса у нас нет и

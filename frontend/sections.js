@@ -508,15 +508,38 @@
         d: T("marketing.earnNote", "Постишь ролики с продуктами — получаешь долю с продаж."),
         go: () => openEarn() },
     ];
-    cards.forEach((c) => {
+    cards.forEach((c, i) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "mk-card";
+      // Мини-галерея «как это выглядит»: у мокапов — три превью шаблонов
+      // (или стилизованные плашки, пока превью не сгенерированы), у UGC и
+      // заработка — по одной тематической плашке.
+      const gal = i === 0
+        ? `<span class="mk-card-gallery" data-mk-gal>
+             <span class="mk-gal-ph g1">🏛️</span>
+             <span class="mk-gal-ph g2">🧊</span>
+             <span class="mk-gal-ph g3">🛒</span></span>`
+        : `<span class="mk-card-gallery">
+             <span class="mk-gal-ph g${i + 1}">${i === 1 ? "🤳" : "💸"}</span></span>`;
       b.innerHTML = `<span class="mk-ico" aria-hidden="true">${c.icon}</span>
-        <b>${esc(c.t)}</b><span class="mk-note">${esc(c.d)}</span>`;
+        <b>${esc(c.t)}</b><span class="mk-note">${esc(c.d)}</span>${gal}`;
       b.addEventListener("click", c.go);
       grid.appendChild(b);
     });
+    // Живые превью шаблонов подъезжают асинхронно; без сессии или без
+    // сгенерированных превью карточка остаётся на плашках — это норма.
+    fetch("/api/mockup/templates", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const withPrev = ((data && data.templates) || [])
+          .filter((x) => x.preview_url).slice(0, 3);
+        const holder = $("[data-mk-gal]", page);
+        if (!holder || !withPrev.length) return;
+        holder.innerHTML = withPrev.map((x) =>
+          `<img src="${esc(x.preview_url)}" alt="" loading="lazy" />`).join("");
+      })
+      .catch(() => {});
     app.appendChild(page);
     paint();
   }

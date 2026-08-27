@@ -4818,6 +4818,7 @@ function msPhotos(card, tr, mode) {
     await loadProject();
   });
   msTurnaround(card, tr);
+  msMarketingStudio(card, tr, mode);
 }
 
 /* 3D-облёт товара: 8 ракурсов по кругу, листаются drag'ом по горизонтали —
@@ -4881,6 +4882,214 @@ function msTurnaround(card, tr) {
   const up = () => { downX = null; };
   view.addEventListener("pointerup", up);
   view.addEventListener("pointercancel", up);
+}
+
+/* ─────────── Маркетинг-студия: промпт-бар + витрина шаблонов ───────────
+   Сверху генератор одной строкой (промпт, ракурс, аспект, слоты «персонаж»
+   и «продукт» из ОБЩЕЙ базы всех проектов), под ним сетка готовых сцен с
+   фильтром по категориям. Клик по шаблону не генерит сразу — подставляет
+   сцену в бар как референс. */
+let mkCatalog = null;   // {templates, categories} — грузится один раз
+let mkChars = null;     // общая база героев (все проекты владельца)
+let mkProducts = null;  // общая база товаров
+
+function mkToast(text) {
+  let el = $("#mk-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "mk-toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("show"), 3200);
+}
+
+async function msMarketingStudio(card, tr, mode) {
+  const box = $(".mk-studio", card);
+  if (!box) return;
+  const on = mode.id === "mockup";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  if (!mkCatalog) {
+    try {
+      [mkCatalog, mkChars, mkProducts] = await Promise.all([
+        api("/api/mockup/templates"),
+        api("/api/characters/all").then((r) => r.characters || []).catch(() => []),
+        api("/api/mockup/products").then((r) => r.products || []).catch(() => []),
+      ]);
+    } catch (e) { box.classList.add("hidden"); return; }
+  }
+  const st = tr._mk || (tr._mk = {
+    cat: "", tplId: "", camera: "", aspect: "1:1",
+    charId: 0, productTrackId: 0, useProduct: true, video: false, prompt: "",
+  });
+  const tpls = mkCatalog.templates || [];
+  const frameCost = Math.max(1, Math.round((tr.turnaround_cost || 8) / 8));
+  const chip = (label, active, onClick, cls = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `mk-chip ${cls}` + (active ? " on" : "");
+    b.innerHTML = label;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  box.innerHTML = `
+    <label class="mk-title">${esc(t("mk.title"))}</label>
+    <div class="mk-bar">
+      <textarea class="mk-prompt" rows="2" placeholder="${esc(t("mk.promptPh"))}"></textarea>
+      <div class="mk-bar-row">
+        <div class="mk-chips mk-kind"></div>
+        <div class="mk-chips mk-camera"></div>
+        <div class="mk-chips mk-aspect"></div>
+        <div class="mk-slots"></div>
+        <button type="button" class="mk-go">${esc(t("mk.generate"))} · ⚡ ${frameCost}</button>
+      </div>
+      <span class="mk-status status"></span>
+    </div>
+    <div class="mk-filter"></div>
+    <div class="mk-tpl-grid"></div>`;
+  const promptEl = $(".mk-prompt", box);
+  if (st.prompt) promptEl.value = st.prompt;
+  promptEl.addEventListener("input", () => { st.prompt = promptEl.value; });
+
+  // Товары общей базы: текущий трек первым, дальше все остальные с фото.
+  const ownPhoto = (tr.photos || []).length
+    ? { track_id: tr.id, title: tr.title || `#${tr.id}`, url: tr.photos[0].url } : null;
+  const products = [
+    ...(ownPhoto ? [ownPhoto] : []),
+    ...(mkProducts || []).filter((p) => p.track_id !== tr.id),
+  ];
+
+  const paintBar = () => {
+    const kind = $(".mk-kind", box);
+    kind.innerHTML = "";
+    kind.append(
+      chip(esc(t("mk.image")), !st.video, () => { st.video = false; paintBar(); }),
+      chip(esc(t("mk.video")), false, () => { mkToast(t("mk.videoSoon")); }, "soon"));
+    const cam = $(".mk-camera", box);
+    cam.innerHTML = "";
+    [["", "camAuto"], ["closeup", "camCloseup"], ["medium", "camMedium"], ["wide", "camWide"]]
+      .forEach(([v, k]) => cam.appendChild(chip(esc(t(`mk.${k}`)), st.camera === v,
+        () => { st.camera = v; paintBar(); })));
+    const asp = $(".mk-aspect", box);
+    asp.innerHTML = "";
+    ["9:16", "3:4", "1:1"].forEach((v) => asp.appendChild(
+      chip(v, st.aspect === v, () => { st.aspect = v; paintBar(); })));
+    const slots = $(".mk-slots", box);
+    slots.innerHTML = "";
+    // Слот «персонаж»: клик листает героев ВСЕХ проектов, последний клик
+    // очищает слот. Фото героя уезжает референсом.
+    const chars = mkChars || [];
+    const ch = chars.find((c) => c.id === st.charId);
+    const cSlot = document.createElement("button");
+    cSlot.type = "button";
+    cSlot.className = "mk-slot" + (ch ? " filled" : "");
+    cSlot.title = ch ? ch.name : t("mk.slotChar");
+    cSlot.innerHTML = ch
+      ? (ch.photo_url ? `<img src="${esc(ch.photo_url)}" alt="" />` : `<b>${esc((ch.name || "?")[0])}</b>`)
+      : `<span>👤</span><i>${esc(t("mk.slotChar"))}</i>`;
+    cSlot.addEventListener("click", () => {
+      if (!chars.length) { mkToast(t("mk.noChars")); return; }
+      const idx = chars.findIndex((c) => c.id === st.charId);
+      const next = chars[idx + 1];
+      st.charId = next ? next.id : 0;
+      paintBar();
+    });
+    // Слот «продукт»: клик листает товары общей базы; без единого фото —
+    // открывает аплоад фото товара текущего трека.
+    const prod = products.find((p) => p.track_id === st.productTrackId)
+      || (st.useProduct ? products[0] : null);
+    const pSlot = document.createElement("button");
+    pSlot.type = "button";
+    pSlot.className = "mk-slot" + (st.useProduct && prod ? " filled" : "");
+    pSlot.title = prod ? prod.title : t("mk.slotProduct");
+    pSlot.innerHTML = (st.useProduct && prod)
+      ? `<img src="${esc(prod.url)}" alt="" />`
+      : `<span>📦</span><i>${esc(t("mk.slotProduct"))}</i>`;
+    pSlot.addEventListener("click", () => {
+      if (!products.length) {
+        const input = $(".ms-photo-input", card);
+        if (input) input.click();
+        return;
+      }
+      if (!st.useProduct) { st.useProduct = true; st.productTrackId = products[0].track_id; }
+      else {
+        const idx = products.findIndex((p) => p.track_id === (st.productTrackId || products[0].track_id));
+        const next = products[idx + 1];
+        if (next) st.productTrackId = next.track_id;
+        else { st.useProduct = false; st.productTrackId = 0; }
+      }
+      paintBar();
+    });
+    slots.append(cSlot, pSlot);
+  };
+  paintBar();
+
+  // Витрина шаблонов: фильтр-чипы по категориям + плиточная сетка.
+  const cats = mkCatalog.categories || [];
+  const filt = $(".mk-filter", box);
+  const grid = $(".mk-tpl-grid", box);
+  const paintGrid = () => {
+    filt.innerHTML = "";
+    filt.appendChild(chip(esc(t("mk.catAll")), !st.cat,
+      () => { st.cat = ""; paintGrid(); }));
+    cats.forEach((c) => filt.appendChild(chip(esc(t(`mk.cat_${c}`)), st.cat === c,
+      () => { st.cat = c; paintGrid(); })));
+    grid.innerHTML = "";
+    tpls.filter((x) => !st.cat || x.category === st.cat).forEach((x) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-tpl" + (st.tplId === x.id ? " on" : "");
+      const name = LANG === "ru" ? x.ru : x.en;
+      b.innerHTML = (x.preview_url
+        ? `<img src="${esc(x.preview_url)}" alt="" loading="lazy" />`
+        : `<span class="mk-tpl-ph">${x.emoji}</span>`)
+        + `<span class="mk-tpl-cap"><b>${esc(name)}</b>`
+        + `<i>${esc(t(`mk.cat_${x.category}`))}${x.motion ? " · 🎬" : ""}</i></span>`;
+      b.addEventListener("click", () => {
+        st.tplId = st.tplId === x.id ? "" : x.id;
+        st.prompt = st.tplId ? x.prompt : "";
+        promptEl.value = st.prompt;
+        paintGrid();
+        if (st.tplId) box.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      grid.appendChild(b);
+    });
+  };
+  paintGrid();
+
+  const go = $(".mk-go", box);
+  const stEl = $(".mk-status", box);
+  go.addEventListener("click", async () => {
+    const text = (promptEl.value || "").trim();
+    const tpl = tpls.find((x) => x.id === st.tplId);
+    if (!tpl && !text) { mkToast(t("mk.needPrompt")); return; }
+    const useProduct = Boolean(st.useProduct && products.length);
+    if (!useProduct && !st.charId) { mkToast(t("mk.needProduct")); return; }
+    const body = {
+      camera: st.camera, aspect: st.aspect,
+      character_id: st.charId || 0,
+      use_product: useProduct,
+      product_track_id: useProduct
+        ? (st.productTrackId || products[0].track_id) : 0,
+    };
+    // Текст совпадает с промптом шаблона — шлём шаблон; правленый или
+    // свой текст едет как есть, чтобы сервер не склеил его сам с собой.
+    if (tpl && text === tpl.prompt) body.template_id = tpl.id;
+    else body.prompt = text;
+    go.disabled = true;
+    stEl.textContent = t("status.queued");
+    try {
+      await api(`/api/tracks/${tr.id}/marketing-gen`, { method: "POST", body });
+      mkToast((tpl && tpl.motion) ? t("mk.addedMotion") : t("mk.added"));
+      stEl.textContent = "";
+      schedulePoll();
+      await loadProject();
+    } catch (e) { fail(e); stEl.textContent = ""; }
+    go.disabled = false;
+  });
 }
 
 /* Шапка блока: одна строка, по которой видно всё решение целиком — режим,
