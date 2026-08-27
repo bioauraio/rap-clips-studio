@@ -374,6 +374,12 @@
   // Ширина ленты меняется от языка, поворота экрана и появления «Кабинета»
   // после входа: подложка обязана переехать вместе с кнопкой.
   window.addEventListener("resize", () => { moveIndicator(); measureBar(); });
+  // Шрифт грузится позже первой раскраски, кнопки меняют ширину — подложка
+  // обязана переехать следом, иначе она стоит со сдвигом до первого клика.
+  window.addEventListener("load", () => { moveIndicator(); measureBar(); });
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => moveIndicator()).catch(() => {});
+  }
 
   function relabel() {
     SECTIONS.forEach((s) => {
