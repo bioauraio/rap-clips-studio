@@ -372,9 +372,31 @@
     </article>`;
   }
 
+  // Тип CSS-анимации превью по движению камеры: наезд дышит масштабом,
+  // проезд едет вбок, кран — по вертикали, облёт — с наклоном.
+  function motionAnim(cam) {
+    const c = String(cam || "").toLowerCase();
+    if (/push|dolly in|zoom in/.test(c)) return "drone";
+    if (/pull|zoom out/.test(c)) return "slider";
+    if (/truck|pan|whip/.test(c)) return "truck";
+    if (/crane|pedestal|tilt/.test(c)) return "crane";
+    if (/arc|orbit|handheld|drift/.test(c)) return "orbit";
+    if (/follow|track/.test(c)) return "vehicle";
+    return "";
+  }
+
+  function motionThumb(c) {
+    if (!c.preview_url) return "";
+    const anim = motionAnim(c.camera);
+    return `<span class="pb-thumb${anim ? " cam-anim-" + anim : ""}">
+      <span class="cam-thumb"><i style="background-image:url('${esc(c.preview_url)}')"></i></span>
+    </span>`;
+  }
+
   function motionCard(c) {
     return `<article class="pb-card lb-card" data-kind="motion" data-key="${esc(c.key)}">
       ${head(c, "motion")}
+      ${motionThumb(c)}
       <p class="lb-desc">${esc(c.desc)}</p>
       <p class="pb-meta">${esc(c.camera || T("promptbase.noCamera", "камера не меняется"))}${
         c.bracket ? " · MiniMax " + esc(c.bracket) : ""}</p>

@@ -619,12 +619,11 @@
                  value="${esc(layerQuery)}" />
           <div class="adm-list l-list"></div>
           <button type="button" class="ghost l-new" style="margin-top:8px">+ карточка</button>
-          ${layerKind === "cameras" ? `
           <div class="adm-row" style="margin-top:8px;flex-wrap:wrap">
-            <button type="button" class="ghost l-cam-seed">📥 Разложить кадры Тони</button>
-            <button type="button" class="ghost l-cam-gen">🖼 Догенерить превью шлюзом</button>
+            ${layerKind === "cameras" ? '<button type="button" class="ghost l-cam-seed">📥 Разложить кадры Тони</button>' : ""}
+            <button type="button" class="ghost l-cam-gen">🖼 Догенерить превью всем (⚡0)</button>
             <span class="l-cam-msg muted"></span>
-          </div>` : ""}
+          </div>
         </div>
         <div class="l-editor"></div>
       </div>`;
@@ -690,9 +689,9 @@
     const camGen = $(".l-cam-gen", box);
     if (camGen) camGen.addEventListener("click", async () => {
       const m = $(".l-cam-msg", box);
-      m.textContent = "генерю недостающие (минуты)…";
+      m.textContent = "генерю недостающие превью слоя (минуты)…";
       try {
-        const r = await api("/api/admin/cameras/previews", { method: "POST" });
+        const r = await api(`/api/admin/prompts/${layerKind}/previews`, { method: "POST" });
         m.textContent = `готово: ${(r.done || []).length}, ошибок: ${(r.failed || []).length}`;
         renderLayers(box);
       } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
@@ -767,8 +766,10 @@
         <input type="text" class="l-f" data-f="${f}" value="${esc(v || "")}" /></div>`;
     };
 
-    const card = (c.fields || []).filter((f) => !isPrompt(f));
-    const prompts = (c.fields || []).filter(isPrompt);
+    // БАГ-ФИКС: filter без map(field) выводил СКЛЕЕННЫЕ ключи полей
+    // («labeldesctiergroup…») вместо полей с подписями и инпутами.
+    const card = (c.fields || []).filter((f) => !isPrompt(f)).map(field);
+    const prompts = (c.fields || []).filter(isPrompt).map(field);
     box.innerHTML = `
       <div class="adm-card">
         <div class="adm-row">
@@ -791,6 +792,7 @@
                 Загрузить свою картинку
                 <input type="file" class="l-prev-up" accept="image/*" style="display:none">
               </label>
+              <button type="button" class="ghost l-prev-gen">Сгенерировать превью ⚡0</button>
               <span class="l-prev-msg muted"></span>
             </div>
             ${(c.preview_gallery || []).length > 1 ? `
@@ -836,6 +838,17 @@
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
         layerEditor(box, host);
       } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
+    });
+    const prevGen = $(".l-prev-gen", box);
+    if (prevGen) prevGen.addEventListener("click", async () => {
+      const m = $(".l-prev-msg", box);
+      prevGen.disabled = true;
+      m.textContent = "генерю по промпту карточки…";
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}/preview-generate`,
+                  { method: "POST" });
+        layerEditor(box, host);
+      } catch (e) { m.textContent = "не вышло: " + (e.message || e); prevGen.disabled = false; }
     });
     $$(".l-gallery img", box).forEach((im) => im.addEventListener("click", async () => {
       try {

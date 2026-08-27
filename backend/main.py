@@ -4999,7 +4999,7 @@ def api_library(request: Request, lang: str = "", db: Session = Depends(db_sessi
         },
         "scripts": prompts_library.public_scripts(**kw),
         "boards": prompts_library.public_boards(**kw),
-        "motions": prompts_library.public_motions(**kw),
+        "motions": _decorate_layer(prompts_library.public_motions(**kw), "motions"),
         "cameras": _decorate_cameras(prompts_library.public_cameras(**kw)),
         "lights": prompts_library.public_lights(**kw),
         # Приёмы и наборы — прежние слои. Они остаются в том же каталоге
@@ -5059,8 +5059,8 @@ def api_motions(request: Request, lang: str = "", group: str = "",
     lg, plan, adm = _lib_who(request, db, lang)
     return {"lang": lg,
             "groups": _groups(prompts_library.MOTION_GROUPS, lg),
-            "motions": prompts_library.public_motions(
-                lang=lg, group=group, plan_id=plan, is_admin=adm)}
+            "motions": _decorate_layer(prompts_library.public_motions(
+                lang=lg, group=group, plan_id=plan, is_admin=adm), "motions")}
 
 
 @app.get("/api/motions/{key}")
@@ -5108,15 +5108,20 @@ def _preview_entry(v) -> tuple[str, list[str]]:
     return (str(v or ""), [str(v)] if v else [])
 
 
-def _decorate_cameras(cards: list[dict]) -> list[dict]:
+def _decorate_layer(cards: list[dict], layer: str) -> list[dict]:
+    """Приклеить превью к карточкам ЛЮБОГО слоя каталога."""
     previews = _layer_previews()
     for c in cards:
-        main, gallery = _preview_entry(previews.get(f"cameras:{c['key']}"))
+        main, gallery = _preview_entry(previews.get(f"{layer}:{c['key']}"))
         c["preview_url"] = f"/api/media/{main}" if main else ""
-        # Несколько кадров Тони на пресет: первый — главный, остальные
-        # крутятся на карточке hover-сменой.
+        # Несколько кадров Тони на карточку: первый — главный, остальные
+        # крутятся hover-сменой.
         c["preview_urls"] = [f"/api/media/{f}" for f in gallery]
     return cards
+
+
+def _decorate_cameras(cards: list[dict]) -> list[dict]:
+    return _decorate_layer(cards, "cameras")
 
 
 @app.get("/api/cameras")
@@ -5218,6 +5223,111 @@ CAMERA_REF_CLUSTERS = (
 )
 
 
+# Смысловое соответствие «движение → кластер кадров Тони»: наезд ← пролёт
+# дрона, кран/тилт ← спуск по секвойям, вбок ← проезд, облёт/зум ← вертолёт.
+MOTION_REF_MAP = {
+    "m_push_settle": "drone_push_in",
+    "m_steadi_follow": "drone_push_in",
+    "m_pull_open": "slider_arc",
+    "m_rack_focus": "slider_arc",
+    "m_truck_side": "truck_left",
+    "m_pan_link": "truck_left",
+    "m_pedestal_down": "crane_down",
+    "m_crane_rise": "crane_down",
+    "m_tilt_up": "crane_down",
+    "m_arc_quarter": "helicopter_orbit",
+    "m_handheld_drift": "helicopter_orbit",
+    "m_dolly_zoom": "helicopter_orbit",
+}
+
+
+def _layer_preview_prompt(layer: str, card: dict) -> str:
+    """Промпт превью карточки слоя — по СОБСТВЕННОМУ тексту записи."""
+    if layer == "cameras" and card.get("key") in CAMERA_PREVIEW_SCENES:
+        scene = CAMERA_PREVIEW_SCENES[card["key"]]
+        return (f"Cinematic film still, vertical 3:4 composition: {scene}. "
+                f"Natural light, realistic photography, no logos, no brands, "
+                f"no text, no watermark.")
+    bits = []
+    cam = str(card.get("camera") or "").strip()
+    if cam:
+        bits.append(f"camera: {cam}")
+    body = " ".join(str(card.get("text") or card.get("solo")
+                        or card.get("add") or "").split())[:400]
+    body = body.replace("{character}", "a lone person").replace(
+        "{location}", "a quiet city street")
+    if body:
+        bits.append(body)
+    return ("Cinematic film still, vertical 3:4, a neutral demonstration of "
+            "this camera or motion technique: " + "; ".join(bits) +
+            ". One ordinary person in a neutral urban or nature scene, natural "
+            "light, no logos, no brands, no text, no watermark.")
+
+
+def _generate_layer_preview(db: Session, layer: str, card: dict,
+                            engine: str = "chatgpt") -> str:
+    """Один кадр превью бесплатным шлюзом; возвращает имя файла."""
+    import asyncio
+    mediagen.reset_task()
+    res = asyncio.run(mediagen.generate_image_ex(
+        _layer_preview_prompt(layer, card), None, engine=engine, aspect="3:4"))
+    fname = _save_image(res["data"], res["mime"], upscale=False)
+    _reg_file(db, fname, None, kind="layer_preview")
+    db.commit()
+    return fname
+
+
+@app.post("/api/admin/prompts/{layer}/previews")
+def admin_layer_previews_batch(layer: str, user: User = Depends(current_user),
+                               db: Session = Depends(db_session)):
+    """Догенерить превью ВСЕМ карточкам слоя без превью (бесплатный шлюз)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    done, failed = [], []
+    previews = _layer_previews()
+    for card in prompts_library.layer_rows(layer):
+        key = card["key"]
+        if _preview_entry(previews.get(f"{layer}:{key}"))[1]:
+            continue
+        try:
+            fname = _generate_layer_preview(db, layer, card)
+            previews = _layer_previews()
+            previews[f"{layer}:{key}"] = {"main": fname, "all": [fname]}
+            _layer_previews_save(previews)
+            done.append(key)
+        except Exception as e:  # noqa: BLE001
+            failed.append(f"{key}: {_err_text(e, 120)}")
+            log.warning("превью %s/%s не вышло: %s", layer, key, e)
+    return {"done": done, "failed": failed}
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview-generate")
+def admin_layer_preview_generate(layer: str, key: str,
+                                 user: User = Depends(current_user),
+                                 db: Session = Depends(db_session)):
+    """Сгенерировать превью ОДНОЙ карточки по её собственному промпту (⚡0)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    card = next((r for r in prompts_library.layer_rows(layer)
+                 if r["key"] == key), None)
+    if not card:
+        raise HTTPException(404, "нет такой карточки")
+    try:
+        fname = _generate_layer_preview(db, layer, card)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"превью не вышло: {_err_text(e, 200)}")
+    previews = _layer_previews()
+    _m, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    gallery = [fname] + gallery
+    previews[f"{layer}:{key}"] = {"main": fname, "all": gallery}
+    _layer_previews_save(previews)
+    return {"ok": True, "preview_url": f"/api/media/{fname}"}
+
+
 @app.post("/api/admin/cameras/seed-refs")
 def admin_camera_seed_refs(user: User = Depends(current_user),
                            db: Session = Depends(db_session)):
@@ -5263,6 +5373,22 @@ def admin_camera_seed_refs(user: User = Depends(current_user),
         db.commit()
         previews[f"cameras:{preset}"] = {"main": copied[0], "all": copied}
         seeded[preset] = len(copied)
+    # Движения слоя «Движение» — те же кадры Тони по смысловому соответствию
+    # (наезд ← дрон-пролёт, кран ← спуск по секвойям и т.д.). Файлы
+    # ПЕРЕИСПОЛЬЗУЮТСЯ: один файл может быть превью нескольких карточек.
+    for mkey, donor in MOTION_REF_MAP.items():
+        m_main, m_gal = _preview_entry(previews.get(f"motions:{mkey}"))
+        if m_gal:
+            continue
+        _dm, d_gal = _preview_entry(previews.get(f"cameras:{donor}"))
+        if not d_gal:
+            continue
+        # Раздаём разные кадры донора разным движениям, по кругу.
+        offset = sum(1 for k2, d2 in MOTION_REF_MAP.items()
+                     if d2 == donor and k2 < mkey)
+        pick = d_gal[offset % len(d_gal)]
+        previews[f"motions:{mkey}"] = {"main": pick, "all": [pick]}
+        seeded[f"motions:{mkey}"] = 1
     _layer_previews_save(previews)
     return {"ok": True, "seeded": seeded, "unmatched": unmatched}
 

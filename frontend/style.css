@@ -4566,3 +4566,8 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
 .cam-anim-orbit   .cam-thumb i { animation: camOrbit 8s ease-in-out infinite alternate; }
 .cam-anim-crane   .cam-thumb i { animation: camCrane 8s ease-in-out infinite alternate; }
 @media (prefers-reduced-motion: reduce) { .s-cameras .cam-thumb i { animation: none !important; } }
+
+/* Превью карточки движения в промпт-базе: широкий кадр с той же живой
+   CSS-анимацией, что у камера-пресетов. */
+.pb-thumb { display: block; margin: 6px 0 8px; }
+.pb-thumb .cam-thumb { aspect-ratio: 16/9; border-radius: 10px; display: block; }
