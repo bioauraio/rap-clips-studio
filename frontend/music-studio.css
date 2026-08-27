@@ -363,3 +363,10 @@
   .mus-head .mus-title-in { grid-area: 2 / 1 / 3 / -1; min-width: 0; }
   .mus-head .mus-artist-in { grid-area: 3 / 1 / 4 / -1; min-width: 0; }
 }
+
+/* ── разделы верхнего уровня (Анализ/Мастеринг/Дорожки/Генерация/Дистрибуция) ── */
+.mus-sections { margin: 4px 0 14px; }
+.mus-status.warn .mus-dot { background: var(--gold, #d9a441); }
+.mus-status.warn { color: var(--gold-ink, #8a5a2b); }
+#mus-dist .mus-agreement { background: rgba(45, 33, 26, .04); border-radius: 10px; padding: 12px; }
+#mus-dist .mus-match { display: flex; margin-top: 8px; }

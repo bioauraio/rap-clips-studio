@@ -69,6 +69,8 @@
       sub: "Сегменты считаются в момент отправки, а не сохраняются списком: сохранённый за неделю протухает." },
     { id: "payouts", ico: "💸", title: "Выплаты",
       sub: "Заявки амбассадоров партнёрки." },
+    { id: "demos", ico: "🎤", title: "Демки",
+      sub: "Заявки на лейбл со страницы «Дистрибуция»: анкета, права, файлы и отчёт технических проверок." },
     { id: "ledger", ico: "🧾", title: "Журнал",
       sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
     { id: "prompts", ico: "🎬", title: "Промты",
@@ -1845,9 +1847,54 @@
     });
   }
 
+  /* ─────────────────────────── демки лейбла ─────────────────────────── */
+  async function renderDemos(box) {
+    try {
+      const d = await api("/api/music/demos?limit=200");
+      const items = d.items || [];
+      if (!items.length) {
+        box.innerHTML = `<div class="adm-card muted">демок пока нет</div>`;
+        return;
+      }
+      const rows = items.map((x) => {
+        const checks = (x.checks || []).filter((c) => c.level !== "ok")
+          .map((c) => `<div class="muted">• ${esc(c.text || c.key)}</div>`).join("");
+        return `<div class="adm-card">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            ${x.cover_url ? `<img src="${esc(x.cover_url)}" style="width:56px;height:56px;border-radius:8px;object-fit:cover">` : ""}
+            <div style="flex:1;min-width:220px">
+              <b>${esc(x.artist)} — ${esc(x.track_title)}</b>
+              <div class="muted">${esc(x.genre || "жанр не указан")} · ${esc((x.created_at || "").slice(0, 16).replace("T", " "))} · ИИ: ${esc(x.ai_disclosure || "—")}${x.isrc ? " · ISRC " + esc(x.isrc) : ""}</div>
+              <div class="muted">контакт: ${esc(x.contact)}${x.socials ? " · " + esc(x.socials.split("\n")[0]) : ""}</div>
+              ${x.comment ? `<div class="muted">${esc(x.comment)}</div>` : ""}
+              ${checks}
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              ${x.audio_url ? `<audio controls preload="none" src="${esc(x.audio_url)}" style="max-width:240px"></audio>` : ""}
+              <select data-demo="${x.id}">
+                ${["new", "seen", "accepted", "declined"].map((st) => `<option value="${st}"${st === x.status ? " selected" : ""}>${st}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+        </div>`;
+      }).join("");
+      box.innerHTML = rows;
+      box.querySelectorAll("select[data-demo]").forEach((sel) => {
+        sel.addEventListener("change", async () => {
+          try {
+            await api(`/api/music/demos/${sel.dataset.demo}/status`, {
+              method: "POST", body: { status: sel.value } });
+          } catch (e) { alert("не сохранилось: " + (e.message || e)); }
+        });
+      });
+    } catch (e) {
+      box.innerHTML = `<div class="adm-card">не загрузилось: ${esc(String(e.message || e))}</div>`;
+    }
+  }
+
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
-    payouts: renderPayouts, ledger: renderLedger, earn: renderEarnAdmin,
+    payouts: renderPayouts, demos: renderDemos, ledger: renderLedger, earn: renderEarnAdmin,
     // «Стили» и «Референсы» больше НЕ пункты меню: они вкладки страницы
     // «Промты». Два входа в один каталог означали бы два разных ответа на
     // вопрос «что сейчас сохранено».

@@ -47,7 +47,23 @@
     ab: "after",
     match: true,
     genBusy: false,
+    // Раздел верхнего уровня: Анализ / Мастеринг / Дорожки / Генерация /
+    // Дистрибуция. Первые три работают с треком из списка, последние два —
+    // самостоятельные страницы.
+    section: "analysis",
+    stemsTask: null,
+    stemsRes: null,
+    stemsBusy: false,
+    keyBusy: false,
+    analysis: null,     // {id, data} — разбор открытого трека
   };
+
+  const SECTIONS = ["analysis", "master", "stems", "gen", "dist"];
+
+  function defaultTab() {
+    return M.section === "master" ? "master"
+      : M.section === "stems" ? "stems" : "sound";
+  }
 
   const byId = (id) => document.getElementById(id);
   /* Сводка раздела может не доехать (сеть моргнула на первом кадре). Все
@@ -82,6 +98,7 @@
     if (!box) return;
     box.classList.remove("hidden");
     if (location.hash !== "#/music") history.replaceState(null, "", "#/music");
+    applySection();
     boot();
   }
 
@@ -110,8 +127,66 @@
       try { M.refs = await api("/api/music/references"); } catch (e) { M.refs = { items: [] }; }
     }
     renderIntake();
+    applySection();
     if (!M.items.length) await loadList(true);
     renderAll();
+  }
+
+  // ─────────────────── разделы верхнего уровня ───────────────────
+
+  function sectionNav() {
+    let bar = byId("mus-sections");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "mus-sections";
+      bar.className = "mus-tabs mus-sections";
+      const wrap = document.querySelector("#music .mus-wrap");
+      if (wrap) wrap.insertBefore(bar, wrap.firstChild);
+    }
+    bar.innerHTML = "";
+    SECTIONS.forEach((id) => {
+      const b = el("button", "mus-tab" + (M.section === id ? " on" : ""), T("sec." + id));
+      b.type = "button";
+      b.addEventListener("click", () => {
+        if (M.section === id) return;
+        M.section = id;
+        if (M.open) M.tab = defaultTab();
+        stopAB();
+        applySection();
+      });
+      bar.appendChild(b);
+    });
+  }
+
+  /* Единственное место, которое решает, что на экране: раздел + открыт ли
+     трек. openTrack/closeTrack больше не трогают hidden сами. */
+  function applySection() {
+    sectionNav();
+    const intake = byId("mus-intake");
+    const drop = byId("mus-drop");
+    const gen = byId("mus-gen");
+    const list = byId("mus-list-card");
+    const det = byId("mus-detail");
+    let dist = byId("mus-dist");
+    if (!dist) {
+      dist = document.createElement("div");
+      dist.id = "mus-dist";
+      dist.className = "hidden";
+      const wrap = document.querySelector("#music .mus-wrap");
+      if (wrap) wrap.appendChild(dist);
+    }
+    const sct = M.section;
+    const showDist = sct === "dist";
+    const open = Boolean(M.open) && !showDist;
+    dist.classList.toggle("hidden", !showDist);
+    if (intake) intake.classList.toggle("hidden",
+      showDist || open || sct === "master" || sct === "stems");
+    if (drop) drop.classList.toggle("hidden", sct === "gen");
+    if (gen) gen.classList.toggle("hidden", sct !== "gen" && sct !== "analysis");
+    if (list) list.classList.toggle("hidden", showDist || open);
+    if (det) det.classList.toggle("hidden", !open);
+    if (open) renderDetail();
+    if (showDist) renderDist(dist);
   }
 
   // ────────────────────────── лента треков ──────────────────────────
@@ -313,7 +388,12 @@
         let body = {};
         try { body = JSON.parse(xhr.responseText || "{}"); } catch (e) { body = {}; }
         if (xhr.status >= 200 && xhr.status < 300) { resolve(body); return; }
-        reject(new Error(body.detail || body.error || T("err.upload")));
+        const err = new Error(body.detail || body.message || body.error || T("err.upload"));
+        // Тело ошибки нужно вызывающему: дистрибуция показывает СПИСОК
+        // проверок, а не одну строку.
+        err.data = body;
+        err.status = xhr.status;
+        reject(err);
       };
       xhr.onerror = () => reject(new Error(T("err.net")));
       xhr.send(formData);
@@ -412,16 +492,15 @@
   // ────────────────────────── карточка трека ──────────────────────────
 
   async function openTrack(id, preload) {
-    const wrap = byId("mus-intake");
-    const list = byId("mus-list-card");
     const det = byId("mus-detail");
     if (!det) return;
-    if (wrap) wrap.classList.add("hidden");
-    if (list) list.classList.add("hidden");
-    det.classList.remove("hidden");
+    if (M.section === "dist" || M.section === "gen") M.section = "analysis";
     M.open = preload || null;
-    M.tab = "sound";
-    renderDetail();
+    M.tab = defaultTab();
+    M.stemsRes = null;
+    M.stemsBusy = Boolean(M.stemsTask);
+    M.analysis = null;
+    applySection();
     try {
       M.open = await api("/api/music/tracks/" + id);
     } catch (e) {
@@ -430,7 +509,7 @@
       return;
     }
     M.target = M.open.master_target || M.target;
-    renderDetail();
+    applySection();
     schedulePoll();
     window.scrollTo({ top: 0, behavior: "auto" });
   }
@@ -439,12 +518,7 @@
     clearTimeout(M.poll);
     stopAB();
     M.open = null;
-    const wrap = byId("mus-intake");
-    const list = byId("mus-list-card");
-    const det = byId("mus-detail");
-    if (wrap) wrap.classList.remove("hidden");
-    if (list) list.classList.remove("hidden");
-    if (det) det.classList.add("hidden");
+    applySection();
     loadList(true);
   }
 
@@ -554,6 +628,7 @@
     // ── четыре раздела ──
     const tabs = el("div", "mus-tabs");
     [["sound", T("tabs.sound")], ["master", T("tabs.master")],
+     ["stems", T("sec.stems")],
      ["release", T("tabs.release")], ["social", T("tabs.social")]].forEach(([id, label]) => {
       const b = el("button", "mus-tab" + (M.tab === id ? " on" : ""), label);
       b.type = "button";
@@ -566,6 +641,7 @@
     det.appendChild(pane);
     if (M.tab === "sound") paneSound(pane, o);
     if (M.tab === "master") paneMaster(pane, o);
+    if (M.tab === "stems") paneStems(pane, o);
     if (M.tab === "release") paneRelease(pane, o);
     if (M.tab === "social") paneSocial(pane, o);
     restoreFocus(snap);
@@ -694,8 +770,308 @@
 
     card.appendChild(el("p", "mus-fh", T("sound.note")));
     pane.appendChild(card);
+    pane.appendChild(keyCard(o));
     // Волну перерисовываем после вставки в DOM: до неё clientWidth равен нулю.
     requestAnimationFrame(() => drawWave(canvas, o.wave, 0));
+  }
+
+  /* Темп и тональность: разбор на своём CPU, бесплатно. Результат кэшится
+     на сервере (analysis_json), повторный клик — пересчёт. */
+  function keyCard(o) {
+    const card = el("div", "mus-card");
+    card.appendChild(el("h3", null, T("key.title")));
+    const a = M.analysis && M.analysis.id === o.id ? M.analysis.data : null;
+    if (a) {
+      const nums = el("div", "mus-nums");
+      num(nums, T("sound.bpm"), String(a.bpm || "—"), "BPM");
+      if (a.key) {
+        num(nums, T("key.title"), T("key.keyLine", { key: a.key, scale: a.scale || "" }));
+      }
+      card.appendChild(nums);
+      if (a.bpm_alt && a.bpm_alt !== a.bpm) {
+        card.appendChild(el("p", "mus-fh", T("key.bpmAltNote", { alt: a.bpm_alt })));
+      }
+      if (a.key_confidence !== undefined && a.key_confidence !== null && a.key) {
+        card.appendChild(el("p", "mus-fh", T("key.keyNote", { c: a.key_confidence })));
+      }
+      if (a.key_error) {
+        card.appendChild(el("p", "mus-fh", T("key.failed", { err: a.key_error })));
+      }
+    }
+    const row = el("div", "mus-run");
+    const btn = el("button", a ? "ghost" : "primary",
+      M.keyBusy ? T("key.running") : T("key.run"));
+    btn.type = "button";
+    btn.disabled = M.keyBusy;
+    btn.addEventListener("click", async () => {
+      M.keyBusy = true;
+      renderDetail();
+      try {
+        const d = await api(`/api/music/tracks/${o.id}/analysis` + (a ? "?refresh=true" : ""));
+        M.analysis = { id: o.id, data: d };
+      } catch (e) { fail(e); } finally {
+        M.keyBusy = false;
+        renderDetail();
+      }
+    });
+    row.appendChild(btn);
+    card.appendChild(row);
+    return card;
+  }
+
+  // ────────────────────────── раздел «Дорожки» ──────────────────────────
+
+  function paneStems(pane, o) {
+    const card = el("div", "mus-card");
+    card.appendChild(el("h3", null, T("stems.title")));
+    card.appendChild(el("p", "mus-sub", T("stems.note")));
+    const row = el("div", "mus-run");
+    const btn = el("button", "primary", M.stemsBusy ? T("stems.running") : T("stems.run"));
+    btn.type = "button";
+    btn.disabled = M.stemsBusy;
+    btn.addEventListener("click", async () => {
+      M.stemsBusy = true;
+      M.stemsRes = null;
+      renderDetail();
+      try {
+        const r = await api(`/api/music/tracks/${o.id}/stems`, { method: "POST" });
+        M.stemsTask = r.task_id;
+        pollStems(o.id);
+      } catch (e) {
+        M.stemsBusy = false;
+        fail(e);
+        renderDetail();
+      }
+    });
+    row.appendChild(btn);
+    card.appendChild(row);
+    if (M.stemsBusy) card.appendChild(status("run", T("stems.running")));
+    if (M.stemsRes) {
+      if (M.stemsRes.error) {
+        card.appendChild(status("err", T("stems.failed")));
+      } else {
+        [["vocal", M.stemsRes.vocal_url],
+         ["instrumental", M.stemsRes.instrumental_url]].forEach(([k, url]) => {
+          if (!url) return;
+          const line = el("div", "mus-run");
+          line.appendChild(el("b", null, T("stems." + k)));
+          const au = el("audio");
+          au.controls = true;
+          au.preload = "none";
+          au.src = url;
+          au.style.flex = "1 1 200px";
+          const dl = el("a", null, "⬇");
+          dl.href = url;
+          dl.target = "_blank";
+          dl.rel = "noopener";
+          line.append(au, dl);
+          card.appendChild(line);
+        });
+      }
+    }
+    pane.appendChild(card);
+  }
+
+  function pollStems(trackId) {
+    if (!M.stemsTask) return;
+    setTimeout(async () => {
+      let st = null;
+      try {
+        st = await api(`/api/music/stems/${M.stemsTask}`);
+      } catch (e) { /* сеть моргнула — следующий тик */ }
+      if (st) {
+        const code = String(st.status || "").toUpperCase();
+        const done = Boolean(st.vocal_url || st.instrumental_url);
+        const dead = ["CREATE_TASK_FAILED", "GENERATE_FAILED", "FAILED",
+                      "ERROR", "SENSITIVE_WORD_ERROR"].includes(code);
+        if (done || dead) {
+          M.stemsBusy = false;
+          M.stemsRes = done ? st : { error: true };
+          M.stemsTask = null;
+          if (visible() && M.open && M.open.id === trackId && M.tab === "stems") renderDetail();
+          return;
+        }
+      }
+      pollStems(trackId);
+    }, 5000);
+  }
+
+  // ────────────────────────── раздел «Дистрибуция» ──────────────────────────
+  // Страница строится ОДИН раз: перерисовка формы на каждом заходе стирала
+  // бы набранное. Список заявок обновляется отдельным контейнером.
+
+  function distField(form, key, kind) {
+    const wrap = el("label", kind === "textarea" ? "wide" : "");
+    wrap.appendChild(el("span", null, T("dist." + key)));
+    let input;
+    if (kind === "textarea") { input = el("textarea"); input.rows = 2; }
+    else { input = el("input"); input.type = "text"; }
+    input.setAttribute("data-dist-field", key);
+    wrap.appendChild(input);
+    form.appendChild(wrap);
+    return input;
+  }
+
+  async function renderDist(box) {
+    if (!box.dataset.built) {
+      box.dataset.built = "1";
+      box.innerHTML = "";
+      const card = el("div", "mus-card");
+      card.appendChild(el("h3", null, T("dist.title")));
+      card.appendChild(el("p", "mus-sub", T("dist.note")));
+      const form = el("div", "mus-form");
+      ["artist", "track", "genre", "contact", "isrc"].forEach((k) => distField(form, k));
+      distField(form, "socials", "textarea");
+      distField(form, "comment", "textarea");
+      // раскрытие ИИ
+      const aiWrap = el("label");
+      aiWrap.appendChild(el("span", null, T("dist.aiLabel")));
+      const ai = el("select");
+      [["", "unset"], ["none", "none"], ["music", "music"],
+       ["vocals", "vocals"], ["all", "all"]].forEach(([v, k]) => {
+        const op = document.createElement("option");
+        op.value = v;
+        op.textContent = T("dist.ai_" + k);
+        ai.appendChild(op);
+      });
+      aiWrap.appendChild(ai);
+      form.appendChild(aiWrap);
+      card.appendChild(form);
+
+      // файлы + требования
+      const req = el("div", "mus-dist");
+      req.appendChild(el("b", null, T("dist.reqTitle")));
+      req.appendChild(el("p", "mus-fh", T("dist.req1")));
+      req.appendChild(el("p", "mus-fh", T("dist.req2")));
+      card.appendChild(req);
+      const files = el("div", "mus-form");
+      const fileRow = (key, accept) => {
+        const wrap = el("label", "wide");
+        wrap.appendChild(el("span", null, T("dist." + key)));
+        const input = el("input");
+        input.type = "file";
+        input.accept = accept;
+        wrap.appendChild(input);
+        files.appendChild(wrap);
+        return input;
+      };
+      const audioIn = fileRow("audio", ".wav,.flac,.aif,.aiff,audio/wav,audio/flac");
+      const coverIn = fileRow("cover", ".jpg,.jpeg,.png,image/jpeg,image/png");
+      card.appendChild(files);
+
+      // права и согласия
+      const checks = el("div");
+      const checkbox = (key) => {
+        const lab = el("label", "mus-match");
+        const cb = el("input");
+        cb.type = "checkbox";
+        lab.append(cb, el("span", null, T("dist." + key)));
+        checks.appendChild(lab);
+        return cb;
+      };
+      const cbOriginal = checkbox("original");
+      const cbAgree = checkbox("agree");
+      card.appendChild(checks);
+
+      const errBox = el("div");
+      card.appendChild(errBox);
+      const row = el("div", "mus-run");
+      const send = el("button", "primary", T("dist.submit"));
+      send.type = "button";
+      row.appendChild(send);
+      card.appendChild(row);
+      box.appendChild(card);
+
+      // черновик соглашения
+      const agr = el("div", "mus-card");
+      agr.appendChild(el("h3", null, T("dist.agreementTitle")));
+      agr.appendChild(el("p", "mus-sub", T("dist.agreementNote")));
+      const pre = el("pre", "mus-agreement");
+      pre.style.whiteSpace = "pre-wrap";
+      pre.style.font = "12px/1.5 ui-monospace, monospace";
+      pre.style.maxHeight = "320px";
+      pre.style.overflow = "auto";
+      agr.appendChild(pre);
+      box.appendChild(agr);
+      api("/api/music/demo/agreement")
+        .then((r) => { pre.textContent = r.text || ""; })
+        .catch(() => { pre.textContent = "—"; });
+
+      const mine = el("div", "mus-card");
+      mine.appendChild(el("h3", null, T("dist.mineTitle")));
+      const mineList = el("div", "mus-checks");
+      mine.id = "mus-dist-mine";
+      mine.appendChild(mineList);
+      box.appendChild(mine);
+
+      send.addEventListener("click", async () => {
+        errBox.innerHTML = "";
+        const val = (k) => {
+          const n = box.querySelector(`[data-dist-field="${k}"]`);
+          return n ? n.value.trim() : "";
+        };
+        const fd = new FormData();
+        fd.append("artist", val("artist"));
+        fd.append("track_title", val("track"));
+        fd.append("genre", val("genre"));
+        fd.append("socials", val("socials"));
+        fd.append("contact", val("contact"));
+        fd.append("isrc", val("isrc"));
+        fd.append("comment", val("comment"));
+        fd.append("ai_disclosure", ai.value);
+        fd.append("original_confirm", cbOriginal.checked ? "1" : "");
+        fd.append("agree_terms", cbAgree.checked ? "1" : "");
+        if (audioIn.files && audioIn.files[0]) fd.append("audio_file", audioIn.files[0]);
+        if (coverIn.files && coverIn.files[0]) fd.append("cover_file", coverIn.files[0]);
+        send.disabled = true;
+        send.textContent = T("dist.sending");
+        try {
+          const r = await xhrUpload("/api/music/demo", fd);
+          errBox.appendChild(status("ok", T("dist.sent")));
+          (r.checks || []).filter((c) => c.level === "warn").forEach((c) => {
+            errBox.appendChild(status("warn", c.text));
+          });
+          loadMyDemos();
+        } catch (e) {
+          const data = (e && e.data) || {};
+          const list = data.checks;
+          if (list && list.length) {
+            errBox.appendChild(status("err", T("dist.fix")));
+            list.filter((c) => c.level !== "ok").forEach((c) => {
+              errBox.appendChild(status(c.level === "fail" ? "err" : "warn", c.text));
+            });
+          } else {
+            errBox.appendChild(status("err", apiErr(e)));
+          }
+        } finally {
+          send.disabled = false;
+          send.textContent = T("dist.submit");
+        }
+      });
+    }
+    loadMyDemos();
+  }
+
+  async function loadMyDemos() {
+    const mine = byId("mus-dist-mine");
+    if (!mine) return;
+    const list = mine.querySelector(".mus-checks");
+    let data;
+    try { data = await api("/api/music/demo/mine"); } catch (e) { return; }
+    list.innerHTML = "";
+    (data.items || []).forEach((d) => {
+      const row = el("div", "mus-check " + (d.status === "accepted" ? "ok"
+        : d.status === "declined" ? "fail" : "warn"));
+      row.appendChild(el("span", "mus-dot"));
+      const mid = el("span");
+      mid.appendChild(el("b", null, `${d.artist} — ${d.track_title}`));
+      mid.appendChild(el("span", null, " · " + (T("dist.st_" + d.status) || d.status)));
+      row.appendChild(mid);
+      row.appendChild(el("span", "mus-check-val",
+        (d.created_at || "").slice(0, 10)));
+      list.appendChild(row);
+    });
+    mine.classList.toggle("hidden", !(data.items || []).length);
   }
 
   function status(kind, text) {

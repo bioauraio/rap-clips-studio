@@ -1404,6 +1404,40 @@ class MusicTrack(Base):
     lead_id = Column(Integer, nullable=False, default=0)
 
 
+class DemoSubmission(Base):
+    """Демка, отправленная на лейбл со страницы «Дистрибуция».
+
+    Отличие от MusicLead: лид — это «свяжитесь со мной», а демка — полный
+    пакет (файл трека, обложка, права, раскрытие ИИ, согласие с офертой),
+    прошедший технические проверки ffprobe'ом. Отчёт проверок хранится
+    рядом с заявкой: через месяц никто не вспомнит, каким был файл."""
+    __tablename__ = "demo_submissions"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    artist = Column(String, nullable=False, default="")
+    track_title = Column(String, nullable=False, default="")
+    genre = Column(String, nullable=False, default="")
+    socials = Column(Text, nullable=False, default="")
+    contact = Column(String, nullable=False, default="")
+    isrc = Column(String, nullable=False, default="")
+    comment = Column(Text, nullable=False, default="")
+    # Права: материал оригинальный, ИИ-состав раскрыт, оферта принята.
+    # Без всех трёх заявка не создаётся вовсе — это не галочки «для галочки»,
+    # а то, что лейбл обязан спросить до прослушивания.
+    original_confirm = Column(Boolean, nullable=False, default=False)
+    ai_disclosure = Column(String, nullable=False, default="")  # none|music|vocals|all
+    agree_terms = Column(Boolean, nullable=False, default=False)
+    audio_filename = Column(String, nullable=False, default="")
+    audio_name = Column(String, nullable=False, default="")
+    cover_filename = Column(String, nullable=False, default="")
+    # JSON-отчёт технических проверок на момент приёма (формат, битность,
+    # частота, клиппинг, обложка).
+    checks_json = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="new")  # new | seen | accepted | declined
+    note = Column(Text, nullable=False, default="")
+
+
 class MusicLead(Base):
     """Заявка в лейбл qlolmusic.
 
