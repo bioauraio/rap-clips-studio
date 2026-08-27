@@ -3868,6 +3868,33 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .s-light-yellow { background: #e5a50a; box-shadow: 0 0 6px rgba(229,165,10,.5); }
 .s-light-red    { background: #d64545; box-shadow: 0 0 6px rgba(214,69,69,.5); }
 
+/* ОБЁРТКИ ТРЕКОВ СНЯТЫ (правка владельца 27.08). Панель «Треки» и рамка
+   .track-card заворачивали строку трека и все четыре этапа в одну плиту —
+   этапы, честно сделанные отдельными стеклянными блоками, внутри неё
+   читались как отсеки одного ящика. Теперь: заголовок + лёгкая строка трека
+   на фоне страницы, а «Настройка/Раскадровка/Анимация/Сборка» стоят сами.
+   Несколько треков — последовательность таких групп; навигацию по ним уже
+   делает тумблер этапов, нового механизма нет. */
+#tracks-panel.panel {
+  background: transparent; border: none; box-shadow: none;
+  padding: 0; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+#tracks-panel > h2 { margin: 0 0 10px 4px; }
+#tracks .track-card {
+  background: transparent; border: none; box-shadow: none;
+  padding: 0; margin-bottom: 34px;
+}
+/* Строка трека: обложка, номер, название, Супергенерация, стрелки — лёгкой
+   строкой в тонком стекле, а не крышкой ящика. */
+#tracks .track-card > .track-head {
+  padding: 8px 12px; margin-bottom: 0;
+  background: color-mix(in srgb, var(--card-solid) 45%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--ink-rgb), .08);
+  border-radius: 20px; corner-shape: squircle;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
+}
+
 /* Этапы — ОТДЕЛЬНЫЕ стеклянные блоки: Настройки → Раскадровка → Анимация →
    Сборка. Воздух между панелями, жидкое стекло, подпись у каждого блока. */
 .stages-stacked .stage-pane {
