@@ -356,7 +356,10 @@
     display: flex; justify-content: flex-start;
   }
   .topbar.has-sections .tb-project { gap: 6px; min-width: 0; }
-  .topbar.has-sections .tb-copy { display: none; }
+  /* Специфичность не ниже, чем у общего правила капсул (.tb-modeline
+     .tb-copy) — иначе display:inline-flex оттуда молча возвращает кнопку. */
+  .topbar.has-sections .tb-modeline .tb-copy { display: none; }
+  .topbar.has-sections .tb-modeline .mode-badge { max-width: 64px; padding: 0 8px; }
   .topbar.has-sections .project-select {
     max-width: 34vw; overflow: hidden; text-overflow: ellipsis;
   }
