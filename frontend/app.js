@@ -10961,13 +10961,15 @@ function mkRenderTabs() {
   const box = chatEl("mk-tabs");
   if (!box) return;
   box.innerHTML = "";
-  [["chats", "make.tabChats"], ["projects", "make.tabProjects"]].forEach(([id, key]) => {
+  [["chats", "make.tabChats"], ["projects", "make.tabProjects"],
+   ["bank", "make.tabBank"]].forEach(([id, key]) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = chatState.tab === id ? "on" : "";
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", chatState.tab === id ? "true" : "false");
-    b.textContent = t(key);
+    b.textContent = t(key) || (id === "bank"
+      ? (LANG === "ru" ? "Банк" : "Bank") : id);
     b.addEventListener("click", () => {
       chatState.tab = id;
       chatRenderAll();
@@ -11117,6 +11119,80 @@ function mkChatRow(c) {
   row.appendChild(star);
   row.appendChild(del);
   return row;
+}
+
+/* БАНК ГЕНЕРАЦИЙ — третья вкладка сайдбара: кадры, видео и обложки всех
+   проектов одной лентой, новые сверху. Своего хранилища не заводит: файлы
+   уже зарегистрированы в FileOwner, и /api/files отдаёт их метаданные —
+   второй реестр «для банка» разъехался бы с первым на первой же чистке. */
+function mkRenderBank() {
+  const box = chatEl("mk-bank");
+  if (!box) return;
+  const on = chatState.tab === "bank";
+  box.classList.toggle("hidden", !on);
+  if (!on || box.dataset.loaded === "1") return;
+  box.innerHTML = `<p class="chat-list-empty muted">${escHtml(t("common.loading"))}</p>`;
+  const filters = ["all", "image", "video"];
+  let kind = "all";
+  const load = async () => {
+    const q = kind === "video" ? "video,clip" : (kind === "image" ? "frame,cover,image" : "");
+    let res;
+    try {
+      res = await api(`/api/files?limit=60${q ? "&kind=" + encodeURIComponent(q) : ""}`);
+    } catch (e) { box.innerHTML = ""; return; }
+    box.innerHTML = "";
+    const tabs = document.createElement("div");
+    tabs.className = "mk-bank-tabs";
+    filters.forEach((f) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-mini" + (f === kind ? " on" : "");
+      b.textContent = f === "all" ? (LANG === "ru" ? "всё" : "all")
+        : (f === "image" ? t("chat.optImage") : t("chat.optVideo"));
+      b.addEventListener("click", () => { kind = f; load(); });
+      tabs.appendChild(b);
+    });
+    box.appendChild(tabs);
+    const grid = document.createElement("div");
+    grid.className = "mk-bank-grid";
+    (res.files || []).forEach((f) => {
+      const url = f.url || `/api/media/${f.filename}`;
+      const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(f.filename || "");
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "mk-bank-cell";
+      cell.innerHTML = isVideo
+        ? `<video src="${escHtml(url)}" muted playsinline preload="metadata"></video>`
+        : `<img src="${escHtml(f.thumb_url || url)}" alt="" loading="lazy" />`;
+      cell.addEventListener("click", () => {
+        openModal(f.filename || "", (body) => {
+          body.innerHTML = isVideo
+            ? `<video src="${escHtml(url)}" controls autoplay playsinline
+                     style="width:100%;border-radius:16px"></video>`
+            : `<img src="${escHtml(url)}" alt="" style="width:100%;border-radius:16px" />`;
+          const row = document.createElement("div");
+          row.className = "row";
+          const dl = document.createElement("a");
+          dl.className = "btn ghost";
+          dl.href = url;
+          dl.download = f.filename || "";
+          dl.textContent = t("common.download") || (LANG === "ru" ? "Скачать" : "Download");
+          row.appendChild(dl);
+          body.appendChild(row);
+        }, { wide: true });
+      });
+      grid.appendChild(cell);
+    });
+    if (!(res.files || []).length) {
+      const p = document.createElement("p");
+      p.className = "chat-list-empty muted";
+      p.textContent = LANG === "ru" ? "Пока пусто." : "Nothing here yet.";
+      grid.appendChild(p);
+    }
+    box.appendChild(grid);
+  };
+  box.dataset.loaded = "1";
+  load();
 }
 
 // Вкладка «Проекты» — НАСТОЯЩИЕ проекты, сгруппированные по режимам. Клик =
@@ -12048,6 +12124,108 @@ function mkGroupTarget(box) {
   if (cur.target) mkWhy(g, t("make.targetKeeps"));
 }
 
+/* ПРОМТЫ-ШАБЛОНЫ в правой панели: свои сверху, каталог заготовок ниже.
+   Клик подставляет текст в поле — не «открывает витрину, где надо ещё раз
+   выбрать». Свои шаблоны лежат в localStorage браузера: это черновики
+   одного человека на одной машине, и заводить под них таблицу с синком
+   раньше, чем ими начнут пользоваться, — работа вперёд спроса. */
+const MK_TPL_KEY = "lolq_chat_templates";
+
+function mkOwnTemplates() {
+  try { return JSON.parse(localStorage.getItem(MK_TPL_KEY) || "[]"); }
+  catch (e) { return []; }
+}
+function mkSaveTemplates(list) {
+  try { localStorage.setItem(MK_TPL_KEY, JSON.stringify(list.slice(0, 40))); }
+  catch (e) { /* приватный режим — молча живём без своих шаблонов */ }
+}
+
+let mkLibCache = null;
+
+function mkGroupTemplates(box) {
+  const g = mkGroup(box, "make.grpTemplates", false, null);
+  const title = $(".mk-group-title", g);
+  if (title && !t("make.grpTemplates")) {
+    title.textContent = LANG === "ru" ? "Промты-шаблоны" : "Prompt templates";
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "mk-tpl";
+  g.appendChild(wrap);
+
+  const put = (text) => {
+    const field = chatEl("cc-text");
+    if (!field) return;
+    field.value = text;
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+  };
+
+  const paint = (boards) => {
+    wrap.innerHTML = "";
+    const own = mkOwnTemplates();
+    own.forEach((tpl, i) => {
+      const row = document.createElement("div");
+      row.className = "mk-tpl-row own";
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-tpl-btn";
+      b.textContent = tpl.slice(0, 60);
+      b.title = tpl;
+      b.addEventListener("click", () => put(tpl));
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ghost mk-mem-del";
+      del.textContent = "✕";
+      del.addEventListener("click", () => {
+        const list = mkOwnTemplates();
+        list.splice(i, 1);
+        mkSaveTemplates(list);
+        paint(boards);
+      });
+      row.append(b, del);
+      wrap.appendChild(row);
+    });
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "ghost mk-mem-add";
+    save.textContent = LANG === "ru"
+      ? "+ сохранить текущий как шаблон" : "+ save current as template";
+    save.addEventListener("click", () => {
+      const field = chatEl("cc-text");
+      const text = (field && field.value || "").trim();
+      if (!text) return;
+      const list = mkOwnTemplates();
+      if (!list.includes(text)) list.unshift(text);
+      mkSaveTemplates(list);
+      paint(boards);
+    });
+    wrap.appendChild(save);
+
+    if (!boards.length) return;
+    const det = document.createElement("details");
+    det.className = "mk-acc";
+    det.innerHTML = `<summary><span>${escHtml(LANG === "ru"
+      ? "Заготовки каталога" : "Catalogue presets")}</span></summary>`;
+    boards.slice(0, 30).forEach((card) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-tpl-btn";
+      b.textContent = card.label;
+      b.title = card.desc || "";
+      b.addEventListener("click", () => put(card.solo || card.first || card.text || ""));
+      det.appendChild(b);
+    });
+    wrap.appendChild(det);
+  };
+
+  paint([]);
+  if (mkLibCache) { paint(mkLibCache); return; }
+  api(`/api/library?lang=${encodeURIComponent(LANG)}`).then((res) => {
+    mkLibCache = (res.boards || []).filter((x) => !x.locked);
+    paint(mkLibCache);
+  }).catch(() => { /* каталог не отдался — свои шаблоны работают и так */ });
+}
+
 /* ПАМЯТЬ АГЕНТА в правой панели. Список фактов, которые он запомнил о
    человеке, с крестиком у каждого. Память, которую нельзя посмотреть и
    почистить, — это не память, а подслушивание: человек обязан видеть, что
@@ -12154,6 +12332,7 @@ function mkRenderParams() {
   mkGroupDuration(box);
   mkGroupVariants(box);
   mkGroupTarget(box);
+  mkGroupTemplates(box);
   mkGroupMemory(box);
 
   const resetAll = chatEl("mk-reset-all");
@@ -12362,6 +12541,7 @@ function chatRenderAll() {
   mkRenderTabs();
   chatRenderList();
   mkRenderProjects();
+  mkRenderBank();
   chatRenderFeed();
   chatRenderCompose();
   mkRenderParams();

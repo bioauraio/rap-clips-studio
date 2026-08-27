@@ -1755,6 +1755,32 @@ button.primary:hover:not(:disabled) {
 .mk-mem-del { padding: 0 4px; font-size: 12px; box-shadow: none; color: var(--ink-muted); }
 .mk-mem-add { align-self: flex-start; font-size: 12px; box-shadow: none; }
 
+/* Промты-шаблоны. */
+.mk-tpl { display: flex; flex-direction: column; gap: 4px; }
+.mk-tpl-row { display: flex; align-items: center; gap: 4px; }
+.mk-tpl-btn {
+  flex: 1; min-width: 0; text-align: left; font-size: 12.5px; padding: 6px 9px;
+  border-radius: 12px; corner-shape: squircle; background: var(--inset);
+  border: 1px solid var(--border); box-shadow: none; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mk-tpl-btn:hover { border-color: var(--border-bright); }
+.mk-tpl .mk-acc { display: flex; flex-direction: column; gap: 4px; }
+
+/* Банк генераций: третья вкладка сайдбара Генератора. */
+.mk-bank { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.mk-bank-tabs { display: flex; gap: 4px; }
+.mk-bank-tabs .mk-mini.on { color: var(--on-fire); background: var(--fire-ink); }
+.mk-bank-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.mk-bank-cell {
+  padding: 0; border: 1px solid var(--border); border-radius: 12px;
+  corner-shape: squircle; overflow: hidden; aspect-ratio: 9/16;
+  background: var(--inset); box-shadow: none; cursor: pointer;
+}
+.mk-bank-cell img, .mk-bank-cell video {
+  width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none;
+}
+
 /* ══════════════════ МАСТЕРСКАЯ: три колонки ══════════════════
    Основное окно генерации. Всё, что ниже, — надстройка над разметкой чата:
    ни один прежний класс не переопределён, чтобы правка не расползлась на
