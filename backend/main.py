@@ -5799,6 +5799,74 @@ def _scenes_for_mockup(db: Session, track: Track, engine: str = "") -> dict:
     ))
 
 
+def _rebalance_cast(scenes: list[dict], characters: list[dict]) -> None:
+    """Страховка ПОСЛЕ генерации: модель, несмотря на просьбы, иногда тащит
+    один и тот же состав через всю раскадровку.
+
+    Если БОЛЬШЕ 70% кадров получили одинаковый состав — вписываем ни разу
+    не использованных персонажей в часть этих кадров. Промпты НЕ переписываем
+    (второй проход по модели стоит денег и времени): к characters добавляется
+    имя, а в image_prompt/image_prompt_last — короткая фраза с внешностью из
+    карточки, по которой рендер и подставит фото-модельку."""
+    names = [str(c.get("name") or "").strip() for c in characters]
+    names = [n for n in names if n]
+    if len(names) < 2 or len(scenes) < 4:
+        return
+    by_name = {str(c.get("name") or "").strip(): c for c in characters}
+
+    def cast_of(sc: dict) -> tuple:
+        return tuple(sorted(str(n).strip() for n in (sc.get("characters") or [])
+                            if str(n).strip()))
+
+    counts: dict = {}
+    for sc in scenes:
+        counts[cast_of(sc)] = counts.get(cast_of(sc), 0) + 1
+    dominant, dom_n = max(counts.items(), key=lambda kv: kv[1])
+    if not dominant or dom_n <= 0.7 * len(scenes):
+        return
+    used = {n for sc in scenes for n in cast_of(sc)}
+    unused = [n for n in names if n not in used]
+    if not unused:
+        return
+    # Кандидаты — кадры с доминирующим составом, кроме самого первого и
+    # самого последнего: открывающий и финальный кадры — режиссёрские
+    # решения, их состав не трогаем.
+    slots = [i for i, sc in enumerate(scenes)
+             if cast_of(sc) == dominant and 0 < i < len(scenes) - 1]
+    if not slots:
+        return
+    taken: set = set()
+    for k, name in enumerate(unused):
+        char = by_name.get(name) or {}
+        desc = " ".join(str(char.get("description") or "").split())[:220]
+        # Каждому забытому персонажу — до двух появлений, равномерно по
+        # клипу и со сдвигом на персонажа, чтобы двое забытых не свалились
+        # в одни и те же сцены.
+        want = []
+        for j in range(2):
+            idx = (len(slots) * (2 * k + j + 1)) // (2 * len(unused) + 1)
+            want.append(slots[min(idx, len(slots) - 1)])
+        for i in want:
+            if i in taken:
+                i = next((x for x in slots if x not in taken), None)
+                if i is None:
+                    break
+            taken.add(i)
+            sc = scenes[i]
+            cast = [str(n).strip() for n in (sc.get("characters") or []) if str(n).strip()]
+            if name not in cast:
+                cast.append(name)
+            sc["characters"] = cast
+            extra = (f" Also present in the frame: {name}"
+                     + (f" — {desc}" if desc else "") + ".")
+            for field in ("image_prompt", "image_prompt_last"):
+                text = str(sc.get(field) or "").rstrip()
+                if text and name not in text:
+                    sc[field] = text + extra
+    log.info("страховка состава: %s кадров из %s с одинаковым составом, вписаны: %s",
+             dom_n, len(scenes), ", ".join(unused))
+
+
 def _run_scene_generation(track_id: int) -> None:
     db = SessionLocal()
     engine = "gateway"
@@ -5839,6 +5907,10 @@ def _run_scene_generation(track_id: int) -> None:
                 engine=engine,
                 random_cast=bool(getattr(track, "random_cast", False)),
             ))
+            # Страховка состава: если модель провела один состав через >70%
+            # кадров — вписываем забытых персонажей сервером, без второго
+            # прохода по модели.
+            _rebalance_cast(result.get("scenes") or [], characters_payload(project))
         for s in list(track.scenes):
             _remove_media(s.image_filename)
             _remove_media(s.video_filename)
