@@ -3667,6 +3667,9 @@ function statusLabel(status, doneWord) {
    блока на экране значило бы предлагать написать сюжет дважды. */
 function applyMode() {
   const m = curMode();
+  // Своя студия мокапов: CSS по этому классу прячет клиповые этапы
+  // (тумблер Настройка/Раскадровка/…, cinema-бар) внутри карточек товаров.
+  document.body.classList.toggle("mode-mockup", m.id === "mockup");
   const storyPanel = $("#story").closest(".panel");
   const docsPanel = $("#docs-panel");
   const isClip = m.id === "clip";
@@ -4056,6 +4059,7 @@ function renderInner() {
     empty.textContent = objT("empty", mode);
     container.appendChild(empty);
   }
+  renderMockupStudio();
 }
 
 
@@ -4818,7 +4822,6 @@ function msPhotos(card, tr, mode) {
     await loadProject();
   });
   msTurnaround(card, tr);
-  msMarketingStudio(card, tr, mode);
 }
 
 /* 3D-облёт товара: 8 ракурсов по кругу, листаются drag'ом по горизонтали —
@@ -4882,6 +4885,177 @@ function msTurnaround(card, tr) {
   const up = () => { downX = null; };
   view.addEventListener("pointerup", up);
   view.addEventListener("pointercancel", up);
+}
+
+/* ─────────── Студия режима «Мокапы»: своя структура страницы ───────────
+   Hero → промпт-бар с витриной → «Мои генерации» → свёрнутые настройки
+   (фирменный мир, персонажи бренда, товары). Клиповая раскадровка и этапы
+   в этом режиме не показываются: кадры живут в общей галерее. */
+function applyMockupLayout(on) {
+  const pairs = [["#docs-panel", "world"], ["#story-panel", "world"],
+                 ["#chars-panel", "chars"], ["#tracks-panel", "goods"],
+                 ["#add-track-panel", "goods"]];
+  let set = $("#mockup-settings");
+  if (on) {
+    if (!set) {
+      set = document.createElement("section");
+      set.id = "mockup-settings";
+      set.className = "panel mkp-settings";
+      set.innerHTML = ["world", "chars", "goods"].map((k) =>
+        `<details class="ms-howto mkp-set" data-set="${k}">
+           <summary>${esc(t("mkp.set_" + k))}</summary>
+           <div class="mkp-set-body" data-body="${k}"></div>
+         </details>`).join("");
+      const studio = $("#mockup-studio");
+      if (studio) studio.after(set);
+    }
+    pairs.forEach(([sel, k]) => {
+      const el = $(sel);
+      if (!el || el.closest("#mockup-settings")) return;
+      // Метка исходного места: панель вернётся ровно туда при смене режима.
+      if (!el.dataset.ph) {
+        const ph = document.createElement("div");
+        ph.id = "ph-" + sel.slice(1);
+        ph.className = "hidden";
+        el.before(ph);
+        el.dataset.ph = ph.id;
+      }
+      const body = $(`[data-body="${k}"]`, set);
+      if (body) body.appendChild(el);
+      el.classList.add("mkp-inset");
+    });
+  } else if (set) {
+    pairs.forEach(([sel]) => {
+      const el = $(sel);
+      if (!el || !el.dataset.ph) return;
+      const ph = document.getElementById(el.dataset.ph);
+      if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph);
+      el.classList.remove("mkp-inset");
+    });
+    set.remove();
+  }
+}
+
+function mockupScenes() {
+  const out = [];
+  (project.tracks || []).forEach((tr) => (tr.scenes || []).forEach((sc) => {
+    if (sc.image_url || ["queued", "running"].includes(sc.image_status)
+        || sc.image_status === "error") out.push(sc);
+  }));
+  return out.sort((a, b) => b.id - a.id);
+}
+
+function openMkpViewer(sc) {
+  openModal(t("mkp.frame"), (body) => {
+    const vidBusy = ["queued", "running"].includes(sc.video_status);
+    body.innerHTML = `<div class="mkp-view">
+      ${sc.video_url ? `<video src="${esc(sc.video_url)}" controls autoplay loop muted playsinline></video>`
+                     : `<img src="${esc(sc.image_url)}" alt="" />`}
+      <div class="row">
+        <a class="ghost mkp-btn" href="${esc(sc.image_url)}" download>${esc(t("mkp.download"))}</a>
+        <button type="button" class="primary mkp-anim" ${vidBusy ? "disabled" : ""}>
+          ${esc(vidBusy ? t("scene.videoBusy") : (sc.video_url ? t("scene.regenVideo") : t("mkp.animate")))}</button>
+        <button type="button" class="mkp-del">${esc(t("common.del"))}</button>
+      </div></div>`;
+    $(".mkp-anim", body).addEventListener("click", async () => {
+      try {
+        await api(`/api/scenes/${sc.id}/generate-video`, { method: "POST", body: {} });
+        closeModal();
+        mkToast(t("mkp.animQueued"));
+        schedulePoll();
+        await loadProject();
+      } catch (e) { fail(e); }
+    });
+    $(".mkp-del", body).addEventListener("click", async () => {
+      if (!confirm(t("scene.delConfirm"))) return;
+      try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
+      closeModal();
+      await loadProject();
+    });
+  }, { medium: true });
+}
+
+let mkpAutoTrack = false;  // служебный товар создаётся один раз, не в цикле
+
+async function renderMockupStudio() {
+  const box = $("#mockup-studio");
+  if (!box) return;
+  const mode = curMode();
+  const on = mode.id === "mockup";
+  box.classList.toggle("hidden", !on);
+  applyMockupLayout(on);
+  if (!on) return;
+  let tr = (project.tracks || [])[0];
+  if (!tr) {
+    // Товаров ещё нет — под капотом заводится служебный: сценам промпт-бара
+    // нужен контейнер, но человеку про это знать незачем.
+    if (mkpAutoTrack) return;
+    mkpAutoTrack = true;
+    try {
+      const fd = new FormData();
+      fd.append("title", t("mkp.firstItem"));
+      fd.append("style_keys", "");
+      fd.append("lyrics", "");
+      fd.append("comment", "");
+      await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
+      await loadProject();
+    } catch (e) { mkpAutoTrack = false; }
+    return;
+  }
+  // Загрузка фото товара из слота «продукт» — свой input на странице.
+  const input = $(".ms-photo-input", box);
+  if (input && !input.dataset.bound) {
+    input.dataset.bound = "1";
+    input.addEventListener("change", async () => {
+      const files = Array.from(input.files || []);
+      if (!files.length) return;
+      for (const f of files) {
+        const fd = new FormData();
+        fd.append("photo", f);
+        try { await api(`/api/tracks/${tr.id}/photos`, { method: "POST", body: fd }); }
+        catch (e) { fail(e); break; }
+      }
+      input.value = "";
+      mkProducts = null; mkCatalog = null;  // база товаров изменилась
+      await loadProject();
+    });
+  }
+  msMarketingStudio(box, tr, mode);
+  // «Мои генерации»: кадры всех товаров проекта одной masonry-галереей.
+  const gal = $("#mkp-gallery");
+  if (!gal) return;
+  gal.innerHTML = "";
+  const scenes = mockupScenes();
+  if (!scenes.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = t("mkp.galleryEmpty");
+    gal.appendChild(p);
+    return;
+  }
+  scenes.forEach((sc) => {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "mkp-item";
+    if (sc.image_url) {
+      cell.innerHTML = `<img src="${esc(sc.image_url)}" alt="" loading="lazy" />`
+        + (sc.video_url ? '<span class="mkp-badge">▶</span>' : "")
+        + (["queued", "running"].includes(sc.video_status) ? `<span class="mkp-busy">${esc(t("status.running"))}</span>` : "");
+      cell.addEventListener("click", () => openMkpViewer(sc));
+    } else if (sc.image_status === "error") {
+      cell.classList.add("err");
+      cell.innerHTML = `<span class="mkp-ph">⚠</span><i>${esc(t("mkp.failed"))}</i>`;
+      cell.addEventListener("click", async () => {
+        if (!confirm(t("scene.delConfirm"))) return;
+        try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
+        await loadProject();
+      });
+    } else {
+      cell.classList.add("busy");
+      cell.innerHTML = `<span class="mkp-ph">✨</span><i>${esc(t("status.running"))}</i>`;
+    }
+    gal.appendChild(cell);
+  });
 }
 
 /* ─────────── Маркетинг-студия: промпт-бар + витрина шаблонов ───────────
