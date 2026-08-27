@@ -181,9 +181,12 @@
    лента разделов (она умеет прокручиваться), а не ломается раскладка. */
 @media (min-width: 901px) {
   .topbar.has-sections { flex-wrap: nowrap; }
-  .topbar.has-sections > .tb-sections { flex: 1 1 auto; min-width: 0; }
-  .topbar.has-sections > .tb-modeline { flex: 0 0 auto; }
-  .topbar.has-sections > .tb-user { flex: 0 0 auto; }
+  /* Разделы НЕ сжимаются первыми: это главная навигация, и обрезанная лента
+     («Студия · Генератор ›») — худшее, чем можно заплатить за место.
+     Сжимается середина: селект проекта. */
+  .topbar.has-sections > .tb-sections { flex: 0 0 auto; }
+  .topbar.has-sections > .tb-modeline { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+  .topbar.has-sections > .tb-user { flex: 0 0 auto; margin-left: 0; }
 }
 /* Средние ширины: жмём личный блок, а не разделы — «выйти» есть в кабинете,
    а тема и язык переключаются значками. */
@@ -192,6 +195,7 @@
   .topbar.has-sections .theme-switch { transform: scale(.9); transform-origin: right center; }
   .topbar.has-sections .lang-switch button { padding: 0 6px; }
   .topbar.has-sections .profile-btn .profile-cap { display: none; }
+  .topbar.has-sections #save-account-btn { display: none; }
 }
 /* Лента режимов — третий ярус; в одной полосе для неё места нет, а режим уже
    назван капсулой рядом с проектом. */
