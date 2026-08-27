@@ -622,6 +622,61 @@ STYLES = [
         "engines": ["seedance-2-mini", "seedance-2-5-480", "kling-3.0"],
         "research": "ota.visual: 80 роликов, медиана 134 тыс., топ-1 — 13,7 млн (100× медианы), ER топа 6–10%",
     },
+    {
+        "key": "gta",
+        "group": "animation",
+        "tier": "free",
+        "prompt_class": "school",
+        "label": {"en": "GTA-style (game art)", "ru": "GTA-стиль (игровой арт)"},
+        "desc": {
+            "en": "Modern open-world game art: sun-soaked neon city, glossy cars, confident slightly exaggerated characters.",
+            "ru": "Современный игровой арт открытого мира: залитый солнцем неоновый город, глянцевые машины, дерзкие чуть утрированные герои.",
+        },
+        "gain": {
+            "en": "Your track becomes a key-art poster of a crime saga: the city is a stage, every frame sells swagger.",
+            "ru": "Трек превращается в постер криминальной саги: город — сцена, каждый кадр продаёт дерзость.",
+        },
+        "tags": ["epic", "saturated", "neon", "street", "night", "clean"],
+        "music": {
+            "en": "Hard rap, trap, phonk, club bangers.",
+            "ru": "Жёсткий рэп, трэп, фонк, клубные бэнгеры.",
+            "genres": ["trap", "phonk", "gangsta rap", "club"],
+        },
+        "tempo": {"bpm": [80, 160], "cut": "mid"},
+        "mix_role": "base",
+        "mix_with": ["cinema", "noir"],
+        "avoid_mix": ["ghibli", "embroidery", "clay"],
+        "engines": ["seedance-2-5", "kling-3.0"],
+        "research": "",
+    },
+    {
+        "key": "retro16bit",
+        "group": "animation",
+        "tier": "free",
+        "prompt_class": "school",
+        "label": {"en": "16-bit (retro game)", "ru": "16-бит (ретро-игра)"},
+        "desc": {
+            "en": "Old-school 16-bit pixel art: large visible pixels, sprite characters, parallax backgrounds.",
+            "ru": "Олдскульный 16-битный пиксель-арт: крупные видимые пиксели, спрайтовые герои, параллакс-фоны.",
+        },
+        "gain": {
+            "en": "The clip plays like a run through a legendary cartridge game: levels, bosses, and your hero as the sprite.",
+            "ru": "Клип смотрится как прохождение легендарной картриджной игры: уровни, боссы, и твой герой — спрайт.",
+        },
+        "tags": ["playful", "nostalgic", "saturated"],
+        "music": {
+            "en": "Energetic rap, chiptune-flavoured electronica, breakbeat, punchy pop.",
+            "ru": "Энергичный рэп, электроника с чиптюн-вайбом, брейкбит, задорный поп.",
+            "genres": ["chiptune", "breakbeat", "rap", "electro"],
+        },
+        "tempo": {"bpm": [90, 170], "cut": "fast"},
+        "mix_role": "base",
+        "mix_with": ["flat2d"],
+        "avoid_mix": ["cinema", "dreamclad", "katsumi"],
+        "engines": ["seedance-2-mini", "kling-3.0"],
+        "research": "",
+    },
+
 ]
 
 
@@ -1199,6 +1254,20 @@ _PROMPTS: dict[str, str] = {
         'Hyperreal Russian street found-footage: night dashcam, GoPro, phone or CCTV camera look with heavy VHS grain, analog noise and motion blur; harsh headlights, red neon gas-station canopies, wet asphalt, dense traffic with glowing tail lights, grey soviet panel blocks, ruined brick factories, dusty supercars in wastelands. One absurd event unfolds in the middle of mundane Russian reality — animals rearing between cars, flying couriers, delivery drones, aliens in queues — filmed like an accidental viral video: documentary believability, realistic physics, nobody poses, aggressive dynamic framing, violent handheld shake, strobing flash by night. Muted cold palette with red neon accents. Vertical 9:16, no text.',
     'dreamclad':
         '1990s American hood-cinema still, shot on grainy 35mm film: faded low-contrast color grade with warm orange-brown skin tones and dusty teal shadows (or deep-grain black-and-white), heavy film grain, soft halation, subtle gate weave and VHS-era imperfections. Brick-block New York / LA streets of the 90s — bodegas with graffiti, chain-link fences, stone staircases, boxy sedans and vintage Cadillacs — or night-time mansion gates and museum halls lit by warm tungsten windows and headlights. Young men in white tank tops, bandana masks, hoodies and baggy denim; crowds dressed identically like a uniform; recurring icons of money stacks, doves, crosses, candles and classical statues — sacred mixed with street. Frontal, symmetric, almost ceremonial compositions, subjects staring straight into the lens, or candid through-the-windshield documentary angles; overexposed hazy daylight or moody night backlight. Cinematic, nostalgic, quietly menacing, music-video energy. No clean digital look, no HDR, no modern cars or clothing, no neon cyberpunk, no glossy skin, no watermarks. Vertical 9:16, no text.',
+    'gta':
+        'Stylized modern open-world crime game art, vertical 9:16: semi-realistic 3D with a painterly touch, '
+        'vibrant sun-soaked city turning to neon at dusk — palm-lined avenues, glass towers, motels, beaches of a '
+        'southern sin city. Glossy exotic cars with hot reflections, wet asphalt shine, lens flare off chrome. '
+        'Slightly exaggerated confident characters with strong silhouettes and swagger, realistically lit with '
+        'cinematic golden-hour sun or magenta-cyan neon. Saturated colors, high-energy key-art composition, game '
+        'cover quality rendering. No photorealism, no anime, no text, no logos.',
+    'retro16bit':
+        'Authentic 16-bit pixel art in the spirit of classic SNES and Sega run-and-gun games, vertical 9:16: large '
+        'clearly visible square pixels, limited retro console palette, dithering shading. Sprite characters with '
+        'bold black-edged silhouettes and chunky proportions, expressive 2-3 frame poses. Side-scroller feel: '
+        'layered parallax backgrounds (jungle, ruined city, alien base), scanline hint, optional subtle HUD vibe '
+        'when the scene calls for it. Crisp pixel clusters, no anti-aliasing between colors. No smooth gradients, '
+        'no 3D render, no photorealism, no modern vector art, no text.',
     'katsumi':
         'Hyperrealistic absurdist found-footage aesthetic: a deadpan surreal protagonist (animal or costumed figure) doing mundane human things with total seriousness, shot like accidental amateur documentary footage from the 1990s–2000s — handheld camcorder or disposable-camera look with harsh direct on-camera flash at night, or flat overcast daylight; heavy analog film grain, VHS noise, slight chromatic aberration, motion blur, fisheye or wide-angle distortion, tilted imperfect framing with the subject too close to the lens, often staring straight into the camera. Muted dirty palette of swampy olive, tobacco brown, dusty grey and desaturated flesh tones, background falling into deep black shadow, with one rare accent color (neon sign, police lights, orange robe, gold chain). Gritty tactile textures: wet fur, greasy pavement, cigarette smoke, scuffed metal, cheap floral motel interiors, cluttered convenience-store shelves. Cinematic realism, not cartoon — everything must look physically shot, grimy street-punk mood, crime-scene-snapshot lighting, deadpan comedy with zero wink. Avoid: clean digital sharpness, glossy studio light, saturated candy colors, cartoon or 3D-render look, symmetry, beauty-filter smoothness. Vertical 9:16, no text.',
 }
@@ -1216,6 +1285,20 @@ _PROMPTS: dict[str, str] = {
 # восстанавливает текст.
 # ─────────────────────────────────────────────────────────────────────────────
 _STRUCTURE: dict[str, dict] = {
+    "gta": {
+        "optics": "Кинематографичный широкий план и низкие ракурсы: герой и машина как на обложке игры.",
+        "light":  "Золотой час или неон в сумерках; горячие рефлексы на глянце машин, реалистичные тени при стилизованных героях.",
+        "palette": "Насыщенный юг: бирюза неба, магента и циан неона, оранжевый закат, чёрный глянец.",
+        "texture": "Полу-3D с живописным мазком: чистый рендер игрового ключ-арта, без фотореализма и без аниме.",
+        "bans": "Фотореализм, аниме, текст, логотипы, тусклые цвета.",
+    },
+    "retro16bit": {
+        "optics": "Плоская «камера» сайд-скроллера: профильные и трёхчетвертные ракурсы, параллакс слоёв фона.",
+        "light":  "Свет рисуется палитрой и дизерингом, а не источниками: два-три тона на форму.",
+        "palette": "Ограниченная консольная палитра SNES-эры: сочные, но дискретные цвета без плавных переходов.",
+        "texture": "Крупный видимый пиксель, чёткие кластеры без сглаживания, спрайтовые контуры.",
+        "bans": "Плавные градиенты, 3D-рендер, фотореализм, антиалиасинг, текст.",
+    },
     "ghibli": {
         "optics": "Мягкий фокус, обычное поле зрения, без длиннофокусного сжатия — кадр должен дышать, а не давить.",
         "light":  "Золотой час или свет лампы сквозь окно. Один тёплый источник, мягкая тень, видимые пылинки в луче.",
@@ -1554,14 +1637,31 @@ def style_prompt(key: str) -> str:
     return _PROMPTS.get(key, "")
 
 
+# Заводские story_base: как стиль влияет на ДРАМАТУРГИЮ. Раньше поле жило
+# только в наложении админки; новые стили приезжают с заводским значением,
+# и наложение по-прежнему главнее.
+_STORY_BASE: dict[str, str] = {
+    "gta": "Криминальный размах: погони, сделки, дерзкие выходы из машин, город "
+           "как сцена и трофей. Герой ведёт себя как протагонист криминальной "
+           "саги — уверенные жесты, наглость без суеты, ставки растут от кадра "
+           "к кадру: улица → клуб → пентхаус → побег. Машины и деньги — "
+           "полноправные персонажи.",
+    "retro16bit": "Аркадная миссия: клип строится как прохождение уровня — "
+                  "старт, полоса препятствий, мини-боссы на сильных долях, "
+                  "босс-файт на кульминации, экран победы в финале. Ретро-юмор "
+                  "уместен: жизни, бонусы, ловушки; повторяющиеся враги как "
+                  "паттерн уровня.",
+}
+
+
 def style_story_base(key: str) -> str:
     """Как стиль влияет на СЮЖЕТ, а не на картинку. Уходит отдельным блоком
-    в промпты сюжета и раскадровки (claude.py).
-
-    Заводского значения у этого поля нет: до админки стилей влияния стиля
-    на сценарий не существовало вовсе. Пусто — блок просто не приезжает."""
+    в промпты сюжета и раскадровки (claude.py). Наложение админки главнее
+    заводского значения."""
     ov = (_OVERLAY.get(key) or {}).get("story_base")
-    return ov if isinstance(ov, str) else ""
+    if isinstance(ov, str) and ov.strip():
+        return ov
+    return _STORY_BASE.get(key, "")
 
 
 def style_gen_refs(key: str) -> list[str]:
