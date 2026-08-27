@@ -6406,7 +6406,9 @@ function renderTrack(tr) {
   allBtn.disabled = framesBusy || !framesTodo;
   const allImgSpec = imageEngineById(effImageEngine(tr));
   allBtn.textContent = (framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo }))
-    + (!framesBusy && framesTodo && allImgSpec ? ` · ⚡ ${tNum(framesTodo * allImgSpec.frames_cost)}` : "");
+    // Пакет рисует ТОЛЬКО первые кадры (дефолт which=first) — цена за один
+    // кадр на сцену, вдвое меньше пары.
+    + (!framesBusy && framesTodo && allImgSpec ? ` · ⚡ ${tNum(framesTodo * Math.ceil(allImgSpec.frames_cost / 2))}` : "");
   allBtn.title = t("track.allFramesTitle");
   $(".all-frames-note", card).textContent = framesBusy ? t("track.allFramesNote") : "";
   allBtn.addEventListener("click", async () => {
@@ -7360,18 +7362,24 @@ function renderScene(s, audioEl, mode = "board") {
   framesBtn.disabled = imgBusy;
   const sceneImgSpec = imageEngineById(
     sceneImgOverride(card) || s.image_engine || effImageEngine(sceneTrack(s.id)));
+  // ДЕФОЛТ — ОДИН КАДР (первый, полцены): пары «первый+последний» часто
+  // расходятся. Пара — отдельной кнопкой «оба», последний — кнопкой «посл.»
+  // (он рисуется с первым кадром референсом).
+  const halfCost = sceneImgSpec ? Math.ceil(sceneImgSpec.frames_cost / 2) : 0;
   framesBtn.textContent = (imgBusy ? t("scene.framesBusy")
     : s.image_url ? t("scene.regenFrames") : t("scene.genFrames"))
-    + (!imgBusy && sceneImgSpec ? ` · ⚡ ${tNum(sceneImgSpec.frames_cost)}` : "");
-  framesBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
+    + (!imgBusy && sceneImgSpec ? ` · ⚡ ${tNum(halfCost)}` : "");
+  framesBtn.addEventListener("click", () => genSceneFrames(s.id, "first", sceneImgOverride(card)));
   const firstBtn = $(".s-gen-first", card);
   const lastBtn = $(".s-gen-last", card);
   if (firstBtn) {
     firstBtn.disabled = imgBusy;
-    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "first", sceneImgOverride(card)));
+    if (sceneImgSpec) firstBtn.title = `${t("scene.genBothTitle")} · ⚡ ${tNum(sceneImgSpec.frames_cost)}`;
+    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
   }
   if (lastBtn) {
     lastBtn.disabled = imgBusy;
+    if (sceneImgSpec) lastBtn.title = `${t("scene.genLastTitle")} · ⚡ ${tNum(halfCost)}`;
     lastBtn.addEventListener("click", () => genSceneFrames(s.id, "last", sceneImgOverride(card)));
   }
 
@@ -8204,7 +8212,7 @@ async function deleteScene(id) {
   await loadProject();
 }
 
-async function genSceneFrames(id, which = "both", engine = "") {
+async function genSceneFrames(id, which = "first", engine = "") {
   try {
     // engine пустой = «как у объекта»: сервер разрешит цепочку
     // сцена → трек → тариф сам, второй копии этой логики на клиенте нет.
@@ -10651,7 +10659,7 @@ function chatEl(id) { return document.getElementById(id); }
 const AGENT_RUN = {
   gen_scenes: (a) => api(`/api/tracks/${a.track_id}/generate-scenes`, { method: "POST" }),
   extend_scenes: (a) => api(`/api/tracks/${a.track_id}/scenes/extend`, { method: "POST", body: {} }),
-  gen_frames: (a) => api(`/api/scenes/${a.scene_id}/generate-frames`, { method: "POST", body: { which: "both" } }),
+  gen_frames: (a) => api(`/api/scenes/${a.scene_id}/generate-frames`, { method: "POST", body: { which: "first" } }),
   gen_video: (a) => api(`/api/scenes/${a.scene_id}/generate-video`, { method: "POST" }),
   assemble: (a) => api(`/api/tracks/${a.track_id}/assemble`, { method: "POST" }),
 };

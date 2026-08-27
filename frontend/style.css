@@ -2032,6 +2032,9 @@ button.primary:hover:not(:disabled) {
 
 @media (max-width: 900px) {
   .chat, .chat.mk-narrow { grid-template-columns: minmax(0, 1fr); padding: 8px 10px 10px; height: 100dvh; }
+  /* Нижний док разделов закреплён над нижним краем — капсуле ввода нужен
+     воздух под ним, иначе док ложится на «Отправить» и подсказку цены. */
+  #app.chat-view ~ #chat { padding-bottom: 84px; }
   .mk-panel { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 76vh; }
   .mk-card { max-width: none; }
   .mk-variant { width: 132px; }
@@ -2045,6 +2048,44 @@ button.primary:hover:not(:disabled) {
   .chat-media { width: 100%; }
   .cc-model { max-width: none; }
   .char-photo-model { width: 140px; }
+}
+
+/* ─── ТЕЛЕФОН: Генератор в ширину экрана, ввод одной строкой ───
+   На 375px капсула ввода разваливалась этажами с гигантскими зазорами,
+   «Отправить» накрывал плавающий пузырь агента, а нижний док ложился на
+   подсказку цены. Порядок: строка [＋][модель][Отправить] не переносится,
+   «Промты/✨/⚙» — компактные иконки во второй строке, пузырь агента на
+   экране чата спрятан (сам чат-агент и так открыт), цена — в кнопке. */
+@media (max-width: 700px) {
+  .chat, .chat.mk-narrow { padding: 6px 6px 88px; gap: 8px; }
+  .chat-compose { margin: 0 2px 6px; padding: 8px 10px 10px; border-radius: 20px; }
+  #cc-text { min-height: 44px; padding: 10px 12px; font-size: 14px; }
+  .chat-compose .cc-meter { margin-bottom: 2px; }
+  .cc-agent { margin-bottom: 4px; }
+  .cc-agent-reply { font-size: 12.5px; margin: 0; }
+  .cc-bar { flex-wrap: wrap; gap: 6px; padding: 0 2px 2px; }
+  .cc-attach span { width: 34px; height: 34px; }
+  /* Селект модели делит строку с «+» и «Отправить» и не выпихивает их. */
+  .cc-bar .cc-model { flex: 1 1 0; min-width: 0; max-width: none; height: 34px; font-size: 12.5px; }
+  .cc-send { order: 3; height: 34px; padding: 0 14px; font-size: 13px; margin-left: 0; }
+  .cc-attach { order: 1; }
+  .cc-bar .cc-model { order: 2; }
+  /* Вторая строка: сервисные иконки + цена. */
+  .cc-bar .mk-mini { order: 4; height: 30px; min-width: 30px; padding: 0 8px; font-size: 11.5px; }
+  .cc-bar .cc-price { order: 5; font-size: 11px; margin-left: auto; }
+  .cc-note { font-size: 10px; margin-top: 4px; }
+  /* Пузырь агента на экране Генератора не нужен: это и есть агент. */
+  body:has(#chat:not(.hidden)) .pa-bubble,
+  body:has(#chat:not(.hidden)) .pa-panel { display: none !important; }
+  /* Карточка модели и лента — в ширину экрана, без лишних полей. */
+  .chat-feed { padding: 10px 8px; gap: 10px; }
+  .chat-main { border-radius: 20px; }
+  .chat-head { padding: 8px 10px; }
+  /* Строка действий под результатом — компактные кнопки, без разброса. */
+  .chat-msg .row, .mk-acts { flex-wrap: wrap; gap: 4px; }
+  .chat-msg .row button, .mk-acts button, .chat-msg .row .mk-dl {
+    font-size: 11px; padding: 4px 8px;
+  }
 }
 
 /* ════════════ ОНБОРДИНГ FREE: чеклист «первый клип» ════════════

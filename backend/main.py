@@ -1107,12 +1107,15 @@ def _model_sheet_engine(user: "User") -> str:
 
 
 def _frames_cost(user: "User", scene: "Scene | None" = None,
-                 engine: str = "") -> int:
-    """Цена пары кадров сцены. Если кадры уже нарисованы — по ТОМУ движку,
-    которым их реально нарисовали: иначе смена тарифа между кадрами и видео
-    ломала бы добор до цены сцены."""
+                 engine: str = "", which: str = "both") -> int:
+    """Цена кадров сцены. По умолчанию — пара; which="first"/"last" — ОДИН
+    кадр за половину цены пары (вверх): дефолт генерации теперь один кадр,
+    и брать за него как за два было бы обманом. Если кадры уже нарисованы —
+    по ТОМУ движку, которым их реально нарисовали: иначе смена тарифа между
+    кадрами и видео ломала бы добор до цены сцены."""
     eng = engine or (scene.image_engine if scene else "") or _plan_image_engine(user)
-    return FRAME_COST.get(eng, FRAMES_COST)
+    pair = FRAME_COST.get(eng, FRAMES_COST)
+    return pair if which == "both" else -(-int(pair) // 2)
 
 
 def _scene_cost(user: "User", provider: str, scene: "Scene | None" = None,
@@ -7486,15 +7489,18 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
 
 
 @app.post("/api/scenes/{scene_id}/generate-frames")
-def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
+def generate_scene_frames(scene_id: int, which: str = "first", engine: str = "",
                           user: User = Depends(current_user),
                           db: Session = Depends(db_session)):
+    """Дефолт — ТОЛЬКО первый кадр (which=first): пары «первый+последний»
+    часто расходятся, а видео умеет ехать от одного кадра. «Последний» —
+    отдельной кнопкой, и тогда он рисуется С РЕФЕРЕНСОМ первого."""
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
     if not scene.image_prompt.strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
     if which not in ("both", "first", "last"):
-        which = "both"
+        which = "first"
     # Движок разрешаем ДО списания: цена кадров зависит именно от него, а сам
     # он берётся по цепочке «явный выбор → движок объекта → тариф». Раньше
     # выбор из карточки кадра доезжал сюда и молча затирался внутри
@@ -7506,7 +7512,7 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
     # референсы. Совпало всё — картинка будет та же самая.
     if _apply_frame_cache(db, user, scene, which, engine):
         return {"ok": True, "cached": True, "charged": 0}
-    _scene_charge(db, user, scene, _frames_cost(user, scene, engine),
+    _scene_charge(db, user, scene, _frames_cost(user, scene, engine, which),
                   f"кадры сцены {scene.id} ({which})", kind="frames", engine=engine)
     scene.image_status = "queued"
     db.commit()
@@ -11253,7 +11259,8 @@ def _frames_todo(track: Track, force: bool = False, scope: str = "") -> list:
 
 
 def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
-                    keep_version: bool = False, scene_ids: list | None = None) -> None:
+                    keep_version: bool = False, scene_ids: list | None = None,
+                    which: str = "both") -> None:
     """Пакетная генерация: кадры сцен трека подряд, одна за другой.
 
     Последовательно, а не парал­лельно: шлюзы картинок обслуживают один
@@ -11278,14 +11285,16 @@ def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
              " (перерисовка)" if force else "")
     for sid in ids:
         try:
-            _run_scene_frames(sid, engine=engine, keep_version=keep_version)
+            _run_scene_frames(sid, which=which, engine=engine,
+                              keep_version=keep_version)
         except Exception as e:  # noqa: BLE001 — одна упавшая сцена не роняет пакет
             log.warning("кадры сцены %s в пакете упали: %s", sid, _err_text(e))
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
 def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
-                        scope: str = "", user: User = Depends(current_user),
+                        scope: str = "", which: str = "first",
+                        user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
     """scope: todo (по умолчанию) | dirty | all. force=1 — легаси-синоним
     dirty: та же кнопка «перерисовать кадры», но теперь она платит только за
@@ -11304,8 +11313,12 @@ def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
     # Движок выбираем ДО списания: цена кадров зависит именно от него, а сам
     # выбор берётся с ТРЕКА, а не молча падает в дефолт тарифа, как раньше.
     eng = _resolve_image_engine(user, track, engine)
-    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng),
-                   f"кадры сцен трека {track.id} ({eng}, {scope})",
+    # Пакет по умолчанию рисует ТОЛЬКО первые кадры (см. generate_scene_frames)
+    # — и стоит вдвое дешевле пары.
+    if which not in ("both", "first"):
+        which = "first"
+    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng, which),
+                   f"кадры сцен трека {track.id} ({eng}, {scope}, {which})",
                    kind="frames", engine=eng, track_id=track.id,
                    project_id=track.project_id)
     for s in todo:
@@ -11313,7 +11326,7 @@ def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
     db.commit()
     redraw = scope in ("dirty", "all")
     _spawn_gen(user, _run_all_frames, track_id, eng, redraw, redraw,
-               [s.id for s in todo], kind="frames")
+               [s.id for s in todo], which, kind="frames")
     return {"ok": True, "queued": len(todo), "engine": eng, "scope": scope,
             "force": redraw}
 
@@ -11327,8 +11340,10 @@ def frames_quote(track_id: int, engine: str = "",
     Считается ТЕМИ ЖЕ функциями, что и списание: второй кассы в сервисе нет."""
     track = _own_track(db, user, track_id)
     eng = _resolve_image_engine(user, track, engine)
-    per = _frames_cost(user, None, eng)
-    out = {"engine": eng, "per_scene": per, "balance": int(user.gen_points or 0),
+    # Пакет по умолчанию рисует только первые кадры — и цена считается за них.
+    per = _frames_cost(user, None, eng, "first")
+    out = {"engine": eng, "per_scene": per, "per_pair": _frames_cost(user, None, eng),
+           "balance": int(user.gen_points or 0),
            "scopes": []}
     for sc in FRAMES_SCOPES:
         n = len(_frames_todo(track, scope=sc))
