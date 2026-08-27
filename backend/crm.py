@@ -1329,9 +1329,15 @@ def admin_prompt_layers(user: User = Depends(admin_user)):
 
 @router.get("/api/admin/prompts/{layer}")
 def admin_prompt_list(layer: str, user: User = Depends(admin_user)):
+    items = prompts_library.layer_list(layer)
+    # Превью карточек (камера и будущие пачки): общий магазин "layer:key".
+    previews = _core()._layer_previews()
+    for it in items:
+        fname = previews.get(f"{layer}:{it['key']}") or ""
+        it["preview_url"] = f"/api/media/{fname}" if fname else ""
     return {"layer": _layer_or_404(layer),
             "title": prompts_library.LAYER_TITLES[layer],
-            "items": prompts_library.layer_list(layer)}
+            "items": items}
 
 
 @router.get("/api/admin/prompts/{layer}/{key}")
@@ -1342,6 +1348,8 @@ def admin_prompt_card(layer: str, key: str, user: User = Depends(admin_user)):
     ov = (prompts_library.library_overlay().get(layer) or {}).get(key) or {}
     card["ru"] = {f: ov.get(f + "_ru", "")
                   for f in prompts_library.PROMPT_FIELDS[layer]}
+    fname = _core()._layer_previews().get(f"{layer}:{key}") or ""
+    card["preview_url"] = f"/api/media/{fname}" if fname else ""
     return card
 
 

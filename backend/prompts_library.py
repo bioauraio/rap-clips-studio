@@ -6578,7 +6578,8 @@ def _validate_v2() -> list[str]:                         # noqa: C901
     # карточки по одному адресу, и первый же «применить по ключу» применит не то.
     seen_keys: dict[str, str] = {k: "приём" for k in SHOT_KEYS}
     for label, keys in (("сценарий", SCRIPT_KEYS), ("заготовка", BOARD_KEYS),
-                        ("движение", MOTION_KEYS), ("свет", LIGHT_KEYS)):
+                        ("движение", MOTION_KEYS), ("камера", CAMERA_KEYS),
+                        ("свет", LIGHT_KEYS)):
         for k in keys:
             if k in seen_keys:
                 err.append(f"{label} {k}: ключ уже занят ({seen_keys[k]})")
@@ -6920,13 +6921,173 @@ def _wrap(text: str, width: int = 76) -> str:
 # чтением кода. Хочешь менять связи — меняй файл коммитом.
 # ═════════════════════════════════════════════════════════════════════════════
 
-LAYERS = ("scripts", "boards", "motions", "lights")
+
+# ═════════════════════════════ СЛОЙ «КАМЕРА» ═════════════════════════════
+# Камера-пресеты: цельные операторские движения по образцам Higgsfield,
+# адаптированные в нашу формулу ({character}/{location} вместо [subject]).
+# Отличие от слоя «Движение»: движение — один приём (наезд, тревеллинг),
+# пресет камеры — ЗАКОНЧЕННЫЙ проезд с фазами, запретами и финальным
+# «settle and hold». Пишется в motion_prompt кадра целиком.
+#
+# Поле "anim" — ключ CSS-анимации карточки-превью на витрине (фронт имитирует
+# само движение маской/сдвигом фона). Новых значений фронт не требует:
+# неизвестный ключ = статичная карточка.
+
+CAMERA_GROUPS = [
+    {"key": "presets", "label": {"en": "Camera presets", "ru": "Камера-пресеты"},
+     "hint": {"en": "A complete camera move with phases, bans and a settle-and-hold finish.",
+              "ru": "Законченный проезд камеры: фазы, запреты и финальный «замереть и держать»."}},
+]
+
+CAMERAS: list[dict] = [
+    {
+        "key": "slider_arc", "group": "presets", "tier": "free", "anim": "slider",
+        "label": {"en": "Slider", "ru": "Слайдер"},
+        "desc": {"en": "A short slider glide: planes separate through parallax, the move ends on the earned angle.",
+                 "ru": "Короткий проход слайдера: планы расходятся параллаксом, финал — на выигранном ракурсе."},
+        "camera": "short slider arc, settle on the earned angle",
+        "text": "A short motorized slider move: the camera glides a brief, deliberate arc past {character}, "
+                "foreground, subject and background separating cleanly through parallax. No pan, no zoom, no "
+                "handheld shake — the slider does all the work. The glide decelerates onto the stronger, earned "
+                "angle, where the framing settles and holds.",
+        "solo": "A short motorized slider glide past {character}: clean parallax separation of foreground, subject "
+                "and background, no pan or zoom, the move decelerating onto a stronger angle where it settles and holds.",
+        "bracket": "[Slider]",
+        "physics": {"en": "Parallax sells the move: near objects travel further across the frame than far ones.",
+                    "ru": "Проезд продаёт параллакс: близкое смещается по кадру сильнее дальнего."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "slow"],
+        "fits_with": [], "conflicts_with": [],
+    },
+    {
+        "key": "vehicle_tracking", "group": "presets", "tier": "free", "anim": "vehicle",
+        "label": {"en": "Vehicle tracking", "ru": "За транспортом"},
+        "desc": {"en": "The camera rides with the vehicle: speed locked, subject stable, the world streams past.",
+                 "ru": "Камера едет с транспортом: скорость синхронна, объект стабилен, мир течёт мимо."},
+        "camera": "tracking alongside the vehicle at matched speed",
+        "text": "The camera travels alongside the moving vehicle with its speed locked to it, so the vehicle sits "
+                "stable in the frame while the world streams past. Constant distance, lens axis steady — no pan, "
+                "no zoom, no drifting closer or further. The road surface and passing surroundings carry all the "
+                "sense of speed. At the end the pace steadies and the framing settles and holds.",
+        "solo": "Side tracking shot riding along a moving vehicle at matched speed: the vehicle stable in frame, "
+                "the world streaming past with strong motion blur near the lens, no pan or zoom, the shot settling "
+                "into a steady glide that holds.",
+        "bracket": "[Vehicle tracking]",
+        "physics": {"en": "The subject is sharp because relative speed is zero; everything else streaks.",
+                    "ru": "Объект резкий, потому что относительная скорость ноль; всё остальное смазано."},
+        "slots": [], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera"],
+        "fits_with": [], "conflicts_with": [],
+    },
+    {
+        "key": "drone_push_in", "group": "presets", "tier": "free", "anim": "drone",
+        "label": {"en": "Drone push-in", "ru": "Дрон-пролёт"},
+        "desc": {"en": "A low fast flight toward the target with banking and real flight inertia.",
+                 "ru": "Низкий быстрый пролёт к цели: крены, набор высоты по склону, инерция настоящего полёта."},
+        "camera": "low fast drone approach, banking, pitch up at the target",
+        "text": "A low, fast FPV drone run toward {character} in {location}: the drone banks into its turns, skims "
+                "low and climbs with the rising terrain, then pitches up to follow the subject as it rises — all "
+                "with the momentum and inertia of a real aircraft, nothing gliding on invisible rails. No zoom, no "
+                "cuts. At the end of the approach the drone bleeds off speed, levels out, and the framing settles "
+                "and holds.",
+        "solo": "Low fast FPV drone flight toward {character}: banked turns, a climb hugging the slope, a pitch up "
+                "as the target rises, real flight inertia throughout, no zoom, finishing as the drone levels out, "
+                "settles and holds.",
+        "bracket": "[Drone push in]",
+        "physics": {"en": "Banking and overshoot are the realism: a real airframe leans into turns and cannot stop dead.",
+                    "ru": "Реализм — в кренах и перелёте: настоящий дрон валится в поворот и не умеет замереть мгновенно."},
+        "slots": ["character", "location"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "wide_frame"],
+        "fits_with": [], "conflicts_with": [],
+    },
+    {
+        "key": "truck_left", "group": "presets", "tier": "free", "anim": "truck",
+        "label": {"en": "Truck left", "ru": "Проезд влево"},
+        "desc": {"en": "A clean lateral move left, lens axis forward, parallax does the work.",
+                 "ru": "Чистый латеральный проезд влево, ось объектива вперёд, работает параллакс."},
+        "camera": "truck left, lens axis forward, no panning",
+        "text": "A clean lateral truck to the left at constant speed: the camera physically travels sideways while "
+                "the lens axis keeps pointing straight forward — strictly no panning, no rotation, no zoom, no "
+                "handheld shake. Strong parallax does the storytelling: near objects sweep fast across the frame, "
+                "{character} holds position, the far background crawls. The move eases out, settles and holds.",
+        "solo": "Clean lateral truck left past {character} at constant speed, lens axis forward, no panning or "
+                "zoom, strong parallax between foreground, subject and background, the move easing out to settle "
+                "and hold.",
+        "bracket": "[Truck left]",
+        "physics": {"en": "Three speeds in one frame: foreground sweeps, subject holds, background crawls.",
+                    "ru": "Три скорости в одном кадре: передний план проносится, герой стоит, фон ползёт."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera"],
+        "fits_with": [], "conflicts_with": [],
+    },
+    {
+        "key": "helicopter_orbit", "group": "presets", "tier": "free", "anim": "orbit",
+        "label": {"en": "Helicopter orbit + zoom", "ru": "Вертолёт+зум"},
+        "desc": {"en": "A slow long-lens aerial orbit with human gimbal flaws and a hard snap-zoom onto a detail.",
+                 "ru": "Медленная орбита длиннофокусником с огрехами живого гимбала и резким snap-zoom на деталь."},
+        "camera": "slow counter-clockwise aerial orbit, long lens, snap zoom mid-move",
+        "text": "A slow counter-clockwise aerial orbit around {character} on a long lens, carrying the small human "
+                "imperfections of a real gimbal — micro corrections, a breath of drift, never machine-perfect. "
+                "Midway through the orbit the lens snap-zooms hard onto a telling detail, the focus hunting for a "
+                "beat before it locks. Then the orbit eases back to its slow pace and the framing settles and "
+                "holds. One continuous shot, no cuts.",
+        "solo": "Slow counter-clockwise helicopter orbit around {character} on a long lens with subtle gimbal "
+                "imperfections, a hard snap-zoom onto a detail with a beat of focus hunting, then back to the slow "
+                "orbit that settles and holds.",
+        "bracket": "",
+        "physics": {"en": "The long lens compresses space; the snap-zoom must overshoot focus before locking.",
+                    "ru": "Длиннофокусник сжимает пространство; snap-zoom обязан проскочить фокус и только потом поймать."},
+        "slots": ["character"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "handheld"],
+        "fits_with": [], "conflicts_with": [],
+    },
+    {
+        "key": "crane_down", "group": "presets", "tier": "free", "anim": "crane",
+        "label": {"en": "Crane down", "ru": "Кран вниз"},
+        "desc": {"en": "A vertical descent from a high point: tilt eases from top-down to eye level, then holds.",
+                 "ru": "Вертикальный спуск с высокой точки: тилт от крутого вниз до уровня глаз, финал и hold."},
+        "camera": "crane down from high vantage, tilt easing to eye level",
+        "text": "A vertical crane descent from a high vantage point over {location}: the camera comes straight "
+                "down while the tilt eases from a steep top-down view to eye level on {character}, the descent "
+                "decelerating into the final composition. One continuous move — no lateral pan, no zoom, no "
+                "handheld. The frame lands on the eye-level composition, settles and holds.",
+        "solo": "Vertical crane descent from high above {character}: tilt easing from steep top-down to eye level "
+                "as the camera comes down, one continuous decelerating move without pan or zoom, landing on the "
+                "final composition that settles and holds.",
+        "bracket": "[Crane down]",
+        "physics": {"en": "Height reads through the tilt change: the horizon drops into frame as the camera lands.",
+                    "ru": "Высоту продаёт смена тилта: по мере посадки в кадр опускается горизонт."},
+        "slots": ["character", "location"], "needs_last": False, "engines": _ANY,
+        "traits": ["moving_camera", "slow"],
+        "fits_with": [], "conflicts_with": [],
+    },
+]
+
+_CAMERA_TEXTS = ("text", "solo")
+PUBLIC_CAMERA_FIELDS = ("key", "group", "tier", "label", "desc", "camera",
+                        "bracket", "physics", "slots", "traits", "anim")
+
+
+def public_camera(key: str, *, lang: str = "", plan_id: str = "free",
+                  is_admin: bool = False) -> dict | None:
+    c = _CAMERA_BY_KEY.get(key)
+    return _public(c, PUBLIC_CAMERA_FIELDS, _CAMERA_TEXTS, lang=lang,
+                   plan_id=plan_id, is_admin=is_admin) if c else None
+
+
+def public_cameras(*, lang: str = "", group: str = "", plan_id: str = "free",
+                   is_admin: bool = False) -> list[dict]:
+    return [public_camera(c["key"], lang=lang, plan_id=plan_id, is_admin=is_admin)
+            for c in CAMERAS if not group or c["group"] == group]
+
+
+LAYERS = ("scripts", "boards", "motions", "cameras", "lights")
 
 #: Человеческие названия слоёв для админки (одноязычные: админку видит один
 #: человек, и второй перевод там читать некому).
 LAYER_TITLES = {
     "scripts": "Сценарии", "boards": "Сцены",
-    "motions": "Движение", "lights": "Свет и цвет",
+    "motions": "Движение", "cameras": "Камера", "lights": "Свет и цвет",
 }
 
 #: Поля, которые админка вправе перекрыть. Всё остальное берётся из файла.
@@ -6937,6 +7098,8 @@ EDITABLE = {
                "note", "first", "last", "motion", "solo", "negative"),
     "motions": ("label", "desc", "tier", "group", "camera", "bracket",
                 "physics", "text", "solo"),
+    "cameras": ("label", "desc", "tier", "group", "camera", "bracket",
+                "physics", "text", "solo", "anim"),
     "lights": ("label", "desc", "tier", "group", "level", "note", "add"),
 }
 
@@ -6950,6 +7113,7 @@ PROMPT_FIELDS = {
     "scripts": ("story", "dnote"),
     "boards": ("first", "last", "motion", "solo", "negative"),
     "motions": ("text", "solo"),
+    "cameras": ("text", "solo"),
     "lights": ("add",),
 }
 
@@ -6989,6 +7153,14 @@ _SKELETON = {
         "engines": list(_ANY), "traits": [],
         "fits_with": [], "conflicts_with": [],
     },
+    "cameras": lambda k: {
+        "key": k, "group": "presets", "tier": "free",
+        "label": {"en": k, "ru": k}, "desc": {"en": "", "ru": ""},
+        "camera": "", "text": "", "solo": "", "bracket": "", "anim": "",
+        "physics": {"en": "", "ru": ""}, "slots": [], "needs_last": False,
+        "engines": list(_ANY), "traits": [],
+        "fits_with": [], "conflicts_with": [],
+    },
     "lights": lambda k: {
         "key": k, "group": "scheme", "tier": "free", "level": "scene",
         "label": {"en": k, "ru": k}, "desc": {"en": "", "ru": ""},
@@ -7001,6 +7173,7 @@ _BUILTIN_LAYER = {
     "scripts": [dict(x) for x in SCRIPTS],
     "boards": [dict(x) for x in BOARDS],
     "motions": [dict(x) for x in MOTIONS],
+    "cameras": [dict(x) for x in CAMERAS],
     "lights": [dict(x) for x in LIGHTS],
 }
 _BUILTIN_BY_KEY_LAYER = {
@@ -7043,20 +7216,23 @@ def _rebuild_layers() -> None:
 
     Реестры — модульные переменные, и вызывающий код читает их атрибутом
     (prompts_library._BOARD_BY_KEY), поэтому переприсваивание видно сразу."""
-    global SCRIPTS, BOARDS, MOTIONS, LIGHTS
-    global _SCRIPT_BY_KEY, _BOARD_BY_KEY, _MOTION_BY_KEY, _LIGHT_BY_KEY
-    global SCRIPT_KEYS, BOARD_KEYS, MOTION_KEYS, LIGHT_KEYS
+    global SCRIPTS, BOARDS, MOTIONS, CAMERAS, LIGHTS
+    global _SCRIPT_BY_KEY, _BOARD_BY_KEY, _MOTION_BY_KEY, _CAMERA_BY_KEY, _LIGHT_BY_KEY
+    global SCRIPT_KEYS, BOARD_KEYS, MOTION_KEYS, CAMERA_KEYS, LIGHT_KEYS
     SCRIPTS = _merge_layer("scripts")
     BOARDS = _merge_layer("boards")
     MOTIONS = _merge_layer("motions")
+    CAMERAS = _merge_layer("cameras")
     LIGHTS = _merge_layer("lights")
     _SCRIPT_BY_KEY = {s["key"]: s for s in SCRIPTS}
     _BOARD_BY_KEY = {b["key"]: b for b in BOARDS}
     _MOTION_BY_KEY = {m["key"]: m for m in MOTIONS}
+    _CAMERA_BY_KEY = {c["key"]: c for c in CAMERAS}
     _LIGHT_BY_KEY = {l["key"]: l for l in LIGHTS}
     SCRIPT_KEYS = tuple(_SCRIPT_BY_KEY)
     BOARD_KEYS = tuple(_BOARD_BY_KEY)
     MOTION_KEYS = tuple(_MOTION_BY_KEY)
+    CAMERA_KEYS = tuple(_CAMERA_BY_KEY)
     LIGHT_KEYS = tuple(_LIGHT_BY_KEY)
 
 
@@ -7078,13 +7254,13 @@ def library_overlay() -> dict:
 
 
 def layer_rows(layer: str) -> list[dict]:
-    return {"scripts": SCRIPTS, "boards": BOARDS,
-            "motions": MOTIONS, "lights": LIGHTS}.get(layer, [])
+    return {"scripts": SCRIPTS, "boards": BOARDS, "motions": MOTIONS,
+            "cameras": CAMERAS, "lights": LIGHTS}.get(layer, [])
 
 
 def layer_groups(layer: str) -> list[dict]:
     return {"boards": BOARD_GROUPS, "motions": MOTION_GROUPS,
-            "lights": LIGHT_GROUPS}.get(layer, [])
+            "cameras": CAMERA_GROUPS, "lights": LIGHT_GROUPS}.get(layer, [])
 
 
 def layer_card(layer: str, key: str) -> dict | None:

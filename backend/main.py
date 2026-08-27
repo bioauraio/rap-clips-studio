@@ -4974,12 +4974,14 @@ def api_library(request: Request, lang: str = "", db: Session = Depends(db_sessi
         "groups": {
             "boards": _groups(prompts_library.BOARD_GROUPS, lg),
             "motions": _groups(prompts_library.MOTION_GROUPS, lg),
+            "cameras": _groups(prompts_library.CAMERA_GROUPS, lg),
             "lights": _groups(prompts_library.LIGHT_GROUPS, lg),
             "shots": _groups(prompts_library.CATEGORIES, lg),
         },
         "scripts": prompts_library.public_scripts(**kw),
         "boards": prompts_library.public_boards(**kw),
         "motions": prompts_library.public_motions(**kw),
+        "cameras": _decorate_cameras(prompts_library.public_cameras(**kw)),
         "lights": prompts_library.public_lights(**kw),
         # Приёмы и наборы — прежние слои. Они остаются в том же каталоге
         # отдельными группами: набор применяется на весь трек, приём на одну
@@ -5050,6 +5052,163 @@ def api_motion(key: str, request: Request, lang: str = "",
     if not card:
         raise ApiError(404, "unknown_motion", f"Unknown motion: {key!r}")
     return card
+
+
+# ─────────────── превью карточек слоёв (камера и будущие пачки) ───────────────
+# Общий магазин превью для ЛЮБОГО слоя каталога: ключ "layer:key" → имя файла.
+# Отдельный от мокапов: у тех превью живут на id шаблона, здесь — на слой,
+# чтобы будущие пачки («ракурсы», «свет», «стили») подключались без правок.
+
+LAYER_PREVIEWS_FILE = os.path.join(UPLOAD_DIR, "layer_previews.json")
+
+
+def _layer_previews() -> dict:
+    try:
+        with open(LAYER_PREVIEWS_FILE, encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _layer_previews_save(m: dict) -> None:
+    tmp = LAYER_PREVIEWS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False)
+    os.replace(tmp, LAYER_PREVIEWS_FILE)
+
+
+def _decorate_cameras(cards: list[dict]) -> list[dict]:
+    previews = _layer_previews()
+    for c in cards:
+        fname = previews.get(f"cameras:{c['key']}") or ""
+        c["preview_url"] = f"/api/media/{fname}" if fname else ""
+    return cards
+
+
+@app.get("/api/cameras")
+def api_cameras(request: Request, lang: str = "", group: str = "",
+                db: Session = Depends(db_session)):
+    """Камера-пресеты: законченные проезды. Пишутся в motion_prompt целиком."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    return {"lang": lg,
+            "groups": _groups(prompts_library.CAMERA_GROUPS, lg),
+            "cameras": _decorate_cameras(prompts_library.public_cameras(
+                lang=lg, group=group, plan_id=plan, is_admin=adm))}
+
+
+@app.get("/api/cameras/{key}")
+def api_camera(key: str, request: Request, lang: str = "",
+               db: Session = Depends(db_session)):
+    lg, plan, adm = _lib_who(request, db, lang)
+    card = prompts_library.public_camera(key, lang=lg, plan_id=plan, is_admin=adm)
+    if not card:
+        raise ApiError(404, "unknown_camera", f"Unknown camera: {key!r}")
+    return _decorate_cameras([card])[0]
+
+
+# Нейтральные сцены превью камера-пресетов: дорога/каньон/город, без брендов.
+CAMERA_PREVIEW_SCENES = {
+    "slider_arc": "an empty coastal road at golden hour, a lone figure by the roadside, "
+                  "layered foreground rocks and distant cliffs, strong depth",
+    "vehicle_tracking": "a plain matte-grey car driving fast on a desert canyon road, "
+                        "dust and motion blur along the asphalt",
+    "drone_push_in": "a low aerial rush over a rocky canyon toward a lone figure standing "
+                     "on a cliff edge, dramatic evening sky",
+    "truck_left": "a city street at dusk, a figure walking past layered storefronts and "
+                  "lampposts, deep parallax between planes",
+    "helicopter_orbit": "a distant telephoto aerial view of a lone figure on a highrise "
+                        "rooftop at dawn, compressed city skyline behind",
+    "crane_down": "a steep top-down view of a lone figure in an empty stone plaza with "
+                  "long morning shadows",
+}
+
+
+def generate_camera_previews(ids: list[str] | None = None,
+                             engine: str = "chatgpt") -> dict:
+    """Превью камера-пресетов бесплатным шлюзом — та же механика, что у
+    превью мокапов: нейтральные сцены, без брендов и без токенов клиента."""
+    db = SessionLocal()
+    done, failed = [], []
+    try:
+        previews = _layer_previews()
+        import asyncio
+        for cam in prompts_library.CAMERAS:
+            key = cam["key"]
+            if previews.get(f"cameras:{key}"):
+                continue
+            if ids and "*" not in ids and key not in ids:
+                continue
+            scene = CAMERA_PREVIEW_SCENES.get(
+                key, "an empty scenic road through a canyon at sunset")
+            prompt = (f"Cinematic film still, vertical 3:4 composition: {scene}. "
+                      f"Natural light, realistic photography, no logos, no brands, "
+                      f"no text, no watermark.")
+            try:
+                mediagen.reset_task()
+                res = asyncio.run(mediagen.generate_image_ex(
+                    prompt, None, engine=engine, aspect="3:4"))
+                fname = _save_image(res["data"], res["mime"], upscale=False)
+                _reg_file(db, fname, None, kind="layer_preview")
+                db.commit()
+                previews = _layer_previews()
+                previews[f"cameras:{key}"] = fname
+                _layer_previews_save(previews)
+                done.append(key)
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{key}: {_err_text(e, 120)}")
+                log.warning("превью камеры %s не вышло: %s", key, e)
+        return {"done": done, "failed": failed}
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/cameras/previews")
+def admin_camera_previews(all: int = 0,  # noqa: A002
+                          user: User = Depends(current_user)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    return generate_camera_previews(["*"] if all else None)
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview")
+async def admin_layer_preview_upload(layer: str, key: str,
+                                     file: UploadFile | None = None,
+                                     user: User = Depends(current_user),
+                                     db: Session = Depends(db_session)):
+    """Своя картинка-превью на карточку ЛЮБОГО слоя каталога.
+
+    Тони перезальёт референсы руками — из чата файлы не достать. Старый файл
+    подчищается, ключ хранится как "layer:key" (см. _layer_previews)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    key = re.sub(r"[^a-z0-9_]", "", (key or "").strip().lower())[:60]
+    if not key:
+        raise HTTPException(400, "плохой ключ")
+    if file is None or not (file.filename or "").strip():
+        raise HTTPException(400, "нет файла")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, f"не похоже на картинку: {ext or '?'}")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(413, "картинка больше 15 МБ")
+    if len(data) < 500:
+        raise HTTPException(400, "файл пустой")
+    fname = f"lprev_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as fh:
+        fh.write(data)
+    _reg_file(db, fname, None, kind="layer_preview")
+    db.commit()
+    previews = _layer_previews()
+    old = previews.get(f"{layer}:{key}") or ""
+    previews[f"{layer}:{key}"] = fname
+    _layer_previews_save(previews)
+    if old:
+        _remove_media(old)
+    return {"ok": True, "preview_url": f"/api/media/{fname}"}
 
 
 @app.get("/api/lights")
