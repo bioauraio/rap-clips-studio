@@ -170,20 +170,20 @@ const I18N = {
         earn: "Earn",
         marketing: "Marketing",
         studio: "Studio",
-        academy: "Academy",
+        academy: "School",
         prompts: "Prompts",
       },
       titles: {
         marketing: "product shots, UGC creators and the partner program",
         studio: "projects, tracks, storyboard and assembly",
-        academy: "courses, lessons and ready-made shot kits",
+        academy: "school: how everything works, courses and shot kits",
         prompts: "shots: first frame, last frame, motion — copy or apply",
       },
     },
 
     // ─────────── АКАДЕМИЯ ───────────
     academy: {
-      title: "Academy",
+      title: "School",
       lead: "Everything we know about the pipeline, in the order you actually need it. Every lesson is open on every plan — what the plan decides is whether the lesson's kit can be applied to your project.",
       progressAll: "{done} of {total} {word} · {percent}%",
       courseMeta: "{n} {word} · {min} min",
@@ -1135,6 +1135,16 @@ const I18N = {
       notReady: "Voiceover is not set up yet — the ElevenLabs key is missing.",
       noVoices: "No voices on the ElevenLabs account yet.",
       pick: "Which voice? Enter the number:",
+    },
+    cine: {
+      promptPh: "Describe a scene — @ adds a character…",
+      needPrompt: "Describe the scene first",
+      added: "Scene added to the storyboard \u2713",
+      camAuto: "camera: auto", camStatic: "static", camPush: "push-in",
+      camOrbit: "orbit", camTrack: "tracking",
+      lightAuto: "light: auto", lightDay: "daylight", lightNeon: "neon",
+      lightSunset: "sunset", lightStudio: "studio",
+      palAuto: "palette: auto", palWarm: "warm", palCold: "cold", palBw: "b/w",
     },
     mk: {
       title: "Marketing studio",
@@ -2693,20 +2703,20 @@ const I18N = {
         earn: "Заработок",
         marketing: "Маркетинг",
         studio: "Студия",
-        academy: "Академия",
+        academy: "Школа",
         prompts: "Промты",
       },
       titles: {
         marketing: "предметная съёмка, UGC-блогеры и партнёрская программа",
         studio: "проекты, треки, раскадровка и сборка",
-        academy: "курсы, уроки и готовые наборы приёмов",
+        academy: "школа: как всё устроено, курсы и наборы приёмов",
         prompts: "приёмы: первый кадр, последний, движение — скопировать или применить",
       },
     },
 
     // ─────────── АКАДЕМИЯ ───────────
     academy: {
-      title: "Академия",
+      title: "Школа",
       lead: "Всё, что мы знаем про конвейер, в том порядке, в котором это реально нужно. Уроки открыты на любом тарифе — тариф решает не «покажем ли текст», а применится ли набор приёмов в проект.",
       progressAll: "{done} из {total} {word} · {percent}%",
       courseMeta: "{n} {word} · {min} мин",
@@ -3637,6 +3647,16 @@ const I18N = {
       notReady: "Озвучка пока не настроена — нет ключа ElevenLabs.",
       noVoices: "На аккаунте ElevenLabs ещё нет голосов.",
       pick: "Каким голосом? Введи номер:",
+    },
+    cine: {
+      promptPh: "Опиши сцену — @ добавит персонажа…",
+      needPrompt: "Сначала опиши сцену",
+      added: "Сцена добавлена в раскадровку ✓",
+      camAuto: "камера: авто", camStatic: "статичная", camPush: "наезд",
+      camOrbit: "орбита", camTrack: "слежение",
+      lightAuto: "свет: авто", lightDay: "дневной", lightNeon: "неон",
+      lightSunset: "закат", lightStudio: "студийный",
+      palAuto: "палитра: авто", palWarm: "тёплая", palCold: "холодная", palBw: "ч/б",
     },
     mk: {
       title: "Маркетинг-студия",

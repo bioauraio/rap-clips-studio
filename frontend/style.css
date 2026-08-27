@@ -3869,3 +3869,53 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .mk-gal-ph.g1 { background: linear-gradient(150deg, #ffe7cf, #ffd2b0); }
 .mk-gal-ph.g2 { background: linear-gradient(150deg, #e4f2ea, #cbe7da); }
 .mk-gal-ph.g3 { background: linear-gradient(150deg, #f3e7f7, #e3d1ef); }
+
+/* ─────────── Cinema-бар (свободная сцена над раскадровкой) ─────────── */
+.cine-bar { margin: 14px 0 6px; }
+.cine-wrap { position: relative; }
+.cine-prompt {
+  width: 100%; resize: vertical; min-height: 48px;
+  border: 1px solid rgba(var(--ink-rgb), .12); border-radius: 14px;
+  background: var(--inset); padding: 10px 12px; font: inherit; color: var(--text);
+}
+.cine-ac {
+  position: absolute; left: 8px; top: 100%; z-index: 30;
+  background: var(--card-solid); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: 0 10px 30px rgba(var(--ink-rgb), .16);
+  display: flex; flex-direction: column; min-width: 180px; overflow: hidden;
+}
+.cine-ac-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  background: none; border: none; cursor: pointer; font: inherit; text-align: left;
+}
+.cine-ac-item:hover { background: var(--gold-wash); }
+.cine-ac-item img { width: 24px; height: 24px; border-radius: 8px; object-fit: cover; }
+
+/* ─────────── Инструкции «Как это работает» + Школа ─────────── */
+.ms-howto {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 18px; padding: 10px 14px; backdrop-filter: blur(8px);
+}
+.ms-howto > summary { cursor: pointer; font-weight: 700; list-style: none; }
+.ms-howto > summary::-webkit-details-marker { display: none; }
+.ms-howto ol { margin: 10px 0 4px; padding-left: 20px; display: flex;
+  flex-direction: column; gap: 6px; font-size: .92rem; line-height: 1.45; }
+.school-grid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+.trends-hero .ms-howto { margin-top: 12px; text-align: left; }
+
+/* ─────────── Лёгкая карточка трека: один уровень рамок ───────────
+   Внешняя обёртка перестаёт быть «блоком в блоке»: фон/рамку/тень несёт
+   только стеклянная панель этапа, обёртка держит лишь вертикальный ритм. */
+.track-card,
+:root[data-theme="dark"] .track-card,
+:root.os-dark:not([data-theme="light"]) .track-card {
+  background: none; border: none; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  padding: 0 2px; margin-bottom: 44px;
+}
+.mode-setup { gap: 30px; }
+.storyboard-block, .clip-dock {
+  margin-top: 30px; padding-top: 22px;
+  border-top: 1px solid rgba(var(--ink-rgb), .10); /* волосяной разделитель */
+}
+.storyboard-box, .media-box { border-color: rgba(var(--ink-rgb), .12); }

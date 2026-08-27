@@ -7720,6 +7720,48 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
     return {"ok": True}
 
 
+def _run_scene_full(scene_id: int) -> None:
+    """Полный круг ОДНОЙ сцены: кадры → видео, последовательно в одном треде
+    (та же логика, что у супергенерации, только для свежего кадра из
+    cinema-бара). Видео не стартует, если кадры упали."""
+    _run_scene_frames(scene_id)
+    db = SessionLocal()
+    try:
+        scene = db.get(Scene, scene_id)
+        ok = bool(scene and scene.image_filename and scene.image_status != "error")
+        if ok:
+            scene.video_status = "queued"
+            db.commit()
+    finally:
+        db.close()
+    if ok:
+        _run_scene_video(scene_id)
+
+
+@app.post("/api/scenes/{scene_id}/full-circle")
+def scene_full_circle(scene_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Кадры + видео сцены одной кнопкой (режим Video в cinema-баре)."""
+    _guard_disk()
+    scene = _own_scene(db, user, scene_id)
+    if not scene.image_prompt.strip():
+        raise HTTPException(400, "у сцены пуст промпт")
+    if scene.image_status in ("queued", "running") or scene.video_status in ("queued", "running"):
+        raise HTTPException(409, "сцена уже генерируется")
+    provider = _allowed_provider(user, scene.video_provider or "seedance")
+    vid_engine = _resolve_video_engine(user, scene.track, provider)
+    cost = _scene_cost(user, provider, scene, vid_engine)
+    _scene_charge(db, user, scene, cost,
+                  f"полный круг сцены {scene.id} ({vid_engine})",
+                  kind="video", engine=vid_engine)
+    scene.video_provider = provider
+    scene.video_engine = vid_engine
+    scene.image_status = "queued"
+    db.commit()
+    _spawn_gen(user, _run_scene_full, scene_id, kind="video")
+    return {"ok": True, "charged": cost}
+
+
 @app.post("/api/scenes/{scene_id}/trim")
 async def trim_scene_video(scene_id: int, request: Request,
                            user: User = Depends(current_user),

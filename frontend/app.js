@@ -5092,6 +5092,185 @@ async function msMarketingStudio(card, tr, mode) {
   });
 }
 
+/* ─────────── Cinema-бар: свободная сцена одним промптом ───────────
+   Живёт над раскадровкой. «@» зовёт персонажа из ОБЩЕЙ базы (все проекты),
+   чипы камеры/света/палитры/длительности собирают промпт, Image рисует
+   кадры новой сцены, Video гонит полный круг (кадры + видео). Никакого
+   отдельного движка: та же add_scene + generate-frames / full-circle. */
+const CINE_CAMERA = {
+  "": "", static: "Locked-off static camera, no movement.",
+  push: "Slow cinematic push-in toward the subject.",
+  orbit: "Smooth orbital camera move around the subject.",
+  track: "Tracking shot following the subject.",
+};
+const CINE_LIGHT = {
+  "": "", day: "natural daylight", neon: "neon night lighting",
+  sunset: "warm golden-hour sunset light", studio: "clean soft studio lighting",
+};
+const CINE_PALETTE = {
+  "": "", warm: "warm color palette", cold: "cold blue color palette",
+  bw: "black and white, monochrome",
+};
+
+async function msCinemaBar(card, tr, mode) {
+  const box = $(".cine-bar", card);
+  if (!box) return;
+  const on = mode.id !== "mockup";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  if (!mkChars) {
+    try { mkChars = (await api("/api/characters/all")).characters || []; }
+    catch (e) { mkChars = (project && project.characters) || []; }
+  }
+  const st = tr._cine || (tr._cine = {
+    camera: "", light: "", palette: "", dur: 6, video: false, prompt: "",
+  });
+  const img = imageEngineById(effImageEngine(tr));
+  const vid = videoEngineById(effVideoEngine(tr));
+  const framesCost = img ? img.frames_cost : 0;
+  const fullCost = framesCost + (vid ? vid.video_cost : 0);
+  const chip = (label, active, onClick, cls = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `mk-chip ${cls}` + (active ? " on" : "");
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  box.innerHTML = `
+    <div class="mk-bar">
+      <div class="cine-wrap">
+        <textarea class="cine-prompt" rows="2" placeholder="${esc(t("cine.promptPh"))}"></textarea>
+        <div class="cine-ac hidden"></div>
+      </div>
+      <div class="mk-bar-row">
+        <div class="mk-chips cine-kind"></div>
+        <div class="mk-chips cine-camera"></div>
+        <div class="mk-chips cine-light"></div>
+        <div class="mk-chips cine-palette"></div>
+        <div class="mk-chips cine-dur"></div>
+        <button type="button" class="mk-go cine-go"></button>
+      </div>
+      <span class="cine-status status"></span>
+    </div>`;
+  const promptEl = $(".cine-prompt", box);
+  if (st.prompt) promptEl.value = st.prompt;
+  const ac = $(".cine-ac", box);
+  const acHide = () => ac.classList.add("hidden");
+  promptEl.addEventListener("input", () => {
+    st.prompt = promptEl.value;
+    // @-автокомплит: последний токен начинается с @ — показываем героев.
+    const uptoCaret = promptEl.value.slice(0, promptEl.selectionStart);
+    const m = uptoCaret.match(/@([\wа-яА-ЯёЁ-]*)$/u);
+    if (!m) { acHide(); return; }
+    const q = (m[1] || "").toLowerCase();
+    const opts = (mkChars || []).filter((c) =>
+      (c.name || "").toLowerCase().startsWith(q)).slice(0, 6);
+    if (!opts.length) { acHide(); return; }
+    ac.innerHTML = "";
+    opts.forEach((c) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cine-ac-item";
+      b.innerHTML = (c.photo_url ? `<img src="${esc(c.photo_url)}" alt="" />` : "👤")
+        + `<span>${esc(c.name)}</span>`;
+      b.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const pos = promptEl.selectionStart;
+        promptEl.value = uptoCaret.replace(/@[\wа-яА-ЯёЁ-]*$/u, c.name)
+          + promptEl.value.slice(pos);
+        st.prompt = promptEl.value;
+        acHide();
+        promptEl.focus();
+      });
+      ac.appendChild(b);
+    });
+    ac.classList.remove("hidden");
+  });
+  promptEl.addEventListener("blur", () => setTimeout(acHide, 150));
+
+  const goEl = $(".cine-go", box);
+  const paintBar = () => {
+    const kind = $(".cine-kind", box);
+    kind.innerHTML = "";
+    kind.append(
+      chip(t("mk.image"), !st.video, () => { st.video = false; paintBar(); }),
+      chip(t("mk.video"), st.video, () => { st.video = true; paintBar(); }));
+    const cam = $(".cine-camera", box);
+    cam.innerHTML = "";
+    [["", "camAuto"], ["static", "camStatic"], ["push", "camPush"],
+     ["orbit", "camOrbit"], ["track", "camTrack"]]
+      .forEach(([v, k]) => cam.appendChild(chip(t(`cine.${k}`), st.camera === v,
+        () => { st.camera = v; paintBar(); })));
+    const li = $(".cine-light", box);
+    li.innerHTML = "";
+    [["", "lightAuto"], ["day", "lightDay"], ["neon", "lightNeon"],
+     ["sunset", "lightSunset"], ["studio", "lightStudio"]]
+      .forEach(([v, k]) => li.appendChild(chip(t(`cine.${k}`), st.light === v,
+        () => { st.light = v; paintBar(); })));
+    const pa = $(".cine-palette", box);
+    pa.innerHTML = "";
+    [["", "palAuto"], ["warm", "palWarm"], ["cold", "palCold"], ["bw", "palBw"]]
+      .forEach(([v, k]) => pa.appendChild(chip(t(`cine.${k}`), st.palette === v,
+        () => { st.palette = v; paintBar(); })));
+    const du = $(".cine-dur", box);
+    du.innerHTML = "";
+    [5, 6, 8, 10].forEach((v) => du.appendChild(chip(`${v}s`, st.dur === v,
+      () => { st.dur = v; paintBar(); })));
+    goEl.textContent = `${t("mk.generate")} · ⚡ ${tNum(st.video ? fullCost : framesCost)}`;
+  };
+  paintBar();
+
+  const stEl = $(".cine-status", box);
+  goEl.addEventListener("click", async () => {
+    const text = (promptEl.value || "").trim();
+    if (!text) { mkToast(t("cine.needPrompt")); return; }
+    // Имена героев, упомянутые в тексте, уезжают в characters сцены.
+    const named = (mkChars || []).filter((c) => c.name
+      && text.toLowerCase().includes(c.name.toLowerCase()))
+      .map((c) => c.name);
+    let prompt = text;
+    if (CINE_LIGHT[st.light]) prompt += `, ${CINE_LIGHT[st.light]}`;
+    if (CINE_PALETTE[st.palette]) prompt += `, ${CINE_PALETTE[st.palette]}`;
+    goEl.disabled = true;
+    stEl.textContent = t("status.queued");
+    try {
+      const sc = await api(`/api/tracks/${tr.id}/scenes`, {
+        method: "POST",
+        body: {
+          image_prompt: prompt,
+          motion_prompt: CINE_CAMERA[st.camera] || "",
+          duration_sec: st.dur,
+          characters: named.join(", "),
+          shot_note: text,
+        },
+      });
+      if (st.video) await api(`/api/scenes/${sc.id}/full-circle`, { method: "POST" });
+      else await api(`/api/scenes/${sc.id}/generate-frames`, { method: "POST" });
+      mkToast(t("cine.added"));
+      st.prompt = "";
+      stEl.textContent = "";
+      schedulePoll();
+      await loadProject();
+    } catch (e) { fail(e); stEl.textContent = ""; }
+    goEl.disabled = false;
+  });
+}
+
+/* Свёрнутая инструкция «Как это работает» — над настройкой режима. */
+function msHowto(card, mode) {
+  const setup = $(".mode-setup", card);
+  if (!setup || $(".ms-howto", card)) return;
+  const html = window.lolqHowto
+    ? window.lolqHowto({ clip: "clips", mockup: "marketing", ugc: "ugc",
+                         series: "clips" }[mode.id] || "clips")
+    : "";
+  if (!html) return;
+  const det = document.createElement("div");
+  det.innerHTML = html;
+  if (det.firstElementChild) setup.prepend(det.firstElementChild);
+}
+
 /* Шапка блока: одна строка, по которой видно всё решение целиком — режим,
    каркас, стиль, движок и прогноз расхода. Она и есть ответ на «что я
    вообще собрал», ради которого раньше приходилось листать пять мест. */
@@ -5725,13 +5904,17 @@ function renderTrack(tr) {
 
   // ── этап 2: раскадровка
   $(".add-scene", card).addEventListener("click", () => addManualScene(tr.id));
+  msCinemaBar(card, tr, modeNow);
+  msHowto(card, modeNow);
   const allBtn = $(".gen-all-frames", card);
   const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
   // «(готовый кадр» — служебная метка бэкенда в image_prompt (backend/main.py),
   // не текст для человека: переводить её нельзя, иначе фильтр разъедется.
   const framesTodo = (tr.scenes || []).filter((s) => !(s.image_url || s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
   allBtn.disabled = framesBusy || !framesTodo;
-  allBtn.textContent = framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo });
+  const allImgSpec = imageEngineById(effImageEngine(tr));
+  allBtn.textContent = (framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo }))
+    + (!framesBusy && framesTodo && allImgSpec ? ` · ⚡ ${tNum(framesTodo * allImgSpec.frames_cost)}` : "");
   allBtn.title = t("track.allFramesTitle");
   $(".all-frames-note", card).textContent = framesBusy ? t("track.allFramesNote") : "";
   allBtn.addEventListener("click", async () => {
@@ -5750,7 +5933,9 @@ function renderTrack(tr) {
     const vidBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.video_status));
     const vidTodo = (tr.scenes || []).filter((s) => s.image_url && !s.video_url).length;
     allVidBtn.disabled = vidBusy || !vidTodo;
-    allVidBtn.textContent = vidBusy ? t("track.allVideosBusy") : t("track.allVideosN", { n: vidTodo });
+    const allVidSpec = videoEngineById(effVideoEngine(tr));
+    allVidBtn.textContent = (vidBusy ? t("track.allVideosBusy") : t("track.allVideosN", { n: vidTodo }))
+      + (!vidBusy && vidTodo && allVidSpec ? ` · ⚡ ${tNum(vidTodo * allVidSpec.scene_cost)}` : "");
     allVidBtn.addEventListener("click", async () => {
       const engSpec = videoEngineById(effVideoEngine(tr));
       const priceLine = engSpec
@@ -6609,8 +6794,11 @@ function renderScene(s, audioEl, mode = "board") {
   const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
   framesBtn.disabled = imgBusy;
-  framesBtn.textContent = imgBusy ? t("scene.framesBusy")
-    : s.image_url ? t("scene.regenFrames") : t("scene.genFrames");
+  const sceneImgSpec = imageEngineById(
+    sceneImgOverride(card) || s.image_engine || effImageEngine(sceneTrack(s.id)));
+  framesBtn.textContent = (imgBusy ? t("scene.framesBusy")
+    : s.image_url ? t("scene.regenFrames") : t("scene.genFrames"))
+    + (!imgBusy && sceneImgSpec ? ` · ⚡ ${tNum(sceneImgSpec.frames_cost)}` : "");
   framesBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
   const firstBtn = $(".s-gen-first", card);
   const lastBtn = $(".s-gen-last", card);
@@ -6843,9 +7031,12 @@ function renderScene(s, audioEl, mode = "board") {
   // пока жив последний.
   const anyFrame = Boolean(s.image_url || s.image_last_url);
   vidBtn.disabled = vidBusy || !anyFrame;
-  vidBtn.textContent = vidBusy ? t("scene.videoBusy")
+  const sceneVidSpec = videoEngineById(
+    (provSel && provSel.dataset.engine) || s.video_engine || effVideoEngine(sceneTrack(s.id)));
+  vidBtn.textContent = (vidBusy ? t("scene.videoBusy")
     : !anyFrame ? t("scene.videoNoFrame")
-    : s.video_url ? t("scene.regenVideo") : t("scene.genVideo");
+    : s.video_url ? t("scene.regenVideo") : t("scene.genVideo"))
+    + (!vidBusy && anyFrame && sceneVidSpec ? ` · ⚡ ${tNum(sceneVidSpec.video_cost)}` : "");
   vidBtn.title = !anyFrame ? t("scene.videoTitleNoFrame") : t("scene.videoTitle");
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value, provSel.dataset.engine || ""));
   }

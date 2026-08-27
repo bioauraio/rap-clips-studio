@@ -492,6 +492,7 @@
     page.innerHTML = `<section class="trends-hero">
       <h1>${esc(T("marketing.title", "Маркетинг"))}</h1>
       <p>${esc(T("marketing.lead", ""))}</p>
+      ${window.lolqHowto ? window.lolqHowto("marketing") : ""}
     </section><section class="mk-grid"></section>`;
     const grid = $(".mk-grid", page);
     const cards = [
@@ -735,6 +736,110 @@
     try { return Boolean(window.me && window.me.user); } catch (e) { return true; }
   }
 
+  /* ─────────── Школа: база знаний «как это работает» ───────────
+     Одни и те же тексты живут в двух местах: свёрнутым блоком на странице
+     раздела (details «Как это работает») и оглавлением в «Школе». */
+  const SCHOOL = {
+    ru: [
+      { id: "clips", icon: "🎬", title: "Клипы", steps: [
+        "Создай проект и загрузи трек — сервис разберёт текст и ритм.",
+        "Выбери стиль и персонажей: их фото держат лицо во всех кадрах.",
+        "Сгенерируй раскадровку — каждая строка песни станет сценой.",
+        "Cinema-бар над раскадровкой добавляет свободную сцену одним промптом, @ зовёт персонажа.",
+        "Кадры → видео → сборка. «Супергенерация» проходит весь путь одной кнопкой.",
+      ] },
+      { id: "marketing", icon: "📦", title: "Маркетинг и мокапы", steps: [
+        "Создай проект «Мокапы» и загрузи фото товара — этикетка сохранится точь-в-точь.",
+        "Выбери готовый шаблон сцены в маркетинг-студии или опиши свою.",
+        "Слоты «Персонаж» и «Продукт» подмешивают референсы из любой твоей базы.",
+        "Кадр ложится в раскадровку — его можно оживить и собрать в ролик.",
+        "3D-облёт крутит товар на 360° по восьми ракурсам.",
+      ] },
+      { id: "ugc", icon: "🤳", title: "UGC-ролики", steps: [
+        "Создай проект UGC и выбери формат ролика — каркас уже расписан по слотам.",
+        "Задай персону блогера и локацию — они держатся из ролика в ролик.",
+        "Напиши бриф или доверься формату: раскадровка соберётся сама.",
+        "Кадры и видео — тем же конвейером, что и клипы.",
+      ] },
+      { id: "earn", icon: "💸", title: "Заработок", steps: [
+        "Сделай ролик с любым продуктом из витрины.",
+        "Возьми свою ссылку в разделе «Заработок» и поставь её в пост.",
+        "Каждый заказ с твоего трафика приносит долю с продажи.",
+      ] },
+      { id: "music", icon: "🎵", title: "Музыка", steps: [
+        "Опиши трек или загрузи свой — студия соберёт бит и вокал.",
+        "Мастеринг выравнивает громкость под площадки.",
+        "Готовый трек сразу можно превратить в клип.",
+      ] },
+      { id: "tokens", icon: "⚡", title: "Токены и цены", steps: [
+        "Каждая генерация стоит токены — цена написана прямо на кнопке (⚡).",
+        "Цена зависит от движка: шлюзовые дешевле, топовые модели дороже.",
+        "Если генерация упала, токены возвращаются автоматически.",
+        "Пакеты токенов и тарифы — в кабинете.",
+      ] },
+    ],
+    en: [
+      { id: "clips", icon: "🎬", title: "Clips", steps: [
+        "Create a project and upload a track — the service parses lyrics and rhythm.",
+        "Pick a style and characters: their photos keep the face consistent.",
+        "Generate the storyboard — every line becomes a scene.",
+        "The cinema bar above the storyboard adds a free scene from one prompt, @ mentions a character.",
+        "Frames → video → assembly. \u201cSupergen\u201d runs the whole pipeline in one click.",
+      ] },
+      { id: "marketing", icon: "📦", title: "Marketing & mockups", steps: [
+        "Create a Mockups project and upload product photos — the label is preserved exactly.",
+        "Pick a ready-made scene template in the marketing studio or describe your own.",
+        "\u201cCharacter\u201d and \u201cProduct\u201d slots mix in references from any of your projects.",
+        "The frame lands in the storyboard — animate it and build a video.",
+        "The 3D turnaround spins the product through eight angles.",
+      ] },
+      { id: "ugc", icon: "🤳", title: "UGC videos", steps: [
+        "Create a UGC project and pick a format — the slots are pre-planned.",
+        "Set the creator persona and location — they persist across videos.",
+        "Write a brief or trust the format: the storyboard builds itself.",
+        "Frames and video run on the same pipeline as clips.",
+      ] },
+      { id: "earn", icon: "💸", title: "Earning", steps: [
+        "Make a video with any product from the showcase.",
+        "Grab your link in the Earn section and put it in your post.",
+        "Every order from your traffic pays you a share.",
+      ] },
+      { id: "music", icon: "🎵", title: "Music", steps: [
+        "Describe a track or upload your own — the studio builds beat and vocals.",
+        "Mastering levels the loudness for the platforms.",
+        "A finished track can become a clip right away.",
+      ] },
+      { id: "tokens", icon: "⚡", title: "Tokens & prices", steps: [
+        "Every generation costs tokens — the price is right on the button (⚡).",
+        "The price depends on the engine: gateway ones are cheaper, top models cost more.",
+        "If a generation fails, tokens are refunded automatically.",
+        "Token packs and plans live in the account.",
+      ] },
+    ],
+  };
+
+  function schoolCats() {
+    return SCHOOL[(typeof LANG !== "undefined" && LANG === "ru") ? "ru" : "en"];
+  }
+
+  /* Свёрнутый блок «Как это работает» для страницы раздела. */
+  window.lolqHowto = function lolqHowto(id) {
+    const cat = schoolCats().find((c) => c.id === id);
+    if (!cat) return "";
+    const head = (typeof LANG !== "undefined" && LANG === "ru")
+      ? "Как это работает" : "How it works";
+    return `<details class="ms-howto"><summary>${cat.icon} ${esc(head)}</summary>
+      <ol>${cat.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>`;
+  };
+
+  function schoolBlock() {
+    const lead = (typeof LANG !== "undefined" && LANG === "ru")
+      ? "База знаний: как устроен каждый раздел." : "Knowledge base: how every section works.";
+    return `<div class="school-grid"><p class="ac-lead">${esc(lead)}</p>` + schoolCats().map((c) =>
+      `<details class="ms-howto school-cat"><summary>${c.icon} ${esc(c.title)}</summary>
+        <ol>${c.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>`).join("") + "</div>";
+  }
+
   function openAcademy(slug) {
     openSheet("academy", T("academy.title", "Академия"), async (body) => {
       busy(body);
@@ -766,7 +871,8 @@
 
   function renderCourses(body) {
     const rows = academy.courses || [];
-    body.innerHTML = courseHead() + `<div class="ac-courses">${rows.map(courseCard).join("")}</div>`;
+    body.innerHTML = schoolBlock() + courseHead()
+      + `<div class="ac-courses">${rows.map(courseCard).join("")}</div>`;
     $$(".ac-lesson", body).forEach((b) =>
       b.addEventListener("click", () => renderLesson(body, b.dataset.slug)));
   }
