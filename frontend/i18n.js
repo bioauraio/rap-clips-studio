@@ -1351,7 +1351,7 @@ const I18N = {
       charsTitle: "characters in the scene — click to toggle",
       prompt: "prompt",
       promptTitle: "first frame prompt",
-      durationTitle: "seconds",
+      durationTitle: "seconds (2–30; over 12 the scene rides a chain of in-between frames)",
       shotSizeTitle: "shot size",
       shotSizeEmpty: "shot size —",
       shot: {
@@ -3971,7 +3971,7 @@ const I18N = {
       charsTitle: "персонажи в кадре — клик включает/выключает",
       prompt: "промпт",
       promptTitle: "промпт первого кадра",
-      durationTitle: "секунд",
+      durationTitle: "секунд (2–30; длиннее 12 — сцена едет цепочкой промежуточных кадров)",
       shotSizeTitle: "крупность плана",
       shotSizeEmpty: "крупность —",
       shot: {

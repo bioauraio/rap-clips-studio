@@ -3140,8 +3140,10 @@ def _midframes(s: Scene) -> list[dict]:
 
 def _midframe_count(duration_sec: int) -> int:
     """Сколько промежуточных кадров положено сцене: примерно раз в 2 секунды
-    между первым и последним, но не больше 4 (экономия токенов и времени)."""
-    return max(0, min(4, round((duration_sec or 0) / 2) - 1))
+    между первым и последним, но не больше 5 (экономия токенов и времени).
+    Длинной сцене (12-30с) опор нужно больше: видео едет отрезками ~6с
+    между соседними кадрами цепочки."""
+    return max(0, min(5, round((duration_sec or 0) / 2) - 1))
 
 
 def _frames_state(s: Scene) -> str:
@@ -6048,7 +6050,10 @@ async def update_scene(scene_id: int, request: Request, user: User = Depends(cur
     for field in ("duration_sec", "lyric_line", "characters", "shot_size", "camera_move",
                   "image_prompt", "motion_prompt", "shot_note", "image_prompt_last"):
         if field in body:
-            setattr(scene, field, str(body[field]) if field != "duration_sec" else body[field])
+            # Длительность — в границах [SCENE_MIN_SEC, SCENE_MAX_SEC]: раньше
+            # поле писалось как пришло, и «300» ломало тайминги всего трека.
+            setattr(scene, field, str(body[field]) if field != "duration_sec"
+                    else _clamp_dur(body[field]))
     if "image_prompt" in body:
         scene.prompt_stale = False
     if "characters" in body:
@@ -7614,7 +7619,11 @@ def _run_midframes(scene_id: int) -> None:
         done: list[dict] = []
         for n in range(1, total + 1):
             prompt = (f"Frame {n} of {total} between these two moments: "
-                      f"{first} → {last}, style unchanged")
+                      f"{first} → {last}, style unchanged. Same single "
+                      f"continuous shot with the same camera move in progress: "
+                      f"identical location, light, wardrobe and identity, only "
+                      f"the action has advanced proportionally. No morphing, "
+                      f"no extra limbs.")
             # ТЕМ ЖЕ ДВИЖКОМ, ЧТО И ПАРА КАДРОВ. Иначе середина сцены
             # выпадает из стиля её краёв — и, что важнее, платим мы за один
             # движок, а рисуем другим: цена в /generate-midframes считается
@@ -7710,7 +7719,11 @@ def _run_extra_midframe(scene_id: int) -> None:
         track = scene.track
         ref = os.path.join(UPLOAD_DIR, scene.image_filename)
         mids = _midframes(scene)
-        prompt = (scene.image_prompt or "").strip()
+        prompt = ((scene.image_prompt or "").strip()
+                  + ". Same single continuous shot as the reference frame, the "
+                    "same camera move in progress: identical location, light, "
+                    "wardrobe and identity, only the action has advanced. "
+                    "No morphing, no extra limbs.")
         data, mime = asyncio.run(mediagen.generate_image(
             prompt, reference_path=ref, engine=scene.image_engine or "",
             resolution=(track.image_resolution or ""), aspect=_track_aspect(track)))
@@ -7862,6 +7875,13 @@ def _run_scene_video(scene_id: int) -> None:
             if base:
                 bits.append(" ".join(base.split())[:220])
             motion = "; ".join(bits) or "subtle natural motion, slow camera drift, alive frame"
+        # БЕСШОВНОСТЬ: движку говорим прямо, что это живая операторская
+        # съёмка, а не нейро-морфинг. Дублей не плодим — клаузу добавляем,
+        # только если её ещё нет в промпте.
+        if "continuous real cinematography" not in motion:
+            motion = (f"{motion}; footage must look like continuous real "
+                      f"cinematography, invisible cuts; no morphing, no warping, "
+                      f"no extra limbs, consistent identity and wardrobe")
         # Темп трека — в промпт движения: движение героя и камеры в темпе
         # дорожки читается как «попал в бит» даже до нарезки по битам.
         bpm = _track_bpm(track)
@@ -10524,7 +10544,11 @@ async def add_scene(track_id: int, request: Request, user: User = Depends(curren
 # ═════════════════════════════════════════════════════════════════════════════
 
 #: Границы длительности кадра — общие с движками видео (2–12 секунд).
-SCENE_MIN_SEC, SCENE_MAX_SEC = 2, 12
+# Максимум подняли до 30: длинная сцена строится ЦЕПОЧКОЙ промежуточных
+# кадров (_scene_frame_chain) — видео едет отрезками кадр→кадр по ~6 секунд,
+# так что 30-секундный план физически снимается. Раскадровщик по-прежнему
+# просит 2-10 секунд: длинные планы — осознанное ручное решение.
+SCENE_MIN_SEC, SCENE_MAX_SEC = 2, 30
 #: Как поступить с таймлайном при вставке кадра.
 RETIME_POLICIES = ("squeeze", "spread", "tail")
 
