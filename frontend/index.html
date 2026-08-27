@@ -1049,6 +1049,12 @@
               <img class="sb-preview hidden" alt="" loading="lazy" decoding="async" />
               <span class="sb-empty muted" data-i18n="track.sheetEmpty"></span>
             </div>
+            <!-- Вертикальный лист стоит слева, а его сводка — рядом, а не
+                 под пустым полем: сетка, число кадров, подсказка «клик — крупно». -->
+            <div class="storyboard-side hidden">
+              <span class="sb-meta sb-grid-note"></span>
+              <span class="sb-meta muted" data-i18n="track.sheetZoomHint"></span>
+            </div>
           </div>
           <!-- Лист нарисован под другое число кадров: резать его нельзя,
                куски поедут мимо панелей. Говорим об этом у самого листа. -->
@@ -1339,11 +1345,14 @@
         <textarea class="s-motion-last" rows="2" data-i18n-ph="scene.motionLastPh"></textarea>
         <button class="s-save" data-i18n="scene.save"></button>
       </div>
+      <!-- ОДНА строка генерации: [Сгенерировать кадры ⚡N][◀¹][²▶][+·]
+           Частные перегенерации — компактные стрелки с подсказками, а не
+           три слова, растянутые на три ряда. -->
       <div class="row s-board-actions">
         <button class="s-gen-frames" data-i18n="scene.regenFrames"></button>
-        <button class="s-gen-first" data-i18n-title="scene.genFirstTitle" data-i18n="scene.genFirst"></button>
-        <button class="s-gen-last" data-i18n-title="scene.genLastTitle" data-i18n="scene.genLast"></button>
-        <button class="s-gen-mid"></button>
+        <button class="s-gen-first s-gen-ico" data-i18n-title="scene.genFirstTitle">◀¹</button>
+        <button class="s-gen-last s-gen-ico" data-i18n-title="scene.genLastTitle">²▶</button>
+        <button class="s-gen-mid s-gen-ico"></button>
       </div>
       <div class="row s-video-row">
         <button class="s-gen-video primary" data-i18n="scene.genVideo"></button>

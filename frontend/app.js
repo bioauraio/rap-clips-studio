@@ -6570,6 +6570,23 @@ function renderTrack(tr) {
     img.classList.remove("hidden");
     img.addEventListener("click", () => openSheetModal(tr));
     if (sbEmpty) sbEmpty.classList.add("hidden");
+    // Ориентация листа решает раскладку: альбомный тянется на всю ширину
+    // панели, вертикальный стоит сбоку от сводки, без пустых полей вокруг.
+    const fitSheet = () => {
+      const box = img.closest(".storyboard-box");
+      const side = $(".storyboard-side", card);
+      if (!box || !img.naturalWidth) return;
+      const wide = img.naturalWidth >= img.naturalHeight;
+      box.classList.toggle("sb-wide", wide);
+      if (side) {
+        side.classList.toggle("hidden", wide);
+        const note = $(".sb-grid-note", side);
+        if (note) note.textContent = t("track.sheetGridNote", {
+          n: tr.storyboard_scenes || tr.scenes_count || 0 });
+      }
+    };
+    if (img.complete) fitSheet();
+    img.addEventListener("load", fitSheet, { once: true });
   }
   if (sbOpenBtn) {
     sbOpenBtn.disabled = !tr.storyboard_url;
@@ -7125,27 +7142,10 @@ function renderScene(s, audioEl, mode = "board") {
       });
       chipsBox.appendChild(chip);
     });
-    /* ВОСЕМЬ ПЕРСОНАЖЕЙ — ЭТО ПОЛ-КАРТОЧКИ ЧИПАМИ. Показываем первые пять
-       и выбранных (их прятать нельзя — по ним читается состав кадра),
-       остальные раскрываются кнопкой. */
-    const LIMIT = 5;
-    const chips = Array.from(chipsBox.children);
-    if (chips.length > LIMIT + 1) {
-      const hidden = chips.filter((c, i) => i >= LIMIT && !c.classList.contains("on"));
-      hidden.forEach((c) => c.classList.add("char-chip-more"));
-      if (hidden.length) {
-        const more = document.createElement("button");
-        more.type = "button";
-        more.className = "style-chip char-chip char-more";
-        more.textContent = LANG === "ru"
-          ? `показать всех (${hidden.length})` : `show all (${hidden.length})`;
-        more.addEventListener("click", () => {
-          hidden.forEach((c) => c.classList.remove("char-chip-more"));
-          more.remove();
-        });
-        chipsBox.appendChild(more);
-      }
-    }
+    /* Чипы показываем ВСЕ, но компактно (кегль и паддинг меньше — стиль
+       .s-chars-chips). Сворачивалку «показать всех» убрали 28.08: карточка
+       перерисовывается после каждого клика, и раскрытые чипы прятались
+       обратно — выглядело как «нажал и ничего». */
   } else {
     chipsBox.classList.add("hidden");
   }
@@ -7423,16 +7423,14 @@ function renderScene(s, audioEl, mode = "board") {
     ? s.midframes_expected
     : Math.max(0, Math.min(4, Math.round(s.duration_sec / 2) - 1));
   const midBusy = midframesBusy(s);
+  // Компактная стрелка: «+·N» вместо «+ промеж. (N)», подробности в title.
   midBtn.textContent = midBusy
-    ? t("scene.midBusy", {
-        a: (s.midframes || []).length,
-        b: (midframesExpect.get(s.id) || { n: midN }).n,
-      })
-    : t("scene.midBtn", { n: midN });
+    ? `${(s.midframes || []).length}/${(midframesExpect.get(s.id) || { n: midN }).n}…`
+    : `+·${midN}`;
   midBtn.disabled = !midN || !s.image_url || midBusy || imgBusy;
   midBtn.title = !midN ? t("scene.midShort")
     : !s.image_url ? t("scene.midNoFrame")
-    : t("scene.midTitle");
+    : t("scene.midTitle") + " — " + t("scene.midBtn", { n: midN });
   midBtn.addEventListener("click", async () => {
     try {
       const r = await api(`/api/scenes/${s.id}/generate-midframes`, { method: "POST" });

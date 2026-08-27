@@ -489,16 +489,25 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .storyboard-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .storyboard-acts { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; align-items: center; }
 .storyboard-box {
-  /* Лист — широкий прямоугольник во всю ширину блока: сетка панелей 3x2 или
-     4x2 в узкой колонке нечитаема, а именно по ней сверяют клип целиком.
-     Высота ограничена, чтобы лист не занимал экран; крупно — по клику. */
-  flex: 1 1 100%; width: 100%; min-width: 0; max-width: 100%;
+  /* Лист обязан занимать РОВНО столько места, сколько занимает картинка:
+     раньше вертикальный лист плавал столбиком посреди пустого блока на всю
+     ширину. Ширина коробки = ширина картинки (fit-content); широкий
+     (альбомный) лист получает класс .sb-wide и растягивается на всю панель. */
+  flex: 0 1 auto; width: fit-content; min-width: 0; max-width: 100%;
   height: auto; max-height: 420px; padding: 6px;
 }
+.storyboard-box.sb-wide { flex: 1 1 100%; width: 100%; max-height: 560px; }
 .storyboard-box img {
-  width: 100%; height: auto; max-width: 100%; max-height: 408px;
+  width: auto; height: auto; max-width: 100%; max-height: 408px;
   object-fit: contain; display: block; cursor: zoom-in; border-radius: 8px;
 }
+.storyboard-box.sb-wide img { width: 100%; max-height: 548px; }
+/* Вертикальный лист стоит СБОКУ, а не по центру пустыни: остальная строка
+   (подпись сетки, предупреждение «лист устарел») живёт рядом с ним. */
+.storyboard-side { flex: 1 1 220px; min-width: 180px; display: flex;
+  flex-direction: column; gap: 6px; align-self: stretch; justify-content: flex-start; }
+.storyboard-side .sb-meta { font-family: var(--font-mono); font-size: 11px;
+  color: var(--ink-muted); }
 .sb-empty { font-size: 11px; }
 .storyboard-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .media-box { aspect-ratio: 9/16; max-height: 270px; }
@@ -641,9 +650,9 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 /* персонажи сцены — чипы поверх скрытого input.s-chars */
 .s-chars-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .s-chars-chips:empty { display: none; }
-.char-chip-more { display: none; }
-.char-more { border-style: dashed; color: var(--ink-muted); }
-.char-chip { padding: 3px 9px; font-size: 10.5px; border-radius: 999px; box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12); }
+/* Сворачивалка чипов удалена — все чипы видны, компактно. */
+.char-chip { padding: 2px 7px; font-size: 10px; border-radius: 999px; box-shadow: none; }
+.s-chars-chips { gap: 3px; }
 .char-chip.on,
 .char-chip.on:hover:not(:disabled) {
   color: var(--on-fire); background: var(--fire-ink);
@@ -3873,16 +3882,48 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
    «Перегенерировать кадры» — главное действие раскадровки, занимает всю
    первую позицию. Вторичные (перв./посл./промежуточные) — компактные
    пилюли одной строкой: они нужны изредка и не должны весить как главные. */
-.scene-card .row:has(.s-gen-frames) { display: grid; grid-template-columns: 1fr; gap: 6px; }
-.scene-card .s-gen-frames { font-size: 12.5px; padding: 9px 12px; }
+/* Одна строка: главная кнопка тянется, три стрелки компактные справа. */
+.scene-card .row:has(.s-gen-frames) {
+  display: flex; flex-wrap: nowrap; gap: 5px; align-items: stretch;
+}
+.scene-card .s-gen-frames { flex: 1 1 auto; min-width: 0; font-size: 12.5px; padding: 9px 10px; }
+.scene-card .s-gen-ico {
+  flex: none; padding: 0 9px; font-size: 12px; font-weight: 800;
+  font-family: var(--font-mono); border-radius: 12px; corner-shape: squircle;
+}
 .scene-card .s-gen-first, .scene-card .s-gen-last, .scene-card .s-gen-mid {
-  font-size: 10.5px; padding: 5px 8px; box-shadow: none;
+  box-shadow: none;
   border: 1px solid rgba(var(--ink-rgb), .18); background: var(--inset);
 }
-/* Три вторичные — в один ряд под главной. */
-.scene-card .row:has(.s-gen-frames) { grid-template-columns: repeat(3, 1fr); }
-.scene-card .s-gen-frames { grid-column: 1 / -1; }
+
 .scene-card .s-gen-video { font-size: 13px; padding: 10px 12px; }
+
+/* ─── «КАК ЧАСЫ»: микро-анимации карточки кадра ───
+   Кнопки отвечают на палец (hover приподнимает, active прижимает), картинки
+   и статусы меняются растворением, а не скачком. Всё на transition — без
+   keyframes и без JS, чтобы перерисовка ленты не запускала анимацию заново
+   на каждом узле. prefers-reduced-motion гасит движение целиком. */
+.scene-card button {
+  transition: transform .15s ease, box-shadow .15s ease,
+              background-color .15s ease, border-color .15s ease,
+              opacity .15s ease;
+}
+.scene-card button:hover:not(:disabled) { transform: translateY(-1px); }
+.scene-card button:active:not(:disabled) { transform: translateY(1px); }
+.scene-card img, .scene-card video, .s-thumbs img {
+  transition: opacity .2s ease;
+}
+.scene-card .status, .scene-card .s-light {
+  transition: opacity .18s ease, background-color .18s ease;
+}
+.scene-card .style-chip, .scene-card .char-chip {
+  transition: background-color .15s ease, color .15s ease,
+              border-color .15s ease, transform .12s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-card button, .scene-card img, .scene-card video,
+  .scene-card .status, .scene-card .style-chip { transition: none; }
+}
 
 /* Светофор состояния кадров в шапке карточки сцены */
 .s-light { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
