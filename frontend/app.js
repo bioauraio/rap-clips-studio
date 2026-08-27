@@ -274,6 +274,10 @@ function hideScreens() {
     const el = $(sel);
     if (el) el.classList.add("hidden");
   });
+  // chat-view — временный режим #app (видна одна шапка). Снимаем ВСЕГДА:
+  // иначе студия, открытая после мастерской, осталась бы пустой шапкой.
+  const app = $("#app");
+  if (app) app.classList.remove("chat-view");
 }
 
 // Экран блокировки. Заблокированному отвечают 403 ВСЕ рабочие роуты, а
@@ -10492,6 +10496,15 @@ function chatScrollBottom() {
 
 function showChat() {
   hideScreens();
+  // Общая шапка остаётся видимой и в Генераторе: раньше отсюда можно было
+  // уйти только через «← Студия» в сайдбаре — то есть выйти из раздела,
+  // чтобы перейти в соседний. Показываем #app в режиме chat-view: из него
+  // виден только .topbar, а сам чат встаёт под ней.
+  const app = $("#app");
+  if (app) {
+    app.classList.remove("hidden");
+    app.classList.add("chat-view");
+  }
   $("#chat").classList.remove("hidden");
   // Поллинг студии гасим: пока человек в мастерской, дёргать проект незачем.
   clearTimeout(pollTimer);

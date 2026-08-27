@@ -815,6 +815,100 @@ def _style_meta_save(db: Session, meta: dict) -> None:
     db.commit()
 
 
+#: Авторские пресеты: их снимали конкретные люди с узнаваемой манерой, и
+#: каталог «Референсы» — это каталог АВТОРОВ, а не второй сорт стилей.
+#: Перенос делается сидом, а не руками владельца: шесть кликов в админке —
+#: это шесть шансов забыть один.
+REFERENCE_AUTHORS = ("spike", "munir", "fanuel", "punkrf", "dreamclad", "katsumi")
+_REF_SEED_MARK = "_authors_v1"
+
+TRANSLATE_SYSTEM = (
+    "Переведи промпт для image-генерации на английский. Сохрани все "
+    "художественные детали, порядок и структуру. Верни ТОЛЬКО перевод, "
+    "без пояснений, без кавычек и без заголовков."
+)
+
+
+async def translate_to_en(text: str) -> str:
+    """Русский промпт → английский. Через бесплатный текстовый шлюз.
+
+    Владелец думает и правит по-русски, в модель уходит английский: русский
+    промпт картинку рисует заметно хуже, а держать в голове второй язык на
+    каждую правку — способ перестать править вовсе."""
+    import textgen  # noqa: PLC0415
+    src = (text or "").strip()
+    if not src:
+        return ""
+    out = await textgen.ask(src, TRANSLATE_SYSTEM)
+    return (out or "").strip()
+
+
+@router.post("/api/admin/translate")
+async def admin_translate(request: Request, user: User = Depends(admin_user)):
+    body = await request.json() if await request.body() else {}
+    try:
+        return {"en": await translate_to_en(str(body.get("text") or "")[:20000])}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+
+
+def _ensure_reference_seed(db: Session, pc) -> None:
+    """Один раз перевести авторские пресеты в вид «референс»."""
+    meta = _style_meta(db)
+    if meta.get(_REF_SEED_MARK):
+        return
+    for key in REFERENCE_AUTHORS:
+        if key not in pc.STYLE_KEYS:
+            continue
+        cur = dict(meta.get(key) or {})
+        cur["kind"] = "reference"
+        meta[key] = cur
+    meta[_REF_SEED_MARK] = True
+    _style_meta_save(db, meta)
+
+
+def _style_meta_of(db: Session, key: str) -> dict:
+    v = _style_meta(db).get(key)
+    return dict(v) if isinstance(v, dict) else {}
+
+
+def _scene_captions(db: Session, key: str) -> list[str]:
+    """Подписи кадров-референсов автора: «что происходит в кадре»."""
+    rows = (db.query(StyleAsset)
+            .filter(StyleAsset.style_key == key, StyleAsset.kind == "ref")
+            .order_by(StyleAsset.position, StyleAsset.id).all())
+    return [(a.note or "").strip() for a in rows if (a.note or "").strip()]
+
+
+def _compose_story_base(db: Session, key: str, manual: str) -> str:
+    """База для сценариев = заметки владельца + автоблок из подписей кадров.
+
+    Автоблок собирается КАЖДЫЙ раз заново, а хранится только ручная часть:
+    иначе размеченный кадр попадал бы в базу дважды, а удалённый оставался
+    бы в ней навсегда."""
+    caps = _scene_captions(db, key)
+    body = (manual or "").strip()
+    if not caps:
+        return body
+    auto = "Сцены из роликов автора:\n" + "\n".join("— " + c for c in caps)
+    return (body + "\n\n" + auto).strip() if body else auto
+
+
+def _restore_story_base(db: Session, key: str) -> None:
+    """Пересобрать story_base стиля после правки подписи кадра."""
+    core = _core()
+    manual = _style_meta_of(db, key).get("story_manual", "")
+    if not manual and not _scene_captions(db, key):
+        return
+    row = _style_row(db, key)
+    if not row:
+        row = StyleOverride(key=key, builtin=core.prompts_catalog.is_builtin(key))
+        db.add(row)
+    row.story_base = _compose_story_base(db, key, manual)
+    db.commit()
+    core.reload_style_overlay()
+
+
 def _style_meta_defaults(db: Session, pc) -> dict:
     """Первый запуск: reference — стили, в чьих данных есть инста-ссылки.
     Остальное остаётся style; ручной переключатель в карточке."""
@@ -854,6 +948,11 @@ async def admin_style_meta(key: str, request: Request,
         cur["kind"] = want
     if "source_url" in body:
         cur["source_url"] = str(body["source_url"] or "")[:500]
+    if "links" in body:
+        # СПИСОК, а не одно поле: у автора инста, тикток и ютуб, и «одна
+        # ссылка на исходник» заставляла бы выбирать, какую из трёх потерять.
+        cur["links"] = [str(u).strip()[:500]
+                        for u in (body["links"] or []) if str(u).strip()][:12]
     meta[key] = cur
     _style_meta_save(db, meta)
     _log_action(db, user, 0, "style_meta", {"key": key, **cur})
@@ -871,6 +970,8 @@ def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_sess
     meta = _style_meta(db)
     if not meta and not db.get(AppSetting, _STYLE_META_KEY):
         meta = _style_meta_defaults(db, pc)
+    _ensure_reference_seed(db, pc)
+    meta = _style_meta(db)
     assets: dict[str, int] = {}
     for (skey, cnt) in (db.query(StyleAsset.style_key, func.count(StyleAsset.id))
                         .group_by(StyleAsset.style_key).all()):
@@ -933,6 +1034,15 @@ def admin_style_card(key: str, user: User = Depends(admin_user),
         "asset_kinds": list(STYLE_ASSET_KINDS),
         "skind": (_style_meta(db).get(key) or {}).get("kind", "style"),
         "source_url": (_style_meta(db).get(key) or {}).get("source_url", ""),
+        # Русский исходник промпта и ссылки автора живут в style_meta:
+        # колонка в style_overrides потребовала бы миграции, а грабли DDL
+        # при деплое известны (docs: deploy-lock).
+        "prompt_ru": _style_meta_of(db, key).get("prompt_ru", ""),
+        "links": list(_style_meta_of(db, key).get("links") or []),
+        # База для сценариев показана двумя кусками: ручной (её и правят) и
+        # автоблок из подписей кадров (он только читается).
+        "story_manual": _style_meta_of(db, key).get("story_manual", ""),
+        "story_auto": _scene_captions(db, key),
     }
 
 
@@ -958,6 +1068,31 @@ async def admin_style_save(key: str, request: Request,
     core = _core()
     pc = core.prompts_catalog
     body = await request.json() if await request.body() else {}
+    # РУССКИЙ ИСХОДНИК И АВТОПЕРЕВОД. В модель уходит английский prompt —
+    # это не обсуждается, русский промпт рисует заметно хуже. Но правит
+    # владелец по-русски, и когда он поменял русский текст, а английский не
+    # трогал, переводим сами: иначе поле «промпт» и то, что реально уехало
+    # в генерацию, разъезжаются молча.
+    meta_patch: dict = {}
+    if "prompt_ru" in body:
+        meta_patch["prompt_ru"] = str(body["prompt_ru"] or "")[:20000]
+    if body.get("translate") and meta_patch.get("prompt_ru"):
+        try:
+            body["prompt"] = await translate_to_en(meta_patch["prompt_ru"])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+    # База для сценариев: правится ручная часть, хранится склейка с
+    # автоблоком подписей кадров.
+    if "story_manual" in body:
+        manual = str(body["story_manual"] or "")[:20000]
+        meta_patch["story_manual"] = manual
+        body["story_base"] = _compose_story_base(db, key, manual)
+    if meta_patch:
+        meta = _style_meta(db)
+        cur = dict(meta.get(key) or {})
+        cur.update(meta_patch)
+        meta[key] = cur
+        _style_meta_save(db, meta)
     row = _style_row(db, key)
     if not row:
         row = StyleOverride(key=key, builtin=pc.is_builtin(key))
@@ -1094,8 +1229,15 @@ async def admin_style_asset_patch(asset_id: int, request: Request,
         asset.title = str(body["title"] or "")[:200]
     if "position" in body:
         asset.position = max(0, int(body["position"] or 0))
+    note_changed = "note" in body
+    if note_changed:
+        # «Что происходит в кадре»: кто, что делает, где, каким приёмом.
+        # Из этих подписей сама собирается база для сценариев автора.
+        asset.note = str(body["note"] or "")[:2000]
     db.commit()
     core.reload_style_overlay()
+    if note_changed:
+        _restore_story_base(db, asset.style_key)
     return _asset_dict(core, asset)
 
 
@@ -1197,6 +1339,9 @@ def admin_prompt_card(layer: str, key: str, user: User = Depends(admin_user)):
     card = prompts_library.layer_card(_layer_or_404(layer), key)
     if not card:
         raise HTTPException(404, "нет такой карточки")
+    ov = (prompts_library.library_overlay().get(layer) or {}).get(key) or {}
+    card["ru"] = {f: ov.get(f + "_ru", "")
+                  for f in prompts_library.PROMPT_FIELDS[layer]}
     return card
 
 
@@ -1205,9 +1350,15 @@ def _clean_patch(layer: str, body: dict) -> dict:
 
     Белый список, а не «всё, что прислали»: поле `acts` или `fits_with`,
     прилетевшее из браузера, увело бы каталог в состояние, которое чинится
-    только руками в базе."""
+    только руками в базе.
+
+    Плюс русские исходники промптов (`<поле>_ru`): они хранятся в наложении
+    рядом, но в каталог НЕ попадают — в модель уходит английский текст."""
     fields = prompts_library.EDITABLE[layer]
     out: dict = {}
+    for f in prompts_library.PROMPT_FIELDS[layer]:
+        if f + "_ru" in body:
+            out[f + "_ru"] = str(body[f + "_ru"] or "")[:8000]
     for f in fields:
         if f not in body:
             continue
@@ -1233,7 +1384,15 @@ async def admin_prompt_save(layer: str, key: str, request: Request,
     key = re.sub(r"[^a-z0-9_]", "", (key or "").strip().lower())[:60]
     if not key:
         raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
-    patch = _clean_patch(layer, await request.json())
+    body = await request.json()
+    patch = _clean_patch(layer, body)
+    # Автоперевод: поля из `translate` пересобираются из русского исходника.
+    for f in (body.get("translate") or []):
+        if f in prompts_library.PROMPT_FIELDS[layer] and patch.get(f + "_ru"):
+            try:
+                patch[f] = await translate_to_en(patch[f + "_ru"])
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
     data = _prompts_overlay(db)
     row = dict(data[layer].get(key) or {})
     row.update(patch)
@@ -1273,9 +1432,11 @@ def admin_mockups(user: User = Depends(admin_user)):
     core = _core()
     previews = core._mockup_previews()
     items = mockup_catalog.admin_list()
+    ov = mockup_catalog.overlay()
     for it in items:
         fname = previews.get(it["id"]) or ""
         it["preview_url"] = f"/api/media/{fname}" if fname else ""
+        it["prompt_ru"] = (ov.get(it["id"]) or {}).get("prompt_ru", "")
     return {"items": items, "categories": list(mockup_catalog.CATEGORIES)}
 
 
@@ -1289,6 +1450,13 @@ async def admin_mockup_save(tid: str, request: Request,
         raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
     body = await request.json()
     patch: dict = {}
+    if "prompt_ru" in body:
+        patch["prompt_ru"] = str(body["prompt_ru"] or "")[:8000]
+    if body.get("translate") and patch.get("prompt_ru"):
+        try:
+            body["prompt"] = await translate_to_en(patch["prompt_ru"])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
     for f in mockup_catalog.EDITABLE:
         if f not in body:
             continue

@@ -9,12 +9,15 @@
    ═══════════════════════════ РЕЖИМ МИНИМАЛИЗМА ═══════════════════════════
    Требование владельца, и оно про экономию внимания, а не про вкус:
 
-     1. ОГНЯ В НАВИГАЦИИ НЕТ. --fire-ink живёт на главном действии экрана
-        (снять, оплатить, применить) — ровно одном. Подсветить огнём ещё и
-        активную вкладку значит уравнять «где я» с «что сделать», и главная
-        кнопка перестаёт находиться взглядом.
-     2. АКТИВНОЕ СОСТОЯНИЕ — РАМКА И ВЕС ТЕКСТА, НЕ ЗАЛИВКА. Заливка на
-        светлой бумаге тянет на себя всё внимание строки.
+     1. ОГОНЬ В НАВИГАЦИИ — ОДИН И ТОЛЬКО ПОД АКТИВНЫМ ПУНКТОМ. Правка
+        27.08.2026 по прямому решению владельца: разделы стали единым
+        сегмент-тумблером, и активный пункт залит огнём. Прежнее правило
+        («огня в навигации нет») отменено ИМЕННО для этой подложки —
+        одна ездящая пилюля на всю ленту, а не заливка на каждой кнопке.
+        Везде остальное в шапке огня по-прежнему нет.
+     2. ПЕРЕКЛЮЧЕНИЕ ВИДНО ДВИЖЕНИЕМ. Подложка едет под новый пункт
+        (transform + transition), а не гаснет в одном месте и вспыхивает в
+        другом: мигание глаз не связывает в одно событие.
      3. ТОНКИЕ ОБВОДКИ. У студии обводка 2–2.5px и «подушка» снизу — это язык
         рабочих карточек, объектов, которые двигают. Навигация ничего не
         двигает, ей хватает 1px.
@@ -89,9 +92,9 @@
   outline-offset: 1px;
 }
 
-/* Шапка с лентой: три группы в одну строку — марка, разделы, личное.
-   Проектная строка и тумблер режимов уезжают во ВТОРОЙ ряд: это второй ярус
-   навигации («чем снимаю»), и стоять в одной строке с первым он не должен. */
+/* Шапка с лентой: одна полоса — марка, разделы, режим и проект, личное.
+   Второй ряд убран 27.08.2026: он занимал высоту ради двух контролов, а
+   свободного места в строке на широком экране хватает с запасом. */
 .topbar.has-sections {
   flex-wrap: wrap;
   row-gap: 8px;
@@ -115,6 +118,80 @@
   background: rgba(45, 33, 26, .16);
 }
 
+
+/* ─────── СЕГМЕНТ-ТУМБЛЕР РАЗДЕЛОВ: капсула с ездящей подложкой ─────── */
+.topbar.has-sections .tb-sections {
+  position: relative;
+  padding: 3px;
+  gap: 1px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+/* Подложку двигает sections.js (moveIndicator). Она под кнопками, поэтому
+   z-index у неё 0, а у кнопок — 1: без этого огонь накрыл бы подпись. */
+.tb-seg-ind {
+  position: absolute; left: 0; top: 0; z-index: 0;
+  width: 0; height: 0; border-radius: 999px; corner-shape: squircle;
+  background: var(--fire-ink);
+  box-shadow: 0 1px 8px rgba(200, 96, 20, .28);
+  opacity: 0; pointer-events: none;
+  transition: transform .26s cubic-bezier(.22, .9, .28, 1),
+              width .26s cubic-bezier(.22, .9, .28, 1), opacity .16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tb-seg-ind { transition: opacity .16s ease; }
+}
+.topbar.has-sections .tb-sec {
+  position: relative; z-index: 1;
+  height: calc(var(--tb-h) - 6px); min-height: 0;
+  border-radius: 999px;
+}
+.topbar.has-sections .tb-sec.on {
+  color: var(--on-fire);
+  border-color: transparent;
+  background: transparent;
+}
+.topbar.has-sections .tb-sec:hover:not(:disabled):not(.on) {
+  border-color: transparent;
+  background: rgba(var(--ink-rgb), .05);
+}
+/* «Студия» — главный вход, и он читается первым: чуть жирнее соседей. */
+.topbar.has-sections .tb-sec[data-sec="studio"] { font-weight: 800; }
+
+/* Режим и проект переехали в общую полосу: компактно и без своей плашки. */
+.topbar.has-sections > .tb-modeline {
+  order: 3; flex: 0 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.topbar.has-sections .tb-project { gap: 6px; min-width: 0; }
+.topbar.has-sections .tb-project .project-cover { display: none; }
+.topbar.has-sections .project-select { max-width: 170px; }
+/* «Новый проект» и «копия» — иконки: слово в общей полосе съедает место,
+   которое нужнее разделам, а действие опознаётся значком. */
+.topbar.has-sections .tb-new {
+  font-size: 0; width: 30px; padding: 0; justify-content: center;
+}
+.topbar.has-sections .tb-new::after { content: "+"; font-size: 17px; font-weight: 800; }
+.topbar.has-sections > .tb-user { order: 5; margin-left: auto; }
+/* Лента режимов — третий ярус; в одной полосе для неё места нет, а режим уже
+   назван капсулой рядом с проектом. */
+.topbar.has-sections .mode-seg { display: none; }
+
+/* Узкий десктоп: разделы сжимаются в значок с подписью, но полоса одна. */
+@media (max-width: 1400px) {
+  .topbar.has-sections .tb-sec { padding: 0 9px; font-size: 12.5px; gap: 5px; }
+  .topbar.has-sections .tb-sec[data-ico]::before {
+    content: attr(data-ico); font-size: 13px; margin-right: 5px;
+  }
+  .topbar.has-sections .project-select { max-width: 130px; }
+}
+@media (max-width: 1150px) {
+  /* Ещё уже — только значки: подпись раздела здесь уже нечитаемый огрызок. */
+  .topbar.has-sections .tb-sec { font-size: 0; padding: 0 10px; }
+  .topbar.has-sections .tb-sec[data-ico]::before { font-size: 15px; margin: 0; }
+}
+
 @media (max-width: 900px) {
   /* Телефон: шапка ОДНОЙ строкой. Лента прокручивается пальцем, личный блок
      ужимается до бейджа токенов и языка — кнопки «Кабинет» и «Мастерская»
@@ -123,7 +200,16 @@
   .topbar.has-sections .tb-sec { padding: 0 9px; font-size: 12.5px; }
   .topbar.has-sections > .tb-user::before { display: none; }
   .topbar.has-sections > .tb-user { gap: 6px; }
-  .topbar.has-sections > .tb-modeline { flex-basis: 100%; }
+  /* Телефон: три строки — личное, разделы-тумблер, режим и проект. В одну
+     полосу это не складывается никакими сжатиями, а прятать режим нельзя:
+     «чем снимаю» человек меняет чаще, чем что угодно ещё. */
+  .topbar.has-sections { flex-wrap: wrap; }
+  .topbar.has-sections > .tb-sections { order: 3; flex: 1 1 100%; }
+  .topbar.has-sections > .tb-user { order: 2; margin-left: auto; }
+  .topbar.has-sections > .tb-modeline { order: 4; flex: 1 1 100%; }
+  .topbar.has-sections .tb-sec { font-size: 12.5px; padding: 0 10px; }
+  .topbar.has-sections .tb-sec[data-ico]::before { margin-right: 4px; }
+  .topbar.has-sections .project-select { max-width: 42vw; }
 }
 @media (max-width: 560px) {
   /* Совсем узкий экран: марка сжимается до знака, чтобы разделам осталось

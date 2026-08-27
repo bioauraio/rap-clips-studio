@@ -716,8 +716,22 @@
               >${esc(g.label)}</option>`).join("")}</select></div>`;
       }
       if (isPrompt(f)) {
-        return `<div class="adm-field"><label>${lab}</label>
-          <textarea class="l-f" data-f="${f}" rows="5">${esc(v || "")}</textarea></div>`;
+        // Русский исходник — главное поле, английский под ним и сворачиваемый.
+        // В модель уходит английский, но правит владелец по-русски.
+        const rv = (c.ru || {})[f] || "";
+        return `<div class="adm-field l-pf" data-pf="${f}">
+          <label>${lab} — по-русски</label>
+          <textarea class="l-ru" data-f="${f}" rows="4"
+            placeholder="правь по-русски — переведём сами">${esc(rv)}</textarea>
+          <div class="adm-row" style="margin:6px 0">
+            <button type="button" class="ghost l-tr" data-f="${f}">Перевести → EN</button>
+            <button type="button" class="ghost l-toggle" data-f="${f}">Показать английский</button>
+            <span class="l-tr-msg muted" data-f="${f}"></span>
+          </div>
+          <div class="l-en-box hidden" data-f="${f}">
+            <label>Английский — этот текст уходит в модель</label>
+            <textarea class="l-f" data-f="${f}" rows="4">${esc(v || "")}</textarea>
+          </div></div>`;
       }
       return `<div class="adm-field"><label>${lab}</label>
         <input type="text" class="l-f" data-f="${f}" value="${esc(v || "")}" /></div>`;
@@ -757,8 +771,33 @@
       </div>`;
 
     const msg = $(".l-msg", box);
+    const enTouched = new Set();
+    $$(".l-en-box .l-f", box).forEach((el) =>
+      el.addEventListener("input", () => enTouched.add(el.dataset.f)));
+    $$(".l-toggle", box).forEach((b) => b.addEventListener("click", () => {
+      const bx = $(`.l-en-box[data-f="${b.dataset.f}"]`, box);
+      bx.classList.toggle("hidden");
+      b.textContent = bx.classList.contains("hidden")
+        ? "Показать английский" : "Скрыть английский";
+    }));
+    $$(".l-tr", box).forEach((b) => b.addEventListener("click", async () => {
+      const f = b.dataset.f;
+      const src = $(`.l-ru[data-f="${f}"]`, box).value;
+      const m = $(`.l-tr-msg[data-f="${f}"]`, box);
+      if (!src.trim()) return;
+      m.className = "l-tr-msg muted";
+      m.textContent = "перевожу…";
+      try {
+        const r = await api("/api/admin/translate", { method: "POST", body: { text: src } });
+        $(`.l-en-box[data-f="${f}"] .l-f`, box).value = r.en || "";
+        enTouched.add(f);
+        $(`.l-en-box[data-f="${f}"]`, box).classList.remove("hidden");
+        m.className = "l-tr-msg adm-ok";
+        m.textContent = "переведено";
+      } catch (e) { m.className = "l-tr-msg adm-err"; m.textContent = e.message; }
+    }));
     const collect = () => {
-      const out = {};
+      const out = { translate: [] };
       $$(".l-f", box).forEach((el) => {
         const f = el.dataset.f;
         if (el.dataset.lang) {
@@ -768,14 +807,20 @@
           out[f] = el.value;
         }
       });
+      $$(".l-ru", box).forEach((el) => {
+        const f = el.dataset.f;
+        out[f + "_ru"] = el.value;
+        if (el.value.trim() && !enTouched.has(f)) out.translate.push(f);
+      });
       return out;
     };
     $(".l-save", box).addEventListener("click", async () => {
+      const patch = collect();
       msg.className = "l-msg muted";
-      msg.textContent = "сохраняю…";
+      msg.textContent = patch.translate.length ? "перевожу и сохраняю…" : "сохраняю…";
       try {
         await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
-                  { method: "PUT", body: collect() });
+                  { method: "PUT", body: patch });
         renderLayers(host);
       } catch (e) { msg.className = "l-msg adm-err"; msg.textContent = e.message; }
     });
@@ -963,9 +1008,9 @@
           <div class="adm-fields" style="flex:1">
             <div class="adm-row">
               <div class="adm-field" style="flex:1"><label>Название (RU)</label>
-                <input class="m-ru" value="${esc(t.ru || "")}" /></div>
+                <input class="m-name-ru" value="${esc(t.ru || "")}" /></div>
               <div class="adm-field" style="flex:1"><label>Название (EN)</label>
-                <input class="m-en" value="${esc(t.en || "")}" /></div>
+                <input class="m-name-en" value="${esc(t.en || "")}" /></div>
               <div class="adm-field"><label>Категория</label>
                 <select class="m-c">${(d.categories || []).map((c) =>
                   `<option value="${esc(c)}" ${c === t.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
@@ -985,7 +1030,16 @@
               ${t.overridden ? '<span class="adm-pill warn">изменён</span>' : ""}
               ${t.hidden ? '<span class="adm-pill warn">скрыт</span>' : ""}
             </div>
-            <div class="adm-field"><label>Промпт сцены</label>
+            <div class="adm-field"><label>Промпт сцены по-русски — правь здесь</label>
+              <textarea class="m-ru" rows="3"
+                placeholder="правь по-русски — переведём сами">${esc(t.prompt_ru || "")}</textarea>
+              <div class="adm-row" style="margin:6px 0">
+                <button type="button" class="ghost m-tr">Перевести → EN</button>
+                <button type="button" class="ghost m-toggle">Показать английский</button>
+              </div>
+            </div>
+            <div class="adm-field m-en-box hidden">
+              <label>Английский — этот текст уходит в модель</label>
               <textarea class="m-prompt" rows="4">${esc(t.prompt || "")}</textarea></div>
             <div class="adm-row">
               <button type="button" class="primary m-save">Сохранить</button>
@@ -999,12 +1053,40 @@
           </div>
         </div>`;
       const msg = $(".m-msg", card);
-      const body = () => ({
-        ru: $(".m-ru", card).value, en: $(".m-en", card).value,
-        category: $(".m-c", card).value, tara: $(".m-tara", card).value,
-        emoji: $(".m-emoji", card).value, prompt: $(".m-prompt", card).value,
-        motion: $(".m-motion", card).checked, showcase: $(".m-show", card).checked,
+      let mEnTouched = false;
+      $(".m-prompt", card).addEventListener("input", () => { mEnTouched = true; });
+      $(".m-toggle", card).addEventListener("click", (e) => {
+        const bx = $(".m-en-box", card);
+        bx.classList.toggle("hidden");
+        e.target.textContent = bx.classList.contains("hidden")
+          ? "Показать английский" : "Скрыть английский";
       });
+      $(".m-tr", card).addEventListener("click", async () => {
+        const src = $(".m-ru", card).value;
+        if (!src.trim()) return;
+        msg.className = "m-msg muted";
+        msg.textContent = "перевожу…";
+        try {
+          const r = await api("/api/admin/translate", { method: "POST", body: { text: src } });
+          $(".m-prompt", card).value = r.en || "";
+          mEnTouched = true;
+          $(".m-en-box", card).classList.remove("hidden");
+          msg.className = "m-msg adm-ok";
+          msg.textContent = "переведено — проверь и сохрани";
+        } catch (e) { msg.className = "m-msg adm-err"; msg.textContent = e.message; }
+      });
+      const body = () => {
+        const promptRu = $(".m-ru", card).value;
+        const out = {
+          ru: $(".m-name-ru", card).value, en: $(".m-name-en", card).value,
+          category: $(".m-c", card).value, tara: $(".m-tara", card).value,
+          emoji: $(".m-emoji", card).value, prompt_ru: promptRu,
+          motion: $(".m-motion", card).checked, showcase: $(".m-show", card).checked,
+        };
+        if (mEnTouched || !promptRu.trim()) out.prompt = $(".m-prompt", card).value;
+        else out.translate = true;
+        return out;
+      };
       $(".m-save", card).addEventListener("click", async () => {
         msg.className = "m-msg muted";
         msg.textContent = "сохраняю…";
@@ -1067,7 +1149,6 @@
   let stylesHost = null;   // куда рисуется каталог стилей: своя панель вкладки «Промты»
   let earnHost = null;
   let styleKey = null;
-  let styleTab = "card";
   let styleCatalog = null;
   let styleSkind = "style";   // "style" | "reference" — какой раздел открыт
   let styleQuery = "";
@@ -1132,26 +1213,45 @@
     } catch (e) { fail(box, e); }
   }
 
-  const S_TABS = [
-    ["card", "Карточка"], ["prompt", "Промпт"], ["refs", "Референсы"],
-    ["story", "База для сценариев"],
-  ];
+  /* ═══════════════ КАРТОЧКА СТИЛЯ / РЕФЕРЕНСА — ОДНА СТРАНИЦА ═══════════════
+     Вкладок здесь больше нет. Промпт, референсы и база для сценариев — не
+     четыре разных экрана, а четыре стороны одной вещи, и владелец правил их
+     по очереди, каждый раз теряя из виду остальные три. Теперь всё видно
+     сразу: слева мета и промпт, справа сетка кадров, внизу база сценариев.
+
+     ПРОМПТ ПРАВИТСЯ ПО-РУССКИ. В модель уходит английский — русский промпт
+     рисует заметно хуже. Но думать на двух языках при каждой правке значит
+     не править вовсе, поэтому русское поле главное, английское — второе и
+     сворачиваемое, а между ними кнопка «Перевести → EN» и автоперевод при
+     сохранении, если английский не трогали руками.
+
+     РЕФЕРЕНС — ЭТО АВТОР. «Референсы» это каталог людей с узнаваемой
+     манерой: ник, ссылки на его аккаунты и выгруженные кадры его роликов.
+     Кадры размечаются подписью «что происходит», и из этих подписей сама
+     собирается база для сценариев автора. */
+
+  //: Пример в placeholder'е, а не в подписи под полем: владелец прочитал
+  //: «база для сценариев» как «описания кадров» и заполнял её раскадровкой.
+  const STORY_PLACEHOLDER =
+    "Истории тихие и бытовые. Герой чаще в пути, чем на месте. "
+    + "Конфликт не с врагом, а с обстоятельствами. "
+    + "Кульминация — решение героя, а не экшн.\n\n"
+    + "Пиши как режиссёру: места, поступки, темп, чего в этих историях не бывает.";
 
   async function styleEditor(box, key) {
     loading(box);
     let d;
     try { d = await api("/api/admin/styles/" + encodeURIComponent(key)); }
     catch (e) { return fail(box, e); }
+    const isRef = d.skind === "reference";
 
     const save = async (patch) => {
       const msg = $(".s-msg", box);
       msg.className = "s-msg muted";
-      msg.textContent = "сохраняю…";
+      msg.textContent = patch.translate ? "перевожу и сохраняю…" : "сохраняю…";
       try {
         await api("/api/admin/styles/" + encodeURIComponent(key),
                   { method: "PUT", body: patch });
-        msg.className = "s-msg adm-ok";
-        msg.textContent = "сохранено";
         styleEditor(box, key);
       } catch (e) {
         msg.className = "s-msg adm-err";
@@ -1159,37 +1259,182 @@
       }
     };
 
+    const c = d.card;
+    const lab = c.label || {}, desc = c.desc || {}, gain = c.gain || {};
+    const links = d.links && d.links.length ? d.links : (d.source_url ? [d.source_url] : []);
+    const refs = (d.assets || []).filter((a) => a.kind === "ref");
+    const files = (d.assets || []).filter((a) => a.kind === "promptfile");
+    const showcase = (d.assets || []).filter((a) => ["poster", "loop", "shot"].includes(a.kind));
+
     box.innerHTML = `
-      <div class="adm-card">
-        <div class="adm-row">
-          <b>${esc((d.card.label && d.card.label.ru) || key)}</b>
-          <span class="adm-pill">${esc(d.card.group || "")}</span>
-          <span class="adm-pill">${d.card.tier === "pro" ? "PRO" : "FREE"}</span>
-          <span class="adm-pill">${d.card.prompt_class === "closed" ? "закрытый" : "разбираемый"}</span>
+      <div class="adm-card s-card">
+        <div class="adm-row s-head">
+          <b>${esc(lab.ru || key)}</b>
+          <span class="adm-pill">${esc(c.group || "")}</span>
+          <span class="adm-pill">${c.tier === "pro" ? "PRO" : "FREE"}</span>
           ${d.overridden ? '<span class="adm-pill warn">изменён</span>' : ""}
-          <select class="s-skind adm-pill" title="Вид: стиль или референс (организация каталога, на генерацию не влияет)">
-            <option value="style" ${d.skind !== "reference" ? "selected" : ""}>стиль</option>
-            <option value="reference" ${d.skind === "reference" ? "selected" : ""}>референс</option>
+          <select class="s-skind adm-pill" title="Стиль — наш пресет. Референс — карточка автора с узнаваемой манерой.">
+            <option value="style" ${!isRef ? "selected" : ""}>стиль</option>
+            <option value="reference" ${isRef ? "selected" : ""}>референс (автор)</option>
           </select>
           <span style="flex:1"></span>
-          <span class="s-msg"></span>
           ${d.overridden && d.builtin ? '<button type="button" class="s-reset ghost">Вернуть заводской</button>' : ""}
         </div>
-        <div class="adm-row s-source-row">
-          <div class="adm-field" style="flex:1">
-            <label>Ссылка на исходник (рилс/пост, откуда снят пресет)</label>
-            <div class="adm-row">
-              <input type="url" class="s-source" placeholder="https://instagram.com/reel/…"
-                     value="${esc(d.source_url || "")}" style="flex:1" />
-              <button type="button" class="ghost s-source-save">Сохранить</button>
-              ${d.source_url ? `<a class="s-source-open" href="${esc(d.source_url)}"
-                target="_blank" rel="noopener">открыть ↗</a>` : ""}
+
+        <div class="s-grid">
+          <div class="s-col">
+            <div class="adm-fields">
+              <div class="adm-row">
+                <div class="adm-field" style="flex:1;min-width:150px">
+                  <label>${isRef ? "Никнейм автора (RU)" : "Название (RU)"}</label>
+                  <input type="text" class="f-lab-ru" value="${esc(lab.ru || "")}" />
+                </div>
+                <div class="adm-field" style="flex:1;min-width:150px">
+                  <label>${isRef ? "Никнейм автора (EN)" : "Название (EN)"}</label>
+                  <input type="text" class="f-lab-en" value="${esc(lab.en || "")}" />
+                </div>
+                <div class="adm-field"><label>Группа</label>
+                  <select class="f-group">${(styleCatalog.groups || []).map((g) =>
+                    `<option value="${esc(g.key)}" ${g.key === c.group ? "selected" : ""}
+                      >${esc((g.label && g.label.ru) || g.key)}</option>`).join("")}</select></div>
+                <div class="adm-field"><label>Тариф</label>
+                  <select class="f-tier">
+                    <option value="free" ${c.tier === "free" ? "selected" : ""}>FREE</option>
+                    <option value="pro" ${c.tier === "pro" ? "selected" : ""}>PRO</option>
+                  </select></div>
+              </div>
+
+              <div class="adm-field">
+                <label>Ссылки на аккаунты автора — инста, тикток, ютуб. Откуда выгружены кадры.</label>
+                <textarea class="f-links" rows="2"
+                  placeholder="https://instagram.com/…&#10;https://tiktok.com/@…">${esc(links.join("\n"))}</textarea>
+                <div class="s-links">${links.map((u) =>
+                  `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\//, "").slice(0, 40))} ↗</a>`).join("")}</div>
+              </div>
+
+              <div class="adm-field">
+                <label>Промпт по-русски — правь здесь. В генерацию уйдёт английский перевод.</label>
+                <textarea class="f-prompt-ru" rows="10"
+                  placeholder="правь по-русски — переведём сами">${esc(d.prompt_ru || "")}</textarea>
+                <div class="adm-row" style="margin-top:6px">
+                  <button type="button" class="ghost f-tr">Перевести → EN</button>
+                  <button type="button" class="ghost f-toggle-en">Показать английский</button>
+                  <span class="f-tr-msg muted"></span>
+                </div>
+              </div>
+              <div class="adm-field f-en-box hidden">
+                <label>Английский промпт — ровно этот текст уходит в модель первым блоком каждого кадра.
+                  Правь руками только для тонкой доводки.</label>
+                <textarea class="f-prompt" rows="10">${esc(d.prompt || "")}</textarea>
+                <p class="adm-note"><span class="p-len"></span>${d.builtin
+                  ? " · заводской: " + (d.builtin_prompt || "").length + " симв." : ""}</p>
+                ${files.length ? `<div class="adm-row">${files.map((f) =>
+                  `<button type="button" class="f-from ghost" data-id="${f.id}">взять из ${esc(f.title || f.filename)}</button>`).join("")}</div>` : ""}
+                ${d.builtin ? '<button type="button" class="ghost f-orig">Показать заводской</button>' : ""}
+              </div>
+
+              <div class="adm-row">
+                <div class="adm-field" style="flex:1;min-width:180px">
+                  <label>Краткое описание для витрины пользователю (RU) — не разметка кадров</label>
+                  <textarea class="f-desc-ru" rows="2">${esc(desc.ru || "")}</textarea></div>
+                <div class="adm-field" style="flex:1;min-width:180px">
+                  <label>То же для витрины (EN)</label>
+                  <textarea class="f-desc-en" rows="2">${esc(desc.en || "")}</textarea></div>
+              </div>
+              <div class="adm-field"><label>Что даёт (RU) — строка выгоды на карточке</label>
+                <textarea class="f-gain-ru" rows="2">${esc(gain.ru || "")}</textarea></div>
             </div>
           </div>
+
+          <div class="s-col s-refs-col">
+            <div class="adm-field">
+              <label>Кадры автора — <b class="ref-count">${refs.length}</b>.
+                Клик по кадру: подпись «что происходит». Галочка — уходит в генерацию.</label>
+              <div class="ref-drop" data-kind="ref">
+                <b>Перетащи кадры сюда</b>
+                <span class="muted">или выбери файлы — можно сразу десятки; сервер ужмёт до 1536px</span>
+                <input type="file" class="a-file ref-multi" data-kind="ref" multiple
+                       accept="image/jpeg,image/png,image/webp" />
+              </div>
+              <div class="ref-queue"></div>
+              <div class="adm-assets s-refgrid">${refs.map((a) => assetCard(a, true)).join("")
+                || '<span class="muted">кадров пока нет</span>'}</div>
+            </div>
+            <details class="s-showcase">
+              <summary>Витрина карточки: постер, петля, примеры кадров, файлы промптов</summary>
+              ${["poster", "loop", "shot", "promptfile"].map((kind) => {
+                const items = (d.assets || []).filter((a) => a.kind === kind);
+                const title = { poster: "Постер", loop: "Петля 2с", shot: "Примеры кадров",
+                                promptfile: "Файлы .txt/.md" }[kind];
+                return `<div class="adm-field"><label>${title}</label>
+                  <div class="adm-assets">${items.map((a) => assetCard(a)).join("")
+                    || '<span class="muted">пусто</span>'}</div>
+                  <input type="file" class="a-file" data-kind="${kind}" /></div>`;
+              }).join("")}
+            </details>
+          </div>
         </div>
-        <div class="adm-tabs s-tabs" style="margin-top:12px"></div>
-        <div class="s-body"></div>
+
+        <div class="adm-field s-story">
+          <label>База для сценариев</label>
+          <textarea class="f-story" rows="7"
+            placeholder="${esc(STORY_PLACEHOLDER)}">${esc(d.story_manual || "")}</textarea>
+          <p class="adm-note">Влияет на <b>СЮЖЕТ и раскадровку</b>, не на картинку.
+            Картинка — в Промпте и Референсах.</p>
+          ${(d.story_auto || []).length ? `<div class="s-auto">
+            <b>Сцены из роликов автора — собираются сами из подписей кадров:</b>
+            <ul>${d.story_auto.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+          </div>` : ""}
+        </div>
+
+        <div class="s-sticky">
+          <span class="s-msg"></span>
+          <span style="flex:1"></span>
+          <button type="button" class="primary f-save">Сохранить</button>
+        </div>
       </div>`;
+
+    // ── промпт: длина, перевод, заводской ──
+    const ru = $(".f-prompt-ru", box);
+    const en = $(".f-prompt", box);
+    const enBox = $(".f-en-box", box);
+    const len = $(".p-len", box);
+    let enTouched = false;
+    const paintLen = () => { len.textContent = en.value.length + " символов"; };
+    paintLen();
+    en.addEventListener("input", () => { enTouched = true; paintLen(); });
+    $(".f-toggle-en", box).addEventListener("click", (e) => {
+      enBox.classList.toggle("hidden");
+      e.target.textContent = enBox.classList.contains("hidden")
+        ? "Показать английский" : "Скрыть английский";
+    });
+    const trMsg = $(".f-tr-msg", box);
+    $(".f-tr", box).addEventListener("click", async () => {
+      if (!ru.value.trim()) return;
+      trMsg.className = "f-tr-msg muted";
+      trMsg.textContent = "перевожу…";
+      try {
+        const r = await api("/api/admin/translate", { method: "POST", body: { text: ru.value } });
+        en.value = r.en || "";
+        enTouched = true;
+        enBox.classList.remove("hidden");
+        paintLen();
+        trMsg.className = "f-tr-msg adm-ok";
+        trMsg.textContent = "переведено — проверь и сохрани";
+      } catch (e) { trMsg.className = "f-tr-msg adm-err"; trMsg.textContent = e.message; }
+    });
+    const orig = $(".f-orig", box);
+    if (orig) orig.addEventListener("click", () => {
+      en.value = d.builtin_prompt || ""; enTouched = true; paintLen();
+    });
+    $$(".f-from", box).forEach((b) => b.addEventListener("click", async () => {
+      try {
+        const r = await api(`/api/admin/styles/assets/${b.dataset.id}/text`);
+        en.value = r.text || ""; enTouched = true; enBox.classList.remove("hidden"); paintLen();
+      } catch (e) { alert(e.message); }
+    }));
+
+    // ── вид и ссылки ──
     $(".s-skind", box).addEventListener("change", async (e) => {
       try {
         await api(`/api/admin/styles/${encodeURIComponent(key)}/meta`,
@@ -1197,23 +1442,32 @@
         renderStyles(stylesHost || pane());
       } catch (err) { alert(err.message); }
     });
-    $(".s-source-save", box).addEventListener("click", async () => {
+
+    // ── сохранение: одно на всю карточку ──
+    $(".f-save", box).addEventListener("click", async () => {
+      const urls = $(".f-links", box).value.split("\n")
+        .map((x) => x.trim()).filter(Boolean);
       try {
         await api(`/api/admin/styles/${encodeURIComponent(key)}/meta`,
-                  { method: "POST", body: { source_url: $(".s-source", box).value } });
-        styleEditor(box, key);
-      } catch (err) { alert(err.message); }
+                  { method: "POST", body: { links: urls, source_url: urls[0] || "" } });
+      } catch (e) { /* ссылки не важнее промпта: молча дальше */ }
+      const patch = {
+        label: { ru: $(".f-lab-ru", box).value, en: $(".f-lab-en", box).value },
+        desc: { ru: $(".f-desc-ru", box).value, en: $(".f-desc-en", box).value },
+        gain: { ru: $(".f-gain-ru", box).value, en: (c.gain || {}).en || "" },
+        group: $(".f-group", box).value,
+        tier: $(".f-tier", box).value,
+        prompt_ru: ru.value,
+        story_manual: $(".f-story", box).value,
+      };
+      // Английский правили руками — оставляем как есть; не правили —
+      // пересобираем из русского, чтобы поле и генерация не разъехались.
+      if (enTouched) patch.prompt = en.value;
+      else if (ru.value.trim()) patch.translate = true;
+      else patch.prompt = en.value;
+      save(patch);
     });
 
-    const tabs = $(".s-tabs", box);
-    S_TABS.forEach(([id, title]) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = id === styleTab ? "on" : "";
-      b.textContent = title;
-      b.addEventListener("click", () => { styleTab = id; styleEditor(box, key); });
-      tabs.appendChild(b);
-    });
     const reset = $(".s-reset", box);
     if (reset) reset.addEventListener("click", async () => {
       if (!confirm("Снять все правки этого стиля и вернуть заводской?")) return;
@@ -1223,167 +1477,15 @@
       } catch (e) { alert(e.message); }
     });
 
-    const body = $(".s-body", box);
-    if (styleTab === "card") styleCard(body, d, save);
-    else if (styleTab === "prompt") stylePrompt(body, d, save);
-    else if (styleTab === "story") styleStory(body, d, save);
-    else styleRefs(body, d, key);
+    styleAssetHandlers(box, key, d);
   }
 
-  function styleCard(body, d, save) {
-    const c = d.card;
-    const lab = c.label || {}, desc = c.desc || {}, gain = c.gain || {};
-    body.innerHTML = `
-      <div class="adm-fields">
-        <div class="adm-row">
-          <div class="adm-field" style="flex:1;min-width:180px">
-            <label>Подпись (RU)</label>
-            <input type="text" class="f-lab-ru" value="${esc(lab.ru || "")}" style="width:100%" />
-          </div>
-          <div class="adm-field" style="flex:1;min-width:180px">
-            <label>Подпись (EN)</label>
-            <input type="text" class="f-lab-en" value="${esc(lab.en || "")}" style="width:100%" />
-          </div>
-        </div>
-        <div class="adm-field">
-          <label>Описание (RU) — это ВИДНО НА ВИТРИНЕ, промпт сюда не вставлять</label>
-          <textarea class="f-desc-ru" rows="2">${esc(desc.ru || "")}</textarea>
-        </div>
-        <div class="adm-field">
-          <label>Описание (EN)</label>
-          <textarea class="f-desc-en" rows="2">${esc(desc.en || "")}</textarea>
-        </div>
-        <div class="adm-field">
-          <label>Что даёт (RU)</label>
-          <textarea class="f-gain-ru" rows="2">${esc(gain.ru || "")}</textarea>
-        </div>
-        <div class="adm-row">
-          <div class="adm-field">
-            <label>Группа</label>
-            <select class="f-group">${(styleCatalog.groups || []).map((g) =>
-              `<option value="${esc(g.key)}" ${g.key === c.group ? "selected" : ""}
-                >${esc((g.label && g.label.ru) || g.key)}</option>`).join("")}</select>
-          </div>
-          <div class="adm-field">
-            <label>Тариф</label>
-            <select class="f-tier">
-              <option value="free" ${c.tier === "free" ? "selected" : ""}>FREE</option>
-              <option value="pro" ${c.tier === "pro" ? "selected" : ""}>PRO</option>
-            </select>
-          </div>
-        </div>
-        <div class="adm-row">
-          <button type="button" class="primary f-save">Сохранить карточку</button>
-        </div>
-        <p class="adm-note">Проверка каталога идёт ДО записи: вставленный сюда по
-          ошибке промпт вернётся отказом, а не уедет на витрину.</p>
-      </div>`;
-    $(".f-save", body).addEventListener("click", () => save({
-      label: { ru: $(".f-lab-ru", body).value, en: $(".f-lab-en", body).value },
-      desc: { ru: $(".f-desc-ru", body).value, en: $(".f-desc-en", body).value },
-      gain: { ru: $(".f-gain-ru", body).value, en: (d.card.gain || {}).en || "" },
-      group: $(".f-group", body).value,
-      tier: $(".f-tier", body).value,
-    }));
-  }
+  /* ── файлы карточки: загрузка, подписи кадров, удаление ── */
+  function styleAssetHandlers(box, key, d) {
+    const reload = () => styleEditor(box, key);
 
-  function stylePrompt(body, d, save) {
-    const files = (d.assets || []).filter((a) => a.kind === "promptfile");
-    body.innerHTML = `
-      <div class="adm-fields">
-        <div class="adm-field">
-          <label>Основной промпт стиля — уходит в КАЖДЫЙ кадр первым и главным блоком.
-            Наружу не отдаётся ни одним публичным роутом.</label>
-          <textarea class="f-prompt" rows="14">${esc(d.prompt || "")}</textarea>
-          <p class="adm-note"><span class="p-len"></span>
-            ${d.builtin ? " · заводской: " + (d.builtin_prompt || "").length + " симв." : ""}</p>
-        </div>
-        ${files.length ? `<div class="adm-field">
-          <label>Взять текст из файла</label>
-          <div class="adm-row">${files.map((f) =>
-            `<button type="button" class="f-from" data-id="${f.id}">${esc(f.title || f.filename)}</button>`).join("")}</div>
-          <p class="adm-note">Файл — источник, из которого ты переносишь текст осознанным
-            нажатием. В генерацию уходит ПОЛЕ, а не файл: два места правды означали бы
-            вечный вопрос «а что реально ушло в модель».</p>
-        </div>` : ""}
-        <div class="adm-row">
-          <button type="button" class="primary f-save">Сохранить промпт</button>
-          ${d.builtin ? '<button type="button" class="ghost f-orig">Показать заводской</button>' : ""}
-        </div>
-      </div>`;
-    const ta = $(".f-prompt", body);
-    const len = $(".p-len", body);
-    const paint = () => { len.textContent = ta.value.length + " символов"; };
-    ta.addEventListener("input", paint); paint();
-    $(".f-save", body).addEventListener("click", () => save({ prompt: ta.value }));
-    const orig = $(".f-orig", body);
-    if (orig) orig.addEventListener("click", () => {
-      ta.value = d.builtin_prompt || ""; paint();
-    });
-    $$(".f-from", body).forEach((b) => b.addEventListener("click", async () => {
-      try {
-        const r = await api(`/api/admin/styles/assets/${b.dataset.id}/text`);
-        ta.value = r.text || ""; paint();
-      } catch (e) { alert(e.message); }
-    }));
-  }
-
-  function styleStory(body, d, save) {
-    body.innerHTML = `
-      <div class="adm-fields">
-        <div class="adm-field">
-          <label>Как этот стиль влияет на СЮЖЕТ, а не на картинку</label>
-          <textarea class="f-story" rows="10">${esc(d.story_base || "")}</textarea>
-          <p class="adm-note">Уходит отдельным блоком в промпты сюжета и раскадровки.
-            До этого поля стиль умел влиять только на кадр: сценарий его не видел вовсе.
-            Пиши тем языком, каким объяснил бы режиссёру — какие места, какие поступки,
-            какая драматургия свойственна этой подаче.</p>
-        </div>
-        <div class="adm-row">
-          <button type="button" class="primary f-save">Сохранить базу</button>
-        </div>
-      </div>`;
-    $(".f-save", body).addEventListener("click",
-      () => save({ story_base: $(".f-story", body).value }));
-  }
-
-  function styleRefs(body, d, key) {
-    const groups = [
-      ["poster", "Постер карточки", "один на стиль, вертикальный кадр 9:16"],
-      ["loop", "Петля карточки", "2 секунды без звука"],
-      ["shot", "Примеры кадров", "витрина стиля и SEO-страница"],
-      ["ref", "Референсы в генерацию", "первые два уйдут в кадр ПОСЛЕ персонажей"],
-      ["promptfile", "Файлы с промптами", ".txt/.md — источник для поля «Промпт»"],
-    ];
-    body.innerHTML = groups.map(([kind, title, hint]) => {
-      const items = (d.assets || []).filter((a) => a.kind === kind);
-      const massa = kind === "ref";
-      return `<div class="adm-field">
-        <label>${esc(title)} — ${esc(hint)}${massa
-          ? ` · <b class="ref-count">${items.length}</b> референсов` : ""}</label>
-        <div class="adm-assets">${items.map((a) => assetCard(a)).join("") ||
-          '<span class="muted">пусто</span>'}</div>
-        ${massa ? `
-        <div class="ref-drop" data-kind="ref">
-          <b>Перетащи сюда картинки</b>
-          <span class="muted">или выбери файлы — можно сразу десятки; сервер сам ужмёт
-            до 1536px / jpeg / ~800КБ</span>
-          <input type="file" class="a-file ref-multi" data-kind="ref" multiple
-                 accept="image/jpeg,image/png,image/webp" />
-        </div>
-        <div class="ref-queue"></div>` : `
-        <div class="adm-row" style="margin-top:8px">
-          <input type="file" class="a-file" data-kind="${kind}" />
-        </div>`}
-      </div>`;
-    }).join("") + `<p class="adm-note">Персонаж всегда важнее стиля: стилевые референсы
-      подмешиваются в кадр последними и не более двух. Иначе перерисовка вылечит один
-      симптом и вернёт другой — «персонажи не похожи».</p>`;
-
-    // Очередь массовой загрузки: файлы уходят по одному, у каждого своя
-    // строка со статусом; страница перерисовывается один раз в конце.
     const uploadMany = async (files, kind) => {
-      const queue = $(".ref-queue", body);
+      const queue = $(".ref-queue", box);
       const rows = new Map();
       if (queue) {
         queue.innerHTML = "";
@@ -1410,21 +1512,20 @@
           if (st) { st.textContent = "✗ " + (e.message || ""); st.className = "adm-err"; }
         }
       }
-      styleEditor(body.closest(".s-editor") || pane(), key);
+      reload();
     };
-    $$(".a-file", body).forEach((inp) => inp.addEventListener("change", () => {
+
+    $$(".a-file", box).forEach((inp) => inp.addEventListener("change", () => {
       const files = Array.from(inp.files || []);
       if (files.length) uploadMany(files, inp.dataset.kind);
     }));
-    const drop = $(".ref-drop", body);
+    const drop = $(".ref-drop", box);
     if (drop) {
       ["dragover", "dragenter"].forEach((ev) => drop.addEventListener(ev, (e) => {
-        e.preventDefault();
-        drop.classList.add("over");
+        e.preventDefault(); drop.classList.add("over");
       }));
       ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => {
-        e.preventDefault();
-        drop.classList.remove("over");
+        e.preventDefault(); drop.classList.remove("over");
       }));
       drop.addEventListener("drop", (e) => {
         const files = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
@@ -1432,22 +1533,39 @@
         if (files.length) uploadMany(files, "ref");
       });
     }
-    $$(".a-del", body).forEach((b) => b.addEventListener("click", async () => {
+    $$(".a-del", box).forEach((b) => b.addEventListener("click", async (e) => {
+      e.stopPropagation();
       if (!confirm("Удалить файл?")) return;
       try {
         await api("/api/admin/styles/assets/" + b.dataset.id, { method: "DELETE" });
-        styleEditor(body.closest(".s-editor") || pane(), key);
-      } catch (e) { alert(e.message); }
+        reload();
+      } catch (err) { alert(err.message); }
     }));
-    $$(".a-gen", body).forEach((cb) => cb.addEventListener("change", async () => {
+    $$(".a-gen", box).forEach((cb) => cb.addEventListener("change", async (e) => {
+      e.stopPropagation();
       try {
         await api("/api/admin/styles/assets/" + cb.dataset.id,
                   { method: "PATCH", body: { in_generation: cb.checked } });
-      } catch (e) { alert(e.message); cb.checked = !cb.checked; }
+      } catch (err) { alert(err.message); cb.checked = !cb.checked; }
+    }));
+    // Подпись кадра: открывается кликом по миниатюре. Из подписей сама
+    // собирается база для сценариев автора — поэтому поле не спрятано в
+    // «дополнительно», а лежит в одном клике от картинки.
+    $$(".a-shot", box).forEach((el) => el.addEventListener("click", async () => {
+      const id = el.dataset.id;
+      const a = (d.assets || []).find((x) => String(x.id) === String(id)) || {};
+      const note = prompt(
+        "Что происходит в кадре: кто, что делает, где, каким приёмом снято",
+        a.note || "");
+      if (note === null) return;
+      try {
+        await api("/api/admin/styles/assets/" + id, { method: "PATCH", body: { note } });
+        reload();
+      } catch (e) { alert(e.message); }
     }));
   }
 
-  function assetCard(a) {
+  function assetCard(a, withNote) {
     const isVideo = /\.mp4$/i.test(a.filename);
     const isText = /\.(txt|md)$/i.test(a.filename);
     const media = isText
@@ -1455,13 +1573,19 @@
       : isVideo
         ? `<video src="${esc(a.url)}" muted></video>`
         : `<img src="${esc(a.url)}" alt="" loading="lazy" />`;
-    return `<div class="adm-asset">${media}<div class="adm-asset-body">
+    const noted = withNote && (a.note || "").trim();
+    return `<div class="adm-asset${noted ? " noted" : ""}">
+      <div class="a-shot" data-id="${a.id}" title="${esc(a.note || "подписать кадр")}">${media}
+        ${withNote ? `<span class="a-cap">${noted
+          ? esc(a.note.slice(0, 60)) : "+ что в кадре"}</span>` : ""}</div>
+      <div class="adm-asset-body">
       ${a.kind === "ref" ? `<label><input type="checkbox" class="a-gen"
         data-id="${a.id}" ${a.in_generation ? "checked" : ""} /> в генерацию</label>` : ""}
       <button type="button" class="a-del ghost" data-id="${a.id}"
-        style="height:28px;font-size:12px">Удалить</button>
+        style="height:26px;font-size:11px">Удалить</button>
     </div></div>`;
   }
+
 
   /* ─────────────────────────── модели ─────────────────────────── */
   async function renderModels(box) {

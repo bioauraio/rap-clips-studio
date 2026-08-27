@@ -195,6 +195,15 @@
     // Лента встаёт СРАЗУ ЗА МАРКОЙ: разделы — верхний ярус, и читать их надо
     // первыми, слева направо, а не выискивать справа между кнопкой выхода и
     // переключателем языка, где они лежали раньше.
+    // Подложка активного пункта — ОДНА на всю ленту и ездит под ним, а не
+    // заливка на каждой кнопке. Заливка мигает: она появляется в одном месте
+    // и исчезает в другом, и глаз не связывает эти два события. Подложка
+    // едет — переход читается как переключение тумблера.
+    const ind = document.createElement("span");
+    ind.className = "tb-seg-ind";
+    ind.setAttribute("aria-hidden", "true");
+    nav.prepend(ind);
+
     const brand = $("#brand");
     if (brand && brand.parentNode === bar) brand.after(nav);
     else bar.prepend(nav);
@@ -227,6 +236,31 @@
                    : $$(`[data-sec="${s.id}"]`);
   }
 
+  /* Подложку двигаем ПОСЛЕ расстановки классов и только если активный пункт
+     виден: у скрытых кнопок (музыка гостю) ширина 0, и подложка схлопнулась
+     бы в точку посреди ленты. Нет активного — подложка гаснет. */
+  function moveIndicator() {
+    const nav = $("#tb-sections");
+    const ind = nav && $(".tb-seg-ind", nav);
+    if (!nav || !ind) return;
+    const on = $(".tb-sec.on", nav);
+    if (!on || !on.offsetWidth) { ind.style.opacity = "0"; return; }
+    ind.style.opacity = "1";
+    ind.style.width = on.offsetWidth + "px";
+    ind.style.height = on.offsetHeight + "px";
+    ind.style.transform =
+      `translate(${on.offsetLeft - nav.clientLeft}px, ${on.offsetTop}px)`;
+  }
+
+  /* Высота шапки — в переменную: под ней живёт экран Генератора, а шапка на
+     телефоне занимает три строки. Фиксированное число в CSS срезало бы низ
+     ленты сообщений ровно на высоту лишней строки. */
+  function measureBar() {
+    const bar = $(".topbar");
+    if (!bar) return;
+    document.documentElement.style.setProperty("--tbh", bar.offsetHeight + "px");
+  }
+
   function paint() {
     SECTIONS.forEach((s) => {
       const on = Boolean(s.active && s.active());
@@ -238,7 +272,15 @@
         else node.removeAttribute("aria-current");
       });
     });
+    // requestAnimationFrame: сразу после смены классов ширина кнопки ещё
+    // старая (жирный шрифт активного пункта её меняет), и подложка встала бы
+    // на полпикселя мимо.
+    requestAnimationFrame(() => { moveIndicator(); measureBar(); });
   }
+
+  // Ширина ленты меняется от языка, поворота экрана и появления «Кабинета»
+  // после входа: подложка обязана переехать вместе с кнопкой.
+  window.addEventListener("resize", () => { moveIndicator(); measureBar(); });
 
   function relabel() {
     SECTIONS.forEach((s) => {
@@ -1312,7 +1354,7 @@
      подсветка раздела продолжает работать, кто бы лист ни рисовал. */
   window.QlolSections = {
     mount, go, paint, openAcademy, openLibrary, openMarketing, openEarn,
-    closePages, toast,
+    closePages, toast, moveIndicator,
     ui: {
       T, TF, esc, lang, num, plural, toast, errorText, busy, failed,
       planName, tracksOf, sceneOptions, slotFields, readSlots,

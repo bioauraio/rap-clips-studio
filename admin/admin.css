@@ -257,3 +257,53 @@
   color: var(--text); background: var(--card, var(--bg));
   border-color: var(--border-bright);
 }
+
+/* ═════════ КАРТОЧКА СТИЛЯ / РЕФЕРЕНСА — ОДНА СТРАНИЦА ═════════
+   Вкладок больше нет: промпт, кадры и база сценариев — стороны одной вещи.
+   Две колонки на широком экране, одна на узком; кадры автора живут своей
+   сеткой со своим скроллом, чтобы полсотни миниатюр не выдавливали промпт
+   на второй экран. Плотно, но по канону: волосяные рамки, стекло, огонь
+   только на «Сохранить». */
+.s-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.s-col { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.s-head { flex-wrap: wrap; gap: 6px; }
+.s-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: 12px; }
+.s-links a { color: var(--accent-2-ink); text-decoration: none; }
+.s-links a:hover { text-decoration: underline; }
+
+/* Сетка кадров автора: видно сразу два десятка, дальше скролл внутри блока. */
+.s-refgrid {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  max-height: 52vh; overflow: auto; padding: 4px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--inset);
+}
+.s-refgrid .adm-asset img, .s-refgrid .adm-asset video { height: 84px; }
+.adm-asset .a-shot { cursor: pointer; position: relative; display: block; }
+.adm-asset .a-cap {
+  display: block; padding: 4px 6px; font-size: 10.5px; line-height: 1.3;
+  color: var(--muted); border-top: 1px solid var(--border);
+  max-height: 30px; overflow: hidden;
+}
+.adm-asset.noted .a-cap { color: var(--text); }
+.adm-asset .a-shot:hover .a-cap { color: var(--accent-2-ink); }
+
+.s-showcase { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+.s-showcase summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.s-showcase > .adm-field { margin-top: 10px; }
+
+.s-story { margin-top: 16px; }
+.s-auto {
+  margin-top: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--inset);
+}
+.s-auto ul { margin: 6px 0 0; padding-left: 18px; }
+
+/* Липкая полоса сохранения: карточка длинная, и кнопка не должна убегать. */
+.s-sticky {
+  position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center;
+  gap: 10px; margin: 16px -16px -16px; padding: 12px 16px;
+  border-top: 1px solid var(--border); background: var(--card, var(--bg));
+  border-radius: 0 0 var(--r-lg, 16px) var(--r-lg, 16px);
+}
+
+@media (max-width: 1100px) { .s-grid { grid-template-columns: 1fr; } }
