@@ -3936,6 +3936,7 @@ async function dropSceneBefore(movedId, targetId) {
    куска мышью, минимальный эквалайзер и нарезка дорожки по выделению.      */
 
 const waveCache = new Map();   // trackId → пики (форма волны не меняется)
+const beatsCache = new Map();  // trackId → сетка долей (метки на волне)
 const eqChains = new Map();    // trackId → узлы WebAudio, чтобы не пересоздавать
 
 async function wavePeaks(trackId) {
@@ -3984,6 +3985,7 @@ function mountWavePlayer(card, tr, audioEl) {
   const cutBtn = $(".wp-cut", box);
   const clearBtn = $(".wp-clear", box);
   let peaks = null;
+  let beatsGrid = null;       // {beats, downbeats, bpm} — метки долей на волне
   let sel = null;             // выделенный кусок {a, b} в секундах
   const dur = () => audioEl.duration || tr.audio_duration_sec || 0;
 
@@ -4015,6 +4017,22 @@ function mountWavePlayer(card, tr, audioEl) {
         g.fillStyle = x <= played ? "#e0503a" : "rgba(45, 33, 26, .28)";
         g.fillRect(x, mid - bar / 2, 1, bar);
       }
+    }
+    // Метки долей: сильные доли (начала тактов) — заметные риски сверху,
+    // остальные — едва видимые. По ним видно, попадает ли склейка в музыку.
+    if (beatsGrid && total) {
+      (beatsGrid.beats || []).forEach((tb) => {
+        const x = Math.round((tb / total) * w) + 0.5;
+        g.strokeStyle = "rgba(45, 33, 26, .14)";
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 5); g.stroke();
+      });
+      (beatsGrid.downbeats || []).forEach((tb) => {
+        const x = Math.round((tb / total) * w) + 0.5;
+        g.strokeStyle = "rgba(193, 64, 27, .45)";
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 11); g.stroke();
+      });
     }
     // Границы кадров: линия + захватываемая ручка сверху и номер кадра.
     // Ручка нужна ровно затем, чтобы было понятно, что метку МОЖНО тащить —
@@ -4173,6 +4191,12 @@ function mountWavePlayer(card, tr, audioEl) {
   });
 
   draw();
+  if (beatsCache.has(tr.id)) beatsGrid = beatsCache.get(tr.id);
+  else api(`/api/tracks/${tr.id}/beats`).then((d) => {
+    beatsCache.set(tr.id, d);
+    beatsGrid = d;
+    draw();
+  }).catch(() => { /* сетки нет (речь/эмбиент/нет numpy) — волна живёт без меток */ });
   wavePeaks(tr.id).then((d) => { peaks = d.peaks; draw(); })
     .catch(() => { /* волна не обязательна: плеер работает и без картинки */ });
 }
@@ -6573,6 +6597,23 @@ function renderTrack(tr) {
   sliceBtn.disabled = !tr.storyboard_url || Boolean(tr.storyboard_stale);
   if (tr.storyboard_stale) sliceBtn.title = t("track.sheetStaleTitle");
   sliceBtn.addEventListener("click", () => openCellsModal(tr));
+
+  // ── «Нарезать под бит»: границы сцен — к ближайшим сильным долям.
+  const beatBtn = $(".beat-align", card);
+  if (beatBtn) {
+    beatBtn.disabled = !tr.scenes_count || !tr.audio_filename && !tr.audio_duration_sec;
+    beatBtn.addEventListener("click", async () => {
+      beatBtn.disabled = true;
+      try {
+        const r = await api(`/api/tracks/${tr.id}/beat-align`, { method: "POST" });
+        alert(r.moved
+          ? t("track.beatAligned", { n: r.moved, bpm: r.bpm })
+          : t("track.beatAlignedNone", { bpm: r.bpm }));
+        waveCache.delete(tr.id);
+        await loadProject();
+      } catch (e) { fail(e); } finally { beatBtn.disabled = false; }
+    });
+  }
 
   // ── Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
   //
