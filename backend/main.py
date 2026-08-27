@@ -7835,6 +7835,11 @@ def _run_scene_video(scene_id: int) -> None:
             if base:
                 bits.append(" ".join(base.split())[:220])
             motion = "; ".join(bits) or "subtle natural motion, slow camera drift, alive frame"
+        # Темп трека — в промпт движения: движение героя и камеры в темпе
+        # дорожки читается как «попал в бит» даже до нарезки по битам.
+        bpm = _track_bpm(track)
+        if bpm and "BPM" not in motion.upper():
+            motion = f"{motion}; movement paced to the music at {bpm:g} BPM"
         # Кадров может быть больше двух: тогда сцена рисуется отрезками
         # кадр→кадр и склеивается. Один кадр — тоже норма: движок оживит его
         # без конечной точки.
@@ -8066,6 +8071,128 @@ async def trim_scene_video(scene_id: int, request: Request,
 # ─────────────────────────── аудио-студия (дополнения) ───────────────────
 # Генерация, мастеринг и анализ живут в music_api.py — здесь только то, чего
 # там нет: стемы, тональность и отгрузка на лейбл.
+
+# ─────────────────────── нарезка под бит ───────────────────────
+# Сетка долей считается классическим MIR-набором (audio_analysis.py) за
+# секунды CPU и без ключей. Кэш в памяти: разбор одного трека не меняется,
+# пока не сменился файл дорожки.
+
+_BEATS_CACHE: dict = {}
+_BEATS_LOCK = threading.Lock()
+
+
+def _track_beats(track: Track) -> dict:
+    """Темп и сетка долей трека; пусто, если считать нечем или нечего."""
+    import audio_analysis
+    if not track.audio_filename or not audio_analysis.available():
+        return {}
+    key = (track.id, track.audio_filename)
+    with _BEATS_LOCK:
+        hit = _BEATS_CACHE.get(key)
+    if hit is not None:
+        return hit
+    path = os.path.join(UPLOAD_DIR, track.audio_filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        a = audio_analysis.analyze(path)
+        data = {"bpm": a.get("bpm") or 0,
+                "bpm_confidence": a.get("bpm_confidence") or 0,
+                "beats": a.get("beats") or [],
+                "downbeats": a.get("downbeats") or [],
+                "duration_sec": a.get("duration_sec") or 0}
+    except Exception as e:  # noqa: BLE001
+        log.warning("разбор долей трека %s не вышел: %s", track.id, e)
+        data = {}
+    with _BEATS_LOCK:
+        _BEATS_CACHE[key] = data
+        while len(_BEATS_CACHE) > 64:
+            _BEATS_CACHE.pop(next(iter(_BEATS_CACHE)))
+    return data
+
+
+def _track_bpm(track: Track) -> float:
+    """BPM для промптов движения — только из уже посчитанного кэша или из
+    текстового профиля: гонять полный разбор ради одной строчки нельзя."""
+    with _BEATS_LOCK:
+        hit = _BEATS_CACHE.get((track.id, track.audio_filename))
+    if hit:
+        return float(hit.get("bpm") or 0)
+    m = re.search(r"темп\s+([\d.]+)\s*BPM", track.audio_profile or "")
+    return float(m.group(1)) if m else 0.0
+
+
+@app.get("/api/tracks/{track_id}/beats")
+def track_beats(track_id: int, user: User = Depends(current_user),
+                db: Session = Depends(db_session)):
+    """Сетка долей для волновой дорожки: метки пиков/долей и BPM."""
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(400, "сначала загрузи дорожку")
+    data = _track_beats(track)
+    if not data:
+        raise HTTPException(422, "сетка долей не посчиталась (нет numpy или файл не читается)")
+    return data
+
+
+@app.post("/api/tracks/{track_id}/beat-align")
+def beat_align(track_id: int, user: User = Depends(current_user),
+               db: Session = Depends(db_session)):
+    """Подвинуть границы сцен к ближайшим сильным долям трека.
+
+    Правила: граница едет к ближайшему началу такта (downbeat, запас ±2 c),
+    сцена не короче 2 секунд, сумма длительностей остаётся равной дорожке.
+    Секундное разрешение честно ограничено схемой (duration_sec — целые
+    секунды): граница попадает в ближайшую к такту целую секунду."""
+    track = _own_track(db, user, track_id)
+    scenes = sorted(track.scenes, key=lambda s: s.position)
+    if len(scenes) < 2:
+        raise HTTPException(400, "нарезать нечего — в раскадровке меньше двух кадров")
+    data = _track_beats(track)
+    if not data:
+        raise HTTPException(422, "сетка долей не посчиталась — нарезка по битам недоступна")
+    if float(data.get("bpm_confidence") or 0) < 0.2:
+        raise HTTPException(422, "у трека нет выраженной доли (речь/эмбиент?) — "
+                                 "честнее оставить нарезку по времени")
+    duration = int(track.audio_duration_sec or round(data.get("duration_sec") or 0))
+    grid = [float(t) for t in (data.get("downbeats") or [])]
+    if len(grid) < 4:
+        grid = [float(t) for t in (data.get("beats") or [])]
+    if not grid:
+        raise HTTPException(422, "долей не нашлось")
+
+    # Границы: старые кумулятивные точки тянем к ближайшему такту.
+    bounds = [0]
+    cur = 0
+    moved = 0
+    for i, s in enumerate(scenes[:-1]):
+        target = cur + max(2, int(s.duration_sec or 2))
+        lo = bounds[-1] + 2
+        hi = duration - 2 * (len(scenes) - 1 - i)
+        cand = [g for g in grid if lo <= g <= hi and abs(g - target) <= 2.0]
+        snapped = min(cand, key=lambda g: abs(g - target)) if cand else target
+        b = int(round(max(lo, min(hi, snapped))))
+        if b <= bounds[-1] + 1:
+            b = bounds[-1] + 2
+        bounds.append(b)
+        cur = b
+    bounds.append(max(duration, bounds[-1] + 2))
+
+    for i, s in enumerate(scenes):
+        new_dur = max(2, bounds[i + 1] - bounds[i])
+        if new_dur != int(s.duration_sec or 0):
+            moved += 1
+            # Уже снятое видео не совпадает с новым слотом — говорим вслух,
+            # но не удаляем: это оплаченные токены (см. video_stale в db.py).
+            if s.video_filename:
+                s.video_stale = True
+        s.duration_sec = new_dur
+        s.start_sec = bounds[i]
+    db.commit()
+    return {"ok": True, "moved": moved, "bpm": data.get("bpm"),
+            "scenes": [{"id": s.id, "start_sec": s.start_sec,
+                        "duration_sec": s.duration_sec} for s in scenes]}
+
 
 @app.post("/api/tracks/{track_id}/music/key")
 def music_key(track_id: int, user: User = Depends(current_user),

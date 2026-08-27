@@ -97,7 +97,11 @@
       id: "studio",
       label: () => T("nav.sections.studio", "Студия"),
       title: () => T("nav.titles.studio", ""),
-      active: () => shown("#app") && !shown("#chat") && !shown("#music") && !sheet,
+      /* Школа живёт ВНУТРИ #app своей страницей и переменную sheet не
+         трогает — без этой проверки подсвечивались сразу два раздела:
+         «Студия» (потому что #app виден) и «Школа». */
+      active: () => shown("#app") && !shown("#chat") && !shown("#music") && !sheet
+        && !(window.QlolSchool && window.QlolSchool.visible()),
       open() {
         // Выход из мастерской знает только app.js — у него там поллинг и
         // адресная строка. Своей копии этой логики здесь быть не должно.
@@ -309,7 +313,8 @@
     const nav = $("#tb-sections");
     const ind = nav && $(".tb-seg-ind", nav);
     if (!nav || !ind) return;
-    const on = $(".tb-sec.on", nav);
+    const all = $$(".tb-sec.on", nav);
+    const on = all[all.length - 1];
     if (!on || !on.offsetWidth) { ind.style.opacity = "0"; return; }
     ind.style.opacity = "1";
     ind.style.width = on.offsetWidth + "px";
