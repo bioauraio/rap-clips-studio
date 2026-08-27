@@ -4607,6 +4607,70 @@ def reload_style_overlay(db: Session | None = None) -> int:
             db.close()
 
 
+#: Ключи app_settings, в которых лежат наложения каталогов. Именованные
+#: константы, а не строки по коду: опечатка в ключе выглядит как «админка не
+#: сохраняет», и искать её пришлось бы в двух файлах.
+PROMPTS_OVERLAY_KEY = "prompts_overlay"
+MOCKUP_OVERLAY_KEY = "mockup_overlay"
+
+
+def _overlay_setting(db: Session, key: str) -> dict:
+    row = db.get(AppSetting, key)
+    if not row or not (row.value or "").strip():
+        return {}
+    try:
+        data = json.loads(row.value)
+    except Exception:  # noqa: BLE001
+        log.warning("наложение %s не разбирается как JSON", key)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _overlay_setting_save(db: Session, key: str, data: dict) -> None:
+    blob = json.dumps(data, ensure_ascii=False)
+    row = db.get(AppSetting, key)
+    if row:
+        row.value = blob
+    else:
+        db.add(AppSetting(key=key, value=blob))
+    db.commit()
+
+
+def reload_prompts_overlay(db: Session | None = None) -> int:
+    """Перечитать правки слоёв промтов (сценарии/сцены/движение/свет).
+
+    Та же дисциплина, что у стилей: наложение живёт в базе, файл остаётся
+    источником, инвалидация — на старте и после каждого сохранения."""
+    own = db is None
+    db = db or SessionLocal()
+    try:
+        data = _overlay_setting(db, PROMPTS_OVERLAY_KEY)
+        prompts_library.set_library_overlay(data)
+        return sum(len(v) for v in data.values() if isinstance(v, dict))
+    except Exception as e:  # noqa: BLE001
+        log.warning("наложение промтов не загрузилось: %s", str(e)[:200])
+        return 0
+    finally:
+        if own:
+            db.close()
+
+
+def reload_mockup_overlay(db: Session | None = None) -> int:
+    """Перечитать правки шаблонов мокапов."""
+    own = db is None
+    db = db or SessionLocal()
+    try:
+        data = _overlay_setting(db, MOCKUP_OVERLAY_KEY)
+        mockup_catalog.set_overlay(data)
+        return len(data)
+    except Exception as e:  # noqa: BLE001
+        log.warning("наложение мокапов не загрузилось: %s", str(e)[:200])
+        return 0
+    finally:
+        if own:
+            db.close()
+
+
 def _is_pro(user: "User | None") -> bool:
     """Открыт ли человеку разбор приёма. PRO+ — то есть любой платный тариф."""
     return bool(user and (user.is_admin or _plan_of(user) != "free"))
@@ -14413,6 +14477,8 @@ def admin_page(request: Request, rest: str = "",
 # Правки стилей из базы — до первого запроса, иначе первая же витрина
 # отдаст заводской каталог и человек решит, что админка не сохраняет.
 reload_style_overlay()
+reload_prompts_overlay()
+reload_mockup_overlay()
 
 # ЧЕЛОВЕЧЕСКИЕ АДРЕСА РАЗДЕЛОВ. Приложение — SPA, и до сих пор разделы жили
 # в якорях (#/make, ?home#ld-learn): такие ссылки стыдно слать и невозможно

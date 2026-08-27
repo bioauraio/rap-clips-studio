@@ -41,6 +41,8 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 import mailer
+import mockup_catalog
+import prompts_library
 from db import (
     AdminAction, AppSetting, Campaign, CampaignRecipient, Chat, ChatMessage, FileOwner,
     PointEvent, ProcessedPayment, Project, RefEvent, Scene, SessionLocal,
@@ -1146,6 +1148,203 @@ def admin_style_asset_text(asset_id: int, user: User = Depends(admin_user),
         raise HTTPException(404, "файл потерян")
     with open(path, encoding="utf-8", errors="replace") as f:
         return {"text": f.read(200000), "filename": asset.filename}
+
+
+# ═══════════════════ СЛОИ ПРОМТОВ И ШАБЛОНЫ МОКАПОВ ═══════════════════
+#
+# Одна страница админки «Промты» собирает пять вкладок: слои (этот блок),
+# стили и референсы (блок выше), тренды (/api/admin/trends) и шаблоны
+# мокапов (низ этого блока). Отдельных страниц у них больше нет — два входа
+# в один каталог означали бы два разных представления о том, что сохранено.
+#
+# ХРАНЕНИЕ. Правки лежат наложением в app_settings, файл остаётся источником
+# и живёт в git. Поэтому DELETE у заводской карточки не удаляет её, а СНИМАЕТ
+# правку: удалить строку кода веб-формой нельзя и не нужно.
+
+
+def _prompts_overlay(db: Session) -> dict:
+    core = _core()
+    data = core._overlay_setting(db, core.PROMPTS_OVERLAY_KEY)
+    return {l: dict(data.get(l) or {}) for l in prompts_library.LAYERS}
+
+
+def _layer_or_404(layer: str) -> str:
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя промтов")
+    return layer
+
+
+@router.get("/api/admin/prompts")
+def admin_prompt_layers(user: User = Depends(admin_user)):
+    """Оглавление вкладки: слои, их названия и сколько в каждом карточек."""
+    return {"layers": [{
+        "key": l, "title": prompts_library.LAYER_TITLES[l],
+        "count": len(prompts_library.layer_rows(l)),
+        "groups": [{"key": g["key"], "label": g["label"]["ru"]}
+                   for g in prompts_library.layer_groups(l)],
+    } for l in prompts_library.LAYERS]}
+
+
+@router.get("/api/admin/prompts/{layer}")
+def admin_prompt_list(layer: str, user: User = Depends(admin_user)):
+    return {"layer": _layer_or_404(layer),
+            "title": prompts_library.LAYER_TITLES[layer],
+            "items": prompts_library.layer_list(layer)}
+
+
+@router.get("/api/admin/prompts/{layer}/{key}")
+def admin_prompt_card(layer: str, key: str, user: User = Depends(admin_user)):
+    card = prompts_library.layer_card(_layer_or_404(layer), key)
+    if not card:
+        raise HTTPException(404, "нет такой карточки")
+    return card
+
+
+def _clean_patch(layer: str, body: dict) -> dict:
+    """Отфильтровать присланное по белому списку EDITABLE.
+
+    Белый список, а не «всё, что прислали»: поле `acts` или `fits_with`,
+    прилетевшее из браузера, увело бы каталог в состояние, которое чинится
+    только руками в базе."""
+    fields = prompts_library.EDITABLE[layer]
+    out: dict = {}
+    for f in fields:
+        if f not in body:
+            continue
+        v = body[f]
+        if f in prompts_library.BILINGUAL:
+            if not isinstance(v, dict):
+                continue
+            out[f] = {"en": str(v.get("en") or "")[:4000],
+                      "ru": str(v.get("ru") or "")[:4000]}
+        elif isinstance(v, bool):
+            out[f] = v
+        else:
+            out[f] = str(v or "")[:8000]
+    return out
+
+
+@router.put("/api/admin/prompts/{layer}/{key}")
+async def admin_prompt_save(layer: str, key: str, request: Request,
+                            user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    core = _core()
+    _layer_or_404(layer)
+    key = re.sub(r"[^a-z0-9_]", "", (key or "").strip().lower())[:60]
+    if not key:
+        raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
+    patch = _clean_patch(layer, await request.json())
+    data = _prompts_overlay(db)
+    row = dict(data[layer].get(key) or {})
+    row.update(patch)
+    row.pop("enabled", None)          # сохранение всегда возвращает в строй
+    data[layer][key] = row
+    core._overlay_setting_save(db, core.PROMPTS_OVERLAY_KEY, data)
+    core.reload_prompts_overlay(db)
+    _log_action(db, user, user.id, "prompt_save", {"layer": layer, "key": key})
+    return {"ok": True, "card": prompts_library.layer_card(layer, key)}
+
+
+@router.delete("/api/admin/prompts/{layer}/{key}")
+def admin_prompt_delete(layer: str, key: str, hide: int = 0,
+                        user: User = Depends(admin_user),
+                        db: Session = Depends(db_session)):
+    """Заводская карточка: снять правки (hide=1 — убрать её с витрины).
+    Своя карточка: удалить совсем."""
+    core = _core()
+    _layer_or_404(layer)
+    data = _prompts_overlay(db)
+    builtin = key in prompts_library._BUILTIN_BY_KEY_LAYER[layer]
+    if builtin and hide:
+        data[layer][key] = {"enabled": False}
+    else:
+        data[layer].pop(key, None)
+    core._overlay_setting_save(db, core.PROMPTS_OVERLAY_KEY, data)
+    core.reload_prompts_overlay(db)
+    _log_action(db, user, user.id, "prompt_delete",
+                {"layer": layer, "key": key, "hide": bool(hide)})
+    return {"ok": True}
+
+
+# ─────────────────────────── шаблоны мокапов ───────────────────────────
+
+@router.get("/api/admin/mockups")
+def admin_mockups(user: User = Depends(admin_user)):
+    core = _core()
+    previews = core._mockup_previews()
+    items = mockup_catalog.admin_list()
+    for it in items:
+        fname = previews.get(it["id"]) or ""
+        it["preview_url"] = f"/api/media/{fname}" if fname else ""
+    return {"items": items, "categories": list(mockup_catalog.CATEGORIES)}
+
+
+@router.put("/api/admin/mockups/{tid}")
+async def admin_mockup_save(tid: str, request: Request,
+                            user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    core = _core()
+    tid = re.sub(r"[^a-z0-9_]", "", (tid or "").strip().lower())[:60]
+    if not tid:
+        raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
+    body = await request.json()
+    patch: dict = {}
+    for f in mockup_catalog.EDITABLE:
+        if f not in body:
+            continue
+        v = body[f]
+        if f in ("motion", "showcase"):
+            patch[f] = bool(v)
+        elif f == "category":
+            cat = str(v or "").strip()
+            if cat and cat not in mockup_catalog.CATEGORIES:
+                raise HTTPException(400, f"неизвестная категория: {cat}")
+            patch[f] = cat
+        else:
+            patch[f] = str(v or "")[:8000]
+    data = core._overlay_setting(db, core.MOCKUP_OVERLAY_KEY)
+    row = dict(data.get(tid) or {})
+    row.update(patch)
+    row.pop("enabled", None)
+    data[tid] = row
+    core._overlay_setting_save(db, core.MOCKUP_OVERLAY_KEY, data)
+    core.reload_mockup_overlay(db)
+    _log_action(db, user, user.id, "mockup_save", {"id": tid})
+    return {"ok": True}
+
+
+@router.delete("/api/admin/mockups/{tid}")
+def admin_mockup_delete(tid: str, hide: int = 0,
+                        user: User = Depends(admin_user),
+                        db: Session = Depends(db_session)):
+    core = _core()
+    data = core._overlay_setting(db, core.MOCKUP_OVERLAY_KEY)
+    if mockup_catalog.is_builtin(tid) and hide:
+        data[tid] = {"enabled": False}
+    else:
+        data.pop(tid, None)
+    core._overlay_setting_save(db, core.MOCKUP_OVERLAY_KEY, data)
+    core.reload_mockup_overlay(db)
+    _log_action(db, user, user.id, "mockup_delete", {"id": tid, "hide": bool(hide)})
+    return {"ok": True}
+
+
+@router.post("/api/admin/mockups/{tid}/preview")
+def admin_mockup_preview(tid: str, user: User = Depends(admin_user)):
+    """Перегенерировать превью одного шаблона нейтральной бутылкой.
+
+    Старое превью снимается ДО генерации: иначе generate_mockup_previews()
+    увидит уже заполненный ключ и честно ничего не сделает."""
+    core = _core()
+    if not mockup_catalog.get(tid):
+        raise HTTPException(404, "нет такого шаблона")
+    previews = core._mockup_previews()
+    previews.pop(tid, None)
+    core._mockup_previews_save(previews)
+    res = core.generate_mockup_previews([tid])
+    if res.get("failed"):
+        raise HTTPException(502, "; ".join(res["failed"])[:300])
+    return {"ok": True, "preview_url": f"/api/media/{core._mockup_previews().get(tid, '')}"}
 
 
 # ═══════════════════════ МОДЕЛИ И НАСТРОЙКИ СЕРВИСА ═══════════════════════

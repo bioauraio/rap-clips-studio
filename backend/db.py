@@ -1444,6 +1444,130 @@ class AuthCode(Base):
     attempts = Column(Integer, nullable=False, default=0)
 
 
+# ─────────────────────────── ШКОЛА: КУРСЫ ───────────────────────────
+# Уроки-маркдауны (learn.py) остаются как были — это SEO-витрина и база
+# знаний. Курсы — другое: их редактируют из интерфейса, у них модули,
+# видео, авторы, кейсы, отзывы и платный доступ, и держать такое файлами
+# в образе значит требовать деплой ради переименования урока.
+
+class Course(Base):
+    __tablename__ = "courses"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    title = Column(String, nullable=False, default="")
+    subtitle = Column(String, nullable=False, default="")
+    cover_filename = Column(String, nullable=False, default="")
+    # draft — виден только админу, live — в витрине, archived — спрятан.
+    status = Column(String, nullable=False, default="draft")
+    # free — читают все; paid — за токены или по тарифу; admin_only — наш.
+    access = Column(String, nullable=False, default="free")
+    price_points = Column(Integer, nullable=False, default=0)
+    # Пустая строка = тариф не требуется. Иначе free|pro|pro_max|studio.
+    min_plan = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    # Ключ сида: чтобы повторный старт не наплодил вторые «Первый клип».
+    seed_key = Column(String, nullable=False, default="", index=True)
+
+
+class CourseModule(Base):
+    __tablename__ = "course_modules"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    course_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    course = relationship("Course", backref=backref(
+        "modules", cascade="all, delete-orphan",
+        order_by="CourseModule.sort_order"))
+
+
+class Lesson(Base):
+    __tablename__ = "course_lessons"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    module_id = Column(Integer, ForeignKey("course_modules.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    summary = Column(String, nullable=False, default="")
+    body_md = Column(Text, nullable=False, default="")
+    # Наше видео (/api/media/<file>) или внешняя ссылка — одно поле,
+    # потому что плееру нужен ровно один адрес.
+    video_url = Column(String, nullable=False, default="")
+    video_filename = Column(String, nullable=False, default="")
+    cover_filename = Column(String, nullable=False, default="")
+    minutes = Column(Integer, nullable=False, default=0)
+    status = Column(String, nullable=False, default="draft")
+    published_at = Column(DateTime, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    module = relationship("CourseModule", backref=backref(
+        "lessons", cascade="all, delete-orphan", order_by="Lesson.sort_order"))
+
+
+class LessonProgress(Base):
+    __tablename__ = "course_lesson_progress"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    lesson_id = Column(Integer, nullable=False, default=0, index=True)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    done_at = Column(DateTime, default=now)
+
+
+class CourseAccess(Base):
+    """Кому открыт платный курс. source: purchase | admin | plan."""
+    __tablename__ = "course_access"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    granted_at = Column(DateTime, default=now)
+    source = Column(String, nullable=False, default="purchase")
+
+
+class CourseAuthor(Base):
+    __tablename__ = "course_authors"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    name = Column(String, nullable=False, default="")
+    role = Column(String, nullable=False, default="")
+    avatar_filename = Column(String, nullable=False, default="")
+    bio = Column(Text, nullable=False, default="")
+
+
+class CourseAuthorLink(Base):
+    """Многие-ко-многим руками, без association table: мягкая миграция
+    ALTER'ом умеет только колонки, и обычная таблица тут проще."""
+    __tablename__ = "course_author_links"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    author_id = Column(Integer, nullable=False, default=0, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class CourseCase(Base):
+    """Кейс курса: работа ученика или наш пример."""
+    __tablename__ = "course_cases"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    title = Column(String, nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    media_filename = Column(String, nullable=False, default="")
+    video_url = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class CourseReview(Base):
+    __tablename__ = "course_reviews"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    author_name = Column(String, nullable=False, default="")
+    rating = Column(Integer, nullable=False, default=5)
+    text = Column(Text, nullable=False, default="")
+    published = Column(Boolean, nullable=False, default=False)
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
     # Мягкая миграция: новые колонки добавляем ALTER'ом, НЕ пересоздавая базу —

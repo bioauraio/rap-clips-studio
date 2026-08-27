@@ -38,6 +38,10 @@ trap '$SSH $MSK "rmdir /tmp/rapclips-deploy.lock 2>/dev/null" || true' EXIT
 echo "== выкатка на msk (rsync ТОЛЬКО подпапками) =="
 rsync -az --delete -e "$SSH" backend/  $MSK:/opt/rapclips/backend/
 rsync -az --delete -e "$SSH" frontend/ $MSK:/opt/rapclips/frontend/
+# Админка едет ТРЕТЬЕЙ папкой. До 27.08 её тут не было: Dockerfile её копирует
+# (COPY admin/ /app/admin/), а деплой не обновлял — правки админки молча не
+# доезжали, и это выглядело как «кнопка не появилась».
+rsync -az --delete -e "$SSH" admin/    $MSK:/opt/rapclips/admin/
 $SSH $MSK 'cd /opt/rapclips && ./deploy.sh'
 
 echo "== ждём тишины: рестарт посреди генерации убивает оплаченную работу =="
@@ -56,6 +60,7 @@ done
 echo "== синк msk -> lolq (5.42.120.67) =="
 $SSH $MSK 'rsync -az --delete /opt/rapclips/backend/  root@5.42.120.67:/opt/qlolvideo/backend/ &&
            rsync -az --delete /opt/rapclips/frontend/ root@5.42.120.67:/opt/qlolvideo/frontend/ &&
+           rsync -az --delete /opt/rapclips/admin/    root@5.42.120.67:/opt/qlolvideo/admin/ &&
            ssh root@5.42.120.67 "cd /opt/qlolvideo/infra && docker compose up -d --build qlolvideo"'
 
 echo "== проверка: прод обязан отдавать ИМЕННО нашу версию =="

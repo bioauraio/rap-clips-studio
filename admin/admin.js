@@ -71,10 +71,8 @@
       sub: "Заявки амбассадоров партнёрки." },
     { id: "ledger", ico: "🧾", title: "Журнал",
       sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
-    { id: "styles", ico: "🎨", title: "Стили",
-      sub: "Промпт, референсы, файлы и сценарная база каждого стиля. Промпты закрыты: наружу уходят только подпись и описание." },
-    { id: "refstyles", ico: "📎", title: "Референсы",
-      sub: "Авторские пресеты по чужим роликам (инста/рилс). Те же карточки и промпты, плюс ссылка на исходник; в генерации работают как обычные стили, на витрине пользователей ничего не меняется." },
+    { id: "prompts", ico: "🎬", title: "Промты",
+      sub: "Вся настройка промтов одной страницей: слои каталога, стили, референсы, тренды и шаблоны мокапов. Второго входа в эти разделы нет — два входа означали бы два разных представления о том, что сохранено." },
     { id: "design", ico: "🎨", title: "Дизайн",
       sub: "Живые токены дизайн-системы: огненный градиент, фон, стекло. Меняются без переката — theme.css отдаёт их поверх стилей." },
     { id: "earn", ico: "💸", title: "Заработок",
@@ -110,7 +108,10 @@
     const spec = TABS.find((t) => t.id === current);
     $(".adm-title").textContent = spec.title;
     $(".adm-sub").textContent = spec.sub;
-    history.replaceState(null, "", "/admin?tab=" + current);
+    // Подраздел живёт в адресе вместе с разделом: перезагрузка страницы на
+    // «Шаблонах мокапов» обязана вернуть на «Шаблоны мокапов», а не в начало.
+    history.replaceState(null, "", "/admin?tab=" + current
+      + (current === "prompts" ? "&sub=" + promptTab : ""));
     nav();
     loading(pane());
     RENDER[current](pane());
@@ -426,6 +427,7 @@
      Тот же TrendPreset, но kind="earn": продукт встроен в шаблон, партнёр
      подставляет только свой стиль. Фото товара — постер шаблона. */
   async function renderEarnAdmin(box) {
+    earnHost = box;
     let d;
     try { d = await api("/api/admin/trends"); }
     catch (e) { return fail(box, e); }
@@ -500,14 +502,14 @@
         try {
           await api(`/api/admin/trends/${t.id}/media?kind=poster`,
                     { method: "POST", body: fd });
-          renderEarnAdmin(pane());
+          renderEarnAdmin(earnHost || pane());
         } catch (err) { msg.className = "e-msg adm-err"; msg.textContent = err.message; }
       });
       $(".e-del", card).addEventListener("click", async () => {
         if (!confirm("Удалить продукт с витрины?")) return;
         try {
           await api(`/api/admin/trends/${t.id}`, { method: "DELETE" });
-          renderEarnAdmin(pane());
+          renderEarnAdmin(earnHost || pane());
         } catch (e) { alert(e.message); }
       });
       return card;
@@ -525,11 +527,545 @@
             + "person from the second reference, lifestyle shot, natural light",
           motion_prompt: "the person shows the product to the camera, subtle motion",
           duration_sec: 6, aspect: "9:16" } });
-        renderEarnAdmin(pane());
+        renderEarnAdmin(earnHost || pane());
       } catch (e) { alert(e.message); }
     });
   }
 
+  /* ══════════════════════════ ПРОМТЫ ══════════════════════════
+     ОДНА страница на всю настройку промтов. Раньше «Стили» и «Референсы»
+     были отдельными пунктами меню, тренды правились из «Заработка», а
+     шаблоны мокапов не правились вообще — и на вопрос «где меняется текст,
+     который уходит в модель» было четыре разных ответа. Теперь ответ один.
+
+     ВКЛАДКИ — СЕГМЕНТ-КАПСУЛА, А НЕ ОГОНЬ. Огненная заливка в каноне
+     означает «главное действие листа», и пять огненных вкладок сверху
+     означали бы пять главных действий, то есть ни одного. Активный сегмент
+     показан вставкой и яркой волосяной рамкой. */
+  const P_TABS = [
+    ["layers", "Слои промтов"], ["styles", "Стили"], ["refs", "Референсы"],
+    ["trends", "Тренды"], ["mockups", "Шаблоны мокапов"],
+  ];
+  let promptTab = "layers";
+
+  function renderPrompts(box) {
+    box.innerHTML = `<div class="adm-seg p-seg"></div><div class="p-sub"></div>`;
+    const seg = $(".p-seg", box);
+    P_TABS.forEach(([id, title]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = id === promptTab ? "on" : "";
+      b.textContent = title;
+      b.addEventListener("click", () => {
+        promptTab = id;
+        open("prompts");
+      });
+      seg.appendChild(b);
+    });
+    const sub = $(".p-sub", box);
+    loading(sub);
+    if (promptTab === "styles") renderStyles(sub, "style");
+    else if (promptTab === "refs") renderStyles(sub, "reference");
+    else if (promptTab === "trends") renderTrends(sub);
+    else if (promptTab === "mockups") renderMockups(sub);
+    else renderLayers(sub);
+  }
+
+  /* ───────────────── слои каталога: сценарии · сцены · движение · свет ─────
+     Каталог остаётся кодом (backend/prompts_library.py): его видно в
+     git-истории и проверяет validate(). Здесь правится НАЛОЖЕНИЕ поверх
+     файла — оно лежит в app_settings и подмешивается в выдачу пользователю.
+     Поэтому у заводской карточки есть «вернуть заводскую», а не «удалить». */
+
+  //: Человеческие подписи полей. Ключи приходят с сервера (EDITABLE),
+  //: и незнакомое поле не ломает форму — оно подписывается своим ключом.
+  const P_FIELD = {
+    label: "Название", desc: "Описание", tier: "Тариф", group: "Группа",
+    cut: "Темп монтажа (slow / mid / fast)", level: "Уровень (scene / grade)",
+    shot: "Крупность плана", camera: "Движение камеры",
+    bracket: "Команда в скобках (MiniMax)", note: "Подпись кадра",
+    music: "Под какую музыку", logline: "Логлайн", hero: "Герой",
+    motif: "Сквозной мотив", opens: "Открывается", closes: "Закрывается",
+    physics: "Физика движения",
+    first: "Первый кадр", last: "Последний кадр", motion: "Движение",
+    solo: "Grok — один кадр", negative: "Запреты",
+    text: "Движение (пара кадров)", add: "Хвост света",
+    story: "Сюжет — уходит в модель", dnote: "Заметка режиссёру",
+  };
+
+  let layerKind = "boards";
+  let layerKey = null;
+  let layerQuery = "";
+
+  async function renderLayers(box) {
+    let d;
+    try { d = await api("/api/admin/prompts"); }
+    catch (e) { return fail(box, e); }
+    const spec = (d.layers || []).find((l) => l.key === layerKind) || d.layers[0];
+    layerKind = spec.key;
+    let list;
+    try { list = await api("/api/admin/prompts/" + layerKind); }
+    catch (e) { return fail(box, e); }
+
+    box.innerHTML = `
+      <div class="adm-seg l-kinds" style="margin-bottom:12px"></div>
+      <div class="adm-split">
+        <div class="adm-card">
+          <h3>${esc(spec.title)} <span class="adm-count">${(list.items || []).length}</span></h3>
+          <input type="search" class="l-search" placeholder="поиск по названию и ключу…"
+                 value="${esc(layerQuery)}" />
+          <div class="adm-list l-list"></div>
+          <button type="button" class="ghost l-new" style="margin-top:8px">+ карточка</button>
+        </div>
+        <div class="l-editor"></div>
+      </div>`;
+
+    const kinds = $(".l-kinds", box);
+    (d.layers || []).forEach((l) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = l.key === layerKind ? "on" : "";
+      b.textContent = `${l.title} · ${l.count}`;
+      b.addEventListener("click", () => {
+        layerKind = l.key; layerKey = null; layerQuery = "";
+        renderLayers(box);
+      });
+      kinds.appendChild(b);
+    });
+
+    const listBox = $(".l-list", box);
+    const paint = () => {
+      const q = layerQuery.trim().toLowerCase();
+      listBox.innerHTML = "";
+      (list.items || [])
+        .filter((it) => !q || (it.label || "").toLowerCase().includes(q)
+          || it.key.toLowerCase().includes(q))
+        .forEach((it) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "adm-item" + (it.key === layerKey ? " on" : "");
+          b.innerHTML = `<span>${esc(it.label || it.key)}</span>
+            <span class="adm-mark">${it.hidden ? "скрыт" : it.overridden ? "изменён" : ""}${
+              it.builtin ? "" : " свой"}</span>`;
+          b.addEventListener("click", () => { layerKey = it.key; renderLayers(box); });
+          listBox.appendChild(b);
+        });
+      if (!listBox.children.length)
+        listBox.innerHTML = '<span class="muted" style="padding:8px">ничего не нашлось</span>';
+    };
+    paint();
+    const search = $(".l-search", box);
+    search.addEventListener("input", () => { layerQuery = search.value; paint(); });
+
+    $(".l-new", box).addEventListener("click", async () => {
+      const key = prompt("Ключ новой карточки (латиница, цифры, подчёркивание)");
+      if (!key) return;
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(key.trim().toLowerCase())}`,
+                  { method: "PUT", body: { label: { ru: key, en: key } } });
+        layerKey = key.trim().toLowerCase();
+        renderLayers(box);
+      } catch (e) { alert(e.message); }
+    });
+
+    const ed = $(".l-editor", box);
+    if (layerKey && (list.items || []).some((it) => it.key === layerKey)) {
+      layerEditor(ed, box);
+    } else {
+      layerKey = null;
+      ed.innerHTML = `<div class="adm-card s-empty">
+        <span class="s-empty-ico">🎬</span><b>Выбери карточку слева</b>
+        <span class="muted">Правки ложатся наложением поверх файла каталога:
+          заводской текст никуда не девается и возвращается одной кнопкой.</span>
+      </div>`;
+    }
+  }
+
+  async function layerEditor(box, host) {
+    loading(box);
+    let c;
+    try { c = await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`); }
+    catch (e) { return fail(box, e); }
+
+    const isPrompt = (f) => (c.prompt_fields || []).includes(f);
+    const isBi = (f) => (c.bilingual || []).includes(f);
+    const field = (f) => {
+      const v = c.value[f];
+      const lab = esc(P_FIELD[f] || f);
+      if (isBi(f)) {
+        const o = v && typeof v === "object" ? v : {};
+        return `<div class="adm-field"><label>${lab}</label>
+          <div class="adm-row">
+            <textarea class="l-f" data-f="${f}" data-lang="ru" rows="2"
+              placeholder="RU">${esc(o.ru || "")}</textarea>
+            <textarea class="l-f" data-f="${f}" data-lang="en" rows="2"
+              placeholder="EN">${esc(o.en || "")}</textarea>
+          </div></div>`;
+      }
+      if (f === "tier") {
+        return `<div class="adm-field"><label>${lab}</label>
+          <select class="l-f" data-f="tier">
+            <option value="free" ${v === "free" ? "selected" : ""}>FREE</option>
+            <option value="pro" ${v === "pro" ? "selected" : ""}>PRO</option>
+          </select></div>`;
+      }
+      if (f === "group" && (c.groups || []).length) {
+        return `<div class="adm-field"><label>${lab}</label>
+          <select class="l-f" data-f="group">${c.groups.map((g) =>
+            `<option value="${esc(g.key)}" ${g.key === v ? "selected" : ""}
+              >${esc(g.label)}</option>`).join("")}</select></div>`;
+      }
+      if (isPrompt(f)) {
+        return `<div class="adm-field"><label>${lab}</label>
+          <textarea class="l-f" data-f="${f}" rows="5">${esc(v || "")}</textarea></div>`;
+      }
+      return `<div class="adm-field"><label>${lab}</label>
+        <input type="text" class="l-f" data-f="${f}" value="${esc(v || "")}" /></div>`;
+    };
+
+    const card = (c.fields || []).filter((f) => !isPrompt(f));
+    const prompts = (c.fields || []).filter(isPrompt);
+    box.innerHTML = `
+      <div class="adm-card">
+        <div class="adm-row">
+          <b>${esc((c.value.label && c.value.label.ru) || c.key)}</b>
+          <span class="adm-pill">${esc(c.key)}</span>
+          ${c.builtin ? '<span class="adm-pill">заводская</span>'
+                      : '<span class="adm-pill">своя</span>'}
+          ${c.overridden ? '<span class="adm-pill warn">изменена</span>' : ""}
+          ${c.hidden ? '<span class="adm-pill warn">скрыта с витрины</span>' : ""}
+          <span style="flex:1"></span>
+          <span class="l-msg"></span>
+        </div>
+        <div class="adm-fields" style="margin-top:12px">
+          ${card.join("")}
+          <div class="adm-field"><label>Текст, который уходит в модель</label></div>
+          ${prompts.join("")}
+          <div class="adm-row">
+            <button type="button" class="primary l-save">Сохранить</button>
+            ${c.builtin && c.overridden
+              ? '<button type="button" class="ghost l-reset">Вернуть заводскую</button>' : ""}
+            ${c.builtin
+              ? `<button type="button" class="ghost l-hide">${
+                  c.hidden ? "Вернуть на витрину" : "Скрыть с витрины"}</button>`
+              : '<button type="button" class="ghost danger l-del">Удалить карточку</button>'}
+          </div>
+          <p class="adm-note">Правится наложение, а не файл: связи карточек
+            (сочетается / конфликтует / подходящие стили) наложением не трогаются —
+            разъехавшаяся ссылка ломает сборку молча. Их меняют коммитом.</p>
+        </div>
+      </div>`;
+
+    const msg = $(".l-msg", box);
+    const collect = () => {
+      const out = {};
+      $$(".l-f", box).forEach((el) => {
+        const f = el.dataset.f;
+        if (el.dataset.lang) {
+          out[f] = out[f] || { ru: "", en: "" };
+          out[f][el.dataset.lang] = el.value;
+        } else {
+          out[f] = el.value;
+        }
+      });
+      return out;
+    };
+    $(".l-save", box).addEventListener("click", async () => {
+      msg.className = "l-msg muted";
+      msg.textContent = "сохраняю…";
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
+                  { method: "PUT", body: collect() });
+        renderLayers(host);
+      } catch (e) { msg.className = "l-msg adm-err"; msg.textContent = e.message; }
+    });
+    const reset = $(".l-reset", box);
+    if (reset) reset.addEventListener("click", async () => {
+      if (!confirm("Снять все правки и вернуть заводскую карточку?")) return;
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
+                  { method: "DELETE" });
+        renderLayers(host);
+      } catch (e) { alert(e.message); }
+    });
+    const hide = $(".l-hide", box);
+    if (hide) hide.addEventListener("click", async () => {
+      try {
+        if (c.hidden) {
+          await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
+                    { method: "PUT", body: {} });
+        } else {
+          if (!confirm("Убрать карточку из каталога у пользователей?")) return;
+          await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}?hide=1`,
+                    { method: "DELETE" });
+        }
+        renderLayers(host);
+      } catch (e) { alert(e.message); }
+    });
+    const del = $(".l-del", box);
+    if (del) del.addEventListener("click", async () => {
+      if (!confirm("Удалить свою карточку совсем?")) return;
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
+                  { method: "DELETE" });
+        layerKey = null;
+        renderLayers(host);
+      } catch (e) { alert(e.message); }
+    });
+  }
+
+  /* ─────────────────────────── тренды ───────────────────────────
+     Тот же TrendPreset, что и в «Заработке», но kind != "earn": шаблон,
+     в который человек подставляет своё фото. Партнёрские продукты сюда не
+     попадают — у них своя вкладка со своими полями награды. */
+  async function renderTrends(box) {
+    let d;
+    try { d = await api("/api/admin/trends"); }
+    catch (e) { return fail(box, e); }
+    const rows = (d.presets || []).filter((x) => (x.kind || "trend") !== "earn");
+    box.innerHTML = `
+      <div class="adm-card">
+        <div class="adm-row">
+          <h3>Шаблоны трендов <span class="adm-count">${rows.length}</span></h3>
+          <span style="flex:1"></span>
+          <button type="button" class="primary t-new">+ тренд</button>
+        </div>
+        <p class="adm-note">Промпт кадра и промпт движения уходят в модель как есть.
+          Постер — то, что человек видит на витрине /trends до генерации.</p>
+        <div class="t-list"></div>
+      </div>`;
+    const list = $(".t-list", box);
+    rows.forEach((t) => {
+      const card = document.createElement("div");
+      card.className = "adm-card";
+      card.innerHTML = `
+        <div class="adm-row">
+          <div class="e-shot">${t.poster_url
+            ? `<img src="${esc(t.poster_url)}" alt="" />`
+            : '<span class="e-ph">🎞️</span>'}</div>
+          <div class="adm-fields" style="flex:1">
+            <div class="adm-row">
+              <div class="adm-field" style="flex:1"><label>Название</label>
+                <input class="t-title" value="${esc(t.title || "")}" /></div>
+              <div class="adm-field"><label>Секунд</label>
+                <input class="t-dur" type="number" min="2" max="12"
+                       value="${Number(t.duration_sec || 6)}" style="width:80px" /></div>
+              <div class="adm-field"><label>Кадр</label>
+                <input class="t-aspect" value="${esc(t.aspect || "9:16")}" style="width:80px" /></div>
+              <div class="adm-field"><label>Показывать</label>
+                <input class="t-on" type="checkbox" ${t.enabled ? "checked" : ""} /></div>
+            </div>
+            <div class="adm-field"><label>Промпт кадра</label>
+              <textarea class="t-img" rows="3">${esc(t.image_prompt || "")}</textarea></div>
+            <div class="adm-field"><label>Промпт движения</label>
+              <textarea class="t-mot" rows="3">${esc(t.motion_prompt || "")}</textarea></div>
+            <div class="adm-row">
+              <label class="e-upload">постер
+                <input type="file" class="t-file" accept="image/*" hidden /></label>
+              <button type="button" class="primary t-save">Сохранить</button>
+              <button type="button" class="ghost danger t-del">Удалить</button>
+              <span class="t-msg"></span>
+            </div>
+          </div>
+        </div>`;
+      const msg = $(".t-msg", card);
+      $(".t-save", card).addEventListener("click", async () => {
+        msg.className = "t-msg muted";
+        msg.textContent = "сохраняю…";
+        try {
+          await api("/api/admin/trends", { method: "POST", body: {
+            id: t.id, kind: t.kind || "trend",
+            title: $(".t-title", card).value,
+            image_prompt: $(".t-img", card).value,
+            motion_prompt: $(".t-mot", card).value,
+            duration_sec: Number($(".t-dur", card).value || 6),
+            aspect: $(".t-aspect", card).value,
+            enabled: $(".t-on", card).checked } });
+          msg.className = "t-msg adm-ok";
+          msg.textContent = "сохранено";
+        } catch (e) { msg.className = "t-msg adm-err"; msg.textContent = e.message; }
+      });
+      $(".t-file", card).addEventListener("change", async (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        msg.className = "t-msg muted";
+        msg.textContent = "загружаю постер…";
+        const fd = new FormData();
+        fd.append("file", f);
+        try {
+          await api(`/api/admin/trends/${t.id}/media?kind=poster`, { method: "POST", body: fd });
+          renderTrends(box);
+        } catch (err) { msg.className = "t-msg adm-err"; msg.textContent = err.message; }
+      });
+      $(".t-del", card).addEventListener("click", async () => {
+        if (!confirm("Удалить шаблон тренда?")) return;
+        try {
+          await api(`/api/admin/trends/${t.id}`, { method: "DELETE" });
+          renderTrends(box);
+        } catch (e) { alert(e.message); }
+      });
+      list.appendChild(card);
+    });
+    if (!rows.length) list.innerHTML = '<p class="muted">трендов пока нет</p>';
+    $(".t-new", box).addEventListener("click", async () => {
+      const title = prompt("Название тренда");
+      if (!title) return;
+      try {
+        await api("/api/admin/trends", { method: "POST", body: {
+          kind: "trend", title, enabled: false, duration_sec: 6, aspect: "9:16",
+          image_prompt: "the person from the reference photo, ",
+          motion_prompt: "subtle natural motion, the camera holds still" } });
+        renderTrends(box);
+      } catch (e) { alert(e.message); }
+    });
+  }
+
+  /* ───────────────────── шаблоны мокапов ─────────────────────
+     mockup_catalog.py — тот же приём наложения, что и у слоёв: файл остаётся
+     источником, правки лежат в базе. Превью генерится НЕЙТРАЛЬНОЙ бутылкой:
+     витрина показывает сцену, а не чей-то товар. */
+  let mockQuery = "";
+  let mockCat = "";
+
+  async function renderMockups(box) {
+    let d;
+    try { d = await api("/api/admin/mockups"); }
+    catch (e) { return fail(box, e); }
+    box.innerHTML = `
+      <div class="adm-card">
+        <div class="adm-row">
+          <h3>Шаблоны мокапов <span class="adm-count">${(d.items || []).length}</span></h3>
+          <input type="search" class="m-search" placeholder="поиск…"
+                 value="${esc(mockQuery)}" style="flex:1;min-width:160px" />
+          <select class="m-cat">
+            <option value="">все категории</option>
+            ${(d.categories || []).map((c) =>
+              `<option value="${esc(c)}" ${c === mockCat ? "selected" : ""}>${esc(c)}</option>`).join("")}
+          </select>
+          <button type="button" class="primary m-new">+ шаблон</button>
+        </div>
+        <p class="adm-note">Промпт сцены уходит в модель после жёсткой охраны этикетки
+          («тот самый товар с фото») — её дописывает сервер, сюда вставлять не нужно.</p>
+        <div class="m-list"></div>
+      </div>`;
+    const list = $(".m-list", box);
+    const q = mockQuery.trim().toLowerCase();
+    const rows = (d.items || []).filter((t) => (!mockCat || t.category === mockCat)
+      && (!q || (t.ru || "").toLowerCase().includes(q) || t.id.toLowerCase().includes(q)));
+    rows.forEach((t) => {
+      const card = document.createElement("div");
+      card.className = "adm-card";
+      card.innerHTML = `
+        <div class="adm-row">
+          <div class="e-shot">${t.preview_url
+            ? `<img src="${esc(t.preview_url)}" alt="" />`
+            : `<span class="e-ph">${esc(t.emoji || "🖼️")}</span>`}</div>
+          <div class="adm-fields" style="flex:1">
+            <div class="adm-row">
+              <div class="adm-field" style="flex:1"><label>Название (RU)</label>
+                <input class="m-ru" value="${esc(t.ru || "")}" /></div>
+              <div class="adm-field" style="flex:1"><label>Название (EN)</label>
+                <input class="m-en" value="${esc(t.en || "")}" /></div>
+              <div class="adm-field"><label>Категория</label>
+                <select class="m-c">${(d.categories || []).map((c) =>
+                  `<option value="${esc(c)}" ${c === t.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
+            </div>
+            <div class="adm-row">
+              <div class="adm-field"><label>Тара</label>
+                <input class="m-tara" value="${esc(t.tara || "any")}" style="width:90px" /></div>
+              <div class="adm-field"><label>Эмодзи</label>
+                <input class="m-emoji" value="${esc(t.emoji || "")}" style="width:70px" /></div>
+              <div class="adm-field"><label>Просится в анимацию</label>
+                <input class="m-motion" type="checkbox" ${t.motion ? "checked" : ""} /></div>
+              <div class="adm-field"><label>В витрине превью</label>
+                <input class="m-show" type="checkbox" ${t.showcase ? "checked" : ""} /></div>
+              <span style="flex:1"></span>
+              <span class="adm-pill">${esc(t.id)}</span>
+              ${t.builtin ? "" : '<span class="adm-pill">свой</span>'}
+              ${t.overridden ? '<span class="adm-pill warn">изменён</span>' : ""}
+              ${t.hidden ? '<span class="adm-pill warn">скрыт</span>' : ""}
+            </div>
+            <div class="adm-field"><label>Промпт сцены</label>
+              <textarea class="m-prompt" rows="4">${esc(t.prompt || "")}</textarea></div>
+            <div class="adm-row">
+              <button type="button" class="primary m-save">Сохранить</button>
+              <button type="button" class="ghost m-prev">Сгенерировать превью</button>
+              ${t.builtin
+                ? `<button type="button" class="ghost m-hide">${
+                    t.hidden ? "Вернуть в каталог" : "Скрыть из каталога"}</button>`
+                : '<button type="button" class="ghost danger m-del">Удалить</button>'}
+              <span class="m-msg"></span>
+            </div>
+          </div>
+        </div>`;
+      const msg = $(".m-msg", card);
+      const body = () => ({
+        ru: $(".m-ru", card).value, en: $(".m-en", card).value,
+        category: $(".m-c", card).value, tara: $(".m-tara", card).value,
+        emoji: $(".m-emoji", card).value, prompt: $(".m-prompt", card).value,
+        motion: $(".m-motion", card).checked, showcase: $(".m-show", card).checked,
+      });
+      $(".m-save", card).addEventListener("click", async () => {
+        msg.className = "m-msg muted";
+        msg.textContent = "сохраняю…";
+        try {
+          await api(`/api/admin/mockups/${encodeURIComponent(t.id)}`,
+                    { method: "PUT", body: body() });
+          msg.className = "m-msg adm-ok";
+          msg.textContent = "сохранено";
+        } catch (e) { msg.className = "m-msg adm-err"; msg.textContent = e.message; }
+      });
+      $(".m-prev", card).addEventListener("click", async () => {
+        msg.className = "m-msg muted";
+        msg.textContent = "рисую превью, это до минуты…";
+        try {
+          await api(`/api/admin/mockups/${encodeURIComponent(t.id)}/preview`, { method: "POST" });
+          renderMockups(box);
+        } catch (e) { msg.className = "m-msg adm-err"; msg.textContent = e.message; }
+      });
+      const hide = $(".m-hide", card);
+      if (hide) hide.addEventListener("click", async () => {
+        try {
+          if (t.hidden) {
+            await api(`/api/admin/mockups/${encodeURIComponent(t.id)}`,
+                      { method: "PUT", body: {} });
+          } else {
+            if (!confirm("Убрать шаблон из каталога у пользователей?")) return;
+            await api(`/api/admin/mockups/${encodeURIComponent(t.id)}?hide=1`,
+                      { method: "DELETE" });
+          }
+          renderMockups(box);
+        } catch (e) { alert(e.message); }
+      });
+      const del = $(".m-del", card);
+      if (del) del.addEventListener("click", async () => {
+        if (!confirm("Удалить свой шаблон совсем?")) return;
+        try {
+          await api(`/api/admin/mockups/${encodeURIComponent(t.id)}`, { method: "DELETE" });
+          renderMockups(box);
+        } catch (e) { alert(e.message); }
+      });
+      list.appendChild(card);
+    });
+    if (!rows.length) list.innerHTML = '<p class="muted">ничего не нашлось</p>';
+    const search = $(".m-search", box);
+    search.addEventListener("change", () => { mockQuery = search.value; renderMockups(box); });
+    $(".m-cat", box).addEventListener("change", (e) => {
+      mockCat = e.target.value; renderMockups(box);
+    });
+    $(".m-new", box).addEventListener("click", async () => {
+      const id = prompt("Ключ шаблона (латиница, цифры, подчёркивание)");
+      if (!id) return;
+      try {
+        await api(`/api/admin/mockups/${encodeURIComponent(id.trim().toLowerCase())}`,
+                  { method: "PUT", body: { ru: id, en: id, category: "product" } });
+        renderMockups(box);
+      } catch (e) { alert(e.message); }
+    });
+  }
+
+  let stylesHost = null;   // куда рисуется каталог стилей: своя панель вкладки «Промты»
+  let earnHost = null;
   let styleKey = null;
   let styleTab = "card";
   let styleCatalog = null;
@@ -537,6 +1073,7 @@
   let styleQuery = "";
 
   async function renderStyles(box, skind) {
+    stylesHost = box;
     if (skind) styleSkind = skind;
     const isRef = styleSkind === "reference";
     try {
@@ -657,7 +1194,7 @@
       try {
         await api(`/api/admin/styles/${encodeURIComponent(key)}/meta`,
                   { method: "POST", body: { kind: e.target.value } });
-        renderStyles(pane());
+        renderStyles(stylesHost || pane());
       } catch (err) { alert(err.message); }
     });
     $(".s-source-save", box).addEventListener("click", async () => {
@@ -682,7 +1219,7 @@
       if (!confirm("Снять все правки этого стиля и вернуть заводской?")) return;
       try {
         await api("/api/admin/styles/" + encodeURIComponent(key), { method: "DELETE" });
-        renderStyles(pane());
+        renderStyles(stylesHost || pane());
       } catch (e) { alert(e.message); }
     });
 
@@ -1187,8 +1724,10 @@
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
     payouts: renderPayouts, ledger: renderLedger, earn: renderEarnAdmin,
-    styles: (box) => renderStyles(box, "style"),
-    refstyles: (box) => renderStyles(box, "reference"),
+    // «Стили» и «Референсы» больше НЕ пункты меню: они вкладки страницы
+    // «Промты». Два входа в один каталог означали бы два разных ответа на
+    // вопрос «что сейчас сохранено».
+    prompts: renderPrompts,
     models: renderModels, pricing: renderPricing, market: renderMarket,
     design: renderDesign,
     settings: renderSettings,
@@ -1200,7 +1739,16 @@
       const u = (me && me.user) || {};
       $(".adm-who").textContent = u.name || u.login || u.email || "владелец";
     } catch (e) { /* страницу и так отдали только админу */ }
-    const want = new URLSearchParams(location.search).get("tab");
+    const qs = new URLSearchParams(location.search);
+    const want = qs.get("tab");
+    const sub = qs.get("sub");
+    if (sub && P_TABS.some(([id]) => id === sub)) promptTab = sub;
+    // Старые закладки на отдельные разделы не должны отдавать пустую
+    // страницу: они ведут на те же панели, теперь вкладками.
+    if (want === "styles" || want === "refstyles") {
+      promptTab = want === "refstyles" ? "refs" : "styles";
+      return open("prompts");
+    }
     open(want || "stats");
   }
 

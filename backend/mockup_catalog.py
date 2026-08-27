@@ -156,3 +156,92 @@ def scene_prompt(tpl: dict) -> str:
 def preview_prompt(tpl: dict) -> str:
     """Промпт превью каталога: та же сцена, но с нейтральной бутылкой."""
     return PREVIEW_PRODUCT + tpl["prompt"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# НАЛОЖЕНИЕ ВЛАДЕЛЬЦА (админка → «Промты» → вкладка «Шаблоны мокапов»)
+#
+# Тот же приём, что у стилей и у слоёв промтов: файл остаётся источником и
+# живёт в git-истории, правки владельца лежат отдельным слоем в app_settings
+# (ключ `mockup_overlay`) и накладываются сверху. Своя карточка (ключа нет в
+# файле) собирается из скелета — тогда в TEMPLATES она просто добавляется.
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: Что вообще можно перекрыть. `id` не редактируется: он пишется в счёт и в
+#: превью, и переименование ключа означало бы потерю и того и другого.
+EDITABLE = ("ru", "en", "category", "tara", "emoji", "prompt", "motion", "showcase")
+
+_BUILTIN: list[dict] = [dict(t) for t in TEMPLATES]
+_BUILTIN_BY_ID = {t["id"]: t for t in _BUILTIN}
+_OVERLAY: dict[str, dict] = {}
+
+
+def _skeleton(tid: str) -> dict:
+    return {"id": tid, "ru": tid, "en": tid, "category": "product",
+            "tara": "any", "emoji": "🖼️", "prompt": "", "motion": False,
+            "showcase": False}
+
+
+def _rebuild() -> None:
+    global TEMPLATES, _BY_ID
+    out: list[dict] = []
+    for base in _BUILTIN:
+        ov = _OVERLAY.get(base["id"]) or {}
+        if ov.get("enabled") is False:
+            continue
+        if not ov:
+            out.append(base)
+            continue
+        row = dict(base)
+        for f in EDITABLE:
+            if f in ov and ov[f] not in (None, ""):
+                row[f] = ov[f]
+        out.append(row)
+    for tid, ov in _OVERLAY.items():
+        if tid in _BUILTIN_BY_ID or ov.get("enabled") is False:
+            continue
+        row = _skeleton(tid)
+        for f in EDITABLE:
+            if f in ov and ov[f] not in (None, ""):
+                row[f] = ov[f]
+        out.append(row)
+    TEMPLATES = out
+    _BY_ID = {t["id"]: t for t in out}
+
+
+def set_overlay(data: dict | None) -> None:
+    global _OVERLAY
+    _OVERLAY = {str(k): v for k, v in (data or {}).items() if isinstance(v, dict)}
+    _rebuild()
+
+
+def overlay() -> dict:
+    return dict(_OVERLAY)
+
+
+def is_builtin(tid: str) -> bool:
+    return tid in _BUILTIN_BY_ID
+
+
+def builtin(tid: str) -> dict | None:
+    return _BUILTIN_BY_ID.get(tid)
+
+
+def admin_list() -> list[dict]:
+    """Каталог для админки: эффективные поля плюс метки правки и скрытия."""
+    out = []
+    for t in TEMPLATES:
+        ov = _OVERLAY.get(t["id"]) or {}
+        row = {f: t.get(f) for f in EDITABLE}
+        row.update({"id": t["id"], "builtin": t["id"] in _BUILTIN_BY_ID,
+                    "overridden": bool({f for f in EDITABLE if f in ov}),
+                    "hidden": False})
+        out.append(row)
+    for tid, ov in _OVERLAY.items():
+        if ov.get("enabled") is not False or tid not in _BUILTIN_BY_ID:
+            continue
+        base = _BUILTIN_BY_ID[tid]
+        row = {f: base.get(f) for f in EDITABLE}
+        row.update({"id": tid, "builtin": True, "overridden": True, "hidden": True})
+        out.append(row)
+    return out

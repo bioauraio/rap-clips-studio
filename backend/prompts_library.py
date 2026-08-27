@@ -6903,6 +6903,245 @@ def _wrap(text: str, width: int = 76) -> str:
     return "\n".join("  " + x for x in lines)
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# НАЛОЖЕНИЕ ВЛАДЕЛЬЦА (админка → раздел «Промты» → вкладка «Слои промтов»)
+#
+# ПОЧЕМУ ФАЙЛ ОСТАЁТСЯ ИСТОЧНИКОМ. Четыре слоя ниже — это код: их читает
+# validate(), их видно в git-истории, и откат правки стоит одну команду.
+# Переносить их в базу целиком значило бы потерять и то и другое. Поэтому
+# правки владельца живут ОТДЕЛЬНЫМ слоем в app_settings (ключ
+# `prompts_overlay`) и накладываются поверх файла на старте и после каждого
+# сохранения — ровно как наложение стилей в prompts_catalog.set_overlay().
+#
+# ЧТО МОЖНО ПРАВИТЬ. Только поля из EDITABLE. Связи между карточками
+# (fits_with / conflicts_with / boards в актах / styles_fit) наложением НЕ
+# трогаются: разъехавшаяся ссылка ломает сборку молча, а чинится только
+# чтением кода. Хочешь менять связи — меняй файл коммитом.
+# ═════════════════════════════════════════════════════════════════════════════
+
+LAYERS = ("scripts", "boards", "motions", "lights")
+
+#: Человеческие названия слоёв для админки (одноязычные: админку видит один
+#: человек, и второй перевод там читать некому).
+LAYER_TITLES = {
+    "scripts": "Сценарии", "boards": "Сцены",
+    "motions": "Движение", "lights": "Свет и цвет",
+}
+
+#: Поля, которые админка вправе перекрыть. Всё остальное берётся из файла.
+EDITABLE = {
+    "scripts": ("label", "tier", "cut", "music", "logline", "hero", "motif",
+                "opens", "closes", "story", "dnote"),
+    "boards": ("label", "desc", "tier", "group", "shot", "camera", "bracket",
+               "note", "first", "last", "motion", "solo", "negative"),
+    "motions": ("label", "desc", "tier", "group", "camera", "bracket",
+                "physics", "text", "solo"),
+    "lights": ("label", "desc", "tier", "group", "level", "note", "add"),
+}
+
+#: Двуязычные поля: в наложении они хранятся диктом {"en": …, "ru": …}.
+BILINGUAL = ("label", "desc", "note", "physics", "music", "logline", "hero",
+             "motif", "opens", "closes")
+
+#: Поля с текстом промпта — те, что уходят в модель. Админка показывает их
+#: отдельной группой, чтобы «описание» и «промпт» нельзя было перепутать.
+PROMPT_FIELDS = {
+    "scripts": ("story", "dnote"),
+    "boards": ("first", "last", "motion", "solo", "negative"),
+    "motions": ("text", "solo"),
+    "lights": ("add",),
+}
+
+#: Скелет своей (не заводской) карточки. Каждое поле, которое читает код
+#: ниже по файлу, обязано здесь БЫТЬ: пропущенный ключ роняет не сохранение,
+#: а первую же генерацию, и вина будет выглядеть как «сломался движок».
+_SKELETON = {
+    "scripts": lambda k: {
+        "key": k, "tier": "free", "label": {"en": k, "ru": k},
+        "music": {"en": "", "ru": ""}, "bpm": [70, 140], "cut": "mid",
+        "logline": {"en": "", "ru": ""}, "hero": {"en": "", "ru": ""},
+        "motif": {"en": "", "ru": ""}, "opens": {"en": "", "ru": ""},
+        "closes": {"en": "", "ru": ""},
+        "acts": [{"key": "all", "share": 1.0, "shot": "medium",
+                  "label": {"en": "Whole clip", "ru": "Весь клип"},
+                  "en": "", "ru": "", "boards": []}],
+        "scenes": {"min": 12, "typ": 24, "max": 40},
+        "open_board": "", "close_board": "", "styles_fit": [],
+        "preset": "", "story": "", "dnote": "", "slots_hint": [],
+        "tags": [], "needs_lyrics": False,
+    },
+    "boards": lambda k: {
+        "key": k, "group": "opening", "tier": "free",
+        "label": {"en": k, "ru": k}, "desc": {"en": "", "ru": ""},
+        "shot": "medium", "camera": "static, eye level",
+        "first": "", "last": "", "motion": "", "solo": "",
+        "bracket": "[Static shot]", "note": {"en": "", "ru": ""},
+        "negative": "", "slots": [], "traits": [],
+        "needs_last": False, "engines": list(_ANY),
+        "fits_with": [], "conflicts_with": [], "styles_fit": [], "tags": [],
+    },
+    "motions": lambda k: {
+        "key": k, "group": "camera", "tier": "free",
+        "label": {"en": k, "ru": k}, "desc": {"en": "", "ru": ""},
+        "camera": "", "text": "", "solo": "", "bracket": "",
+        "physics": {"en": "", "ru": ""}, "slots": [], "needs_last": False,
+        "engines": list(_ANY), "traits": [],
+        "fits_with": [], "conflicts_with": [],
+    },
+    "lights": lambda k: {
+        "key": k, "group": "scheme", "tier": "free", "level": "scene",
+        "label": {"en": k, "ru": k}, "desc": {"en": "", "ru": ""},
+        "add": "", "note": {"en": "", "ru": ""},
+        "slots": [], "traits": [], "fits_with": [], "conflicts_with": [],
+    },
+}
+
+_BUILTIN_LAYER = {
+    "scripts": [dict(x) for x in SCRIPTS],
+    "boards": [dict(x) for x in BOARDS],
+    "motions": [dict(x) for x in MOTIONS],
+    "lights": [dict(x) for x in LIGHTS],
+}
+_BUILTIN_BY_KEY_LAYER = {
+    layer: {x["key"]: x for x in rows} for layer, rows in _BUILTIN_LAYER.items()
+}
+
+#: {layer: {key: {field: value, "enabled": bool}}}
+_LIB_OVERLAY: dict[str, dict] = {l: {} for l in LAYERS}
+
+
+def _merge_layer(layer: str) -> list[dict]:
+    ov_all = _LIB_OVERLAY.get(layer) or {}
+    fields = EDITABLE[layer]
+    out: list[dict] = []
+    for base in _BUILTIN_LAYER[layer]:
+        ov = ov_all.get(base["key"]) or {}
+        if ov.get("enabled") is False:
+            continue
+        if not ov:
+            out.append(base)
+            continue
+        row = dict(base)
+        for f in fields:
+            if ov.get(f) not in (None, "", [], {}):
+                row[f] = ov[f]
+        out.append(row)
+    for key, ov in ov_all.items():
+        if key in _BUILTIN_BY_KEY_LAYER[layer] or ov.get("enabled") is False:
+            continue
+        row = _SKELETON[layer](key)
+        for f in fields:
+            if ov.get(f) not in (None, "", [], {}):
+                row[f] = ov[f]
+        out.append(row)
+    return out
+
+
+def _rebuild_layers() -> None:
+    """Пересобрать четыре слоя и производные реестры.
+
+    Реестры — модульные переменные, и вызывающий код читает их атрибутом
+    (prompts_library._BOARD_BY_KEY), поэтому переприсваивание видно сразу."""
+    global SCRIPTS, BOARDS, MOTIONS, LIGHTS
+    global _SCRIPT_BY_KEY, _BOARD_BY_KEY, _MOTION_BY_KEY, _LIGHT_BY_KEY
+    global SCRIPT_KEYS, BOARD_KEYS, MOTION_KEYS, LIGHT_KEYS
+    SCRIPTS = _merge_layer("scripts")
+    BOARDS = _merge_layer("boards")
+    MOTIONS = _merge_layer("motions")
+    LIGHTS = _merge_layer("lights")
+    _SCRIPT_BY_KEY = {s["key"]: s for s in SCRIPTS}
+    _BOARD_BY_KEY = {b["key"]: b for b in BOARDS}
+    _MOTION_BY_KEY = {m["key"]: m for m in MOTIONS}
+    _LIGHT_BY_KEY = {l["key"]: l for l in LIGHTS}
+    SCRIPT_KEYS = tuple(_SCRIPT_BY_KEY)
+    BOARD_KEYS = tuple(_BOARD_BY_KEY)
+    MOTION_KEYS = tuple(_MOTION_BY_KEY)
+    LIGHT_KEYS = tuple(_LIGHT_BY_KEY)
+
+
+def set_library_overlay(data: dict | None) -> None:
+    """Заменить наложение целиком. Зовётся из main.py на старте и после
+    каждого сохранения в админке — другого способа его поменять нет."""
+    global _LIB_OVERLAY
+    clean = {l: {} for l in LAYERS}
+    for layer, rows in (data or {}).items():
+        if layer not in clean or not isinstance(rows, dict):
+            continue
+        clean[layer] = {str(k): v for k, v in rows.items() if isinstance(v, dict)}
+    _LIB_OVERLAY = clean
+    _rebuild_layers()
+
+
+def library_overlay() -> dict:
+    return {l: dict(_LIB_OVERLAY.get(l) or {}) for l in LAYERS}
+
+
+def layer_rows(layer: str) -> list[dict]:
+    return {"scripts": SCRIPTS, "boards": BOARDS,
+            "motions": MOTIONS, "lights": LIGHTS}.get(layer, [])
+
+
+def layer_groups(layer: str) -> list[dict]:
+    return {"boards": BOARD_GROUPS, "motions": MOTION_GROUPS,
+            "lights": LIGHT_GROUPS}.get(layer, [])
+
+
+def layer_card(layer: str, key: str) -> dict | None:
+    """Полная карточка для админки: эффективная, заводская и метка правки."""
+    if layer not in LAYERS:
+        return None
+    row = next((r for r in layer_rows(layer) if r["key"] == key), None)
+    base = _BUILTIN_BY_KEY_LAYER[layer].get(key)
+    ov = (_LIB_OVERLAY.get(layer) or {}).get(key) or {}
+    if row is None and base is None and not ov:
+        return None
+    eff = row or base or _SKELETON[layer](key)
+    fields = EDITABLE[layer]
+    return {
+        "layer": layer, "key": key,
+        "builtin": base is not None,
+        "overridden": bool({f for f in fields if f in ov}),
+        "hidden": ov.get("enabled") is False,
+        "fields": list(fields),
+        "bilingual": [f for f in fields if f in BILINGUAL],
+        "prompt_fields": list(PROMPT_FIELDS[layer]),
+        "value": {f: eff.get(f) for f in fields},
+        "builtin_value": {f: base.get(f) for f in fields} if base else None,
+        "groups": [{"key": g["key"], "label": g["label"]["ru"]}
+                   for g in layer_groups(layer)],
+    }
+
+
+def layer_list(layer: str) -> list[dict]:
+    """Список слоя для админки: только то, что нужно строке списка."""
+    ov_all = _LIB_OVERLAY.get(layer) or {}
+    fields = EDITABLE[layer]
+    out = []
+    for r in layer_rows(layer):
+        ov = ov_all.get(r["key"]) or {}
+        out.append({
+            "key": r["key"],
+            "label": _localise(r.get("label"), "ru"),
+            "group": r.get("group", ""),
+            "tier": r.get("tier", "free"),
+            "builtin": r["key"] in _BUILTIN_BY_KEY_LAYER[layer],
+            "overridden": bool({f for f in fields if f in ov}),
+        })
+    # Скрытые заводские карточки не исчезают из админки: иначе выключенную
+    # по ошибке заготовку нельзя было бы вернуть ничем, кроме правки базы.
+    for key, ov in ov_all.items():
+        if ov.get("enabled") is False and key in _BUILTIN_BY_KEY_LAYER[layer]:
+            base = _BUILTIN_BY_KEY_LAYER[layer][key]
+            out.append({"key": key, "label": _localise(base.get("label"), "ru"),
+                        "group": base.get("group", ""), "tier": base.get("tier", "free"),
+                        "builtin": True, "overridden": True, "hidden": True})
+    return out
+
+
+_rebuild_layers()
+
+
 if __name__ == "__main__":
     import sys
     if "--examples" in sys.argv:
