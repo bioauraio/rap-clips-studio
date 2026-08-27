@@ -897,15 +897,17 @@ function tgWidget(botName) {
   s.setAttribute("data-onauth", "onTelegramAuth(user)");
   holder.appendChild(s);
   // Виджет Telegram при неправильном домене рисует СЫРУЮ ошибку «Bot domain
-  // invalid» прямо в форму входа. Показываем блок только когда виджет
-  // реально отрисовал iframe с кнопкой; ошибка остаётся скрытой.
-  const watch = setInterval(() => {
-    if (holder.querySelector("iframe")) {
-      holder.classList.remove("hidden");
-      clearInterval(watch);
-    }
-  }, 300);
-  setTimeout(() => clearInterval(watch), 8000);
+  // invalid» прямо в форму входа, причём ВНУТРИ iframe — прочитать её нельзя.
+  // Отличие живой кнопки: она шлёт родителю postMessage с oauth.telegram.org
+  // (ресайз под свой размер), ошибка молчит. Показываем блок только после
+  // такого сообщения.
+  const reveal = (e) => {
+    if (!String(e.origin || "").includes("oauth.telegram.org")) return;
+    holder.classList.remove("hidden");
+    window.removeEventListener("message", reveal);
+  };
+  window.addEventListener("message", reveal);
+  setTimeout(() => window.removeEventListener("message", reveal), 15000);
   return holder;
 }
 
