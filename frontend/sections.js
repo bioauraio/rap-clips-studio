@@ -212,11 +212,71 @@
     const jump = $("#stage-jump");
     if (jump && jump.parentNode !== document.body) document.body.appendChild(jump);
 
+    profileMenu();
+
     const brand = $("#brand");
     if (brand && brand.parentNode === bar) brand.after(nav);
     else bar.prepend(nav);
     bar.classList.add("has-sections");
     paint();
+  }
+
+  /* МЕНЮ ПРОФИЛЯ. «выйти» стояло голой кнопкой в шапке и удлиняло правый
+     край ради действия, которое делают раз в месяц. Теперь по клику на
+     «Профиль» открывается список: Кабинет, Админка (владельцу), Выйти.
+     Оригинальные кнопки НЕ дублируются, а нажимаются — у них свои
+     обработчики в app.js, и вторая копия означала бы второе поведение. */
+  function profileMenu() {
+    const btn = $("#account-btn");
+    const user = $(".tb-user");
+    if (!btn || !user || $("#tb-profile-menu")) return;
+    const menu = document.createElement("div");
+    menu.id = "tb-profile-menu";
+    menu.className = "tb-pmenu hidden";
+    user.appendChild(menu);
+
+    let pass = false;                 // пропуск клика к «родному» обработчику
+    const hide = () => menu.classList.add("hidden");
+    const item = (label, onPick) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tb-pitem";
+      b.textContent = label;
+      b.addEventListener("click", () => { hide(); onPick(); });
+      return b;
+    };
+    const build = () => {
+      menu.innerHTML = "";
+      menu.appendChild(item(T("top.account", "Кабинет"), () => {
+        pass = true;
+        btn.click();
+      }));
+      const adm = $("#admin-btn");
+      if (adm && !adm.classList.contains("hidden")) {
+        menu.appendChild(item(T("top.adminTitle", "Админка"), () => adm.click()));
+      }
+      const save = $("#save-account-btn");
+      if (save && !save.classList.contains("hidden")) {
+        menu.appendChild(item(save.textContent || T("top.saveAccount", ""),
+          () => save.click()));
+      }
+      const out = $("#logout-btn");
+      if (out) {
+        menu.appendChild(item(out.textContent || T("top.logout", "выйти"),
+          () => out.click()));
+      }
+    };
+    btn.addEventListener("click", (e) => {
+      if (pass) { pass = false; return; }
+      e.preventDefault();
+      e.stopPropagation();
+      build();
+      menu.classList.toggle("hidden");
+    }, true);
+    document.addEventListener("click", (e) => {
+      if (!menu.contains(e.target) && e.target !== btn) hide();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
   }
 
   function go(id) {

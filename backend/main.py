@@ -10013,6 +10013,48 @@ async def reorder_scenes(track_id: int, request: Request,
                                   sorted(track.scenes, key=lambda x: x.position)]}
 
 
+@app.post("/api/tracks/{track_id}/scenes/retime")
+async def retime_scene(track_id: int, request: Request,
+                       user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Сдвинуть ГРАНИЦУ между двумя кадрами (метку на дорожке).
+
+    Двигается не «длительность кадра», а стык: предыдущий кадр растёт ровно
+    на столько, на сколько укорачивается следующий. Иначе перетаскивание
+    метки уводило бы весь хвост клипа, и одна поправка на полсекунды
+    рассинхронизировала бы тридцать сцен.
+
+    Минимум секунда на кадр: кадр в ноль секунд — это не кадр, а дырка в
+    таймлайне, которую нечем показать.
+    """
+    track = _own_track(db, user, track_id)
+    body = await request.json()
+    scene_id = int(body.get("scene_id") or 0)
+    want = int(round(float(body.get("start_sec") or 0)))
+    ordered = sorted(track.scenes, key=lambda x: (x.position, x.id))
+    idx = next((i for i, s in enumerate(ordered) if s.id == scene_id), -1)
+    if idx <= 0:
+        raise HTTPException(400, "первую границу двигать некуда")
+    prev, cur = ordered[idx - 1], ordered[idx]
+    lo = int(prev.start_sec or 0) + 1
+    hi = int(cur.start_sec or 0) + int(cur.duration_sec or 0) - 1
+    if hi < lo:
+        raise HTTPException(400, "кадры слишком короткие для сдвига")
+    want = max(lo, min(hi, want))
+    end = int(cur.start_sec or 0) + int(cur.duration_sec or 0)
+    prev.duration_sec = want - int(prev.start_sec or 0)
+    cur.start_sec = want
+    cur.duration_sec = end - want
+    _renumber_scenes(track)
+    db.commit()
+    # Куски дорожки под сценами уехали — режем заново, как после reorder.
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    return {"ok": True, "scenes": [{"id": s.id, "start_sec": s.start_sec,
+                                    "duration_sec": s.duration_sec}
+                                   for s in sorted(track.scenes,
+                                                   key=lambda x: x.position)]}
+
+
 def _resync_scene_audio(track_id: int) -> None:
     """Перенарезать отрезки дорожки под нынешние места кадров."""
     db = SessionLocal()

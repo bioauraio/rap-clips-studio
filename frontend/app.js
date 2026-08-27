@@ -3988,7 +3988,9 @@ function mountWavePlayer(card, tr, audioEl) {
   // посередине, а не после сборки клипа.
   const bounds = () => (tr.scenes || [])
     .slice().sort((a, b) => a.position - b.position)
-    .map((s) => ({ at: s.start_sec, n: s.position }));
+    .map((s) => ({ at: s.start_sec, n: s.position, id: s.id }));
+  // Какую границу тащим прямо сейчас (и куда она уже уехала визуально).
+  let dragBound = null;
 
   function draw() {
     const w = cv.clientWidth || 600;
@@ -4011,11 +4013,22 @@ function mountWavePlayer(card, tr, audioEl) {
         g.fillRect(x, mid - bar / 2, 1, bar);
       }
     }
-    g.strokeStyle = "rgba(45, 33, 26, .35)";
-    g.lineWidth = 1;
-    bounds().forEach((b) => {
+    // Границы кадров: линия + захватываемая ручка сверху и номер кадра.
+    // Ручка нужна ровно затем, чтобы было понятно, что метку МОЖНО тащить —
+    // невидимая зона перетаскивания это не функция, а секрет.
+    bounds().forEach((b, i) => {
       const x = Math.round((b.at / total) * w) + 0.5;
+      const hot = dragBound && dragBound.id === b.id;
+      g.strokeStyle = hot ? "#e0503a" : "rgba(45, 33, 26, .35)";
+      g.lineWidth = hot ? 2 : 1;
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+      if (i === 0) return;                 // нулевую границу не двигают
+      g.fillStyle = hot ? "#e0503a" : "rgba(45, 33, 26, .55)";
+      g.beginPath();
+      g.moveTo(x - 5, 0); g.lineTo(x + 5, 0); g.lineTo(x, 9); g.closePath();
+      g.fill();
+      g.font = "10px ui-monospace, monospace";
+      g.fillText(String(b.n), x + 3, h - 3);
     });
     const px = Math.round((audioEl.currentTime / total) * w) + 0.5;
     g.strokeStyle = "#2d211a"; g.lineWidth = 2;
@@ -4034,18 +4047,73 @@ function mountWavePlayer(card, tr, audioEl) {
   // Щелчок — перемотка, протяжка — выделение. Разделяем по пройденному
   // расстоянию: иначе дрожание руки на клике каждый раз давало бы выделение.
   let dragFrom = null;
+  /* Метка под курсором — в пикселях, а не в секундах: на трёхминутном треке
+     секунда это два пикселя, и «попадание в 0.5с» означало бы попадание
+     пальцем в один пиксель. */
+  const boundAt = (ev) => {
+    const total = dur() || 1;
+    const r = cv.getBoundingClientRect();
+    const px = ev.clientX - r.left;
+    let best = null;
+    bounds().forEach((b, i) => {
+      if (i === 0) return;
+      const bx = (b.at / total) * r.width;
+      const d = Math.abs(px - bx);
+      if (d <= 7 && (!best || d < best.d)) best = { ...b, d };
+    });
+    return best;
+  };
+  cv.addEventListener("pointermove", (ev) => {
+    if (!dragFrom && !dragBound) cv.style.cursor = boundAt(ev) ? "ew-resize" : "";
+  });
   cv.addEventListener("pointerdown", (ev) => {
+    const b = boundAt(ev);
+    if (b) {
+      dragBound = { ...b, at: b.at };
+      cv.setPointerCapture(ev.pointerId);
+      draw();
+      return;
+    }
     dragFrom = { x: ev.clientX, at: atX(ev) };
     cv.setPointerCapture(ev.pointerId);
   });
   cv.addEventListener("pointermove", (ev) => {
+    if (dragBound) {
+      dragBound.at = Math.round(atX(ev));
+      // Рисуем по локальному состоянию: сервер узнает результат один раз,
+      // на отпускании, а не тридцать раз за перетаскивание.
+      const sc = (tr.scenes || []).find((x) => x.id === dragBound.id);
+      if (sc) sc.start_sec = dragBound.at;
+      draw();
+      return;
+    }
     if (!dragFrom) return;
     if (Math.abs(ev.clientX - dragFrom.x) < 4) return;
     const now = atX(ev);
     sel = { a: Math.min(dragFrom.at, now), b: Math.max(dragFrom.at, now) };
     draw();
   });
-  cv.addEventListener("pointerup", (ev) => {
+  cv.addEventListener("pointerup", async (ev) => {
+    if (dragBound) {
+      const moved = dragBound;
+      dragBound = null;
+      draw();
+      try {
+        const res = await api(`/api/tracks/${tr.id}/scenes/retime`, {
+          method: "POST",
+          body: { scene_id: moved.id, start_sec: Math.round(moved.at) },
+        });
+        // Сервер прижимает границу к минимальной длине кадра — читаем его
+        // ответ, а не верим своей картинке.
+        (res.scenes || []).forEach((row) => {
+          const sc = (tr.scenes || []).find((x) => x.id === row.id);
+          if (sc) { sc.start_sec = row.start_sec; sc.duration_sec = row.duration_sec; }
+        });
+        draw();
+        await loadProject();
+      } catch (e) { fail(e); await loadProject(); }
+      return;
+    }
     if (dragFrom && Math.abs(ev.clientX - dragFrom.x) < 4) {
       audioEl.currentTime = dragFrom.at;
       sel = null;
@@ -5476,6 +5544,7 @@ async function msCinemaBar(card, tr, mode) {
         <div class="mk-chips cine-kind"></div>
         <button type="button" class="mk-go cine-go"></button>
       </div>
+      <span class="cine-hint hidden">${escHtml(t("cine.hint"))}</span>
       <div class="cine-foot">
         <button type="button" class="cine-more" aria-expanded="false">⚙ ${
           escHtml(ct("cine.more", "Настройки кадра", "Shot settings"))}</button>
@@ -5541,6 +5610,14 @@ async function msCinemaBar(card, tr, mode) {
     ac.classList.remove("hidden");
   });
   promptEl.addEventListener("blur", () => setTimeout(acHide, 150));
+  {
+    // Подсказка про «@» появляется при фокусе и уходит вместе с ним: висеть
+    // под полем постоянно ей незачем — это шум для того, кто уже понял.
+    const hint = $(".cine-hint", box);
+    promptEl.addEventListener("focus", () => hint.classList.remove("hidden"));
+    promptEl.addEventListener("blur", () => setTimeout(() =>
+      hint.classList.add("hidden"), 150));
+  }
 
   const goEl = $(".cine-go", box);
   const CAM = [["", "camAuto"], ["static", "camStatic"], ["push", "camPush"],
@@ -6736,6 +6813,11 @@ function renderSceneTile(s, tr, mode, audioEl) {
   }
   if (mode === "anim" && s.video_url) $(".st-play", tile).classList.remove("hidden");
   $(".st-no", tile).textContent = t("scene.pos", { n: s.position });
+  $(".st-badge", tile).textContent = String(s.position);
+  // Название кадра — строчка текста или режиссёрская заметка: без неё лист
+  // нарезки это двадцать одинаковых картинок с номерами.
+  $(".st-title", tile).textContent =
+    (s.lyric_line || s.shot_note || "").trim().slice(0, 70);
   $(".st-time", tile).textContent = fmtTime(s.start_sec);
 
   const status = mode === "anim" ? s.video_status : s.image_status;

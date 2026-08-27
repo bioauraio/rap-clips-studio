@@ -379,7 +379,11 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-head .stage-tabs::-webkit-scrollbar { display: none; }
 .track-head .stage-tab { flex: none; }
 .order-btns { display: flex; gap: 2px; }
-.track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+/* Дорожка — НА ВСЮ ШИРИНУ блока, комментарий и заметка под ней. Половина
+   ширины на волну означала, что метки кадров стояли в двух пикселях друг от
+   друга и попасть в границу было нечем. */
+.track-body { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.track-body .track-left { min-width: 0; }
 @media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
 .t-audio { width: 100%; }
 .t-duration { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); }
@@ -2397,6 +2401,22 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
 }
 .st-no { font-weight: 700; color: var(--text); }
+/* Номер на кадре и название под ним: лист нарезки должен читаться, пока по
+   нему таскают кадры, а не после того, как всё встало. */
+.st-badge {
+  position: absolute; left: 6px; top: 6px; z-index: 2;
+  min-width: 22px; height: 22px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; corner-shape: squircle;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 800;
+  color: #fff; background: rgba(var(--ink-rgb), .68);
+  backdrop-filter: blur(6px);
+}
+.st-title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; padding: 6px 8px 0; text-align: left;
+  font-size: 12.5px; font-weight: 700; line-height: 1.25; color: var(--text);
+}
 .st-time { margin-left: auto; }
 .st-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; background: transparent; }
 .st-dot.busy { background: var(--gold); animation: st-pulse 1.1s infinite; }
@@ -3366,7 +3386,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .wp-play { min-width: 38px; }
 .wp-clock { font-family: var(--font-mono); font-size: 11px; }
 .wp-wave {
-  width: 100%; height: 96px; display: block; cursor: crosshair;
+  width: 100%; height: 96px; display: block; cursor: crosshair; touch-action: none;
   border: 1px solid rgba(var(--ink-rgb),.12); border-radius: 20px; background: var(--inset);
   touch-action: none;   /* протяжка выделяет кусок, а не листает страницу */
 }
@@ -3952,6 +3972,7 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 }
 .cine-more.on { color: var(--text); border-color: rgba(var(--ink-rgb), .4); }
 .cine-sum { font-size: 12px; color: var(--gold-ink); font-weight: 600; }
+.cine-hint { font-size: 12px; color: var(--ink-muted); }
 .cine-opts {
   display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }

@@ -120,14 +120,47 @@
 
 
 /* ─────── СЕГМЕНТ-ТУМБЛЕР РАЗДЕЛОВ: капсула с ездящей подложкой ─────── */
+/* Капсула — ЖИДКОЕ СТЕКЛО, а не белая плашка: непрозрачная заливка поверх
+   стеклянной шапки читается как чужая наклейка. Полупрозрачный фон, blur и
+   светлая кромка сверху (внутренний блик) дают ту самую выпуклость. */
 .topbar.has-sections .tb-sections {
   position: relative;
-  padding: 3px;
+  padding: 4px;
   gap: 1px;
   border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card-solid) 42%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55),
+              0 2px 10px rgba(var(--ink-rgb), .07);
 }
+:root[data-theme="dark"] .topbar.has-sections .tb-sections,
+:root:not([data-theme="light"]).os-dark .topbar.has-sections .tb-sections {
+  background: color-mix(in srgb, var(--card-solid) 55%, transparent);
+  border-color: rgba(255, 255, 255, .10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06),
+              0 2px 12px rgba(0, 0, 0, .35);
+}
+
+/* Меню профиля: «выйти» и «админка» ушли с правого края шапки сюда. */
+.tb-user { position: relative; }
+.tb-pmenu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 120;
+  min-width: 170px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  border-radius: 16px; corner-shape: squircle;
+  background: var(--card-solid); border: 1px solid var(--border);
+  box-shadow: 0 14px 34px rgba(var(--ink-rgb), .18);
+}
+.tb-pitem {
+  text-align: left; padding: 9px 12px; font-size: 13px; font-weight: 600;
+  color: var(--ink); background: transparent; border: none; box-shadow: none;
+  border-radius: 11px; corner-shape: squircle; cursor: pointer;
+}
+.tb-pitem:hover { background: var(--inset); }
+/* Кнопка выхода и «сохранить аккаунт» живут в меню, а не в строке. */
+.topbar.has-sections #logout-btn,
+.topbar.has-sections #save-account-btn { display: none; }
 /* Подложку двигает sections.js (moveIndicator). Она под кнопками, поэтому
    z-index у неё 0, а у кнопок — 1: без этого огонь накрыл бы подпись. */
 .tb-seg-ind {
@@ -144,7 +177,8 @@
 }
 .topbar.has-sections .tb-sec {
   position: relative; z-index: 1;
-  height: calc(var(--tb-h) - 6px); min-height: 0;
+  height: calc(var(--tb-h) - 4px); min-height: 0;
+  padding: 0 14px; font-size: 13.5px;
   border-radius: 999px;
 }
 .topbar.has-sections .tb-sec.on {
@@ -191,11 +225,9 @@
 /* Средние ширины: жмём личный блок, а не разделы — «выйти» есть в кабинете,
    а тема и язык переключаются значками. */
 @media (max-width: 1500px) {
-  .topbar.has-sections #logout-btn { display: none; }
   .topbar.has-sections .theme-switch { transform: scale(.9); transform-origin: right center; }
   .topbar.has-sections .lang-switch button { padding: 0 6px; }
   .topbar.has-sections .profile-btn .profile-cap { display: none; }
-  .topbar.has-sections #save-account-btn { display: none; }
   /* Капсула режима — значок и короткая подпись: полное «🎬 RAP CLIPS ▾»
      на средней ширине выталкивает личный блок за правый край. */
   .topbar.has-sections .mode-badge {

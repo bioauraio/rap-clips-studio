@@ -984,11 +984,13 @@
                 <div class="track-right">
                   <label data-i18n="track.comment"></label>
                   <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
-                  <!-- Режиссёрская заметка трека: её пишет генератор сюжета. -->
-                  <div class="t-note-view hidden">
-                    <label data-i18n="track.noteLabel"></label>
+                  <!-- Режиссёрская заметка трека: её пишет генератор сюжета.
+                       СВЁРНУТА: читают её один раз, а место она занимала
+                       постоянно и отжимала дорожку. Данные на месте. -->
+                  <details class="t-note-view hidden">
+                    <summary data-i18n="track.noteLabel"></summary>
                     <p class="t-note-text muted"></p>
-                  </div>
+                  </details>
                 </div>
               </div>
               <label class="t-lyrics-label" data-i18n="track.lyrics"></label>
@@ -1191,7 +1193,11 @@
       <img class="st-img hidden" alt="" loading="lazy" decoding="async" />
       <span class="st-ph"></span>
       <span class="st-play hidden">▶</span>
+      <!-- Номер кадра — НА кадре, крупно: при перетаскивании в листе видно,
+           что и куда встало, не вчитываясь в подпись под миниатюрой. -->
+      <span class="st-badge"></span>
     </span>
+    <span class="st-title"></span>
     <span class="st-meta">
       <span class="st-no"></span>
       <span class="st-time"></span>

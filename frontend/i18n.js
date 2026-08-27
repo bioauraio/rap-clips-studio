@@ -1172,7 +1172,8 @@ const I18N = {
       set_world: "🌍 Brand world", set_chars: "👥 Brand characters", set_goods: "📦 Products",
     },
     cine: {
-      promptPh: "Describe a scene — @ adds a character…",
+      promptPh: "Describe the scene. To cast your own character, type @ and pick from the list",
+      hint: "@ mentions a character from your base — their face stays the same",
       needPrompt: "Describe the scene first",
       added: "Scene added to the storyboard \u2713",
       camAuto: "camera: auto", camStatic: "static", camPush: "push-in",
@@ -3724,7 +3725,8 @@ const I18N = {
       set_world: "🌍 Фирменный мир", set_chars: "👥 Персонажи бренда", set_goods: "📦 Предметы",
     },
     cine: {
-      promptPh: "Опиши сцену — @ добавит персонажа…",
+      promptPh: "Опиши сцену. Чтобы вставить своего персонажа — набери @ и выбери из списка",
+      hint: "@ зовёт героя из общей базы — лицо останется тем же",
       needPrompt: "Сначала опиши сцену",
       added: "Сцена добавлена в раскадровку ✓",
       camAuto: "камера: авто", camStatic: "статичная", camPush: "наезд",
