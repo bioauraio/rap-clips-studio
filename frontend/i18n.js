@@ -443,6 +443,7 @@ const I18N = {
       // Панель параметров
       grpModel: "Model",
       grpVersion: "Version",
+      grpCamera: "Camera",
       grpAspect: "Frame format",
       grpQuality: "Quality",
       grpDuration: "Length",
@@ -3084,6 +3085,7 @@ const I18N = {
       // Панель параметров
       grpModel: "Модель",
       grpVersion: "Версия",
+      grpCamera: "Камера",
       grpAspect: "Формат кадра",
       grpQuality: "Качество",
       grpDuration: "Длительность",

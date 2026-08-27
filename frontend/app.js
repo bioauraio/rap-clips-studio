@@ -5692,7 +5692,11 @@ async function msCinemaBar(card, tr, mode) {
     kind.append(
       chip(t("mk.image"), !st.video, () => { st.video = false; paintBar(); }),
       chip(t("mk.video"), st.video, () => { st.video = true; paintBar(); }));
-    fillSel($(".cine-camera", box), CAM.map(([v, k]) => [v, t(`cine.${k}`)]),
+    // Базовые варианты + камера-пресеты каталога (значение "preset:<key>").
+    const camItems = CAM.map(([v, k]) => [v, t(`cine.${k}`)])
+      .concat((cameraPresetsCache || []).filter((c) => !c.locked)
+        .map((c) => ["preset:" + c.key, "🎥 " + (c.label || c.key)]));
+    fillSel($(".cine-camera", box), camItems,
       st.camera, (v) => { st.camera = v; paintBar(); });
     fillSel($(".cine-light", box), LIGHT.map(([v, k]) => [v, t(`cine.${k}`)]),
       st.light, (v) => { st.light = v; paintBar(); });
@@ -5707,7 +5711,10 @@ async function msCinemaBar(card, tr, mode) {
       const row = list.find(([val]) => val === v);
       return row ? t(`cine.${row[1]}`) : "";
     };
-    if (st.camera) picked.push(nameOf(CAM, st.camera));
+    if (st.camera) {
+      const cam = (cameraPresetsCache || []).find((c) => "preset:" + c.key === st.camera);
+      picked.push(cam ? (cam.label || cam.key) : nameOf(CAM, st.camera));
+    }
     if (st.light) picked.push(nameOf(LIGHT, st.light));
     if (st.palette) picked.push(nameOf(PAL, st.palette));
     if (st.video) picked.push(`${st.dur}s`);
@@ -5716,6 +5723,8 @@ async function msCinemaBar(card, tr, mode) {
     goEl.textContent = `${t("mk.generate")} · ⚡ ${tNum(st.video ? fullCost : framesCost)}`;
   };
   paintBar();
+  // Пресеты каталога грузятся лениво: селект перерисуется, когда приедут.
+  cameraPresets().then(() => paintBar());
 
   const stEl = $(".cine-status", box);
   goEl.addEventListener("click", async () => {
@@ -5735,7 +5744,12 @@ async function msCinemaBar(card, tr, mode) {
         method: "POST",
         body: {
           image_prompt: prompt,
-          motion_prompt: CINE_CAMERA[st.camera] || "",
+          motion_prompt: (() => {
+            const cam = (cameraPresetsCache || [])
+              .find((c) => "preset:" + c.key === st.camera);
+            if (cam) return camFillSlots(cam.text, { characters: named.join(",") });
+            return CINE_CAMERA[st.camera] || "";
+          })(),
           duration_sec: st.dur,
           characters: named.join(", "),
           shot_note: text,
@@ -10719,6 +10733,7 @@ const chatState = {
   // ── параметры правой панели ──
   tab: "chats",        // chats | projects
   aspect: "",          // пусто = дефолт движка
+  camera: "",          // камера-пресет для видео (ключ из /api/cameras)
   resolution: "",
   variants: 1,
   target: { target: "" },   // «куда положить»: пусто = оставить в ленте
@@ -12273,6 +12288,37 @@ function mkGroupVersion(box) {
   });
 }
 
+/* Камера-пресеты в Генераторе: только для видео-моделей. Выбранный пресет
+   дописывается к промпту при отправке (см. mkCameraSuffix). */
+function mkGroupCamera(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind !== "video") return;
+  const cams = (cameraPresetsCache || []).filter((c) => !c.locked);
+  if (!cams.length) {
+    // Каталог ещё не приехал — грузим и перерисуем панель.
+    cameraPresets().then((list) => { if (list.length) mkRenderParams(); });
+    return;
+  }
+  const g = mkGroup(box, "make.grpCamera", Boolean(chatState.camera), () => {
+    chatState.camera = "";
+    mkRenderParams();
+  });
+  const chips = mkChips(g);
+  cams.forEach((c) => {
+    mkChip(chips, c.label || c.key, "", chatState.camera === c.key, () => {
+      chatState.camera = chatState.camera === c.key ? "" : c.key;
+      mkRenderParams();
+    });
+  });
+}
+
+function mkCameraSuffix() {
+  const model = chatCurrentModel();
+  if (!model || model.kind !== "video" || !chatState.camera) return "";
+  const cam = (cameraPresetsCache || []).find((c) => c.key === chatState.camera);
+  return cam ? " " + camFillSlots(cam.solo || cam.text, { characters: "" }) : "";
+}
+
 function mkGroupAspect(box) {
   const model = chatCurrentModel();
   if (!model || model.kind === "text") return;
@@ -12662,6 +12708,7 @@ function mkRenderParams() {
   mkGroupModel(box);
   mkGroupVersion(box);
   mkGroupAspect(box);
+  mkGroupCamera(box);
   mkGroupQuality(box);
   mkGroupDuration(box);
   mkGroupVariants(box);
@@ -13037,7 +13084,9 @@ async function chatSend() {
     const fileKinds = {};
     chatState.files.forEach((f) => { fileKinds[String(f.id)] = f.kind || "vibe"; });
     const body = {
-      text,
+      // Камера-пресет дописывается к тексту: движку нужен единый промпт,
+      // отдельного поля камеры у видео-моделей нет.
+      text: text + mkCameraSuffix(),
       engine: model.id,
       file_ids: chatState.files.map((f) => f.id),
       file_kinds: fileKinds,
