@@ -769,6 +769,111 @@
           <div class="ms-summary"></div>
 
           <!-- 1. ЧТО СНИМАЕМ -->
+          <details class="ms-sec ms-fold" data-sec="material">
+            <summary data-i18n="modeSetup.material"></summary>
+            <div class="ms-fold-body">
+              <!-- Фото товара (мокапы): референс, по которому упаковка обязана
+                   совпасть до последней буквы на этикетке. -->
+              <div class="ms-photos hidden">
+                <label data-i18n="modeSetup.photos"></label>
+                <p class="ms-photos-hint muted" data-i18n="modeSetup.photosHint"></p>
+                <div class="ms-photos-grid"></div>
+                <label class="ms-photo-add">
+                  <input type="file" class="ms-photo-input hidden" accept="image/jpeg,image/png,image/webp" multiple />
+                  <span data-i18n="modeSetup.photosAdd"></span>
+                </label>
+                <span class="ms-photos-status status"></span>
+                <!-- 3D-облёт: 8 ракурсов по кругу, листаются drag'ом. -->
+                <div class="ms-turnaround">
+                  <button type="button" class="ms-ta-btn ghost"></button>
+                  <span class="ta-status status"></span>
+                  <div class="ms-ta-viewer hidden"></div>
+                </div>
+                <!-- Маркетинг-студия: промпт-бар + витрина шаблонов.
+                     Наполняется из app.js (msMarketingStudio). -->
+                <div class="mk-studio hidden"></div>
+              </div>
+              <div class="track-body">
+                <div class="track-left">
+                  <!-- Аудио — свойство КЛИПА: серия и ролик режутся не по
+                       дорожке, а по сценарию. Скрывает renderTrack по
+                       mode.needs_audio. -->
+                  <label class="t-audio-label" data-i18n="track.audio"></label>
+                  <!-- Свой плеер: форма волны с границами кадров прямо на
+                       ней, перемотка щелчком, эквалайзер и нарезка. Тег audio
+                       остаётся движком звука, но спрятан — родные контролы
+                       браузера не умеют ни того, ни другого. -->
+                  <audio class="t-audio hidden" preload="metadata"></audio>
+                  <div class="wp hidden">
+                    <div class="wp-row">
+                      <button type="button" class="wp-play ghost">▶</button>
+                      <span class="wp-clock"></span>
+                      <span class="wp-spacer"></span>
+                      <button type="button" class="wp-eq-btn ghost" data-i18n="wave.eq"></button>
+                      <button type="button" class="wp-cut ghost hidden" data-i18n="wave.cut"></button>
+                      <button type="button" class="wp-clear ghost hidden" data-i18n="wave.clear"></button>
+                    </div>
+                    <canvas class="wp-wave" height="96"></canvas>
+                    <div class="wp-eq hidden">
+                      <label><span data-i18n="wave.low"></span>
+                        <input type="range" class="wp-eq-low" min="-12" max="12" step="1" value="0" /></label>
+                      <label><span data-i18n="wave.mid"></span>
+                        <input type="range" class="wp-eq-mid" min="-12" max="12" step="1" value="0" /></label>
+                      <label><span data-i18n="wave.high"></span>
+                        <input type="range" class="wp-eq-high" min="-12" max="12" step="1" value="0" /></label>
+                      <button type="button" class="wp-eq-reset ghost" data-i18n="wave.flat"></button>
+                    </div>
+                    <span class="wp-hint muted" data-i18n="wave.hint"></span>
+                  </div>
+                  <!-- Работа с файлом дорожки в одну строку: длительность,
+                       загрузка нового файла и выгрузка нынешнего. Загрузка
+                       была спрятана в неприметную ссылку — её просто не
+                       находили, а заменить дорожку без неё нельзя. -->
+                  <div class="t-audio-acts">
+                    <span class="t-duration"></span>
+                    <label class="t-audio-swap btn">
+                      <span data-i18n="track.audioSwap"></span>
+                      <input type="file" accept="audio/*" hidden />
+                    </label>
+                    <a class="t-audio-get btn ghost hidden" download
+                       data-i18n="track.audioGet"></a>
+                    <button type="button" class="t-audio-url btn ghost"
+                            data-i18n="track.audioUrl"></button>
+                  </div>
+                  <!-- Импорт по ПРЯМОЙ ссылке на файл: облако, сайт битмейкера,
+                       выгрузка дистрибьютора. Ссылки на ролики и стриминг
+                       сервер отбивает — оттуда звук достаётся только в обход
+                       правил площадки. -->
+                  <div class="t-url-row hidden">
+                    <input class="t-url-input" type="url"
+                           data-i18n-ph="track.audioUrlPh" />
+                    <button type="button" class="t-url-go primary"
+                            data-i18n="track.audioUrlGo"></button>
+                  </div>
+                  <p class="t-url-hint muted hidden" data-i18n="track.audioUrlHint"></p>
+                  <!-- Текст песни — в ЛЕВОЙ колонке под дорожкой: ему нужна
+                       высота, и на десктопе он стоит рядом с компактными
+                       комментарием и библией, а не этажом ниже во всю ширину.
+                       app.js ищет поля по классам — переезд безопасен. -->
+                  <label class="t-lyrics-label" data-i18n="track.lyrics"></label>
+                  <textarea class="t-lyrics" rows="10" data-i18n-ph="track.lyricsPh"></textarea>
+                </div>
+                <div class="track-right">
+                  <label data-i18n="track.comment"></label>
+                  <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
+                  <!-- Библия героя — зеркало проектного поля (узел живёт вне
+                       #tracks); компактно в правой колонке под комментарием. -->
+                  <div class="ms-bible hidden">
+                    <label data-i18n-title="story.bibleTitle" data-i18n="story.bible"></label>
+                    <textarea class="ms-bible-text" rows="3" data-i18n-ph="story.biblePh"></textarea>
+                  </div>
+                  <!-- Режиссёрская заметка трека: её пишет генератор сюжета.
+                       СВЁРНУТА: читают её один раз, а место она занимала
+                       постоянно и отжимала дорожку. Данные на месте. -->
+                  <details class="t-note-view hidden">
+                    <summary data-i18n="track.noteLabel"></summary>
+                    <p class="t-note-text muted"></p>
+                  </details>
           <section class="ms-sec" data-sec="what">
             <h4 class="ms-h" data-i18n="modeSetup.what"></h4>
             <p class="ms-hint muted"></p>
@@ -902,111 +1007,6 @@
 
           <!-- 5. МАТЕРИАЛ: то, что человек приносит сам. У клипа дорожка и
                текст песни, у ролика локация, у мокапа фото упаковки. -->
-          <details class="ms-sec ms-fold" data-sec="material">
-            <summary data-i18n="modeSetup.material"></summary>
-            <div class="ms-fold-body">
-              <!-- Фото товара (мокапы): референс, по которому упаковка обязана
-                   совпасть до последней буквы на этикетке. -->
-              <div class="ms-photos hidden">
-                <label data-i18n="modeSetup.photos"></label>
-                <p class="ms-photos-hint muted" data-i18n="modeSetup.photosHint"></p>
-                <div class="ms-photos-grid"></div>
-                <label class="ms-photo-add">
-                  <input type="file" class="ms-photo-input hidden" accept="image/jpeg,image/png,image/webp" multiple />
-                  <span data-i18n="modeSetup.photosAdd"></span>
-                </label>
-                <span class="ms-photos-status status"></span>
-                <!-- 3D-облёт: 8 ракурсов по кругу, листаются drag'ом. -->
-                <div class="ms-turnaround">
-                  <button type="button" class="ms-ta-btn ghost"></button>
-                  <span class="ta-status status"></span>
-                  <div class="ms-ta-viewer hidden"></div>
-                </div>
-                <!-- Маркетинг-студия: промпт-бар + витрина шаблонов.
-                     Наполняется из app.js (msMarketingStudio). -->
-                <div class="mk-studio hidden"></div>
-              </div>
-              <div class="track-body">
-                <div class="track-left">
-                  <!-- Аудио — свойство КЛИПА: серия и ролик режутся не по
-                       дорожке, а по сценарию. Скрывает renderTrack по
-                       mode.needs_audio. -->
-                  <label class="t-audio-label" data-i18n="track.audio"></label>
-                  <!-- Свой плеер: форма волны с границами кадров прямо на
-                       ней, перемотка щелчком, эквалайзер и нарезка. Тег audio
-                       остаётся движком звука, но спрятан — родные контролы
-                       браузера не умеют ни того, ни другого. -->
-                  <audio class="t-audio hidden" preload="metadata"></audio>
-                  <div class="wp hidden">
-                    <div class="wp-row">
-                      <button type="button" class="wp-play ghost">▶</button>
-                      <span class="wp-clock"></span>
-                      <span class="wp-spacer"></span>
-                      <button type="button" class="wp-eq-btn ghost" data-i18n="wave.eq"></button>
-                      <button type="button" class="wp-cut ghost hidden" data-i18n="wave.cut"></button>
-                      <button type="button" class="wp-clear ghost hidden" data-i18n="wave.clear"></button>
-                    </div>
-                    <canvas class="wp-wave" height="96"></canvas>
-                    <div class="wp-eq hidden">
-                      <label><span data-i18n="wave.low"></span>
-                        <input type="range" class="wp-eq-low" min="-12" max="12" step="1" value="0" /></label>
-                      <label><span data-i18n="wave.mid"></span>
-                        <input type="range" class="wp-eq-mid" min="-12" max="12" step="1" value="0" /></label>
-                      <label><span data-i18n="wave.high"></span>
-                        <input type="range" class="wp-eq-high" min="-12" max="12" step="1" value="0" /></label>
-                      <button type="button" class="wp-eq-reset ghost" data-i18n="wave.flat"></button>
-                    </div>
-                    <span class="wp-hint muted" data-i18n="wave.hint"></span>
-                  </div>
-                  <!-- Работа с файлом дорожки в одну строку: длительность,
-                       загрузка нового файла и выгрузка нынешнего. Загрузка
-                       была спрятана в неприметную ссылку — её просто не
-                       находили, а заменить дорожку без неё нельзя. -->
-                  <div class="t-audio-acts">
-                    <span class="t-duration"></span>
-                    <label class="t-audio-swap btn">
-                      <span data-i18n="track.audioSwap"></span>
-                      <input type="file" accept="audio/*" hidden />
-                    </label>
-                    <a class="t-audio-get btn ghost hidden" download
-                       data-i18n="track.audioGet"></a>
-                    <button type="button" class="t-audio-url btn ghost"
-                            data-i18n="track.audioUrl"></button>
-                  </div>
-                  <!-- Импорт по ПРЯМОЙ ссылке на файл: облако, сайт битмейкера,
-                       выгрузка дистрибьютора. Ссылки на ролики и стриминг
-                       сервер отбивает — оттуда звук достаётся только в обход
-                       правил площадки. -->
-                  <div class="t-url-row hidden">
-                    <input class="t-url-input" type="url"
-                           data-i18n-ph="track.audioUrlPh" />
-                    <button type="button" class="t-url-go primary"
-                            data-i18n="track.audioUrlGo"></button>
-                  </div>
-                  <p class="t-url-hint muted hidden" data-i18n="track.audioUrlHint"></p>
-                  <!-- Текст песни — в ЛЕВОЙ колонке под дорожкой: ему нужна
-                       высота, и на десктопе он стоит рядом с компактными
-                       комментарием и библией, а не этажом ниже во всю ширину.
-                       app.js ищет поля по классам — переезд безопасен. -->
-                  <label class="t-lyrics-label" data-i18n="track.lyrics"></label>
-                  <textarea class="t-lyrics" rows="10" data-i18n-ph="track.lyricsPh"></textarea>
-                </div>
-                <div class="track-right">
-                  <label data-i18n="track.comment"></label>
-                  <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
-                  <!-- Библия героя — зеркало проектного поля (узел живёт вне
-                       #tracks); компактно в правой колонке под комментарием. -->
-                  <div class="ms-bible hidden">
-                    <label data-i18n-title="story.bibleTitle" data-i18n="story.bible"></label>
-                    <textarea class="ms-bible-text" rows="3" data-i18n-ph="story.biblePh"></textarea>
-                  </div>
-                  <!-- Режиссёрская заметка трека: её пишет генератор сюжета.
-                       СВЁРНУТА: читают её один раз, а место она занимала
-                       постоянно и отжимала дорожку. Данные на месте. -->
-                  <details class="t-note-view hidden">
-                    <summary data-i18n="track.noteLabel"></summary>
-                    <p class="t-note-text muted"></p>
-                  </details>
                 </div>
               </div>
             </div>
@@ -1024,44 +1024,45 @@
              стояла сверху, а кнопки листа — колонкой сбоку от миниатюры: три
              похожих действия в трёх разных местах, и человек искал, куда жать.
              Порядок здесь = порядок работы: сцены → лист → посмотреть → разложить. -->
-        <div class="board-bar">
-          <button class="gen-scenes primary" data-i18n="track.genScenes"></button>
-          <button class="gen-storyboard" data-i18n="track.genSheet"></button>
-          <button class="sb-open ghost" data-i18n-title="track.sheetOpenTitle" data-i18n="track.sheetOpen"></button>
-          <button class="slice-storyboard ghost" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
-          <!-- Нарезка под бит: границы сцен едут к ближайшим сильным долям.
-               Бесплатно — счёт на своём CPU, без токенов. -->
-          <button class="beat-align ghost" data-i18n-title="track.beatAlignTitle" data-i18n="track.beatAlign"></button>
-          <!-- Покрытие дорожки: мелкая подпись + кнопка «дописать» ЖИВУТ В ЭТОЙ
-               ЖЕ строке — отдельная плашка на всю ширину съедала вертикаль. -->
-          <span class="scenes-coverage hidden"></span>
-          <span class="scenes-status status"></span>
-          <span class="sb-status status"></span>
-        </div>
-        <!-- Лист раскадровки — контрольный отпечаток, а не полотно на всю
-             страницу: миниатюра фиксированной высоты, клик открывает крупно. -->
-        <div class="storyboard-block">
-          <div class="media-head">
-            <span data-i18n="track.sheetTitle"></span>
-          </div>
-          <div class="storyboard-row">
-            <div class="storyboard-box">
-              <img class="sb-preview hidden" alt="" loading="lazy" decoding="async" />
-              <span class="sb-empty muted" data-i18n="track.sheetEmpty"></span>
-            </div>
-            <!-- Вертикальный лист стоит слева, а его сводка — рядом, а не
-                 под пустым полем: сетка, число кадров, подсказка «клик — крупно». -->
-            <div class="storyboard-side hidden">
-              <span class="sb-meta sb-grid-note"></span>
-              <span class="sb-meta muted" data-i18n="track.sheetZoomHint"></span>
-              <!-- Свободная сцена живёт рядом с листом: пустое поле справа от
-                   вертикального листа — её законное место, а не этаж ниже. -->
-              <div class="cine-bar hidden"></div>
+        <!-- ДВУХКОЛОННИК РАСКАДРОВКИ (правка владельца 28.08): слева
+             колонкой управление — «Свободная сцена», ПОД ней кнопки листа;
+             справа сам лист со сводкой под ним. На мобилке колонкой:
+             свободная сцена → кнопки → лист. -->
+        <div class="board-cols">
+          <div class="board-left">
+            <!-- Cinema-бар: свободная сцена одним промптом, @ зовёт персонажа. -->
+            <div class="cine-bar hidden"></div>
+            <div class="board-bar">
+              <button class="gen-scenes primary" data-i18n="track.genScenes"></button>
+              <button class="gen-storyboard" data-i18n="track.genSheet"></button>
+              <button class="sb-open ghost" data-i18n-title="track.sheetOpenTitle" data-i18n="track.sheetOpen"></button>
+              <button class="slice-storyboard ghost" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
+              <!-- Нарезка под бит: границы сцен едут к ближайшим сильным долям.
+                   Бесплатно — счёт на своём CPU, без токенов. -->
+              <button class="beat-align ghost" data-i18n-title="track.beatAlignTitle" data-i18n="track.beatAlign"></button>
+              <span class="scenes-coverage hidden"></span>
+              <span class="scenes-status status"></span>
+              <span class="sb-status status"></span>
             </div>
           </div>
-          <!-- Лист нарисован под другое число кадров: резать его нельзя,
-               куски поедут мимо панелей. Говорим об этом у самого листа. -->
-          <p class="sb-stale warn hidden"></p>
+          <div class="storyboard-block board-right">
+            <div class="media-head">
+              <span data-i18n="track.sheetTitle"></span>
+            </div>
+            <div class="storyboard-row">
+              <div class="storyboard-box">
+                <img class="sb-preview hidden" alt="" loading="lazy" decoding="async" />
+                <span class="sb-empty muted" data-i18n="track.sheetEmpty"></span>
+              </div>
+              <div class="storyboard-side hidden">
+                <span class="sb-meta sb-grid-note"></span>
+                <span class="sb-meta muted" data-i18n="track.sheetZoomHint"></span>
+              </div>
+            </div>
+            <!-- Лист нарисован под другое число кадров: резать его нельзя,
+                 куски поедут мимо панелей. Говорим об этом у самого листа. -->
+            <p class="sb-stale warn hidden"></p>
+          </div>
         </div>
         <!-- Кадры идут лентой: под музыку с подсветкой текущего кадра
              горизонтальная прокрутка удобнее, а переключатель вида владелец
@@ -1069,8 +1070,6 @@
         <div class="scenes-toolbar">
           <span class="scenes-count muted"></span>
         </div>
-        <!-- Cinema-бар: свободная сцена одним промптом, @ зовёт персонажа. -->
-        <div class="cine-bar hidden"></div>
         <div class="strip-wrap">
           <button class="strip-arrow strip-prev" type="button" data-i18n-aria="common.prev">‹</button>
           <div class="scenes scenes-board"></div>

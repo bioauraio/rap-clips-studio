@@ -6083,11 +6083,32 @@ function mountModeSetup(card, tr, isFirst) {
 }
 
 
+/* Какой трек РАЗВЁРНУТ. Три развёрнутых трека — простыня на 9000px:
+   свёрнутый показывает только строку (обложка, номер, название, кнопки),
+   клик по строке разворачивает его и сворачивает прочие. */
+let expandedTrackId = 0;
+
 function renderTrack(tr) {
   const tpl = $("#track-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".track-card");
   applyI18n(card);   // содержимое <template> обходом документа не задевается
   card.dataset.id = tr.id;
+  {
+    const many = (project.tracks || []).length > 1;
+    if (!expandedTrackId) expandedTrackId = (project.tracks[0] || {}).id || 0;
+    const collapsed = many && tr.id !== expandedTrackId;
+    card.classList.toggle("collapsed", collapsed);
+    const head = $(".track-head", card);
+    if (head && many) {
+      head.classList.add("clickable");
+      head.addEventListener("click", (ev) => {
+        // Клик по полю названия, кнопкам и обложке — их собственная работа.
+        if (ev.target.closest("button, input, label, select")) return;
+        expandedTrackId = tr.id;
+        render();
+      });
+    }
+  }
   // Сколько кадров сняты НЕ нынешним стилем — верстак (nav.js) читает это
   // из атрибута, чтобы предложить перерисовку следующим действием.
   card.dataset.stale = String(tr.scenes_stale || 0);
@@ -11046,8 +11067,15 @@ async function askAgent(text) {
     return;
   }
   reply.textContent = d.reply || "";
+  // Модель любит предлагать одно и то же трижды («Сгенерировать кадры» на
+  // каждый пустой кадр) — одинаковые по смыслу действия схлопываем в одно.
+  const seen = new Set();
   (d.actions || []).forEach((a) => {
     if (a.kind === "none" || !a.title) return;
+    const key = `${a.kind}:${a.scene_id || 0}:${a.track_id || 0}:${a.title}`;
+    if (seen.has(key) || (seen.has(`${a.kind}::`) && !a.scene_id && !a.track_id)) return;
+    seen.add(key);
+    seen.add(`${a.kind}::`);
     const b = document.createElement("button");
     b.type = "button";
     b.className = "cc-agent-act";

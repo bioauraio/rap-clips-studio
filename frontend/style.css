@@ -478,7 +478,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 
 /* ────────── лист раскадровки / клип ────────── */
-.storyboard-block, .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
 .storyboard-box, .media-box {
   background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.18); border-radius: 20px;
@@ -486,7 +486,22 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 }
 /* Лист — контрольный отпечаток фиксированной высоты, а не полотно во всю
    страницу: картинка вписывается целиком, разглядывают её кликом в модалке. */
-.storyboard-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+/* Правая колонка раскадровки: лист сверху, сводка ПОД ним. */
+.storyboard-row { display: flex; flex-direction: column; gap: 8px; }
+.storyboard-side { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* Двухколонник раскадровки: слева управление, справа вертикальный лист. */
+.board-cols {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px; align-items: start; margin-bottom: 14px;
+}
+.board-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.board-right { margin: 0; padding: 0; border: none; }
+@media (max-width: 900px) {
+  .board-cols { grid-template-columns: 1fr; gap: 12px; }
+}
+/* Плейсхолдер свободной сцены больше не режется второй строкой. */
+.cine-prompt { min-height: 58px; }
 .storyboard-acts { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; align-items: center; }
 .storyboard-box {
   /* Лист обязан занимать РОВНО столько места, сколько занимает картинка:
