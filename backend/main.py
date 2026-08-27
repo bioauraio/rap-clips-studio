@@ -5078,11 +5078,25 @@ def _layer_previews_save(m: dict) -> None:
     os.replace(tmp, LAYER_PREVIEWS_FILE)
 
 
+def _preview_entry(v) -> tuple[str, list[str]]:
+    """Запись превью: строка (одна картинка) или {"main":…, "all":[…]}."""
+    if isinstance(v, dict):
+        main = str(v.get("main") or "")
+        gallery = [str(x) for x in (v.get("all") or []) if x]
+        if main and main not in gallery:
+            gallery.insert(0, main)
+        return main, gallery
+    return (str(v or ""), [str(v)] if v else [])
+
+
 def _decorate_cameras(cards: list[dict]) -> list[dict]:
     previews = _layer_previews()
     for c in cards:
-        fname = previews.get(f"cameras:{c['key']}") or ""
-        c["preview_url"] = f"/api/media/{fname}" if fname else ""
+        main, gallery = _preview_entry(previews.get(f"cameras:{c['key']}"))
+        c["preview_url"] = f"/api/media/{main}" if main else ""
+        # Несколько кадров Тони на пресет: первый — главный, остальные
+        # крутятся на карточке hover-сменой.
+        c["preview_urls"] = [f"/api/media/{f}" for f in gallery]
     return cards
 
 
@@ -5171,6 +5185,87 @@ def admin_camera_previews(all: int = 0,  # noqa: A002
     return generate_camera_previews(["*"] if all else None)
 
 
+# Раскладка референсов Тони по пресетам: кластеры времени в именах
+# hf_20260827_HHMMSS_*.png (гипотеза координатора; владелец поправит кликом
+# в админке — главная картинка меняется загрузкой или выбором из галереи).
+CAMERA_REFS_DIR = os.path.join(UPLOAD_DIR, "camera_refs")
+CAMERA_REF_CLUSTERS = (
+    ("crane_down",       135300, 135399),
+    ("vehicle_tracking", 140200, 140599),
+    ("drone_push_in",    141220, 141699),
+    ("truck_left",       142200, 142699),
+    ("slider_arc",       143100, 143399),
+    ("helicopter_orbit", 143500, 143599),
+)
+
+
+@app.post("/api/admin/cameras/seed-refs")
+def admin_camera_seed_refs(user: User = Depends(current_user),
+                           db: Session = Depends(db_session)):
+    """Разложить кадры Тони из camera_refs/ по пресетам как превью-галереи.
+
+    Файлы КОПИРУЮТСЯ в корень хранилища (подпапки /api/media не отдаёт) и
+    регистрируются; исходники в camera_refs/ остаются нетронутыми. Повторный
+    запуск идемпотентен: уже назначенный пресет не трогаем."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if not os.path.isdir(CAMERA_REFS_DIR):
+        raise HTTPException(404, f"нет папки {CAMERA_REFS_DIR}")
+    previews = _layer_previews()
+    out, unmatched = {}, []
+    files = sorted(os.listdir(CAMERA_REFS_DIR))
+    for name in files:
+        if not name.lower().endswith(".png"):
+            continue
+        m = re.match(r"hf_\d{8}_(\d{6})", name)
+        if not m:
+            unmatched.append(name)
+            continue
+        stamp = int(m.group(1))
+        preset = next((k for k, lo, hi in CAMERA_REF_CLUSTERS
+                       if lo <= stamp <= hi), "")
+        if not preset:
+            unmatched.append(name)
+            continue
+        out.setdefault(preset, []).append(name)
+    seeded = {}
+    for preset, names in out.items():
+        entry_main, gallery = _preview_entry(previews.get(f"cameras:{preset}"))
+        if gallery:
+            seeded[preset] = f"уже назначено ({len(gallery)})"
+            continue
+        copied = []
+        for name in names:
+            fname = f"lprev_{uuid.uuid4().hex}.png"
+            shutil.copyfile(os.path.join(CAMERA_REFS_DIR, name),
+                            os.path.join(UPLOAD_DIR, fname))
+            _reg_file(db, fname, None, kind="layer_preview")
+            copied.append(fname)
+        db.commit()
+        previews[f"cameras:{preset}"] = {"main": copied[0], "all": copied}
+        seeded[preset] = len(copied)
+    _layer_previews_save(previews)
+    return {"ok": True, "seeded": seeded, "unmatched": unmatched}
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview-main")
+async def admin_layer_preview_main(layer: str, key: str, request: Request,
+                                   user: User = Depends(current_user)):
+    """Назначить ГЛАВНОЙ одну из картинок галереи пресета (клик в админке)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    body = await request.json()
+    fname = os.path.basename(str(body.get("filename") or ""))
+    previews = _layer_previews()
+    main, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    if fname not in gallery:
+        raise HTTPException(404, "такой картинки нет в галерее пресета")
+    previews[f"{layer}:{key}"] = {
+        "main": fname, "all": [fname] + [g for g in gallery if g != fname]}
+    _layer_previews_save(previews)
+    return {"ok": True, "preview_url": f"/api/media/{fname}"}
+
+
 @app.post("/api/admin/prompts/{layer}/{key}/preview")
 async def admin_layer_preview_upload(layer: str, key: str,
                                      file: UploadFile | None = None,
@@ -5203,12 +5298,14 @@ async def admin_layer_preview_upload(layer: str, key: str,
     _reg_file(db, fname, None, kind="layer_preview")
     db.commit()
     previews = _layer_previews()
-    old = previews.get(f"{layer}:{key}") or ""
-    previews[f"{layer}:{key}"] = fname
+    main, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    # Загруженная картинка становится ГЛАВНОЙ; прежние остаются в галерее —
+    # референсы Тони не затираются заменой главной.
+    gallery = [fname] + [g for g in gallery if g != fname]
+    previews[f"{layer}:{key}"] = {"main": fname, "all": gallery}
     _layer_previews_save(previews)
-    if old:
-        _remove_media(old)
-    return {"ok": True, "preview_url": f"/api/media/{fname}"}
+    return {"ok": True, "preview_url": f"/api/media/{fname}",
+            "preview_urls": [f"/api/media/{g}" for g in gallery]}
 
 
 @app.get("/api/lights")
@@ -5966,72 +6063,176 @@ def _scenes_for_mockup(db: Session, track: Track, engine: str = "") -> dict:
     ))
 
 
-def _rebalance_cast(scenes: list[dict], characters: list[dict]) -> None:
-    """Страховка ПОСЛЕ генерации: модель, несмотря на просьбы, иногда тащит
-    один и тот же состав через всю раскадровку.
+def _cast_plan_text(characters: list[dict], n_scenes: int) -> str:
+    """Случайная равномерная расстановка персонажей по кадрам — ДЛЯ ПРОМПТА.
 
-    Если БОЛЬШЕ 70% кадров получили одинаковый состав — вписываем ни разу
-    не использованных персонажей в часть этих кадров. Промпты НЕ переписываем
-    (второй проход по модели стоит денег и времени): к characters добавляется
-    имя, а в image_prompt/image_prompt_last — короткая фраза с внешностью из
-    карточки, по которой рендер и подставит фото-модельку."""
+    Модель, получив только словесные квоты, всё равно тащит главного во все
+    кадры. Числа против слов: сервер генерит случайное назначение (главный
+    ≤50% кадров, каждый — минимум своя квота, один состав подряд ≤2 кадров)
+    и передаёт его как рекомендацию."""
+    names = [str(c.get("name") or "").strip() for c in characters]
+    names = [x for x in names if x]
+    if len(names) < 3 or n_scenes < 4:
+        return ""
+    rnd = random.Random(secrets.randbits(32))
+    main = next((str(c["name"]).strip() for c in characters if c.get("is_main")),
+                names[0])
+    others = [x for x in names if x != main]
+    quota = max(1, -(-n_scenes // len(names)) - 1)
+    main_cap = max(quota, n_scenes // 2)
+    counts = {x: 0 for x in names}
+    plans: list[list[str]] = []
+    deck: list[str] = []
+    prev, prev_run = None, 0
+    for i in range(n_scenes):
+        size = _pick_cast_size(rnd, len(names))
+        cast: list[str] = []
+        if size > 0:
+            if counts[main] < main_cap and rnd.random() < 0.5:
+                cast.append(main)
+            guard = 0
+            while len(cast) < size and guard < 20:
+                guard += 1
+                if not deck:
+                    deck = others[:]
+                    rnd.shuffle(deck)
+                pick = deck.pop()
+                if pick not in cast:
+                    cast.append(pick)
+        key = tuple(sorted(cast))
+        if key == prev and prev_run >= 2:
+            least = min(names, key=lambda x: counts[x])
+            cast = [least] if least not in cast else [main, least]
+            key = tuple(sorted(cast))
+        prev_run = prev_run + 1 if key == prev else 1
+        prev = key
+        for x in cast:
+            counts[x] += 1
+        plans.append(cast)
+    # Добор квоты: недопредставленные встают вместо самых частых в одиночных
+    # кадрах середины (первый и последний кадры — режиссёрские, не трогаем).
+    for name in names:
+        tries = 0
+        while counts[name] < quota and tries < n_scenes:
+            tries += 1
+            i = rnd.randrange(1, n_scenes - 1)
+            cast = plans[i]
+            if name in cast or len(cast) != 1:
+                continue
+            old = cast[0]
+            if counts[old] <= quota:
+                continue
+            counts[old] -= 1
+            counts[name] += 1
+            plans[i] = [name]
+    lines = [f"кадр {i + 1}: " + (" + ".join(c) if c else "(без людей)")
+             for i, c in enumerate(plans)]
+    return "\n".join(lines)
+
+
+def _rebalance_cast(scenes: list[dict], characters: list[dict]) -> None:
+    """Страховка ПОСЛЕ генерации: модель, несмотря на квоты в промпте, тащит
+    одного героя через раскадровку.
+
+    Два прохода, оба без обращения к модели:
+      1. персонаж, занявший БОЛЬШЕ 55% кадров, ЗАМЕНЯЕТСЯ недопредставленными
+         в лишних одиночных кадрах (первый, последний и кадры-взаимодействия
+         с 2+ героями не трогаются): имя меняется в characters и в текстах,
+         внешность нового дописывается из карточки, в shot_note — пометка;
+      2. ни разу не использованные персонажи вписываются в кадры с
+         доминирующим составом (старое поведение)."""
     names = [str(c.get("name") or "").strip() for c in characters]
     names = [n for n in names if n]
     if len(names) < 2 or len(scenes) < 4:
         return
     by_name = {str(c.get("name") or "").strip(): c for c in characters}
 
-    def cast_of(sc: dict) -> tuple:
-        return tuple(sorted(str(n).strip() for n in (sc.get("characters") or [])
-                            if str(n).strip()))
+    def cast_of(sc: dict) -> list[str]:
+        return [str(n).strip() for n in (sc.get("characters") or []) if str(n).strip()]
 
-    counts: dict = {}
+    def desc_of(name: str) -> str:
+        return " ".join(str((by_name.get(name) or {}).get("description") or "").split())[:220]
+
+    def swap_in_scene(sc: dict, old: str, new: str) -> None:
+        sc["characters"] = [new if x == old else x for x in cast_of(sc)]
+        pat = re.compile(rf"(?<![\w]){re.escape(old)}(?![\w])")
+        for field in ("image_prompt", "image_prompt_last", "motion_prompt"):
+            text = str(sc.get(field) or "")
+            if text:
+                sc[field] = pat.sub(new, text)
+        # Внешность в тексте могла остаться от прежнего героя — дописываем
+        # новую из карточки: рендер слушает конкретное описание.
+        d = desc_of(new)
+        base = str(sc.get("image_prompt") or "").rstrip()
+        if base and d and d[:60] not in base:
+            sc["image_prompt"] = f"{base} In this shot {new} looks like this: {d}."
+        note = str(sc.get("shot_note") or "").rstrip()
+        sc["shot_note"] = (note + " · состав перераспределён").strip(" ·")
+
+    # ── проход 1: перекос на одного персонажа (>55% кадров) ──
+    counts = {n: 0 for n in names}
     for sc in scenes:
-        counts[cast_of(sc)] = counts.get(cast_of(sc), 0) + 1
-    dominant, dom_n = max(counts.items(), key=lambda kv: kv[1])
-    if not dominant or dom_n <= 0.7 * len(scenes):
-        return
-    used = {n for sc in scenes for n in cast_of(sc)}
-    unused = [n for n in names if n not in used]
-    if not unused:
-        return
-    # Кандидаты — кадры с доминирующим составом, кроме самого первого и
-    # самого последнего: открывающий и финальный кадры — режиссёрские
-    # решения, их состав не трогаем.
-    slots = [i for i, sc in enumerate(scenes)
-             if cast_of(sc) == dominant and 0 < i < len(scenes) - 1]
-    if not slots:
-        return
-    taken: set = set()
-    for k, name in enumerate(unused):
-        char = by_name.get(name) or {}
-        desc = " ".join(str(char.get("description") or "").split())[:220]
-        # Каждому забытому персонажу — до двух появлений, равномерно по
-        # клипу и со сдвигом на персонажа, чтобы двое забытых не свалились
-        # в одни и те же сцены.
-        want = []
-        for j in range(2):
-            idx = (len(slots) * (2 * k + j + 1)) // (2 * len(unused) + 1)
-            want.append(slots[min(idx, len(slots) - 1)])
-        for i in want:
-            if i in taken:
-                i = next((x for x in slots if x not in taken), None)
-                if i is None:
+        for n in set(cast_of(sc)):
+            if n in counts:
+                counts[n] += 1
+    cap = max(2, int(0.55 * len(scenes)))
+    replaced = 0
+    for heavy in sorted(counts, key=lambda x: -counts[x]):
+        if counts[heavy] <= cap:
+            break
+        # Кандидаты на замену: одиночные кадры с этим героем, кроме краёв.
+        spots = [i for i in range(1, len(scenes) - 1)
+                 if cast_of(scenes[i]) == [heavy]]
+        under = sorted((n for n in names if n != heavy), key=lambda x: counts[x])
+        for i in spots:
+            if counts[heavy] <= cap or not under:
+                break
+            new = under[0]
+            swap_in_scene(scenes[i], heavy, new)
+            counts[heavy] -= 1
+            counts[new] += 1
+            replaced += 1
+            under.sort(key=lambda x: counts[x])
+    # ── проход 2: ни разу не использованные — вписать в доминирующий состав ──
+    unused = [n for n in names if counts[n] == 0]
+    injected = 0
+    if unused:
+        tallies: dict = {}
+        for sc in scenes:
+            key = tuple(sorted(cast_of(sc)))
+            tallies[key] = tallies.get(key, 0) + 1
+        dominant = max(tallies, key=lambda k: tallies[k]) if tallies else ()
+        slots = [i for i in range(1, len(scenes) - 1)
+                 if tuple(sorted(cast_of(scenes[i]))) == dominant]
+        taken: set = set()
+        for k, name in enumerate(unused):
+            d = desc_of(name)
+            for j in range(2):
+                idx = (len(slots) * (2 * k + j + 1)) // (2 * len(unused) + 1) \
+                    if slots else -1
+                if idx < 0:
                     break
-            taken.add(i)
-            sc = scenes[i]
-            cast = [str(n).strip() for n in (sc.get("characters") or []) if str(n).strip()]
-            if name not in cast:
-                cast.append(name)
-            sc["characters"] = cast
-            extra = (f" Also present in the frame: {name}"
-                     + (f" — {desc}" if desc else "") + ".")
-            for field in ("image_prompt", "image_prompt_last"):
-                text = str(sc.get(field) or "").rstrip()
-                if text and name not in text:
-                    sc[field] = text + extra
-    log.info("страховка состава: %s кадров из %s с одинаковым составом, вписаны: %s",
-             dom_n, len(scenes), ", ".join(unused))
+                i = slots[min(idx, len(slots) - 1)]
+                if i in taken:
+                    i = next((x for x in slots if x not in taken), None)
+                    if i is None:
+                        break
+                taken.add(i)
+                sc = scenes[i]
+                cast = cast_of(sc)
+                if name not in cast:
+                    cast.append(name)
+                sc["characters"] = cast
+                extra = (f" Also present in the frame: {name}"
+                         + (f" — {d}" if d else "") + ".")
+                for field in ("image_prompt", "image_prompt_last"):
+                    text = str(sc.get(field) or "").rstrip()
+                    if text and name not in text:
+                        sc[field] = text + extra
+                injected += 1
+    if replaced or injected:
+        log.info("страховка состава: замен %s, вписано забытых %s (кадров %s)",
+                 replaced, injected, len(scenes))
 
 
 def _run_scene_generation(track_id: int) -> None:
@@ -6061,18 +6262,25 @@ def _run_scene_generation(track_id: int) -> None:
         elif catalog == "mockup":
             result = _scenes_for_mockup(db, track, engine)
         else:
+            chars_payload = characters_payload(project)
+            dur = track.audio_duration_sec or 180
+            # Случайная равномерная расстановка — сервером, числами: модель
+            # получает готовое назначение «кадр → имена» и держится его.
+            plan = _cast_plan_text(chars_payload,
+                                   max(6, min(60, round(dur / 6))))
             result = asyncio.run(claude.generate_scenes(
                 story="" if track.no_story else project.story,
                 character_bible=project.character_bible,
                 track_note=track_note, title=track.title, lyrics=track.lyrics,
                 comment=clean_comment, style=track.style,
-                duration_sec=track.audio_duration_sec or 180,
-                characters=characters_payload(project),
+                duration_sec=dur,
+                characters=chars_payload,
                 audio_profile=track.audio_profile,
                 # Как стиль влияет на драматургию (админка стилей).
                 story_base=prompts_catalog.story_base(_track_style_keys(track)),
                 engine=engine,
                 random_cast=bool(getattr(track, "random_cast", False)),
+                cast_plan=plan,
             ))
             # Страховка состава: если модель провела один состав через >70%
             # кадров — вписываем забытых персонажей сервером, без второго
@@ -6783,7 +6991,9 @@ def _shuffle_track_cast(track: Track, project: Project, seed: "int | None" = Non
         else:
             # Герой в кадре с вероятностью 60% — при одном персонаже в проекте
             # это просто он сам.
-            cast = [hero] if (not others or rnd.randint(1, 100) <= 60) else []
+            # ≤50%: главный не должен вылезать за половину кадров (квота
+            # владельца), при одном персонаже в проекте это просто он сам.
+            cast = [hero] if (not others or rnd.randint(1, 100) <= 50) else []
             while len(cast) < size and others:
                 if not deck:
                     deck = others[:]
