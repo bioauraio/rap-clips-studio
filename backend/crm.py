@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 import os
 import threading
@@ -725,6 +726,37 @@ def ledger_audit(limit: int = 50, user: User = Depends(admin_user),
 #      должен становиться вторым хранилищем закрытых промптов.
 
 STYLE_ASSET_KINDS = ("poster", "loop", "shot", "ref", "promptfile")
+
+
+def _compress_ref_image(data: bytes, ext: str) -> tuple[bytes, str]:
+    """Референс → jpeg: длинная сторона ≤1536, качество вниз, пока не влезет
+    в ~800КБ. Не вышло сжать — возвращаем оригинал (пусть дорого, но живо)."""
+    import subprocess, tempfile, os as _os
+    src = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    dst_path = src.name + ".out.jpg"
+    try:
+        src.write(data)
+        src.close()
+        for q in (4, 7, 12):
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-i", src.name, "-vf",
+                 "scale='min(1536,iw)':'min(1536,ih)':"
+                 "force_original_aspect_ratio=decrease:flags=lanczos",
+                 "-q:v", str(q), dst_path],
+                capture_output=True, timeout=60)
+            if r.returncode == 0 and _os.path.exists(dst_path):
+                out = open(dst_path, "rb").read()
+                if len(out) <= 800 * 1024 or q == 12:
+                    return out, ".jpg"
+        return data, ext
+    except Exception:  # noqa: BLE001
+        return data, ext
+    finally:
+        for pth in (src.name, dst_path):
+            try:
+                _os.remove(pth)
+            except OSError:
+                pass
 STYLE_ASSET_MAX = int(os.environ.get("STYLE_ASSET_MAX_MB", "40")) * 1024 * 1024
 _STYLE_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
               "video/mp4": ".mp4", "text/plain": ".txt", "text/markdown": ".md"}
@@ -748,6 +780,77 @@ def _asset_dict(core, a: StyleAsset) -> dict:
             "title": a.title or "", "note": a.note or ""}
 
 
+# ─── Вид стиля: "style" (наш) или "reference" (авторский пресет по чужому
+# ролику/инсте). Организация каталога админки, на генерацию не влияет.
+# Живёт в AppSetting одним JSON — колонка в style_override потребовала бы
+# миграции, а грабли DDL при деплое известны (docs: deploy-lock).
+_STYLE_META_KEY = "style_meta"
+_INSTA_RE = re.compile(r"instagram\.com|/reel|инстаграм|инста|reels", re.I)
+
+
+def _style_meta(db: Session) -> dict:
+    row = db.get(AppSetting, _STYLE_META_KEY)
+    try:
+        v = json.loads(row.value) if row and row.value else {}
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _style_meta_save(db: Session, meta: dict) -> None:
+    row = db.get(AppSetting, _STYLE_META_KEY)
+    if not row:
+        row = AppSetting(key=_STYLE_META_KEY, value="{}")
+        db.add(row)
+    row.value = json.dumps(meta, ensure_ascii=False)
+    db.commit()
+
+
+def _style_meta_defaults(db: Session, pc) -> dict:
+    """Первый запуск: reference — стили, в чьих данных есть инста-ссылки.
+    Остальное остаётся style; ручной переключатель в карточке."""
+    meta = {}
+    for key in pc.STYLE_KEYS:
+        card = pc.public_style(key) or {}
+        blob = json.dumps(card, ensure_ascii=False)
+        blob += " " + (pc.style_prompt(key) or "")
+        notes = " ".join((a.note or "") + " " + (a.title or "")
+                         for a in db.query(StyleAsset)
+                         .filter(StyleAsset.style_key == key).all())
+        m = _INSTA_RE.search(blob + " " + notes)
+        if m:
+            meta[key] = {"kind": "reference"}
+            url = re.search(r"https?://\S*instagram\.com\S*", blob + " " + notes)
+            if url:
+                meta[key]["source_url"] = url.group(0).rstrip('",)')
+    _style_meta_save(db, meta)
+    return meta
+
+
+@router.post("/api/admin/styles/{key}/meta")
+async def admin_style_meta(key: str, request: Request,
+                           user: User = Depends(admin_user),
+                           db: Session = Depends(db_session)):
+    """Вид (style|reference) и ссылка на исходник. Каталог не трогает."""
+    core = _core()
+    if key not in core.prompts_catalog.STYLE_KEYS:
+        raise HTTPException(404, "нет такого стиля")
+    body = await request.json() if await request.body() else {}
+    meta = _style_meta(db)
+    cur = dict(meta.get(key) or {})
+    if "kind" in body:
+        want = str(body["kind"] or "style")
+        if want not in ("style", "reference"):
+            raise HTTPException(400, "kind: style|reference")
+        cur["kind"] = want
+    if "source_url" in body:
+        cur["source_url"] = str(body["source_url"] or "")[:500]
+    meta[key] = cur
+    _style_meta_save(db, meta)
+    _log_action(db, user, 0, "style_meta", {"key": key, **cur})
+    return {"ok": True, "key": key, **cur}
+
+
 @router.get("/api/admin/styles")
 def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_session)):
     """Список стилей с пометкой «изменён». Промптов здесь нет — они едут
@@ -756,6 +859,9 @@ def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_sess
     pc = core.prompts_catalog
     uses = core._style_uses(db)
     overridden = set(pc.overlay_keys())
+    meta = _style_meta(db)
+    if not meta and not db.get(AppSetting, _STYLE_META_KEY):
+        meta = _style_meta_defaults(db, pc)
     assets: dict[str, int] = {}
     for (skey, cnt) in (db.query(StyleAsset.style_key, func.count(StyleAsset.id))
                         .group_by(StyleAsset.style_key).all()):
@@ -774,6 +880,8 @@ def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_sess
             "assets": assets.get(key, 0),
             "has_story_base": bool(pc.style_story_base(key)),
             "uses": uses.get(key, 0),
+            "skind": (meta.get(key) or {}).get("kind", "style"),
+            "source_url": (meta.get(key) or {}).get("source_url", ""),
         })
     return {
         "styles": rows,
@@ -814,6 +922,8 @@ def admin_style_card(key: str, user: User = Depends(admin_user),
         "builtin_card": pc.builtin_style(key) or {},
         "assets": [_asset_dict(core, a) for a in assets],
         "asset_kinds": list(STYLE_ASSET_KINDS),
+        "skind": (_style_meta(db).get(key) or {}).get("kind", "style"),
+        "source_url": (_style_meta(db).get(key) or {}).get("source_url", ""),
     }
 
 
@@ -930,6 +1040,11 @@ async def admin_style_asset_add(key: str, request: Request,
            or ".bin")
     if ext not in (".jpg", ".jpeg", ".png", ".webp", ".mp4", ".txt", ".md"):
         raise HTTPException(400, f"такой формат не берём: {ext}")
+    # Референсы в генерацию жмём НА СЕРВЕРЕ: длинная сторона до 1536,
+    # jpeg (kie не ест webp), потолок ~800КБ. Pillow в образе нет — ffmpeg,
+    # он тут и так главный обработчик картинок (см. mediagen).
+    if kind == "ref" and ext in (".jpg", ".jpeg", ".png", ".webp"):
+        data, ext = _compress_ref_image(data, ext)
     fname = f"style_{key}_{int(time.time())}_{os.urandom(4).hex()}{ext}"
     path = os.path.join(core.STYLE_ASSETS_DIR, fname)
     with open(path, "wb") as f:

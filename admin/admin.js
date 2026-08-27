@@ -73,6 +73,8 @@
       sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
     { id: "styles", ico: "🎨", title: "Стили",
       sub: "Промпт, референсы, файлы и сценарная база каждого стиля. Промпты закрыты: наружу уходят только подпись и описание." },
+    { id: "refstyles", ico: "📎", title: "Референсы",
+      sub: "Авторские пресеты по чужим роликам (инста/рилс). Те же карточки и промпты, плюс ссылка на исходник; в генерации работают как обычные стили, на витрине пользователей ничего не меняется." },
     { id: "design", ico: "🎨", title: "Дизайн",
       sub: "Живые токены дизайн-системы: огненный градиент, фон, стекло. Меняются без переката — theme.css отдаёт их поверх стилей." },
     { id: "market", ico: "🌍", title: "Рынок",
@@ -421,34 +423,65 @@
   let styleKey = null;
   let styleTab = "card";
   let styleCatalog = null;
+  let styleSkind = "style";   // "style" | "reference" — какой раздел открыт
+  let styleQuery = "";
 
-  async function renderStyles(box) {
+  async function renderStyles(box, skind) {
+    if (skind) styleSkind = skind;
+    const isRef = styleSkind === "reference";
     try {
       styleCatalog = await api("/api/admin/styles");
+      const rows = styleCatalog.styles
+        .filter((s) => (s.skind || "style") === styleSkind);
       box.innerHTML = `
         ${styleCatalog.problems.length ? `<div class="adm-card adm-err">
           Каталог не сходится: ${esc(styleCatalog.problems.slice(0, 4).join("; "))}
         </div>` : ""}
-        <div class="adm-split">
-          <div class="adm-card">
-            <h3>Стили <span class="adm-count">${styleCatalog.styles.length}</span></h3>
+        <div class="adm-split s-split">
+          <div class="adm-card s-side">
+            <h3>${isRef ? "Референсы" : "Стили"} <span class="adm-count">${rows.length}</span></h3>
+            <input type="search" class="s-search" placeholder="поиск…" value="${esc(styleQuery)}" />
             <div class="adm-list s-list"></div>
           </div>
           <div class="s-editor"></div>
         </div>`;
       const list = $(".s-list", box);
-      styleCatalog.styles.forEach((s) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "adm-item" + (s.key === styleKey ? " on" : "");
-        b.innerHTML = `<span>${esc((s.label && s.label.ru) || s.key)}</span>
-          <span class="adm-mark">${s.overridden ? "изменён" : ""}${s.builtin ? "" : " свой"}</span>`;
-        b.addEventListener("click", () => { styleKey = s.key; renderStyles(box); });
-        list.appendChild(b);
-      });
-      if (styleKey) styleEditor($(".s-editor", box), styleKey);
-      else $(".s-editor", box).innerHTML =
-        '<div class="adm-card muted">выбери стиль слева</div>';
+      const paintList = () => {
+        list.innerHTML = "";
+        const q = styleQuery.trim().toLowerCase();
+        rows.filter((s) => !q
+          || ((s.label && s.label.ru) || "").toLowerCase().includes(q)
+          || ((s.label && s.label.en) || "").toLowerCase().includes(q)
+          || s.key.toLowerCase().includes(q))
+          .forEach((s) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "adm-item" + (s.key === styleKey ? " on" : "");
+            b.innerHTML = `<span>${esc((s.label && s.label.ru) || s.key)}</span>
+              <span class="adm-mark">${s.overridden ? "изменён" : ""}${s.builtin ? "" : " свой"}${
+                s.assets ? ` · ${s.assets}📎` : ""}</span>`;
+            b.addEventListener("click", () => { styleKey = s.key; renderStyles(box); });
+            list.appendChild(b);
+          });
+        if (!list.children.length)
+          list.innerHTML = '<span class="muted" style="padding:8px">ничего не нашлось</span>';
+      };
+      paintList();
+      const search = $(".s-search", box);
+      search.addEventListener("input", () => { styleQuery = search.value; paintList(); });
+      if (styleKey && rows.some((s) => s.key === styleKey)) {
+        styleEditor($(".s-editor", box), styleKey);
+      } else {
+        styleKey = null;
+        $(".s-editor", box).innerHTML = `
+          <div class="adm-card s-empty">
+            <span class="s-empty-ico">${isRef ? "📎" : "🎨"}</span>
+            <b>${isRef ? "Выбери референс слева" : "Выбери стиль слева"}</b>
+            <span class="muted">${isRef
+              ? "Авторские пресеты по чужим роликам: промпт, миниатюры-референсы и ссылка на исходник."
+              : "Промпт, описание, референсы сеткой и сценарная база — всё в одной карточке."}</span>
+          </div>`;
+      }
     } catch (e) { fail(box, e); }
   }
 
@@ -487,13 +520,43 @@
           <span class="adm-pill">${d.card.tier === "pro" ? "PRO" : "FREE"}</span>
           <span class="adm-pill">${d.card.prompt_class === "closed" ? "закрытый" : "разбираемый"}</span>
           ${d.overridden ? '<span class="adm-pill warn">изменён</span>' : ""}
+          <select class="s-skind adm-pill" title="Вид: стиль или референс (организация каталога, на генерацию не влияет)">
+            <option value="style" ${d.skind !== "reference" ? "selected" : ""}>стиль</option>
+            <option value="reference" ${d.skind === "reference" ? "selected" : ""}>референс</option>
+          </select>
           <span style="flex:1"></span>
           <span class="s-msg"></span>
           ${d.overridden && d.builtin ? '<button type="button" class="s-reset ghost">Вернуть заводской</button>' : ""}
         </div>
+        <div class="adm-row s-source-row">
+          <div class="adm-field" style="flex:1">
+            <label>Ссылка на исходник (рилс/пост, откуда снят пресет)</label>
+            <div class="adm-row">
+              <input type="url" class="s-source" placeholder="https://instagram.com/reel/…"
+                     value="${esc(d.source_url || "")}" style="flex:1" />
+              <button type="button" class="ghost s-source-save">Сохранить</button>
+              ${d.source_url ? `<a class="s-source-open" href="${esc(d.source_url)}"
+                target="_blank" rel="noopener">открыть ↗</a>` : ""}
+            </div>
+          </div>
+        </div>
         <div class="adm-tabs s-tabs" style="margin-top:12px"></div>
         <div class="s-body"></div>
       </div>`;
+    $(".s-skind", box).addEventListener("change", async (e) => {
+      try {
+        await api(`/api/admin/styles/${encodeURIComponent(key)}/meta`,
+                  { method: "POST", body: { kind: e.target.value } });
+        renderStyles(pane());
+      } catch (err) { alert(err.message); }
+    });
+    $(".s-source-save", box).addEventListener("click", async () => {
+      try {
+        await api(`/api/admin/styles/${encodeURIComponent(key)}/meta`,
+                  { method: "POST", body: { source_url: $(".s-source", box).value } });
+        styleEditor(box, key);
+      } catch (err) { alert(err.message); }
+    });
 
     const tabs = $(".s-tabs", box);
     S_TABS.forEach(([id, title]) => {
@@ -647,31 +710,81 @@
     ];
     body.innerHTML = groups.map(([kind, title, hint]) => {
       const items = (d.assets || []).filter((a) => a.kind === kind);
+      const massa = kind === "ref";
       return `<div class="adm-field">
-        <label>${esc(title)} — ${esc(hint)}</label>
+        <label>${esc(title)} — ${esc(hint)}${massa
+          ? ` · <b class="ref-count">${items.length}</b> референсов` : ""}</label>
         <div class="adm-assets">${items.map((a) => assetCard(a)).join("") ||
           '<span class="muted">пусто</span>'}</div>
+        ${massa ? `
+        <div class="ref-drop" data-kind="ref">
+          <b>Перетащи сюда картинки</b>
+          <span class="muted">или выбери файлы — можно сразу десятки; сервер сам ужмёт
+            до 1536px / jpeg / ~800КБ</span>
+          <input type="file" class="a-file ref-multi" data-kind="ref" multiple
+                 accept="image/jpeg,image/png,image/webp" />
+        </div>
+        <div class="ref-queue"></div>` : `
         <div class="adm-row" style="margin-top:8px">
           <input type="file" class="a-file" data-kind="${kind}" />
-        </div>
+        </div>`}
       </div>`;
     }).join("") + `<p class="adm-note">Персонаж всегда важнее стиля: стилевые референсы
       подмешиваются в кадр последними и не более двух. Иначе перерисовка вылечит один
       симптом и вернёт другой — «персонажи не похожи».</p>`;
 
-    $$(".a-file", body).forEach((inp) => inp.addEventListener("change", async () => {
-      const file = inp.files && inp.files[0];
-      if (!file) return;
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("kind", inp.dataset.kind);
-      if (inp.dataset.kind === "ref") fd.append("in_generation", "1");
-      try {
-        await api(`/api/admin/styles/${encodeURIComponent(key)}/assets`,
-                  { method: "POST", body: fd });
-        styleEditor(body.closest(".s-editor") || pane(), key);
-      } catch (e) { alert(e.message); }
+    // Очередь массовой загрузки: файлы уходят по одному, у каждого своя
+    // строка со статусом; страница перерисовывается один раз в конце.
+    const uploadMany = async (files, kind) => {
+      const queue = $(".ref-queue", body);
+      const rows = new Map();
+      if (queue) {
+        queue.innerHTML = "";
+        files.forEach((f, i) => {
+          const r = document.createElement("div");
+          r.className = "ref-q-row";
+          r.innerHTML = `<span>${esc(f.name.slice(0, 40))}</span><i>в очереди…</i>`;
+          queue.appendChild(r);
+          rows.set(i, r.querySelector("i"));
+        });
+      }
+      for (let i = 0; i < files.length; i += 1) {
+        const st = rows.get(i);
+        if (st) st.textContent = "загружаю…";
+        const fd = new FormData();
+        fd.append("file", files[i]);
+        fd.append("kind", kind);
+        if (kind === "ref") fd.append("in_generation", "1");
+        try {
+          await api(`/api/admin/styles/${encodeURIComponent(key)}/assets`,
+                    { method: "POST", body: fd });
+          if (st) { st.textContent = "✓"; st.className = "adm-ok"; }
+        } catch (e) {
+          if (st) { st.textContent = "✗ " + (e.message || ""); st.className = "adm-err"; }
+        }
+      }
+      styleEditor(body.closest(".s-editor") || pane(), key);
+    };
+    $$(".a-file", body).forEach((inp) => inp.addEventListener("change", () => {
+      const files = Array.from(inp.files || []);
+      if (files.length) uploadMany(files, inp.dataset.kind);
     }));
+    const drop = $(".ref-drop", body);
+    if (drop) {
+      ["dragover", "dragenter"].forEach((ev) => drop.addEventListener(ev, (e) => {
+        e.preventDefault();
+        drop.classList.add("over");
+      }));
+      ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => {
+        e.preventDefault();
+        drop.classList.remove("over");
+      }));
+      drop.addEventListener("drop", (e) => {
+        const files = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
+          .filter((f) => /^image\//.test(f.type));
+        if (files.length) uploadMany(files, "ref");
+      });
+    }
     $$(".a-del", body).forEach((b) => b.addEventListener("click", async () => {
       if (!confirm("Удалить файл?")) return;
       try {
@@ -963,7 +1076,9 @@
 
   const RENDER = {
     stats: renderStats, users: renderUsers, broadcast: renderBroadcast,
-    payouts: renderPayouts, ledger: renderLedger, styles: renderStyles,
+    payouts: renderPayouts, ledger: renderLedger,
+    styles: (box) => renderStyles(box, "style"),
+    refstyles: (box) => renderStyles(box, "reference"),
     models: renderModels, pricing: renderPricing, market: renderMarket,
     design: renderDesign,
     settings: renderSettings,

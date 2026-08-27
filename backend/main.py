@@ -6672,11 +6672,15 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
         if item:
             return item[0]
         return scene_refs[0] if scene_refs else None
+    # Референсы стиля (StyleAsset, in_generation=1) доезжают и до шлюзов:
+    # последним слотом коллажа, персонажи всегда важнее по местам.
+    style_tail = _style_ref_paths(scene.track)[:1]
     if scene_refs:
         models = _character_model_paths(
             chars or [c for c in project.characters if c.is_main], 4, prefer_photo=True)
         # Реф первым: первая картинка коллажа для генератора — главная.
-        return _ref_collage(db, [scene_refs[0], *models], project.owner_id) or scene_refs[0]
+        return (_ref_collage(db, [scene_refs[0], *models, *style_tail],
+                             project.owner_id) or scene_refs[0])
 
     attr_path = _scene_attribute_photo(scene, chars)
     if attr_path:
@@ -6686,10 +6690,11 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     # Лимит по движку: Nano Banana 2 берёт 14 картинок, Pro — 8, шлюз — 1.
     paths = _character_model_paths(chars, 6, prefer_photo=True)
     if not paths:
-        return None
+        return (_ref_collage(db, style_tail, project.owner_id) or style_tail[0]) \
+            if style_tail else None
     # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
     # бок, иначе генератор видит только первого и рисует остальных от балды.
-    return _ref_collage(db, paths, project.owner_id) or paths[0]
+    return _ref_collage(db, [*paths, *style_tail], project.owner_id) or paths[0]
 
 
 def _reference_legend(scene: Scene, project: Project) -> str:
@@ -6774,11 +6779,17 @@ def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[
     # одну болезнь и вернёт вторую — «персонажи не похожи», которую только
     # что чинили.
     style_refs = _style_ref_paths(scene.track)
+    # До ШЕСТИ случайных референсов стиля (по свободным слотам): чем больше
+    # ракурсов эстетики видит Nano Banana, тем меньше он её выдумывает.
+    # Случайные, а не первые — чтобы кадры трека не липли к одной картинке.
+    if len(style_refs) > 6:
+        import random as _rnd
+        style_refs = _rnd.sample(style_refs, 6)
     # Дедуп с сохранением порядка + потолок по самому скупому Nano Banana (8).
     seen: set[str] = set()
     uniq = [p for p in out if not (p in seen or seen.add(p))]
     room = max(0, 8 - len(uniq))
-    for p in style_refs[:2]:
+    for p in style_refs[:6]:
         if room <= 0:
             break
         if p not in seen:

@@ -201,3 +201,39 @@
 }
 .adm-sw input:checked + i { background: linear-gradient(95deg,#e0503a,#f0913c); }
 .adm-sw input:checked + i::before { transform: translateX(14px); }
+
+/* ─────────── Стили/Референсы v132: двухколонник, поиск, масс-загрузка ─────────── */
+.s-split { align-items: flex-start; }
+.s-side { position: sticky; top: 12px; max-height: calc(100vh - 40px); overflow-y: auto; }
+.s-search {
+  width: 100%; margin: 8px 0 10px; padding: 7px 11px;
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 12px;
+  background: var(--inset); font: inherit; color: var(--text);
+}
+.adm-item.on {
+  background: var(--fire-ink); color: var(--on-fire);
+  border-color: rgba(var(--ink-rgb), .12);
+}
+.adm-item.on .adm-mark { color: var(--on-fire); opacity: .8; }
+.s-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 48px 24px; text-align: center;
+}
+.s-empty-ico { font-size: 2.2rem; }
+.s-skind { max-width: 130px; }
+.s-source-row { margin-top: 10px; }
+.s-source-open { align-self: center; white-space: nowrap; }
+.ref-drop {
+  margin-top: 10px; padding: 18px 16px; text-align: center;
+  border: 2px dashed rgba(var(--ink-rgb), .22); border-radius: 16px;
+  background: var(--inset); display: flex; flex-direction: column; gap: 4px;
+  align-items: center;
+}
+.ref-drop.over { border-color: var(--border-bright); background: var(--gold-wash); }
+.ref-drop input[type="file"] { margin-top: 8px; }
+.ref-queue { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+.ref-q-row {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 12px; padding: 3px 8px; border-radius: 8px; background: var(--inset);
+}
+.ref-q-row i { font-style: normal; color: var(--ink-muted); }
