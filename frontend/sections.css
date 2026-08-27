@@ -86,7 +86,7 @@
   border-color: rgba(45, 33, 26, .55);
   background: transparent;
 }
-.topbar.has-sections .tb-sec[data-sec="trends"] { text-transform: lowercase; }
+/* «Тренды» писались строчными — единственный пункт с чужим регистром. */
 .topbar.has-sections .tb-sec:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 1px;
@@ -288,7 +288,7 @@
   .topbar.has-sections > .tb-modeline { order: 3; flex: 1 1 100%; }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 700px) {
   /* Телефон: шапка ОДНОЙ строкой. Лента прокручивается пальцем, личный блок
      ужимается до бейджа токенов и языка — кнопки «Кабинет» и «Мастерская»
      уже стоят в ленте, и дублировать их справа незачем. */
