@@ -465,7 +465,7 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .storyboard-block, .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
 .storyboard-box, .media-box {
-  background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.4); border-radius: 20px;
+  background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.18); border-radius: 20px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 /* Лист — контрольный отпечаток фиксированной высоты, а не полотно во всю
@@ -2208,8 +2208,12 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
    сингл, где второй трек создать нельзя в принципе. */
 .add-track-panel { margin-top: 4px; }
 .add-track-panel .add-track {
-  border: 1px solid rgba(var(--ink-rgb), .3); border-radius: 20px;
-  padding: 12px 14px; background: rgba(255, 255, 255, .5);
+  border: 1px solid rgba(var(--ink-rgb), .18); border-radius: 20px;
+  corner-shape: squircle; padding: 12px 14px;
+  /* Было rgba(255,255,255,.5) — в ночи это молочная плита во всю ширину
+     студии. Токен вместо константы: белый есть только в светлой теме. */
+  background: color-mix(in srgb, var(--card-solid) 55%, transparent);
+  backdrop-filter: blur(10px);
 }
 .add-track-panel .add-track > summary {
   cursor: pointer; list-style: none; font-weight: 800; font-size: 13.5px;
@@ -3936,6 +3940,11 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
     border: 1px solid rgba(var(--ink-rgb), .12);
   }
   .stage-jump::-webkit-scrollbar { display: none; }
+  .stage-jump:empty { display: none; }
+  body:has(#app.trends-view) #stage-jump,
+  body:has(#chat:not(.hidden)) #stage-jump,
+  body:has(#music:not(.hidden)) #stage-jump,
+  body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
   /* Контенту — воздух под нижним меню, чтобы последние кнопки не прятались */
   #app { padding-bottom: 84px; }
 }
@@ -3989,7 +3998,14 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   /* Пустой тумблер — это стеклянная пилюля ни о чём: пока этапов нет
      (школа, тренды, маркетинг, ещё не выбранный трек), панели нет вовсе. */
   .stage-jump:empty { display: none; }
-  .trends-view .stage-jump { display: none; }
+  /* Тумблер живёт в body, а не внутри #app (иначе backdrop-filter шапки
+     прибивает его к ней), поэтому «спрятать на страницах без этапов»
+     пишется через :has — иначе он повисает поверх школы и трендов. */
+  body:has(#app.trends-view) #stage-jump,
+  body:has(#app.chat-view) #stage-jump,
+  body:has(#chat:not(.hidden)) #stage-jump,
+  body:has(#music:not(.hidden)) #stage-jump,
+  body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
   .trends-view#app, #app.trends-view { padding-left: 0; }
   /* Генератор шириной во весь экран: этапов там нет, а поле слева съело бы
      колонку лент. */
