@@ -2483,6 +2483,25 @@ def auth_config():
     }
 
 
+def _relink_allowed(db: Session, holder: User) -> bool:
+    """Можно ли забрать телеграм у аккаунта holder.
+
+    Только у «пустышки»: без логина, почты и телефона, без единой сцены и без
+    купленных токенов. Такие аккаунты плодит сам мини-апп при первом открытии,
+    и держать на них привязку — значит навсегда развести человека с его работой.
+    """
+    if holder.login or holder.email or holder.phone:
+        return False
+    # 150 — стартовый баланс нового аккаунта (db.User.gen_points): больше него
+    # значит человек покупал токены, и такой аккаунт «пустышкой» не считается.
+    if int(holder.gen_points or 0) > 150:
+        return False
+    scenes = (db.query(Scene).join(Track, Scene.track_id == Track.id)
+              .join(Project, Track.project_id == Project.id)
+              .filter(Project.owner_id == holder.id).count())
+    return scenes == 0
+
+
 @app.post("/api/auth/telegram")
 async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(db_session)):
     """Telegram Login Widget: сверяем подпись данных токеном бота (HMAC-SHA256),
@@ -2529,6 +2548,27 @@ async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(d
         user.avatar_url = str(data.get("photo_url") or "")
         db.commit()
         db.refresh(user)
+    elif guest and guest.id != user.id and _relink_allowed(db, user):
+        # ПЕРЕПРИВЯЗКА. Телеграм часто «застревает» на пустом аккаунте, который
+        # завёлся сам при первом открытии мини-аппа: человек потом работает под
+        # своим настоящим и получает «этот телеграм уже привязан к другому».
+        # Если тот аккаунт пустой (без логина/почты/телефона и без работы), он
+        # уступает привязку текущему — с записью в журнал изменений.
+        _log_change(db, "user", user.id, "tg_relink",
+                    old_value=f"user {user.id}", new_value=f"user {guest.id}")
+        user.tg_id = None
+        user.tg_username = None
+        db.flush()
+        guest.tg_id = tg_id
+        guest.tg_username = str(data.get("username") or "")
+        if not guest.avatar_url:
+            guest.avatar_url = str(data.get("photo_url") or "")
+        db.commit()
+        user = guest
+    elif guest and guest.id != user.id and (guest.login or guest.email or guest.phone):
+        # Настоящий аккаунт с наработками телеграм не отбирает молча.
+        raise HTTPException(409, "этот Telegram уже привязан к другому аккаунту "
+                                 "с проектами — войди под ним или отвяжи там")
     else:
         user = _adopt_guest(db, guest, user)
     # Ава обновляется и у существующего аккаунта: photo_url приходит с каждым
