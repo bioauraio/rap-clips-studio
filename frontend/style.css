@@ -2082,10 +2082,8 @@ button.primary:hover:not(:disabled) {
   .chat-main { border-radius: 20px; }
   .chat-head { padding: 8px 10px; }
   /* Строка действий под результатом — компактные кнопки, без разброса. */
-  .chat-msg .row, .mk-acts { flex-wrap: wrap; gap: 4px; }
-  .chat-msg .row button, .mk-acts button, .chat-msg .row .mk-dl {
-    font-size: 11px; padding: 4px 8px;
-  }
+  .chat-msg-bar { gap: 3px; }
+  .chat-msg-bar button, .chat-msg-bar .mk-dl { font-size: 11px; padding: 3px 7px; }
 }
 
 /* ════════════ ОНБОРДИНГ FREE: чеклист «первый клип» ════════════
