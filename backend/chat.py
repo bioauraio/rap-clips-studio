@@ -47,8 +47,8 @@ from sqlalchemy.orm import Session
 import mediagen
 import refs as refs_mod
 from db import (
-    Chat, ChatFile, ChatMessage, Character, CharacterPhoto, FileOwner,
-    Project, Scene, SceneRef, SessionLocal, User, now,
+    Chat, ChatFile, ChatMemory, ChatMessage, Character, CharacterPhoto,
+    FileOwner, Project, Scene, SceneRef, SessionLocal, User, now,
 )
 
 log = logging.getLogger("rapclips.chat")
@@ -1493,6 +1493,101 @@ def _owned_project(user: User, project) -> bool:
     return bool(project and project.owner_id == user.id)
 
 
+# ─────────────────────────── ПАМЯТЬ АГЕНТА ───────────────────────────
+# Агент без памяти каждый раз знакомится заново: человек в третий раз
+# объясняет, что снимает рэп на свои треки и терпеть не может неон. Память —
+# короткие факты о человеке, а не пересказ переписки: их видно списком в
+# правой панели и лишний удаляется одним нажатием.
+
+MEMORY_LIMIT = 40           # столько фактов держим; дальше вытесняем старые
+MEMORY_SYSTEM = (
+    "Ты выделяешь ДОЛГОВРЕМЕННЫЕ факты о человеке из его реплики агенту "
+    "студии клипов. Факт — то, что будет верно и через месяц: чем занимается, "
+    "что снимает, что любит и чего не выносит, как его зовут, чем работает. "
+    "НЕ факты: разовые просьбы, состояние проекта, вопросы, вежливость.\n"
+    "Ответь ТОЛЬКО JSON: {\"facts\": [\"...\"]} — от нуля до трёх фактов, "
+    "каждый до 120 знаков, по-русски. Нечего запоминать — пустой список."
+)
+
+
+def _memory_facts(db: Session, user: User) -> list[ChatMemory]:
+    return (db.query(ChatMemory).filter(ChatMemory.user_id == user.id)
+            .order_by(ChatMemory.id.desc()).limit(MEMORY_LIMIT).all())
+
+
+def _memory_block(db: Session, user: User) -> str:
+    rows = _memory_facts(db, user)
+    if not rows:
+        return ""
+    return ("\n\nПАМЯТЬ О ЧЕЛОВЕКЕ (из прошлых разговоров):\n"
+            + "\n".join(f"- {r.fact}" for r in reversed(rows)))
+
+
+async def _memory_learn(db: Session, user: User, text: str) -> None:
+    """Тихо запомнить 0–3 факта из реплики. Ошибка здесь НЕ ломает ответ:
+    память — удобство, а не условие работы агента."""
+    text = (text or "").strip()
+    if len(text) < 12:
+        return
+    try:
+        out, _ = await _ask_gateway([
+            {"role": "system", "content": MEMORY_SYSTEM},
+            {"role": "user", "content": text[:2000]},
+        ])
+        raw = (out or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1] if "```" in raw[3:] else raw.strip("`")
+            raw = raw[4:] if raw.lower().startswith("json") else raw
+        facts = [str(f).strip()[:120] for f in (json.loads(raw).get("facts") or [])]
+    except Exception:  # noqa: BLE001
+        return
+    have = {r.fact.lower() for r in _memory_facts(db, user)}
+    for f in facts[:3]:
+        if not f or f.lower() in have:
+            continue
+        db.add(ChatMemory(user_id=user.id, fact=f, created_at=now()))
+        have.add(f.lower())
+    db.commit()
+    # Вытеснение самых старых: сорок фактов — предел, за которым системный
+    # промпт распухает, а толку не прибавляется.
+    extra = (db.query(ChatMemory).filter(ChatMemory.user_id == user.id)
+             .order_by(ChatMemory.id.desc()).offset(MEMORY_LIMIT).all())
+    for row in extra:
+        db.delete(row)
+    if extra:
+        db.commit()
+
+
+@router.get("/api/chat/memory")
+def chat_memory(user: User = Depends(current_user),
+                db: Session = Depends(db_session)):
+    return {"facts": [{"id": r.id, "fact": r.fact,
+                       "created_at": r.created_at.isoformat() if r.created_at else ""}
+                      for r in _memory_facts(db, user)]}
+
+
+@router.post("/api/chat/memory")
+async def chat_memory_add(request: Request, user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    body = await _body(request)
+    fact = str(body.get("fact") or "").strip()[:120]
+    if not fact:
+        raise HTTPException(400, "пустой факт")
+    db.add(ChatMemory(user_id=user.id, fact=fact, created_at=now(), source="user"))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/chat/memory/{fact_id}")
+def chat_memory_del(fact_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    row = db.get(ChatMemory, fact_id)
+    if row and row.user_id == user.id:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
+
 @router.post("/api/chat/agent")
 async def chat_agent(request: Request, user: User = Depends(current_user),
                      db: Session = Depends(db_session)):
@@ -1512,7 +1607,7 @@ async def chat_agent(request: Request, user: User = Depends(current_user),
         if not state:
             raise HTTPException(400, "проект не найден — выбери его в шапке")
     messages = [
-        {"role": "system", "content": AGENT_SYSTEM},
+        {"role": "system", "content": AGENT_SYSTEM + _memory_block(db, user)},
         {"role": "user", "content":
             "СОСТОЯНИЕ ПРОЕКТА:\n"
             + json.dumps(state, ensure_ascii=False, indent=1)
@@ -1555,6 +1650,9 @@ async def chat_agent(request: Request, user: User = Depends(current_user),
             "project_id": _aid(a.get("project_id"), _aid(body.get("project_id"))),
             "prompt": str(a.get("prompt") or "")[:2000],
         })
+    # Запоминаем ПОСЛЕ ответа: человек ждёт план действий, а не второй поход
+    # в шлюз. Упавшая память ответ не портит — она внутри себя молчит.
+    await _memory_learn(db, user, text)
     return {"reply": str(data.get("reply") or "")[:2000], "actions": acts,
             "applied": applied, "provider": provider}
 

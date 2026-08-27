@@ -1694,6 +1694,67 @@ button.primary:hover:not(:disabled) {
 .cc-send { margin-left: auto; }
 .cc-note { font-size: 11px; margin: 8px 0 0; line-height: 1.4; }
 
+/* ─────── ОКНО ВВОДА — ГЛАВНЫЙ ГЕРОЙ ЭКРАНА ───────
+   Поле и его контролы живут в ОДНОЙ стеклянной капсуле, а не тремя ярусами
+   плоских блоков: в Генераторе всё начинается отсюда, и глаз обязан
+   находить это место первым. Ряд контролов — внутри капсулы, компактный:
+   вложение, модель с ценой, промты, улучшить, справа огненная «Отправить». */
+.chat-compose {
+  border-top: none; padding: 12px 16px 14px;
+}
+.chat-compose .cc-field,
+.chat-compose .cc-bar { position: relative; z-index: 1; }
+.chat-compose > .cc-field {
+  border-radius: 24px 24px 0 0;
+}
+.chat-compose .cc-field + .mk-error + .mk-enhanced + .cc-bar,
+.chat-compose .cc-bar { margin-top: 0; }
+.chat-compose {
+  /* Капсула: стекло + внутренний блик сверху. */
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--card-solid) 62%, transparent),
+    color-mix(in srgb, var(--card-warm) 48%, transparent));
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  border-radius: 26px; corner-shape: squircle;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5),
+              0 8px 26px rgba(var(--ink-rgb), .10);
+  margin: 0 12px 12px;
+}
+#cc-text {
+  margin-top: 0; padding: 12px 14px; font-size: 15px; min-height: 56px;
+  background: transparent; border: none; box-shadow: none; resize: none;
+}
+#cc-text:focus { outline: none; }
+.cc-bar { padding: 0 8px 6px; gap: 6px; }
+.cc-bar .mk-mini { font-size: 12px; padding: 5px 10px; }
+.cc-send { border-radius: 16px; corner-shape: squircle; }
+
+/* Правая панель: аккордеоны вместо простыни движков. */
+.mk-acc { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px; }
+.mk-acc > summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-muted); list-style: none;
+}
+.mk-acc > summary::-webkit-details-marker { display: none; }
+.mk-acc > summary b {
+  margin-left: auto; text-transform: none; letter-spacing: 0;
+  font-size: 12px; color: var(--accent-ink);
+}
+
+/* Память агента. */
+.mk-mem { display: flex; flex-direction: column; gap: 4px; }
+.mk-mem-row {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px;
+  line-height: 1.35; padding: 6px 8px; border-radius: 12px; corner-shape: squircle;
+  background: var(--inset);
+}
+.mk-mem-row span { flex: 1; min-width: 0; }
+.mk-mem-del { padding: 0 4px; font-size: 12px; box-shadow: none; color: var(--ink-muted); }
+.mk-mem-add { align-self: flex-start; font-size: 12px; box-shadow: none; }
+
 /* ══════════════════ МАСТЕРСКАЯ: три колонки ══════════════════
    Основное окно генерации. Всё, что ниже, — надстройка над разметкой чата:
    ни один прежний класс не переопределён, чтобы правка не расползлась на

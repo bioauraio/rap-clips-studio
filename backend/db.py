@@ -1444,6 +1444,22 @@ class AuthCode(Base):
     attempts = Column(Integer, nullable=False, default=0)
 
 
+class ChatMemory(Base):
+    """ПАМЯТЬ АГЕНТА О ЧЕЛОВЕКЕ. Одна строка — один факт («снимает рэп на
+    свои треки», «любит плёночное зерно», «работает под ником lol4»).
+
+    Почему отдельная таблица, а не «саммари последнего диалога»: факт живёт
+    дольше разговора и должен переживать удаление ленты. Почему короткие
+    факты, а не пересказ: их видно человеку списком, и лишний он удаляет
+    одним нажатием — пересказ так не почистишь."""
+    __tablename__ = "chat_memory"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    fact = Column(String, nullable=False, default="")
+    source = Column(String, nullable=False, default="agent")
+
+
 # ─────────────────────────── ШКОЛА: КУРСЫ ───────────────────────────
 # Уроки-маркдауны (learn.py) остаются как были — это SEO-витрина и база
 # знаний. Курсы — другое: их редактируют из интерфейса, у них модули,

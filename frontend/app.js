@@ -11791,15 +11791,24 @@ function mkGroupModel(box) {
     mkAfterModelChange();
   });
   let dead = "";
+  /* ТРИ АККОРДЕОНА, А НЕ ПРОСТЫНЯ. Раньше все модели трёх видов лежали
+     подряд одним полотном чипов: чтобы увидеть «Вариантов» и «Куда
+     положить», приходилось пролистать двадцать движков. Открыт тот раздел,
+     в котором стоит выбранная модель, — остальные свёрнуты и показывают
+     выбранное одной строкой. */
   [["text", "chat.optText"], ["image", "chat.optImage"], ["video", "chat.optVideo"]].forEach(([kind, key]) => {
     const items = chatState.models.filter((m) => m.kind === kind);
     if (!items.length) return;
-    const cap = document.createElement("div");
-    cap.className = "mk-group-title";
-    cap.style.marginTop = "6px";
-    cap.textContent = t(key);
-    g.appendChild(cap);
-    const chips = mkChips(g);
+    const det = document.createElement("details");
+    det.className = "mk-acc";
+    det.open = Boolean(model && model.kind === kind);
+    const sum = document.createElement("summary");
+    const picked = model && model.kind === kind ? model.title : "";
+    sum.innerHTML = `<span>${escHtml(t(key))}</span>`
+      + (picked ? `<b>${escHtml(picked)}</b>` : "");
+    det.appendChild(sum);
+    g.appendChild(det);
+    const chips = mkChips(det);
     items.forEach((m) => {
       const on = Boolean(model && m.id === model.id);
       // Закрытое тарифом ВИДНО — с ценой, замком и именем тарифа. Мёртвое по
@@ -12032,6 +12041,67 @@ function mkGroupTarget(box) {
   if (cur.target) mkWhy(g, t("make.targetKeeps"));
 }
 
+/* ПАМЯТЬ АГЕНТА в правой панели. Список фактов, которые он запомнил о
+   человеке, с крестиком у каждого. Память, которую нельзя посмотреть и
+   почистить, — это не память, а подслушивание: человек обязан видеть, что
+   именно о нём записано, и стирать лишнее сам. */
+function mkGroupMemory(box) {
+  const g = mkGroup(box, "make.grpMemory", false, null);
+  const title = $(".mk-group-title", g);
+  if (title && !t("make.grpMemory")) title.textContent = LANG === "ru" ? "Память" : "Memory";
+  const list = document.createElement("div");
+  list.className = "mk-mem";
+  list.textContent = t("common.loading");
+  g.appendChild(list);
+  const paint = (facts) => {
+    list.innerHTML = "";
+    if (!facts.length) {
+      const p = document.createElement("p");
+      p.className = "mk-why";
+      p.textContent = LANG === "ru"
+        ? "Пока ничего не запомнил — расскажи о себе агенту."
+        : "Nothing remembered yet — tell the agent about yourself.";
+      list.appendChild(p);
+    }
+    facts.forEach((f) => {
+      const row = document.createElement("div");
+      row.className = "mk-mem-row";
+      const sp = document.createElement("span");
+      sp.textContent = f.fact;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ghost mk-mem-del";
+      del.textContent = "✕";
+      del.addEventListener("click", async () => {
+        await api(`/api/chat/memory/${f.id}`, { method: "DELETE" });
+        load();
+      });
+      row.append(sp, del);
+      list.appendChild(row);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ghost mk-mem-add";
+    add.textContent = LANG === "ru" ? "+ запомнить факт" : "+ remember a fact";
+    add.addEventListener("click", async () => {
+      const fact = window.prompt(LANG === "ru" ? "Что запомнить?" : "What to remember?");
+      if (!fact) return;
+      await api("/api/chat/memory", { method: "POST", body: { fact } });
+      load();
+    });
+    list.appendChild(add);
+  };
+  const load = async () => {
+    try {
+      const res = await api("/api/chat/memory");
+      paint(res.facts || []);
+    } catch (e) {
+      list.textContent = "";                 // гостю память не положена
+    }
+  };
+  load();
+}
+
 function mkAnyChanged() {
   const model = chatCurrentModel();
   if (!model) return false;
@@ -12077,6 +12147,7 @@ function mkRenderParams() {
   mkGroupDuration(box);
   mkGroupVariants(box);
   mkGroupTarget(box);
+  mkGroupMemory(box);
 
   const resetAll = chatEl("mk-reset-all");
   if (resetAll) {
