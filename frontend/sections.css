@@ -143,6 +143,47 @@
               0 2px 12px rgba(0, 0, 0, .35);
 }
 
+/* ─────── ПРАВЫЙ КРАЙ ШАПКИ: ОДИН РОСТ, ОДНО СТЕКЛО ───────
+   На тёмной теме он расползался: капсулы разной высоты, EN/RU в толстой
+   белой обводке (border: 1px solid var(--ink) — а --ink в ночи светлый),
+   бейдж токенов своей заливки, шестерёнка отдельной кнопкой. Приводим всё
+   к одному: высота 34, стеклянный фон, волосяная рамка, один радиус. */
+.topbar.has-sections .tb-user { gap: 8px; align-items: center; flex-wrap: nowrap; }
+.topbar.has-sections .tb-user > .theme-switch,
+.topbar.has-sections .tb-user > .lang-switch,
+.topbar.has-sections .tb-user > .points-badge,
+.topbar.has-sections .tb-user > .account-btn,
+.topbar.has-sections .tb-modeline .mode-badge,
+.topbar.has-sections .tb-modeline .project-select,
+.topbar.has-sections .tb-modeline .tb-new,
+.topbar.has-sections .tb-modeline .tb-copy {
+  height: 34px; min-height: 34px; padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; corner-shape: squircle;
+  border: 1px solid rgba(var(--ink-rgb), .12);
+  background: color-mix(in srgb, var(--card-solid) 52%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
+}
+.topbar.has-sections .tb-user > .theme-switch,
+.topbar.has-sections .tb-user > .lang-switch { padding: 0 3px; gap: 1px; }
+.topbar.has-sections .tb-user .theme-switch button,
+.topbar.has-sections .tb-user .lang-switch button {
+  height: 26px; border: none; box-shadow: none; background: transparent;
+  border-radius: 999px; color: var(--ink-muted);
+}
+/* Активный язык и тема — мягкая подложка, а НЕ чёрная/белая обводка. */
+.topbar.has-sections .tb-user .theme-switch button.on,
+.topbar.has-sections .tb-user .lang-switch button.on,
+.topbar.has-sections .tb-user .lang-switch button.on:hover:not(:disabled) {
+  background: rgba(var(--ink-rgb), .12); color: var(--text);
+  border: none; box-shadow: none;
+}
+.topbar.has-sections .tb-user > .points-badge { padding-left: 30px; }
+.topbar.has-sections .tb-modeline .tb-new,
+.topbar.has-sections .tb-modeline .tb-copy { width: 34px; padding: 0; }
+
 /* Меню профиля: «выйти» и «админка» ушли с правого края шапки сюда. */
 .tb-user { position: relative; }
 .tb-pmenu {
@@ -160,7 +201,8 @@
 .tb-pitem:hover { background: var(--inset); }
 /* Кнопка выхода и «сохранить аккаунт» живут в меню, а не в строке. */
 .topbar.has-sections #logout-btn,
-.topbar.has-sections #save-account-btn { display: none; }
+.topbar.has-sections #save-account-btn,
+.topbar.has-sections #admin-btn { display: none; }
 /* Подложку двигает sections.js (moveIndicator). Она под кнопками, поэтому
    z-index у неё 0, а у кнопок — 1: без этого огонь накрыл бы подпись. */
 .tb-seg-ind {
@@ -875,13 +917,10 @@
   .topbar.has-sections .tb-sections .tb-sec { font-size: 12.5px; padding: 0 9px; }
 }
 
-@media (max-width: 480px) {
-  /* «Админка» на телефоне возвращается: её убирали потому, что переполненная
-     строка выдавливала соседей влево поверх «+ проект». В прокручиваемой
-     ленте выдавливать нечего. Класс .hidden (у него !important) по-прежнему
-     сильнее — не-администратор её не увидит. */
-  .topbar.has-sections #admin-btn { display: inline-flex; }
-}
+/* «Админка» больше НЕ кнопка в строке — ни на телефоне, ни на десктопе:
+   она пункт меню профиля (см. profileMenu в sections.js). Отдельная
+   шестерёнка ела место в правом краю ради входа, которым пользуются раз в
+   день, и ломала общий ряд капсул. */
 
 /* ═══════════ БАЗА ПРОМТОВ: сценарии · сцены · движение · свет ═══════════
    Четыре вкладки, поиск, группы, карточки и полоса сборки внизу листа.

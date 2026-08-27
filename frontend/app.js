@@ -3751,6 +3751,9 @@ async function autoAssembleTick() {
 }
 
 function fmtTime(sec) {
+  // Секунды приходят и дробными (длительность видео, метки таймлайна) —
+  // без округления наружу утекал хвост вида 30.439999999999998.
+  sec = Math.round(Number(sec) || 0);
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
