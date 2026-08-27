@@ -7255,6 +7255,7 @@ function renderScene(s, audioEl, mode = "board") {
   }
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
+  renderCameraRow(card, s);
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
   {
     // Меню «⋯»: закрывается кликом мимо и Esc — оставлять его открытым,
@@ -8237,6 +8238,101 @@ async function deleteScene(id) {
   if (!confirm(t("scene.delConfirm"))) return;
   await api(`/api/scenes/${id}`, { method: "DELETE" });
   await loadProject();
+}
+
+/* ── Камера-пресеты в карточке кадра ──
+   6 карточек с CSS-анимацией, имитирующей само движение (маска + сдвиг
+   фона). Клик пишет ПОЛНЫЙ промпт пресета в motion_prompt и camera_move.
+   Кэш общий на сессию: каталог одинаков для всех кадров. */
+let cameraPresetsCache = null;
+
+async function cameraPresets() {
+  if (cameraPresetsCache) return cameraPresetsCache;
+  try {
+    const d = await api("/api/cameras");
+    cameraPresetsCache = d.cameras || [];
+  } catch (e) {
+    cameraPresetsCache = [];
+  }
+  return cameraPresetsCache;
+}
+
+const CAM_FALLBACK_ICO = { slider: "🎞", vehicle: "🚗", drone: "🛸",
+                           truck: "⬅", orbit: "🚁", crane: "🏗" };
+
+function camFillSlots(text, s) {
+  const who = (s.characters || "").split(",").map((x) => x.trim()).filter(Boolean);
+  return String(text || "")
+    .replace(/\{character\}/g, who[0] || "the subject")
+    .replace(/\{location\}/g, "the location of this scene");
+}
+
+function renderCameraRow(card, s) {
+  const box = $(".s-cameras", card);
+  if (!box) return;
+  cameraPresets().then((cams) => {
+    if (!cams.length) return;
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    cams.forEach((cam) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cam-card cam-anim-" + (cam.anim || "none");
+      btn.title = (cam.desc || "") + (cam.locked ? " · PRO" : "");
+      const filled = cam.locked ? "" : camFillSlots(cam.text, s);
+      // Подсветка выбранного: промпт кадра начинается с текста пресета.
+      const cur = (s.motion_prompt || "").trim();
+      if (filled && cur && cur.startsWith(filled.slice(0, 60))) btn.classList.add("on");
+      const th = document.createElement("span");
+      th.className = "cam-thumb";
+      const bg = document.createElement("i");
+      if (cam.preview_url) {
+        bg.style.backgroundImage = `url("${cam.preview_url}")`;
+      } else {
+        bg.className = "cam-noimg";
+        bg.textContent = CAM_FALLBACK_ICO[cam.anim] || "🎥";
+      }
+      th.appendChild(bg);
+      // Несколько референсов на пресет: hover листает их по кругу.
+      const urls = cam.preview_urls || [];
+      if (urls.length > 1) {
+        let idx = 0;
+        let timer = null;
+        btn.addEventListener("mouseenter", () => {
+          timer = setInterval(() => {
+            idx = (idx + 1) % urls.length;
+            bg.style.backgroundImage = `url("${urls[idx]}")`;
+          }, 1400);
+        });
+        btn.addEventListener("mouseleave", () => {
+          clearInterval(timer);
+          idx = 0;
+          bg.style.backgroundImage = `url("${urls[0]}")`;
+        });
+      }
+      btn.appendChild(th);
+      const nm = document.createElement("span");
+      nm.className = "cam-name";
+      nm.textContent = cam.label || cam.key;
+      btn.appendChild(nm);
+      btn.addEventListener("click", async () => {
+        if (cam.locked) { alert(t("promptbase.locked") || "PRO"); return; }
+        const ta = $(".s-motion", card);
+        if (ta) ta.value = filled;
+        Array.from(box.children).forEach((c) => c.classList.toggle("on", c === btn));
+        try {
+          await api(`/api/scenes/${s.id}`, { method: "PATCH", body: {
+            motion_prompt: filled, camera_move: cam.camera || "",
+          }});
+          s.motion_prompt = filled;
+          s.camera_move = cam.camera || "";
+          const cm = $(".s-camera", card);
+          if (cm) cm.value = s.camera_move;
+        } catch (e) { fail(e); }
+      });
+      box.appendChild(btn);
+    });
+  });
 }
 
 async function genSceneFrames(id, which = "first", engine = "") {

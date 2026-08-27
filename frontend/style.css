@@ -4458,3 +4458,31 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
 
 /* Кнопка перегенерации кадра в модалке разложения листа. */
 .cell-regen { font-size: 10.5px; padding: 3px 6px; margin-left: auto; white-space: nowrap; }
+
+/* ── Камера-пресеты в карточке кадра: живые карточки-иконки ──
+   Анимация превью имитирует само движение пресета (маска + сдвиг фона).
+   Медленный бесконечный loop 6-8с; prefers-reduced-motion выключает. */
+.s-cameras { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: thin; }
+.cam-card { flex: 0 0 74px; border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; cursor: pointer; background: var(--inset); padding: 0; text-align: center; }
+.cam-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cam-thumb { position: relative; display: block; width: 100%; aspect-ratio: 3/4; overflow: hidden; }
+.cam-thumb i { position: absolute; inset: -16%; display: flex; align-items: center;
+  justify-content: center; background-size: cover; background-position: center;
+  font-size: 22px; font-style: normal; }
+.cam-thumb i.cam-noimg { background: linear-gradient(160deg, rgba(45,33,26,.10), rgba(45,33,26,.28)); }
+.cam-name { display: block; font-size: 9.5px; line-height: 1.2; padding: 3px 4px 4px;
+  color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes camSlider  { from { transform: translateX(5%) scale(1.05); } to { transform: translateX(-5%) scale(1.1); } }
+@keyframes camVehicle { from { transform: translateX(7%); } to { transform: translateX(-7%); } }
+@keyframes camDrone   { from { transform: scale(1) rotate(-2deg) translateY(3%); } to { transform: scale(1.24) rotate(2deg) translateY(-3%); } }
+@keyframes camTruck   { from { transform: translateX(8%); } to { transform: translateX(-8%); } }
+@keyframes camOrbit   { from { transform: translateX(4%) rotate(-2.4deg) scale(1.08); } to { transform: translateX(-4%) rotate(2.4deg) scale(1.08); } }
+@keyframes camCrane   { from { transform: translateY(-9%) scale(1.12); } to { transform: translateY(9%) scale(1.02); } }
+.cam-anim-slider  .cam-thumb i { animation: camSlider 8s ease-in-out infinite alternate; }
+.cam-anim-vehicle .cam-thumb i { animation: camVehicle 6s linear infinite alternate; }
+.cam-anim-drone   .cam-thumb i { animation: camDrone 7s ease-in infinite alternate; }
+.cam-anim-truck   .cam-thumb i { animation: camTruck 7s ease-in-out infinite alternate; }
+.cam-anim-orbit   .cam-thumb i { animation: camOrbit 8s ease-in-out infinite alternate; }
+.cam-anim-crane   .cam-thumb i { animation: camCrane 8s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .s-cameras .cam-thumb i { animation: none !important; } }
