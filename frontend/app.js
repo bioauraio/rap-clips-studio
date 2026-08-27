@@ -7012,6 +7012,17 @@ function renderScene(s, audioEl, mode = "board") {
     vo.textContent = "🎙";
     vo.title = t("voice.btnTitle");
     vo.addEventListener("click", async () => {
+      // Сначала — голос ПЕРСОНАЖА сцены: сервер сам найдёт закреплённый
+      // voice_id по speaker/characters. Ручной выбор — только если у
+      // персонажа голос не закреплён.
+      vo.disabled = true;
+      try {
+        await api(`/api/scenes/${s.id}/voiceover`, { method: "POST", body: {} });
+        vo.textContent = "🎙✓";
+        return;
+      } catch (e) {
+        if (!(e && e.status === 400)) { fail(e); return; }
+      } finally { vo.disabled = false; }
       let vs;
       try { vs = await api("/api/voices"); } catch (e) { fail(e); return; }
       if (!vs.enabled) { alert(t("voice.notReady")); return; }
@@ -8257,6 +8268,43 @@ function bindCharacterEditor(card, c) {
   $(".c-name", card).value = c.name;
   $(".c-desc", card).value = c.description;
   $(".c-main", card).checked = c.is_main;
+  // Голос персонажа: список с /api/voices; без ключа ElevenLabs блок скрыт,
+  // а не показан пустым. Превью играет прямо из выпадашки.
+  const voiceBox = $(".char-voice", card);
+  const voiceSel = $(".c-voice", card);
+  const voiceNote = $(".c-voice-note", card);
+  if (voiceBox && voiceSel) {
+    voiceNote.value = c.voice_note || "";
+    api("/api/voices").then((vs) => {
+      if (!vs.enabled || !(vs.voices || []).length) return;
+      voiceBox.classList.remove("hidden");
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = t("character.voiceNone");
+      voiceSel.appendChild(none);
+      vs.voices.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v.id;
+        o.textContent = v.name;
+        o.dataset.preview = v.preview_url || "";
+        voiceSel.appendChild(o);
+      });
+      voiceSel.value = c.voice_id || "";
+      if (voiceSel.value !== (c.voice_id || "")) voiceSel.value = "";
+      const playBtn = $(".c-voice-play", card);
+      let prevAudio = null;
+      if (playBtn) playBtn.addEventListener("click", () => {
+        const opt = voiceSel.selectedOptions[0];
+        const url = opt && opt.dataset.preview;
+        if (!url) return;
+        if (prevAudio) { prevAudio.pause(); prevAudio = null; playBtn.textContent = "▶"; return; }
+        prevAudio = new Audio(url);
+        prevAudio.addEventListener("ended", () => { prevAudio = null; playBtn.textContent = "▶"; });
+        prevAudio.play();
+        playBtn.textContent = "❚❚";
+      });
+    }).catch(() => { /* озвучка не настроена — блок остаётся скрытым */ });
+  }
   // Два ряда: ЗАГРУЖЕННЫЕ фото (они уходят референсом в разворот) и
   // СГЕНЕРИРОВАННЫЕ развороты (последний из них берут кадры сцен). Одна
   // общая куча скрывала главное: какая именно картинка работает.
@@ -8350,11 +8398,19 @@ function bindCharacterEditor(card, c) {
     // Ошибку показываем и модалку НЕ закрываем: иначе правки исчезают вместе
     // с окном, а человек уверен, что сохранил.
     try {
-      await api(`/api/characters/${c.id}`, { method: "PATCH", body: {
+      const patch = {
         name: $(".c-name", card).value,
         description: $(".c-desc", card).value,
         is_main: $(".c-main", card).checked,
-      }});
+      };
+      const vSel = $(".c-voice", card);
+      // Голос шлём только если блок реально показан: иначе скрытая пустая
+      // выпадашка стирала бы закреплённый голос при каждом сохранении.
+      if (vSel && !$(".char-voice", card).classList.contains("hidden")) {
+        patch.voice_id = vSel.value;
+        patch.voice_note = $(".c-voice-note", card).value;
+      }
+      await api(`/api/characters/${c.id}`, { method: "PATCH", body: patch });
     } catch (e) { fail(e); return; }
     closeModal();
     await loadProject();

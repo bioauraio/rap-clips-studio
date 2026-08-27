@@ -3096,6 +3096,9 @@ def character_dict(c: Character) -> dict:
     return {
         "id": c.id, "position": c.position, "name": c.name,
         "description": c.description, "is_main": c.is_main,
+        # Голос ElevenLabs, закреплённый за персонажем, и его манера речи.
+        "voice_id": c.voice_id or "",
+        "voice_note": getattr(c, "voice_note", "") or "",
         # photos — весь список целиком (легаси-контракт фронта и библиотеки),
         # но с kind у каждой позиции.
         "photos": [_char_photo_dict(ph) for ph in photos],
@@ -8149,20 +8152,38 @@ async def scene_voiceover(scene_id: int, request: Request,
 
     Звук ложится в audio_filename сцены — то же поле, куда клип кладёт
     отрезок трека, поэтому сборка подхватывает голос без единой правки.
-    Текст по умолчанию — реплика кадра (lyric_line), можно прислать свой.
+    Текст по умолчанию — реплика кадра (dialogue из body или lyric_line),
+    голос по умолчанию — ГОЛОС ПЕРСОНАЖА СЦЕНЫ: сначала speaker, потом
+    первый персонаж из characters с закреплённым voice_id. Эмоция:
+    body.emotion главнее voice_note персонажа (см. voice.settings_for).
     """
     if not voice.available():
         raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
-    text = str(body.get("text") or scene.lyric_line or scene.shot_note or "").strip()
+    text = str(body.get("text") or body.get("dialogue")
+               or scene.lyric_line or scene.shot_note or "").strip()
     if not text:
         raise HTTPException(400, "у кадра нет реплики — напиши текст")
     voice_id = str(body.get("voice_id") or "").strip()
+    voice_note = ""
     if not voice_id:
-        raise HTTPException(400, "выбери голос")
+        # Голос персонажа сцены: говорящий главнее просто присутствующих.
+        wanted = [n for n in ([scene.speaker] if scene.speaker else [])
+                  + [x.strip() for x in (scene.characters or "").split(",")]
+                  if n and n.strip()]
+        chars = {c.name: c for c in scene.track.project.characters}
+        for name in wanted:
+            c = chars.get(name.strip())
+            if c and (c.voice_id or "").strip():
+                voice_id = c.voice_id.strip()
+                voice_note = getattr(c, "voice_note", "") or ""
+                break
+    if not voice_id:
+        raise HTTPException(400, "выбери голос — или закрепи голос за персонажем в его досье")
+    settings = voice.settings_for(voice_note, str(body.get("emotion") or ""))
     try:
-        fname = await voice.tts(text, voice_id, UPLOAD_DIR)
+        fname = await voice.tts(text, voice_id, UPLOAD_DIR, settings)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     old = scene.audio_filename
@@ -8962,6 +8983,10 @@ async def update_character(char_id: int, request: Request, user: User = Depends(
         ch.name = str(body["name"])
     if "description" in body:
         ch.description = str(body["description"])
+    if "voice_id" in body:
+        ch.voice_id = str(body["voice_id"] or "").strip()[:80]
+    if "voice_note" in body:
+        ch.voice_note = str(body["voice_note"] or "").strip()[:500]
     if "is_main" in body:
         ch.is_main = bool(body["is_main"])
         if ch.is_main:  # главный герой один

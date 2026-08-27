@@ -1139,6 +1139,7 @@ const I18N = {
       notReady: "Voiceover is not set up yet — the ElevenLabs key is missing.",
       noVoices: "No voices on the ElevenLabs account yet.",
       pick: "Which voice? Enter the number:",
+      done: "Line voiced — the audio goes into the scene build.",
     },
     base: {
       empty: "пока пусто",
@@ -1401,6 +1402,10 @@ const I18N = {
 
     character: {
       namePh: "Character name",
+      voiceLabel: "Voice (ElevenLabs)",
+      voiceNone: "— no voice pinned —",
+      voicePreview: "play a voice preview",
+      voiceNotePh: "default manner: e.g. calm, slow / aggressive, fast",
       noName: "no name",
       openTitle: "click: the character's dossier",
       attrsN: "attributes: {n}",
@@ -3696,6 +3701,7 @@ const I18N = {
       notReady: "Озвучка пока не настроена — нет ключа ElevenLabs.",
       noVoices: "На аккаунте ElevenLabs ещё нет голосов.",
       pick: "Каким голосом? Введи номер:",
+      done: "Реплика озвучена — звук встанет в сборку кадра.",
     },
     item: {
       title: "Предмет",
@@ -3956,6 +3962,10 @@ const I18N = {
 
     character: {
       namePh: "Имя персонажа",
+      voiceLabel: "Голос (ElevenLabs)",
+      voiceNone: "— голос не закреплён —",
+      voicePreview: "послушать превью голоса",
+      voiceNotePh: "манера по умолчанию: например «спокойно, медленно» / «агрессивно, быстро»",
       noName: "без имени",
       openTitle: "клик: досье персонажа",
       attrsN: "атрибутов: {n}",
