@@ -189,24 +189,53 @@
   border: none; box-shadow: none;
 }
 .topbar.has-sections .tb-user > .points-badge { padding-left: 30px; }
+/* ⧉ и ＋ — круглые иконки одного размера. Прямоугольные капсулы без gap
+   слипались в комок и наезжали на тему (скрин владельца 28.08). */
 .topbar.has-sections .tb-modeline .tb-new,
-.topbar.has-sections .tb-modeline .tb-copy { width: var(--cap-h); padding: 0; }
+.topbar.has-sections .tb-modeline .tb-copy {
+  width: var(--cap-h); min-width: var(--cap-h); padding: 0; flex: none;
+  border-radius: 50%; font-size: 15px;
+}
+.topbar.has-sections .tb-modeline .tb-project { gap: 8px; }
+.topbar.has-sections .tb-modeline { gap: 8px; }
 
 /* Меню профиля: «выйти» и «админка» ушли с правого края шапки сюда. */
 .tb-user { position: relative; }
 .tb-pmenu {
   position: absolute; right: 0; top: calc(100% + 8px); z-index: 120;
-  min-width: 170px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
-  border-radius: 16px; corner-shape: squircle;
-  background: var(--card-solid); border: 1px solid var(--border);
-  box-shadow: 0 14px 34px rgba(var(--ink-rgb), .18);
+  min-width: 190px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  border-radius: 18px; corner-shape: squircle;
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25),
+              0 14px 34px rgba(var(--ink-rgb), .20);
+  overflow: hidden; resize: none;
 }
-.tb-pitem {
+.tb-phead {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px 8px;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-muted); border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.tb-pava {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 12px; font-weight: 800;
+  color: var(--ink-muted); background: var(--inset) center / cover no-repeat;
+  border: 1px solid var(--border); text-transform: none;
+}
+/* Пункт — ИМЕННО пункт меню: без рамок, без теней, без вида инпута и без
+   resize-уголка (наследованный appearance у кнопок в тёмной теме давал
+   «белое поле с плейсхолдером»). */
+.tb-pmenu .tb-pitem {
+  appearance: none; -webkit-appearance: none; resize: none; width: 100%;
   text-align: left; padding: 9px 12px; font-size: 13px; font-weight: 600;
   color: var(--ink); background: transparent; border: none; box-shadow: none;
-  border-radius: 11px; corner-shape: squircle; cursor: pointer;
+  border-radius: 11px; corner-shape: squircle; cursor: pointer; min-height: 0;
 }
-.tb-pitem:hover { background: var(--inset); }
+.tb-pmenu .tb-pitem:hover { background: var(--inset); transform: none; }
+.tb-pmenu .tb-pitem.danger { color: var(--danger-ink); }
 /* Кнопка выхода и «сохранить аккаунт» живут в меню, а не в строке. */
 .topbar.has-sections #logout-btn,
 .topbar.has-sections #save-account-btn,

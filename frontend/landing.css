@@ -763,3 +763,48 @@ body:has(#welcome:not(.hidden)) {
   background: var(--accent-wash); border: var(--bw-hair) solid var(--edge);
 }
 .ld-learn-gate p { margin: 0 0 var(--s-2); }
+
+/* ═══════════ ТЁМНАЯ ТЕМА ЛЕНДИНГА ═══════════
+   Лендинг держит СВОИ токены прямо на .landing (см. шапку файла) — поэтому
+   тёмные токены приложения из style.css сюда не доставали, и в ночи шапка
+   и карточки оставались светлыми плитами. Переопределяем тот же набор тем
+   же селектором-парой; всё, что на var(), перекрашивается само. Светлые
+   скрины UI внутри .ld-shot НЕ трогаем: тёмная рамка-«окно» вокруг них —
+   намеренная подача скриншота, а не недокрас. */
+:root[data-theme="dark"], :root[data-theme="dark"] .landing,
+:root:not([data-theme="light"]).os-dark,
+:root:not([data-theme="light"]).os-dark .landing {
+  --edge: rgba(0, 0, 0, .72);
+  --line: rgba(240, 231, 220, .12);
+  --line-strong: rgba(240, 231, 220, .22);
+  --surface: #2b231c;
+  --surface-2: #362c23;
+  --ink-muted: #c2b3a2;
+  --accent-ink: #ffa465;
+  --accent-2-ink: #ff9a6a;
+  --gold-ink: #f2c069;
+  --ok-ink: #4fd6a0;
+  --accent-wash: rgba(255, 122, 41, .12);
+  --accent-line: rgba(255, 122, 41, .30);
+  --gold-wash: rgba(242, 192, 105, .14);
+  --shadow-soft: 0 8px 20px -14px rgba(0, 0, 0, .6);
+  --shadow-lift: 0 18px 40px -26px rgba(0, 0, 0, .7);
+  color-scheme: dark;
+}
+/* Захардкоженные светлые места — по одному. */
+:root[data-theme="dark"] .ld-bar,
+:root:not([data-theme="light"]).os-dark .ld-bar {
+  background: linear-gradient(180deg, rgba(46, 38, 30, .82), rgba(38, 31, 25, .72));
+  box-shadow: 0 2px 0 var(--edge), var(--shadow-soft),
+              inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+:root[data-theme="dark"] .landing button:hover:not(:disabled),
+:root:not([data-theme="light"]).os-dark .landing button:hover:not(:disabled) {
+  background: #362c23;
+}
+/* Скрин UI в тёмной — светлое «окно» с тенью, как скриншот в браузере. */
+:root[data-theme="dark"] .ld-shot img,
+:root:not([data-theme="light"]).os-dark .ld-shot img {
+  border-radius: var(--r-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+}

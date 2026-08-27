@@ -239,44 +239,52 @@
 
     let pass = false;                 // пропуск клика к «родному» обработчику
     const hide = () => menu.classList.add("hidden");
-    const item = (label, onPick) => {
+    const ru = () => LANG === "ru";
+    const item = (label, onPick, cls) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "tb-pitem";
+      b.className = "tb-pitem" + (cls ? " " + cls : "");
       b.textContent = label;
       b.addEventListener("click", () => { hide(); onPick(); });
       return b;
     };
     const build = () => {
       menu.innerHTML = "";
-      menu.appendChild(item(T("top.account", "Кабинет"), () => {
+      // Шапка меню: ава + подпись. НЕ кнопка и не поле — просто кто ты.
+      {
+        const head = document.createElement("div");
+        head.className = "tb-phead";
+        const srcImg = $(".profile-ava-img", btn);
+        const ini = $(".profile-ava-ini", btn);
+        head.innerHTML = (srcImg && srcImg.src && !srcImg.classList.contains("hidden")
+          ? `<span class="tb-pava" style="background-image:url('${srcImg.src}')"></span>`
+          : `<span class="tb-pava">${(ini && ini.textContent) || "•"}</span>`)
+          + `<span>${ru() ? "Профиль" : "Profile"}</span>`;
+        menu.appendChild(head);
+      }
+      // Пункты — КОРОТКИЕ имена. Никаких описаний из title-словаря: «клиенты,
+      // рассылки, стили…» — это подсказка админки, в меню она мусор.
+      menu.appendChild(item(ru() ? "Кабинет" : "Account", () => {
         pass = true;
         btn.click();
       }));
       const adm = $("#admin-btn");
       if (adm && !adm.classList.contains("hidden")) {
-        menu.appendChild(item(T("top.adminTitle", "Админка"), () => adm.click()));
+        menu.appendChild(item(ru() ? "Админка" : "Admin", () => adm.click()));
       }
-      const save = $("#save-account-btn");
-      if (save && !save.classList.contains("hidden")) {
-        menu.appendChild(item(save.textContent || T("top.saveAccount", ""),
-          () => save.click()));
-      }
-      // Тема — пунктом меню: с мобильной шапки переключатель убран совсем,
-      // а прятать настройку глубже кабинета незачем. Клик листает по кругу
-      // авто → светлая → тёмная; «авто» — тёмная после 21:00 и до 8:00.
+      // Тема — циклом: авто → светлая → тёмная. Меню не закрываем.
       {
         const names = { auto: ["авто", "auto"], light: ["светлая", "light"],
                         dark: ["тёмная", "dark"], system: ["системная", "system"] };
         const cur = () => localStorage.getItem("rc_theme") || "auto";
-        const label = () => (T("nav.themeWord", "Тема") + ": "
-          + (names[cur()] || names.auto)[LANG === "ru" ? 0 : 1]);
+        const label = () => ((ru() ? "Тема: " : "Theme: ")
+          + (names[cur()] || names.auto)[ru() ? 0 : 1] + " ▸");
         const b = document.createElement("button");
         b.type = "button";
         b.className = "tb-pitem";
         b.textContent = label();
         b.addEventListener("click", (e) => {
-          e.stopPropagation();               // меню не закрываем: листают подряд
+          e.stopPropagation();
           const next = { auto: "light", light: "dark", dark: "auto" }[cur()] || "auto";
           if (typeof window.applyTheme === "function") window.applyTheme(next);
           else localStorage.setItem("rc_theme", next);
@@ -286,8 +294,7 @@
       }
       const out = $("#logout-btn");
       if (out) {
-        menu.appendChild(item(out.textContent || T("top.logout", "выйти"),
-          () => out.click()));
+        menu.appendChild(item(ru() ? "Выйти" : "Sign out", () => out.click(), "danger"));
       }
     };
     btn.addEventListener("click", (e) => {
