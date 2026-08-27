@@ -1331,10 +1331,11 @@ def admin_prompt_layers(user: User = Depends(admin_user)):
 def admin_prompt_list(layer: str, user: User = Depends(admin_user)):
     items = prompts_library.layer_list(layer)
     # Превью карточек (камера и будущие пачки): общий магазин "layer:key".
-    previews = _core()._layer_previews()
+    core = _core()
+    previews = core._layer_previews()
     for it in items:
-        fname = previews.get(f"{layer}:{it['key']}") or ""
-        it["preview_url"] = f"/api/media/{fname}" if fname else ""
+        main, _g = core._preview_entry(previews.get(f"{layer}:{it['key']}"))
+        it["preview_url"] = f"/api/media/{main}" if main else ""
     return {"layer": _layer_or_404(layer),
             "title": prompts_library.LAYER_TITLES[layer],
             "items": items}
@@ -1348,8 +1349,10 @@ def admin_prompt_card(layer: str, key: str, user: User = Depends(admin_user)):
     ov = (prompts_library.library_overlay().get(layer) or {}).get(key) or {}
     card["ru"] = {f: ov.get(f + "_ru", "")
                   for f in prompts_library.PROMPT_FIELDS[layer]}
-    fname = _core()._layer_previews().get(f"{layer}:{key}") or ""
-    card["preview_url"] = f"/api/media/{fname}" if fname else ""
+    core = _core()
+    main, gallery = core._preview_entry(core._layer_previews().get(f"{layer}:{key}"))
+    card["preview_url"] = f"/api/media/{main}" if main else ""
+    card["preview_gallery"] = [{"filename": g, "url": f"/api/media/{g}"} for g in gallery]
     return card
 
 

@@ -593,6 +593,7 @@
     solo: "Grok — один кадр", negative: "Запреты",
     text: "Движение (пара кадров)", add: "Хвост света",
     story: "Сюжет — уходит в модель", dnote: "Заметка режиссёру",
+    anim: "Анимация карточки (slider / vehicle / drone / truck / orbit / crane)",
   };
 
   let layerKind = "boards";
@@ -618,6 +619,12 @@
                  value="${esc(layerQuery)}" />
           <div class="adm-list l-list"></div>
           <button type="button" class="ghost l-new" style="margin-top:8px">+ карточка</button>
+          ${layerKind === "cameras" ? `
+          <div class="adm-row" style="margin-top:8px;flex-wrap:wrap">
+            <button type="button" class="ghost l-cam-seed">📥 Разложить кадры Тони</button>
+            <button type="button" class="ghost l-cam-gen">🖼 Догенерить превью шлюзом</button>
+            <span class="l-cam-msg muted"></span>
+          </div>` : ""}
         </div>
         <div class="l-editor"></div>
       </div>`;
@@ -668,6 +675,27 @@
         layerKey = key.trim().toLowerCase();
         renderLayers(box);
       } catch (e) { alert(e.message); }
+    });
+
+    const camSeed = $(".l-cam-seed", box);
+    if (camSeed) camSeed.addEventListener("click", async () => {
+      const m = $(".l-cam-msg", box);
+      m.textContent = "раскладываю…";
+      try {
+        const r = await api("/api/admin/cameras/previews".replace("previews", "seed-refs"), { method: "POST" });
+        m.textContent = "готово: " + JSON.stringify(r.seeded);
+        renderLayers(box);
+      } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
+    });
+    const camGen = $(".l-cam-gen", box);
+    if (camGen) camGen.addEventListener("click", async () => {
+      const m = $(".l-cam-msg", box);
+      m.textContent = "генерю недостающие (минуты)…";
+      try {
+        const r = await api("/api/admin/cameras/previews", { method: "POST" });
+        m.textContent = `готово: ${(r.done || []).length}, ошибок: ${(r.failed || []).length}`;
+        renderLayers(box);
+      } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
     });
 
     const ed = $(".l-editor", box);
@@ -754,6 +782,26 @@
           <span class="l-msg"></span>
         </div>
         <div class="adm-fields" style="margin-top:12px">
+          <div class="adm-field"><label>Превью карточки</label>
+            <div class="adm-row" style="align-items:center">
+              ${c.preview_url
+                ? `<img src="${esc(c.preview_url)}" style="width:96px;aspect-ratio:3/4;object-fit:cover;border-radius:10px">`
+                : '<span class="muted">превью нет — загрузи или сгенерируй</span>'}
+              <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--adm-border,#ccc);border-radius:8px">
+                Загрузить свою картинку
+                <input type="file" class="l-prev-up" accept="image/*" style="display:none">
+              </label>
+              <span class="l-prev-msg muted"></span>
+            </div>
+            ${(c.preview_gallery || []).length > 1 ? `
+            <div class="adm-row l-gallery" style="flex-wrap:wrap;margin-top:6px">
+              ${c.preview_gallery.map((g) =>
+                `<img src="${esc(g.url)}" data-fn="${esc(g.filename)}"
+                   title="сделать главной"
+                   style="width:54px;aspect-ratio:3/4;object-fit:cover;border-radius:8px;cursor:pointer;${
+                     c.preview_url === g.url ? "outline:2px solid #c1401b;" : "opacity:.75;"}">`).join("")}
+            </div>` : ""}
+          </div>
           ${card.join("")}
           <div class="adm-field"><label>Текст, который уходит в модель</label></div>
           ${prompts.join("")}
@@ -773,6 +821,29 @@
       </div>`;
 
     const msg = $(".l-msg", box);
+    const prevUp = $(".l-prev-up", box);
+    if (prevUp) prevUp.addEventListener("change", async () => {
+      const f = prevUp.files && prevUp.files[0];
+      prevUp.value = "";
+      if (!f) return;
+      const m = $(".l-prev-msg", box);
+      m.textContent = "загружаю…";
+      try {
+        const fd = new FormData();
+        fd.append("file", f);
+        const r = await fetch(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}/preview`,
+                              { method: "POST", body: fd });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
+        layerEditor(box, host);
+      } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
+    });
+    $$(".l-gallery img", box).forEach((im) => im.addEventListener("click", async () => {
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}/preview-main`,
+                  { method: "POST", body: { filename: im.dataset.fn } });
+        layerEditor(box, host);
+      } catch (e) { alert(e.message || e); }
+    }));
     const enTouched = new Set();
     $$(".l-en-box .l-f", box).forEach((el) =>
       el.addEventListener("input", () => enTouched.add(el.dataset.f)));
