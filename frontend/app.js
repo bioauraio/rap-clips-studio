@@ -9146,6 +9146,31 @@ async function openCellsModal(tr) {
       foot.className = "cell-foot";
       foot.appendChild(cb);
       foot.appendChild(sel);
+      // Перегенерация ОДНОГО кадра: лист — черновик, добивка — покадрово.
+      // Кнопка рисует полный кадр по промпту сцены, выбранной в селекте
+      // (which=first), и он встаёт в сцену обычным путём.
+      const regen = document.createElement("button");
+      regen.type = "button";
+      regen.className = "ghost cell-regen";
+      regen.textContent = t("modal.cells.regen");
+      regen.title = t("modal.cells.regenTitle");
+      regen.addEventListener("click", async () => {
+        const sid = Number(sel.value);
+        if (!sid) return;
+        regen.disabled = true;
+        regen.textContent = t("modal.cells.regenQueued");
+        try {
+          await api(`/api/scenes/${sid}/generate-frames?which=first`, { method: "POST" });
+        } catch (e) {
+          regen.disabled = false;
+          regen.textContent = t("modal.cells.regen");
+          fail(e);
+          return;
+        }
+        // Кнопка остаётся выключенной: генерация ушла в очередь, статус
+        // виден на карточке сцены после закрытия модалки.
+      });
+      foot.appendChild(regen);
       box.appendChild(img);
       box.appendChild(foot);
       grid.appendChild(box);

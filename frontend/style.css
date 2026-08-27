@@ -4370,3 +4370,6 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
 .acc-phone-num { width: 150px; }
 .acc-phone-code { width: 76px; }
 .acc-phone-btn { font-size: 12px; padding: 4px 10px; }
+
+/* Кнопка перегенерации кадра в модалке разложения листа. */
+.cell-regen { font-size: 10.5px; padding: 3px 6px; margin-left: auto; white-space: nowrap; }
