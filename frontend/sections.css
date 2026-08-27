@@ -283,8 +283,17 @@
   }
   /* Подложка ездит и здесь — она считается по offsetLeft/Top кнопки. */
   #app { padding-bottom: 86px; }
-  /* Шапка на телефоне минимальна: марка, тема, токены, ава. */
+  /* Шапка на телефоне минимальна: марка, тема, токены, ава. Служебное —
+     админка, кабинет, выход — собрано ПОД АВОЙ, в меню профиля: три кнопки
+     в строке шириной 375px не помещаются никак, а нужны они редко. */
   .topbar.has-sections > .tb-user { order: 2; margin-left: auto; }
+  .topbar.has-sections #admin-btn { display: none; }
+  .topbar.has-sections .profile-btn .profile-cap { display: none; }
+  .topbar.has-sections .profile-btn {
+    width: 34px; height: 34px; padding: 0; border-radius: 50%;
+    justify-content: center; overflow: hidden;
+  }
+  .tb-pmenu { right: 0; left: auto; min-width: 190px; }
   .topbar.has-sections > .tb-modeline { order: 3; flex: 1 1 100%; }
 }
 
