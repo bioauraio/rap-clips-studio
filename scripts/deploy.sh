@@ -23,6 +23,18 @@ fi
 git pull --rebase origin main
 git push origin main
 
+# ЗАМОК НА ВРЕМЯ ВЫКАТКИ. Владелец и Аня катят с разных машин;два одновременных
+# rsync'а в одну папку дают смесь файлов, а «кто последний — тот и прав»
+# выглядит как откат чужой работы. Второй деплой ждёт, а не лезет параллельно.
+echo "== жду свободный деплой-замок =="
+for i in $(seq 1 60); do
+  if $SSH $MSK 'mkdir /tmp/rapclips-deploy.lock 2>/dev/null'; then break; fi
+  # Замок старше 20 минут — след упавшего деплоя, снимаем.
+  $SSH $MSK 'find /tmp -maxdepth 1 -name rapclips-deploy.lock -mmin +20 -exec rmdir {} \; 2>/dev/null' || true
+  echo "  идёт чужой деплой — жду 15с ($i/60)"; sleep 15
+done
+trap '$SSH $MSK "rmdir /tmp/rapclips-deploy.lock 2>/dev/null" || true' EXIT
+
 echo "== выкатка на msk (rsync ТОЛЬКО подпапками) =="
 rsync -az --delete -e "$SSH" backend/  $MSK:/opt/rapclips/backend/
 rsync -az --delete -e "$SSH" frontend/ $MSK:/opt/rapclips/frontend/
@@ -46,6 +58,19 @@ $SSH $MSK 'rsync -az --delete /opt/rapclips/backend/  root@5.42.120.67:/opt/qlol
            rsync -az --delete /opt/rapclips/frontend/ root@5.42.120.67:/opt/qlolvideo/frontend/ &&
            ssh root@5.42.120.67 "cd /opt/qlolvideo/infra && docker compose up -d --build qlolvideo"'
 
-echo "== проверка =="
-curl -fsS -m 15 https://lolq.ai/ | grep -oE 'app\.js\?v=[0-9]+' | head -1
-echo "деплой завершён"
+echo "== проверка: прод обязан отдавать ИМЕННО нашу версию =="
+# 26.08 прод откатился на v126 при свежих файлах на диске: docker собрал образ
+# из КЕША слоя со статикой, и в контейнер уехал старый index.html. Снаружи это
+# выглядит как «мои правки пропали». Поэтому версия сверяется, а расхождение
+# лечится пересборкой без кеша — молча старую версию больше не отдаём.
+WANT=$(grep -oE 'app\.js\?v=[0-9]+' frontend/index.html | head -1)
+for attempt in 1 2; do
+  sleep 12
+  GOT=$(curl -fsS -m 20 https://lolq.ai/ | grep -oE 'app\.js\?v=[0-9]+' | head -1 || true)
+  [ "$GOT" = "$WANT" ] && { echo "прод: $GOT — совпадает"; echo "деплой завершён"; exit 0; }
+  echo "!! прод отдаёт $GOT вместо $WANT — пересобираю образ без кеша ($attempt/2)"
+  $SSH $MSK 'ssh root@5.42.120.67 "cd /opt/qlolvideo/infra &&
+             docker compose build --no-cache qlolvideo >/dev/null 2>&1 &&
+             docker compose up -d qlolvideo"'
+done
+echo "!! версия так и не сошлась: ждали $WANT, прод отдаёт $GOT"; exit 1
