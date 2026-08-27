@@ -647,7 +647,29 @@
         const list = rows.filter((r) =>
           !q || ((r.title || r.name || "").toLowerCase().includes(q)));
         if (!list.length) {
-          grid.innerHTML = `<p class="muted">${T("base.empty", "пока пусто")}</p>`;
+          // Пустое состояние — ДВЕРЬ, а не табличка: «пока пусто» без кнопки
+          // оставляло человека в тупике.
+          grid.innerHTML = "";
+          const p = document.createElement("p");
+          p.className = "muted";
+          p.textContent = T("base.empty", "пока пусто");
+          const cta = document.createElement("button");
+          cta.type = "button";
+          cta.className = "primary";
+          cta.textContent = lang() === "ru"
+            ? (isItems ? "+ Добавить предмет" : "+ Добавить персонажа")
+            : (isItems ? "+ Add an item" : "+ Add a character");
+          cta.addEventListener("click", () => {
+            if (isItems) goStudioMode("mockup");
+            else {
+              go("studio");
+              setTimeout(() => {
+                const b = document.querySelector("#add-character-btn, .char-add");
+                if (b) b.click();
+              }, 500);
+            }
+          });
+          grid.append(p, cta);
           return;
         }
         list.forEach((r) => {

@@ -289,11 +289,11 @@ def video_providers() -> list[str]:
 IMAGE_ENGINES: dict[str, dict] = {
     # Шлюзы владельца: подписка уже оплачена, генерация стоит нам ноль.
     "chatgpt": {
-        "title": "ChatGPT (gateway)", "channel": "gateway",
+        "title": "ChatGPT", "channel": "gateway",
         "usd": 0.0, "max_refs": 1, "native_4k": False, "paid": False,
     },
     "grok": {
-        "title": "Grok (gateway)", "channel": "gateway",
+        "title": "Grok", "channel": "gateway",
         "usd": 0.0, "max_refs": 1, "native_4k": False, "paid": False,
     },
     # Nano Banana (Google Gemini Image) через kie.ai. Смысл не в Elo — по
@@ -1223,7 +1223,7 @@ def _body_minimax(prompt: str, first: str, last: str | None, dur: int,
 VIDEO_ENGINES: dict[str, dict] = {
     # Шлюз владельца: стоит нам ноль, но оживляет ТОЛЬКО первый кадр.
     "grok": {
-        "title": "Grok (gateway)", "family": "grok", "channel": "gateway",
+        "title": "Grok", "family": "grok", "channel": "gateway",
         "usd_6s": 0.0, "first_last": False, "paid": False,
         "note": "Наша подписка. Оживляет только первый кадр сцены.",
     },

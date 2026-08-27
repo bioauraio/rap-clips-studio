@@ -370,9 +370,18 @@ function showApp() {
   // /earn остаётся прямым входом в партнёрку, хотя пункт навигации теперь
   // «Маркетинг»: ссылка разошлась по постам, ломать её нельзя.
   else if (path === "/earn") {
-    setTimeout(() => {
-      if (window.QlolSections && window.QlolSections.openEarn) window.QlolSections.openEarn();
-    }, 400);
+    // Разделы поднимаются позже приложения: одна попытка через 400мс на
+    // холодном старте промахивалась, и /earn показывал голую студию.
+    let tries = 0;
+    const tick = () => {
+      if (window.QlolSections && window.QlolSections.openEarn
+          && typeof window.openModal === "function") {
+        window.QlolSections.openEarn();
+        return;
+      }
+      if (tries++ < 20) setTimeout(tick, 300);
+    };
+    setTimeout(tick, 300);
   }
   if (location.hash === "#/chat" || location.hash === "#/make") showChat();
   // То же для музыки: /#/music — рабочая ссылка, её кладут в закладку.
@@ -877,7 +886,7 @@ window.onTelegramAuth = async function (user) {
 
 function tgWidget(botName) {
   const holder = document.createElement("div");
-  holder.className = "auth-widget";
+  holder.className = "auth-widget hidden";
   const s = document.createElement("script");
   s.async = true;
   s.src = "https://telegram.org/js/telegram-widget.js?22";
@@ -887,6 +896,16 @@ function tgWidget(botName) {
   s.setAttribute("data-userpic", "false");
   s.setAttribute("data-onauth", "onTelegramAuth(user)");
   holder.appendChild(s);
+  // Виджет Telegram при неправильном домене рисует СЫРУЮ ошибку «Bot domain
+  // invalid» прямо в форму входа. Показываем блок только когда виджет
+  // реально отрисовал iframe с кнопкой; ошибка остаётся скрытой.
+  const watch = setInterval(() => {
+    if (holder.querySelector("iframe")) {
+      holder.classList.remove("hidden");
+      clearInterval(watch);
+    }
+  }, 300);
+  setTimeout(() => clearInterval(watch), 8000);
   return holder;
 }
 
