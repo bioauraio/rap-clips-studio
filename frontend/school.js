@@ -217,7 +217,9 @@
   }
 
   function busy(box) {
-    box.innerHTML = `<p class="sch-muted">${esc(T("loading"))}</p>`;
+    // Стеклянный скелетон вместо строчки «загружаю…»: место будущих карточек
+    // мерцает, и загрузка не выглядит пустотой.
+    box.innerHTML = `<div class="skel"></div><div class="skel" style="margin-top:10px"></div>`;
   }
   function failed(box) {
     box.innerHTML = `<p class="sch-muted">${esc(T("failed"))}</p>`;
@@ -412,7 +414,7 @@
               ${l.summary ? `<em>${esc(l.summary)}</em>` : ""}</span>
             <span class="sch-lmeta">
               ${l.minutes ? `${esc(String(l.minutes))} ${esc(T("minutes"))}` : ""}
-              ${l.published_at ? ` · ${esc(fmtDate(l.published_at))}` : ""}
+              ${l.soon ? ` · ${esc(lang() === "ru" ? "скоро" : "soon")}` : ""}
               ${l.status !== "published" ? ` · ${esc(T("unpublished"))}` : ""}
             </span>
             <span class="sch-lmark" aria-hidden="true">${l.done ? "✓" : (l.locked ? "🔒" : "›")}</span>
@@ -679,7 +681,7 @@
         <div class="sch-md">${locked
           ? `<p class="sch-lock">${esc(T("lockedBody"))}</p>`
           : md(l.body_md)}</div>
-        ${locked ? "" : `<div class="sch-lesson-acts">
+        ${locked || l.soon ? "" : `<div class="sch-lesson-acts">
           <button type="button" class="${l.done ? "sch-ghost" : "sch-fire"}" data-done>
             ${esc(l.done ? T("undo") : T("markDone"))}</button>
         </div>`}

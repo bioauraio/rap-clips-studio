@@ -199,8 +199,10 @@
 /* Лента капсул — четыре раздела карточки. Прокручивается пальцем. */
 .mus-tabs {
   display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch; max-width: 100%; min-width: 0;
   padding: 2px; margin: 14px 0 12px;
 }
+.mus-tabs .mus-tab { flex: none; }
 .mus-tabs::-webkit-scrollbar { display: none; }
 .mus-tab {
   flex: none; padding: 6px 12px; border-radius: 999px;

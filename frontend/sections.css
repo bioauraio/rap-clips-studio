@@ -239,7 +239,12 @@
 /* Кнопка выхода и «сохранить аккаунт» живут в меню, а не в строке. */
 .topbar.has-sections #logout-btn,
 .topbar.has-sections #save-account-btn,
-.topbar.has-sections #admin-btn { display: none; }
+.topbar.has-sections #admin-btn,
+/* Тема живёт ТОЛЬКО в меню профиля — из шапки убрана и на десктопе:
+   капсула наезжала на EN/RU, а щёлкают её раз в неделю. */
+.topbar.has-sections .theme-switch,
+/* «Призрак-надпись» под капсулами — легаси-бейдж вида проекта. */
+.topbar.has-sections #project-kind { display: none !important; }
 /* Подложку двигает sections.js (moveIndicator). Она под кнопками, поэтому
    z-index у неё 0, а у кнопок — 1: без этого огонь накрыл бы подпись. */
 .tb-seg-ind {
@@ -1477,4 +1482,29 @@
   .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
     width: 19px; height: 19px;
   }
+}
+
+
+/* Тренды: бейдж «новое» — отдельная пилюля, а не хвост слова; кнопка
+   «Сгенерить» — палец должен попадать (было 22px). Пустое превью — тёплая
+   заглушка вместо сломанной картинки. */
+.trend-new {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  font-style: normal; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; border-radius: 999px;
+  color: var(--gold-ink); background: var(--gold-wash);
+}
+.trend-card-action { min-height: 32px; display: inline-flex; align-items: center; }
+.trend-card img[src=""] { visibility: hidden; }
+.trend-card img[src=""]::after { content: none; }
+.trend-card { background: var(--surface-2); }
+
+/* Селект проекта — пилюля, как соседние капсулы (у select свой UA-вид). */
+.topbar.has-sections .project-select {
+  appearance: none; -webkit-appearance: none;
+  border-radius: 999px !important; padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
 }

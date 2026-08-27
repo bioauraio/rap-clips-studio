@@ -426,12 +426,13 @@
     const card = byId("mus-gen");
     if (!card || !M.status) return;
     const g = S("generation");
+    // Ключа генерации нет — секции НЕТ: кнопка с ценой над строкой «нет
+    // ключа ElevenLabs» — это обманка, а внутренняя кухня не для витрины.
+    card.classList.toggle("hidden", !g.enabled);
     card.classList.toggle("is-off", !g.enabled);
+    if (!g.enabled) return;
     const off = byId("mus-gen-off");
-    if (off) {
-      off.classList.toggle("hidden", Boolean(g.enabled));
-      off.innerHTML = `<span>🔌</span><span>${escHtml(T("gen.off"))}</span>`;
-    }
+    if (off) off.classList.add("hidden");
     const btn = byId("mus-gen-run");
     if (btn) {
       btn.disabled = !g.enabled || M.genBusy;

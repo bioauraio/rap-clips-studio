@@ -270,7 +270,7 @@
       }));
       const adm = $("#admin-btn");
       if (adm && !adm.classList.contains("hidden")) {
-        menu.appendChild(item(ru() ? "Админка" : "Admin", () => adm.click()));
+        menu.appendChild(item("⚙ " + (ru() ? "Админка" : "Admin"), () => adm.click()));
       }
       // Тема — циклом: авто → светлая → тёмная. Меню не закрываем.
       {
@@ -892,7 +892,8 @@
         b.type = "button";
         b.className = "trends-filter" + (i === 0 ? " on" : "");
         const fresh = NEW_TRENDS.has(String(item.title).toLowerCase());
-        b.innerHTML = `${esc(item.display)}${fresh ? `<small>${lang() === "ru" ? "новое" : "new"}</small>` : ""}`;
+        b.innerHTML = `<span>${esc(item.display)}</span>${fresh
+          ? `<em class="trend-new">${lang() === "ru" ? "новое" : "new"}</em>` : ""}`;
         b.addEventListener("click", () => {
           $$(".trends-filter", filters).forEach((x) => x.classList.toggle("on", x === b));
           $$(".trend-card", grid).forEach((c) => c.classList.toggle("hidden", !item.all && c.dataset.title !== item.title));
