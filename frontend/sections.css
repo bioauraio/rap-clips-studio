@@ -372,25 +372,9 @@
   .topbar.has-sections > .tb-modeline { order: 3; flex: 1 1 100%; }
 }
 
-@media (max-width: 700px) {
-  /* Телефон: шапка ОДНОЙ строкой. Лента прокручивается пальцем, личный блок
-     ужимается до бейджа токенов и языка — кнопки «Кабинет» и «Мастерская»
-     уже стоят в ленте, и дублировать их справа незачем. */
-  .topbar.has-sections { row-gap: 6px; }
-  .topbar.has-sections .tb-sec { padding: 0 9px; font-size: 12.5px; }
-  .topbar.has-sections > .tb-user::before { display: none; }
-  .topbar.has-sections > .tb-user { gap: 6px; }
-  /* Телефон: три строки — личное, разделы-тумблер, режим и проект. В одну
-     полосу это не складывается никакими сжатиями, а прятать режим нельзя:
-     «чем снимаю» человек меняет чаще, чем что угодно ещё. */
-  .topbar.has-sections { flex-wrap: wrap; }
-  .topbar.has-sections > .tb-sections { order: 3; flex: 1 1 100%; }
-  .topbar.has-sections > .tb-user { order: 2; margin-left: auto; }
-  .topbar.has-sections > .tb-modeline { order: 4; flex: 1 1 100%; }
-  .topbar.has-sections .tb-sec { font-size: 12.5px; padding: 0 10px; }
-  .topbar.has-sections .tb-sec[data-ico]::before { margin-right: 4px; }
-  .topbar.has-sections .project-select { max-width: 42vw; }
-}
+/* Мобильная раскладка шапки и нижний док живут ВЫШЕ, в одном блоке 700px.
+   Прежний дубль-блок (три строки, лента в шапке) удалён: он стоял ПОЗЖЕ по
+   файлу и молча перебивал доку flex и кегль. */
 @media (max-width: 560px) {
   /* Совсем узкий экран: марка сжимается до знака, чтобы разделам осталось
      место. Слово «lolq.ai» на 360px съедает треть строки и не сообщает
