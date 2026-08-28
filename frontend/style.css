@@ -4262,30 +4262,12 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   .modal { width: 96vw; max-width: 96vw; max-height: 92vh; }
 }
 
-/* Мобилка: шапка липнет, тумблер этапов — круглый нижний таб-бар */
+/* Мобилка: шапка липнет; тумблер этапов — та же нижняя капсула, что на
+   десктопе (единственная ветка ниже), только поднят над доком разделов. */
 @media (max-width: 700px) {
   .topbar { position: sticky; top: 0; z-index: 40; }
-  /* Нижний край телефона занят ГЛАВНОЙ навигацией (нижний док разделов,
-     sections.css): постоянное место у большого пальца принадлежит разделам
-     сервиса, а не этапам одного трека. Этапы — липкий горизонтальный
-     степпер сразу под шапкой, там же, где контент, к которому он ведёт. */
-  .stage-jump {
-    position: sticky; top: var(--tbh, 56px); left: auto; bottom: auto;
-    transform: none; margin: 0 0 8px;
-    z-index: 39; max-width: 100%; overflow-x: auto; scrollbar-width: none;
-    background: color-mix(in srgb, var(--panel) 88%, transparent);
-    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
-    box-shadow: 0 10px 30px rgba(var(--ink-rgb), .18);
-    border: 1px solid rgba(var(--ink-rgb), .12);
-  }
-  .stage-jump::-webkit-scrollbar { display: none; }
-  .stage-jump:empty { display: none; }
-  body:has(#app.trends-view) #stage-jump,
-  body:has(#chat:not(.hidden)) #stage-jump,
-  body:has(#music:not(.hidden)) #stage-jump,
-  body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
   /* Воздух под нижним доком разделов, чтобы последние кнопки не прятались. */
-  #app { padding-bottom: 92px; }
+  #app { padding-bottom: 132px; }
 }
 
 /* ─────── Генератор под общей шапкой ───────
@@ -4309,8 +4291,7 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
    На всех ширинах >700px — как мобильный низ, но с подписями целиком:
    закреплённая стеклянная капсула по центру нижнего края, scroll-spy тот
    же. Контенту возвращена полная ширина. */
-@media (min-width: 701px) {
-  .stage-jump {
+.stage-jump { /* ЕДИНСТВЕННАЯ раскладка тумблера: без медиа-веток */
     position: fixed; left: 50%; bottom: 14px; top: auto; right: auto;
     transform: translateX(-50%);
     z-index: 45; display: flex; flex-direction: row; align-items: center;
@@ -4333,11 +4314,15 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   .stage-jump:empty { display: none; }
   /* Тумблер живёт в body (backdrop-filter предка ломал бы fixed) — прячем
      его на страницах без этапов через :has. */
-  body:has(#app.trends-view) #stage-jump,
-  body:has(#app.chat-view) #stage-jump,
-  body:has(#chat:not(.hidden)) #stage-jump,
-  body:has(#music:not(.hidden)) #stage-jump,
-  body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
+body:has(#app.trends-view) #stage-jump,
+body:has(#app.chat-view) #stage-jump,
+body:has(#chat:not(.hidden)) #stage-jump,
+body:has(#music:not(.hidden)) #stage-jump,
+body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
+/* Телефон: нижний край занят доком разделов — капсула этапов над ним. */
+@media (max-width: 700px) {
+  .stage-jump { bottom: 72px; max-width: 94vw; }
+  .stage-jump .stage-tab { padding: 7px 10px; font-size: 11px; }
 }
 
 /* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */
