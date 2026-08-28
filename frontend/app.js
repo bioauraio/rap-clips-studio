@@ -5562,7 +5562,12 @@ async function msMarketingStudio(card, tr, mode) {
         ? `<img src="${escHtml(x.preview_url)}" alt="" loading="lazy" />`
         : `<span class="mk-tpl-ph">${x.emoji}</span>`)
         + `<span class="mk-tpl-cap"><b>${escHtml(name)}</b>`
-        + `<i>${escHtml(t(`mk.cat_${x.category}`))}${x.motion ? " · 🎬" : ""}</i></span>`;
+        + `<i>${escHtml(t(`mk.cat_${x.category}`))}${x.motion ? " · 🎬" : ""}</i></span>`
+        + `<span class="mk-tpl-info" title="${escHtml(LANG === "ru" ? "страница шаблона" : "template page")}">ⓘ</span>`;
+      $(".mk-tpl-info", b) && $(".mk-tpl-info", b).addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (window.QlolPromptPage) window.QlolPromptPage.open("mockup", x.id);
+      });
       b.addEventListener("click", () => {
         st.tplId = st.tplId === x.id ? "" : x.id;
         st.prompt = st.tplId ? x.prompt : "";

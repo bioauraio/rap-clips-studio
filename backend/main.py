@@ -5277,25 +5277,150 @@ def _generate_layer_preview(db: Session, layer: str, card: dict,
     return fname
 
 
-def generate_layer_previews(db: Session, layer: str) -> dict:
-    """Догенерить превью ВСЕМ карточкам слоя без превью (бесплатный шлюз).
-    Зовётся из админ-роута и из CLI."""
+def generate_layer_previews(db: Session, layer: str, count: int = 1) -> dict:
+    """Догенерить превью карточкам слоя (бесплатный шлюз). count — сколько
+    ПРИМЕРОВ должно накопиться у карточки: страницы промтов показывают
+    галерею, и одного кадра там мало. Зовётся из админ-роута и из CLI:
+      docker exec … python3 -c "import main;print(main.generate_layer_previews(main.SessionLocal(),'motions',count=2))"
+    """
     done, failed = [], []
-    previews = _layer_previews()
+    count = max(1, min(4, int(count or 1)))
     for card in prompts_library.layer_rows(layer):
         key = card["key"]
-        if _preview_entry(previews.get(f"{layer}:{key}"))[1]:
-            continue
-        try:
-            fname = _generate_layer_preview(db, layer, card)
-            previews = _layer_previews()
-            previews[f"{layer}:{key}"] = {"main": fname, "all": [fname]}
-            _layer_previews_save(previews)
-            done.append(key)
-        except Exception as e:  # noqa: BLE001
-            failed.append(f"{key}: {_err_text(e, 120)}")
-            log.warning("превью %s/%s не вышло: %s", layer, key, e)
+        have = _preview_entry(_layer_previews().get(f"{layer}:{key}"))[1]
+        for _ in range(count - len(have)):
+            try:
+                fname = _generate_layer_preview(db, layer, card)
+                previews = _layer_previews()
+                main_f, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+                gallery = gallery + [fname]
+                previews[f"{layer}:{key}"] = {"main": main_f or fname, "all": gallery}
+                _layer_previews_save(previews)
+                done.append(key)
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{key}: {_err_text(e, 120)}")
+                log.warning("превью %s/%s не вышло: %s", layer, key, e)
+                break
     return {"done": done, "failed": failed}
+
+
+# ─────────────── СТРАНИЦА ПРОМТА: /p/{layer}/{key} ───────────────
+# Одна карточка каталога — своя страница: заголовок, галерея примеров,
+# промпт и кнопка «Использовать». Слои: trend | mockup | boards | motions |
+# cameras | lights | styles. Примеры-«extras» у трендов и мокапов живут в
+# ОБЩЕМ механизме превью слоёв (layer_previews, ключи trend:{id} /
+# mockup:{id}) — тот же {"main","all"}, что у карточек Тони.
+
+def _prompt_page_extras(layer: str, key: str) -> list[str]:
+    _m, gallery = _preview_entry(_layer_previews().get(f"{layer}:{key}"))
+    return [f"/api/media/{f}" for f in gallery]
+
+
+@app.get("/api/p/{layer}/{key}")
+def prompt_page(layer: str, key: str, request: Request, lang: str = "",
+                db: Session = Depends(db_session)):
+    user = _resolve_user(request, db)
+    is_adm = bool(user and user.is_admin)
+    lg = _lang_of(request, lang)
+    out = {"layer": layer, "key": key, "is_admin": is_adm, "examples": [],
+           "title": "", "desc": "", "prompt": "", "prompt_ru": "", "use": ""}
+    if layer == "trend":
+        t = db.get(TrendPreset, int(key) if str(key).isdigit() else 0)
+        if not t:
+            raise HTTPException(404, "нет такого тренда")
+        out.update({
+            "title": (t.title if lg == "ru" else (getattr(t, "title_en", "") or t.title)),
+            "prompt": f"{t.image_prompt}\n\n{t.motion_prompt}".strip(),
+            "prompt_ru": f"{getattr(t, 'image_prompt_ru', '') or ''}\n\n"
+                         f"{getattr(t, 'motion_prompt_ru', '') or ''}".strip(),
+            "use": "trends",
+        })
+        if t.sample_filename:
+            out["examples"].append({"url": f"/api/media/{t.sample_filename}", "kind": "video"})
+        if t.poster_filename:
+            out["examples"].append({"url": f"/api/media/{t.poster_filename}", "kind": "image"})
+        out["examples"] += [{"url": u, "kind": "image"}
+                            for u in _prompt_page_extras("trend", key)]
+    elif layer == "mockup":
+        tpl = next((x for x in mockup_catalog.TEMPLATES if x["id"] == key), None)
+        if not tpl:
+            raise HTTPException(404, "нет такого шаблона")
+        prev = _mockup_previews().get(key) or ""
+        out.update({
+            "title": tpl["ru"] if lg == "ru" else tpl["en"],
+            "desc": tpl.get("category") or "",
+            "prompt": tpl.get("prompt") or "",
+            "use": "mockup",
+        })
+        if prev:
+            out["examples"].append({"url": f"/api/media/{prev}", "kind": "image"})
+        out["examples"] += [{"url": u, "kind": "image"}
+                            for u in _prompt_page_extras("mockup", key)]
+    elif layer in prompts_library.LAYERS:
+        card = next((r for r in prompts_library.layer_rows(layer)
+                     if r["key"] == key), None)
+        if not card:
+            raise HTTPException(404, "нет такой карточки")
+        label = card.get("label") or key
+        if isinstance(label, dict):
+            label = label.get(lg) or label.get("en") or key
+        desc = card.get("desc") or card.get("note") or ""
+        if isinstance(desc, dict):
+            desc = desc.get(lg) or desc.get("en") or ""
+        prompt = card.get("text") or card.get("first") or card.get("add") or ""
+        out.update({"title": str(label), "desc": str(desc),
+                    "prompt": str(prompt), "use": "studio"})
+        out["examples"] = [{"url": u, "kind": "image"}
+                           for u in _prompt_page_extras(layer, key)]
+    elif layer == "styles":
+        raise HTTPException(404, "у стилей своя карточка в каталоге промтов")
+    else:
+        raise HTTPException(404, "нет такого слоя")
+    # Пользователю промпт не отдаём сырым у фирменных слоёв? Тренды и мокапы
+    # открыты; закрытые тексты (styles) сюда не попадают вовсе.
+    if not is_adm:
+        out["prompt_ru"] = ""
+    return out
+
+
+@app.post("/api/admin/p/{layer}/{key}/example-generate")
+def prompt_page_example(layer: str, key: str, user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    """+1 пример на страницу промпта (бесплатный шлюз). Тренды и мокапы
+    копят примеры в общем layer_previews; слои Тони — своим роутом."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer == "trend":
+        t = db.get(TrendPreset, int(key) if str(key).isdigit() else 0)
+        if not t or not (t.image_prompt or "").strip():
+            raise HTTPException(404, "тренд не найден или пуст")
+        prompt = re.sub(r"the person from the reference photo",
+                        "a stylish young person", t.image_prompt, flags=re.I)
+        prompt += " No text, no watermark."
+        aspect = t.aspect or "9:16"
+    elif layer == "mockup":
+        tpl = next((x for x in mockup_catalog.TEMPLATES if x["id"] == key), None)
+        if not tpl:
+            raise HTTPException(404, "нет такого шаблона")
+        prompt = mockup_catalog.preview_prompt(tpl)
+        aspect = "3:4"
+    else:
+        raise HTTPException(400, "для слоёв Тони — preview-generate")
+    try:
+        import asyncio  # noqa: PLC0415 — локально, как в соседних роутах
+        mediagen.reset_task()
+        res = asyncio.run(mediagen.generate_image_ex(prompt, None,
+                                                     engine="chatgpt", aspect=aspect))
+        fname = _save_image(res["data"], res["mime"], upscale=False)
+        _reg_file(db, fname, None, kind="prompt_example")
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"пример не вышел: {_err_text(e, 200)}")
+    previews = _layer_previews()
+    main_f, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    previews[f"{layer}:{key}"] = {"main": main_f or fname, "all": gallery + [fname]}
+    _layer_previews_save(previews)
+    return {"ok": True, "url": f"/api/media/{fname}"}
 
 
 @app.post("/api/admin/prompts/{layer}/previews")
@@ -15585,6 +15710,15 @@ def _spa_course(course_id: int):  # noqa: ARG001 — путь читает фр�
 
 
 app.add_api_route("/school/course/{course_id}", _spa_course, methods=["GET"],
+                  include_in_schema=False)
+
+
+def _spa_prompt(layer: str, key: str):  # noqa: ARG001 — путь читает фронт
+    return _spa_index()
+
+
+# Страница промта: /p/{layer}/{key} — тренд, шаблон мокапа, слой каталога.
+app.add_api_route("/p/{layer}/{key}", _spa_prompt, methods=["GET"],
                   include_in_schema=False)
 
 

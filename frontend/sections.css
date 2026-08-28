@@ -1537,3 +1537,13 @@
   background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
   background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
 }
+
+
+/* ⓘ на карточке тренда — вход на страницу промта. */
+.trend-info {
+  position: absolute; right: 8px; top: 8px; z-index: 3;
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%;
+  background: rgba(20, 12, 6, .55); color: #fff; font-size: 13px;
+  box-shadow: none; cursor: pointer;
+}
+.trend-card { position: relative; }

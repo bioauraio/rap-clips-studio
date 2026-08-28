@@ -598,6 +598,11 @@
         });
         const inp = card.querySelector("input");
         inp.addEventListener("change", () => trendMake(card, t, inp));
+        card.querySelector(".trend-info").addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeTrendsPage(false);
+          if (window.QlolPromptPage) window.QlolPromptPage.open("trend", String(t.id));
+        });
         grid.appendChild(card);
       });
       body.appendChild(grid);
@@ -914,6 +919,7 @@
             <span>${lang() === "ru" ? "Сгенерить" : "Generate"}</span>
             <input type="file" accept="image/*" hidden />
           </label>
+          <button type="button" class="trend-info" title="${lang() === "ru" ? "страница тренда" : "trend page"}">ⓘ</button>
           <div class="trend-state hidden"></div>`;
         const vid = card.querySelector("video");
         if (vid) {
