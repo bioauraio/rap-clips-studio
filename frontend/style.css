@@ -4366,23 +4366,44 @@ body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
 }
 .mk-go:disabled { opacity: .6; cursor: default; }
 .mk-filter { display: flex; gap: 6px; flex-wrap: wrap; }
-.mk-tpl-grid { columns: 3 160px; column-gap: 10px; }
+/* ─── ВИТРИНА ШАБЛОНОВ Higgsfield-класса, наш светло-тёплый канон ───
+   Плотная masonry на всю ширину, карточка = ФОТО; подпись — тонкой плашкой
+   ПОВЕРХ низа кадра (не простыня под ним), на ховере проявляется целиком.
+   Без превью — эмодзи на стекле, скелетоны рисует JS классом .skel. */
+.mk-tpl-grid { columns: 5 190px; column-gap: 8px; }
 .mk-tpl {
-  display: inline-block; width: 100%; margin: 0 0 10px; padding: 0;
-  border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
+  position: relative; display: inline-block; width: 100%; margin: 0 0 8px;
+  padding: 0; border: 1px solid var(--border); border-radius: 16px;
+  corner-shape: squircle; overflow: hidden;
   background: var(--card); cursor: pointer; text-align: left;
-  break-inside: avoid;
+  break-inside: avoid; box-shadow: none;
+  transition: border-color .15s ease, transform .15s ease;
 }
-.mk-tpl.on { border-color: var(--border-bright);
-  box-shadow: 0 0 0 2px var(--gold-wash); }
+.mk-tpl:hover { border-color: var(--border-bright); transform: translateY(-2px); }
+.mk-tpl.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--gold-wash); }
 .mk-tpl img { width: 100%; display: block; }
 .mk-tpl-ph {
   display: flex; align-items: center; justify-content: center;
-  font-size: 2rem; height: 110px; background: var(--surface-2);
+  font-size: 2rem; aspect-ratio: 3/4;
+  background: color-mix(in srgb, var(--card-solid) 60%, transparent);
+  backdrop-filter: blur(8px);
 }
-.mk-tpl-cap { display: flex; flex-direction: column; padding: 8px 10px 10px; gap: 2px; }
-.mk-tpl-cap b { font-size: .86rem; }
-.mk-tpl-cap i { font-style: normal; font-size: .72rem; color: var(--ink-muted); }
+.mk-tpl-cap {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; gap: 1px; padding: 16px 9px 7px;
+  background: linear-gradient(transparent, rgba(20, 12, 6, .78));
+  pointer-events: none;
+}
+.mk-tpl-cap b { font-size: .78rem; color: #fff; line-height: 1.15; }
+.mk-tpl-cap i {
+  font-style: normal; font-size: .66rem; color: rgba(255, 255, 255, .75);
+  max-height: 0; overflow: hidden; transition: max-height .18s ease;
+}
+.mk-tpl:hover .mk-tpl-cap i { max-height: 2.4em; }
+/* Карточка без фото: подпись возвращается тёмными чернилами на стекле. */
+.mk-tpl-ph + .mk-tpl-cap { background: none; }
+.mk-tpl-ph + .mk-tpl-cap b { color: var(--ink); }
+.mk-tpl-ph + .mk-tpl-cap i { color: var(--ink-muted); }
 #mk-toast {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(16px);
   background: var(--card-solid); color: var(--text);
