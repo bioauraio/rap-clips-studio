@@ -763,25 +763,39 @@
         d: T("marketing.charsNote", "Общая база героев: лица держатся во всех проектах и режимах."),
         go: () => openBase("chars") },
     ];
+    // Иконка — моно-SVG маской (см. sections.css .mk-ico-*), не эмодзи;
+    // галерея — ЖИВЫЕ примеры: мокапы и UGC дозаполняются превью ниже.
+    const ids = ["mockups", "ugc", "earn", "items", "chars"];
     cards.forEach((c, i) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "mk-card";
-      // Мини-галерея «как это выглядит»: у мокапов — три превью шаблонов
-      // (или стилизованные плашки, пока превью не сгенерированы), у UGC и
-      // заработка — по одной тематической плашке.
-      const gal = i === 0
-        ? `<span class="mk-card-gallery" data-mk-gal>
-             <span class="mk-gal-ph g1">🏛️</span>
-             <span class="mk-gal-ph g2">🧊</span>
-             <span class="mk-gal-ph g3">🛒</span></span>`
-        : `<span class="mk-card-gallery">
-             <span class="mk-gal-ph g${i + 1}">${i === 1 ? "🤳" : "💸"}</span></span>`;
-      b.innerHTML = `<span class="mk-ico" aria-hidden="true">${c.icon}</span>
+      const gal = `<span class="mk-card-gallery" data-gal="${ids[i]}"></span>`;
+      b.innerHTML = `<span class="mk-ico mk-ico-${ids[i]}" aria-hidden="true"></span>
         <b>${esc(c.t)}</b><span class="mk-note">${esc(c.d)}</span>${gal}`;
       b.addEventListener("click", c.go);
       grid.appendChild(b);
     });
+    const fillGal = (id, urls) => {
+      const holder = $(`[data-gal="${id}"]`, page);
+      if (!holder || !urls.length) return;
+      holder.innerHTML = urls.slice(0, 3).map((u) =>
+        `<img src="${esc(u)}" alt="" loading="lazy" />`).join("");
+    };
+    // Персонажи и UGC — живые лица из общей базы.
+    fetch("/api/characters/all", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const urls = ((d && d.characters) || []).map((x) => x.photo_url).filter(Boolean);
+        fillGal("ugc", urls);
+        fillGal("chars", urls.slice(3, 6).length ? urls.slice(3, 6) : urls);
+      }).catch(() => {});
+    // Предметы — фото товаров.
+    fetch("/api/mockup/products", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => fillGal("items",
+        ((d && d.products) || []).map((x) => x.url).filter(Boolean)))
+      .catch(() => {});
     // Живые превью шаблонов подъезжают асинхронно; без сессии или без
     // сгенерированных превью карточка остаётся на плашках — это норма.
     fetch("/api/mockup/templates", { credentials: "same-origin" })
@@ -789,10 +803,8 @@
       .then((data) => {
         const withPrev = ((data && data.templates) || [])
           .filter((x) => x.preview_url).slice(0, 3);
-        const holder = $("[data-mk-gal]", page);
-        if (!holder || !withPrev.length) return;
-        holder.innerHTML = withPrev.map((x) =>
-          `<img src="${esc(x.preview_url)}" alt="" loading="lazy" />`).join("");
+        fillGal("mockups", withPrev.map((x) => x.preview_url));
+        fillGal("earn", withPrev.map((x) => x.preview_url).slice(0, 1));
       })
       .catch(() => {});
     app.appendChild(page);
