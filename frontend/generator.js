@@ -724,7 +724,9 @@
   if (typeof window.onLangChange === "function") {
     window.onLangChange(() => { if ($("#generator-page")) render(); });
   }
-  const boot = () => { if (location.pathname === "/generator" || location.pathname === "/") openGenerator(); };
+  // Корень «/» генератор НЕ забирает: там живут лендинг (гость, ?home) и
+  // студия (вошедший) — их порядок решает app.js. Прямой вход — /generator.
+  const boot = () => { if (location.pathname === "/generator") openGenerator(); };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(boot, 120));
   else setTimeout(boot, 120);
 })();
