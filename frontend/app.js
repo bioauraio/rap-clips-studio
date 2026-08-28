@@ -10894,6 +10894,7 @@ const chatState = {
   fromScene: null,          // «Доснять в мастерской»: откуда пришли
   enhanceBackup: "",        // промпт ДО «улучшить» — чтобы вернуть как было
   hint: "",                 // почему «Отправить» сейчас не сработает
+  kit: [],                  // выбранные с каруселей промты: [{key,label,text}]
   error: "",                // последняя ошибка — под полем, не в alert
 };
 
@@ -11442,7 +11443,8 @@ function mkRenderNote() {
     // «Напишите, что нужно сделать» дублирует плейсхолдер поля и съедала
     // строку в капсуле — такую подсказку не показываем вовсе; остальные
     // (про тариф, лимиты) живут как жили.
-    const hint = chatState.hint === t("chat.needText") ? "" : chatState.hint;
+    const hint = (chatState.hint === t("chat.needText")
+      || chatState.hint === t("make.needText")) ? "" : chatState.hint;
     const text = err || hint;
     box.textContent = text;
     box.classList.toggle("hidden", !text);
@@ -12042,12 +12044,28 @@ function mkMetaLine(m) {
   return bits.join(" · ");
 }
 
+const mkBusySince = new Map();   // msg.id → первый раз замечен busy
+
 function mkStatusLine(m) {
   const s = document.createElement("div");
   if (m.status === "queued" || m.status === "running") {
-    s.className = "status";
-    s.textContent = t(m.status === "queued" ? "chat.queued" : "chat.running");
-  } else if (m.status === "canceled") {
+    // Воздушная шкала вместо голого спиннера: оценка по стадиям — очередь
+    // 10%, генерация тиками времени до 85%, дальше ждём файл. Числа —
+    // ожидание, не обещание; главное, что полоса ЖИВЁТ.
+    if (!mkBusySince.has(m.id)) mkBusySince.set(m.id, Date.now());
+    const secs = (Date.now() - mkBusySince.get(m.id)) / 1000;
+    const expect = m.kind === "video" ? 150 : 35;
+    const pct = m.status === "queued"
+      ? Math.min(10, 4 + secs)
+      : Math.min(85, 12 + (secs / expect) * 73);
+    s.className = "status mk-progress";
+    s.innerHTML = `<span class="mk-bar"><i style="width:${pct.toFixed(0)}%"></i></span>
+      <em>${pct.toFixed(0)}%</em>
+      <u>${escHtml(t(m.status === "queued" ? "chat.queued" : "chat.running"))}</u>`;
+    return s;
+  }
+  mkBusySince.delete(m.id);
+  if (m.status === "canceled") {
     s.className = "status";
     s.textContent = t("make.canceled");
   } else if (m.status === "error") {
@@ -12669,6 +12687,93 @@ function mkGroupTarget(box) {
   if (cur.target) mkWhy(g, t("make.targetKeeps"));
 }
 
+/* ─── КАРУСЕЛИ ПРАВОЙ ПАНЕЛИ: карточки С ПРЕВЬЮ ───
+   «Промты» (заготовки сцен) и «Камера» — клик кладёт запись в НАБОР
+   генерации (чипы над полем, крестик снимает). «Персонажи» и «Предметы» —
+   миниатюры общей базы, клик подтягивает картинку референсом. */
+let mkShowData = null;
+
+function mkGroupShowcase(box) {
+  const g = mkGroup(box, "make.grpShowcase", false, null);
+  const title = $(".mk-group-title", g);
+  if (title && !t("make.grpShowcase")) title.textContent = LANG === "ru" ? "Заготовки" : "Presets";
+  const wrap = document.createElement("div");
+  wrap.className = "mk-show";
+  wrap.innerHTML = `<div class="skel" style="min-height:70px"></div>`;
+  g.appendChild(wrap);
+  const paint = () => {
+    const d = mkShowData || {};
+    const lane = (cap, items, onPick, tall) => {
+      if (!items || !items.length) return "";
+      return `<div class="mk-lane"><small>${escHtml(cap)}</small>
+        <div class="mk-lane-row ${tall ? "tall" : ""}">${items.map((x, i) => `
+          <button type="button" data-i="${i}" title="${escHtml(x.title || x.label || "")}">
+            ${x.img ? `<img src="${escHtml(x.img)}" alt="" loading="lazy"/>` : `<i>${escHtml((x.label || "?").slice(0, 2))}</i>`}
+            <b>${escHtml(x.label || "")}</b>
+          </button>`).join("")}</div></div>`;
+    };
+    wrap.innerHTML =
+      lane(LANG === "ru" ? "Промты" : "Prompts", d.boards, 0, true)
+      + lane(LANG === "ru" ? "Камера" : "Camera", d.cameras, 0, true)
+      + lane(LANG === "ru" ? "Персонажи" : "Characters", d.chars, 0, false)
+      + lane(LANG === "ru" ? "Предметы" : "Products", d.items, 0, false);
+    const lanes = $$(".mk-lane", wrap);
+    const wire = (laneEl, items, pick) => {
+      if (!laneEl) return;
+      $$("button[data-i]", laneEl).forEach((b) =>
+        b.addEventListener("click", () => pick(items[Number(b.dataset.i)])));
+    };
+    const kitPick = (x) => {
+      chatState.kit = chatState.kit || [];
+      if (!chatState.kit.some((k) => k.key === x.key)) {
+        chatState.kit.push({ key: x.key, label: x.label, text: x.text });
+      }
+      mkRenderKit();
+    };
+    const refPick = async (x) => {
+      try {
+        const r = await fetch(x.img, { credentials: "same-origin" });
+        const blob = await r.blob();
+        const fd = new FormData();
+        fd.append("file", new File([blob], "ref.jpg", { type: blob.type || "image/jpeg" }));
+        const up = await api("/api/chat/upload", { method: "POST", body: fd });
+        up.kind = x.refKind || "vibe";
+        chatState.files.push(up);
+        mkRenderFiles();
+      } catch (e) { mkFail(e); }
+    };
+    let li = 0;
+    if ((d.boards || []).length) wire(lanes[li++], d.boards, kitPick);
+    if ((d.cameras || []).length) wire(lanes[li++], d.cameras, kitPick);
+    if ((d.chars || []).length) wire(lanes[li++], d.chars, refPick);
+    if ((d.items || []).length) wire(lanes[li++], d.items, refPick);
+  };
+  if (mkShowData) { paint(); return; }
+  Promise.allSettled([
+    api(`/api/library?lang=${encodeURIComponent(LANG)}`),
+    api(`/api/cameras?lang=${encodeURIComponent(LANG)}`),
+    api("/api/characters/all"),
+    api("/api/mockup/products"),
+  ]).then(([lib, cams, chars, prods]) => {
+    const L = lib.value || {}; const C = cams.value || {};
+    mkShowData = {
+      boards: (L.boards || []).filter((x) => !x.locked && (x.preview_url || (x.preview_urls || [])[0]))
+        .slice(0, 14).map((x) => ({ key: x.key, label: x.label,
+          img: x.preview_url || x.preview_urls[0], text: x.solo || x.first || "" })),
+      cameras: ((C.cameras || C.presets || [])).filter((x) => x.preview_url || (x.preview_urls || [])[0])
+        .slice(0, 14).map((x) => ({ key: x.key, label: x.label,
+          img: x.preview_url || (x.preview_urls || [])[0], text: x.solo || x.text || "" })),
+      chars: ((chars.value || {}).characters || []).filter((x) => x.photo_url)
+        .slice(0, 14).map((x) => ({ key: "c" + x.id, label: x.name || "—",
+          img: x.photo_url, refKind: "vibe" })),
+      items: ((prods.value || {}).products || []).filter((x) => x.url)
+        .slice(0, 14).map((x) => ({ key: "p" + x.track_id, label: x.title || "—",
+          img: x.url, refKind: "copy" })),
+    };
+    paint();
+  });
+}
+
 /* ПРОМТЫ-ШАБЛОНЫ в правой панели: свои сверху, каталог заготовок ниже.
    Клик подставляет текст в поле — не «открывает витрину, где надо ещё раз
    выбрать». Свои шаблоны лежат в localStorage браузера: это черновики
@@ -12878,6 +12983,7 @@ function mkRenderParams() {
   mkGroupDuration(box);
   mkGroupVariants(box);
   mkGroupTarget(box);
+  mkGroupShowcase(box);
   mkGroupTemplates(box);
   mkGroupMemory(box);
 
@@ -12902,6 +13008,31 @@ function mkAfterModelChange() {
 }
 
 // ────────── строка ввода ──────────
+
+/* Чипы выбранных с каруселей промтов — над полем ввода, крестик снимает. */
+function mkRenderKit() {
+  let box = chatEl("cc-kit");
+  if (!box) {
+    const field = document.querySelector("#chat .cc-field");
+    if (!field) return;
+    box = document.createElement("div");
+    box.id = "cc-kit";
+    box.className = "cc-kit";
+    field.parentElement.insertBefore(box, field);
+  }
+  box.innerHTML = "";
+  (chatState.kit || []).forEach((k, i) => {
+    const chip = document.createElement("span");
+    chip.className = "cc-kit-chip";
+    chip.innerHTML = `<span>${escHtml(k.label)}</span><button type="button">✕</button>`;
+    chip.querySelector("button").addEventListener("click", () => {
+      chatState.kit.splice(i, 1);
+      mkRenderKit();
+      mkRenderParams();
+    });
+    box.appendChild(chip);
+  });
+}
 
 function mkRenderFiles() {
   const box = chatEl("cc-files");
@@ -13062,6 +13193,7 @@ function mkRenderBar() {
 }
 
 function chatRenderCompose() {
+  mkRenderKit();
   mkRenderFiles();
   mkRenderSource();
   mkRenderCount();
@@ -13258,10 +13390,13 @@ async function chatSend() {
     }
     const fileKinds = {};
     chatState.files.forEach((f) => { fileKinds[String(f.id)] = f.kind || "vibe"; });
+    // Набор с каруселей уходит ПЕРЕД текстом человека: заготовка задаёт
+    // сцену, его слова уточняют. После отправки набор очищается.
+    const kitText = (chatState.kit || []).map((k) => k.text).filter(Boolean).join(" ");
     const body = {
       // Камера-пресет дописывается к тексту: движку нужен единый промпт,
       // отдельного поля камеры у видео-моделей нет.
-      text: text + mkCameraSuffix(),
+      text: (kitText ? kitText + "\n\n" : "") + text + mkCameraSuffix(),
       engine: model.id,
       file_ids: chatState.files.map((f) => f.id),
       file_kinds: fileKinds,
@@ -13276,6 +13411,7 @@ async function chatSend() {
     await api(`/api/chats/${chatState.activeId}/messages`, { method: "POST", body });
     ta.value = "";
     chatState.files = [];
+    chatState.kit = [];
     chatState.sourceId = 0;
     chatState.lastId = 0;
     chatState.enhanceBackup = "";

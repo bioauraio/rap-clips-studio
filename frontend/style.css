@@ -4651,3 +4651,76 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
   border-radius: 50%; background: rgba(20,12,6,.5); color: #fff; font-size: 12px;
   cursor: pointer;
 }
+
+
+/* ─── Генератор: набор промтов, карусели, прогресс, агент-строка ─── */
+.cc-kit { display: flex; gap: 5px; flex-wrap: wrap; margin: 0 4px 6px; }
+.cc-kit:empty { display: none; }
+.cc-kit-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 6px 4px 10px; border-radius: 999px; corner-shape: squircle;
+  background: var(--gold-wash); color: var(--gold-ink);
+  font-size: 12px; font-weight: 700; border: 1px solid var(--border);
+}
+.cc-kit-chip button { border: 0; background: transparent; box-shadow: none; padding: 0 3px; font-size: 10px; color: inherit; cursor: pointer; }
+
+/* Строка агента — закреплённая шапка капсулы, не строка ленты. */
+.chat-compose .cc-agent {
+  margin: -4px -8px 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  border-radius: 18px 18px 0 0;
+}
+.cc-agent-acts { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.cc-agent-act {
+  font-size: 12px; padding: 5px 11px; border-radius: 999px; corner-shape: squircle;
+  border: 1px solid var(--border-bright); background: var(--card-solid);
+  color: var(--accent-ink); font-weight: 700; box-shadow: none; cursor: pointer;
+}
+.cc-agent-act:hover { background: var(--gold-wash); }
+
+/* Правая панель — единая сетка секций: hairline между, равные отступы. */
+.mk-groups { gap: 0; }
+.mk-groups > .mk-group { padding: 12px 0; border-top: 1px solid var(--border); }
+.mk-groups > .mk-group:first-child { border-top: none; padding-top: 4px; }
+.mk-group-head { min-height: 20px; margin-bottom: 8px; }
+
+/* Карусели заготовок. */
+.mk-show { display: flex; flex-direction: column; gap: 10px; }
+.mk-lane small { display: block; margin-bottom: 5px; color: var(--ink-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; font-family: var(--font-mono); }
+.mk-lane-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.mk-lane-row::-webkit-scrollbar { display: none; }
+.mk-lane-row button {
+  position: relative; flex: none; width: 64px; padding: 0;
+  border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle;
+  overflow: hidden; background: var(--surface-2); box-shadow: none; cursor: pointer;
+}
+.mk-lane-row.tall button { width: 76px; }
+.mk-lane-row img { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; pointer-events: none; }
+.mk-lane-row.tall img { aspect-ratio: 9/13; }
+.mk-lane-row i { display: grid; place-items: center; width: 100%; aspect-ratio: 3/4; font-style: normal; color: var(--ink-muted); }
+.mk-lane-row b {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 4px 3px;
+  font: 700 9px/1.1 var(--font-head); color: #fff; text-align: center;
+  background: linear-gradient(transparent, rgba(20,12,6,.75));
+}
+.mk-lane-row button:hover { border-color: var(--border-bright); }
+
+/* Прогресс генерации: тонкая огненная шкала с процентами. */
+.mk-progress { display: flex; align-items: center; gap: 8px; }
+.mk-bar {
+  flex: 1 1 120px; max-width: 220px; height: 4px; border-radius: 999px;
+  overflow: hidden; background: var(--surface-2); border: 1px solid var(--border);
+}
+.mk-bar i { display: block; height: 100%; background: var(--fire-ink); transition: width 1s linear; }
+.mk-progress em { font: 700 11px/1 var(--font-mono); font-style: normal; color: var(--accent-ink); min-width: 32px; }
+.mk-progress u { text-decoration: none; font-size: 11px; color: var(--ink-muted); }
+/* Карточка в работе мягко дышит; результат появляется fade+scale. */
+.chat-msg:has(.mk-progress) { animation: mk-breathe 2.4s ease-in-out infinite; }
+@keyframes mk-breathe { 0%,100% { opacity: 1; } 50% { opacity: .82; } }
+.chat-media, .mk-variant img, .mk-variant video { animation: mk-appear .35s ease; }
+@keyframes mk-appear { from { opacity: 0; transform: scale(.97); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg:has(.mk-progress), .chat-media, .mk-variant img { animation: none; }
+  .mk-bar i { transition: none; }
+}
