@@ -958,10 +958,17 @@
       const card = document.createElement("div");
       card.className = "adm-card";
       card.innerHTML = `
-        <div class="adm-row">
-          <div class="e-shot">${t.poster_url
-            ? `<img src="${esc(t.poster_url)}" alt="" />`
-            : '<span class="e-ph">🎞️</span>'}</div>
+        <div class="adm-row" style="align-items:flex-start">
+          <div class="e-side">
+            <div class="e-shot">${t.sample_url
+              ? `<video src="${esc(t.sample_url)}" muted loop autoplay playsinline></video>`
+              : t.poster_url
+                ? `<img src="${esc(t.poster_url)}" alt="" />`
+                : '<span class="e-ph">🎞️</span>'}</div>
+            <button type="button" class="ghost t-anim" ${t.poster_url ? "" : "disabled"}
+              title="оживить превью его motion-промптом через бесплатный шлюз">
+              Анимировать ⚡0</button>
+          </div>
           <div class="adm-fields" style="flex:1">
             <div class="adm-row">
               <div class="adm-field" style="flex:1"><label>Название</label>
@@ -1029,6 +1036,18 @@
           msg.className = "t-msg adm-ok";
           msg.textContent = "сохранено";
         } catch (e) { msg.className = "t-msg adm-err"; msg.textContent = e.message; }
+      });
+      $(".t-anim", card).addEventListener("click", async () => {
+        msg.className = "t-msg muted";
+        msg.textContent = "оживляю превью (до 3 минут)…";
+        $(".t-anim", card).disabled = true;
+        try {
+          await api(`/api/admin/trends/${t.id}/preview-animate`, { method: "POST" });
+          renderTrends(box);
+        } catch (e) {
+          msg.className = "t-msg adm-err"; msg.textContent = e.message;
+          $(".t-anim", card).disabled = false;
+        }
       });
       $(".t-prev", card).addEventListener("click", async () => {
         msg.className = "t-msg muted";

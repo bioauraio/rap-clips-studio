@@ -194,7 +194,14 @@
 .topbar.has-sections .tb-modeline .tb-new,
 .topbar.has-sections .tb-modeline .tb-copy {
   width: var(--cap-h); min-width: var(--cap-h); padding: 0; flex: none;
-  border-radius: 50%; font-size: 15px;
+  /* font-size: 0 гасит ТЕКСТ «+ проект» из data-i18n — рисуется только знак
+     из ::after; 15px здесь возвращали подпись, и рядом со знаком выходила
+     каша «проект+» (скрин владельца). */
+  border-radius: 50%; font-size: 0;
+}
+.topbar.has-sections .tb-modeline .tb-copy { font-size: 15px; }
+.topbar.has-sections .tb-modeline .tb-new::after {
+  content: "+"; font-size: 17px; font-weight: 800; line-height: 1;
 }
 .topbar.has-sections .tb-modeline .tb-project { gap: 8px; }
 .topbar.has-sections .tb-modeline { gap: 8px; }

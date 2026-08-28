@@ -383,28 +383,60 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-head .stage-tabs::-webkit-scrollbar { display: none; }
 .track-head .stage-tab { flex: none; }
 .order-btns { display: flex; gap: 2px; }
-/* ФОРМА ТРЕКА. Мобилка и средние экраны — колонкой; десктоп — две колонки
-   в линию: слева дорожка и высокий «Текст песни», справа компактные
-   «Комментарий», «Библия героя» и свёрнутая заметка. Поля не тянутся во
-   весь экран: ширина колонок ограничена, читать строку в 1600px нельзя. */
+/* ФОРМА ТРЕКА (пересборка 28.08 по скрину владельца: прежний двухколонник
+   давал высоченный «Текст песни» слева и узкий столбец справа).
+   ГОРИЗОНТАЛЬНО: секции полной ширины друг под другом; внутри «Материала»
+   на десктопе ТРИ колонки одного ряда — [Дорожка] [Текст песни]
+   [Комментарий+Библия]. track-left разворачивается display:contents, и его
+   дети раскладываются по колонкам сетки сами; высоты полей ограничены. */
 .track-body { display: grid; grid-template-columns: 1fr; gap: 14px; }
 .track-body .track-left, .track-body .track-right { min-width: 0; }
 .track-body textarea { resize: vertical; }
 @media (min-width: 1100px) {
   .track-body {
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
-    gap: 22px; max-width: 1160px; align-items: start;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+    grid-auto-rows: min-content;
+    gap: 6px 22px; align-items: start;
   }
-  .track-body .t-lyrics { min-height: 240px; }
-  /* Правая колонка компактная: 3–4 строки, дальше внутренний скролл. */
-  .track-body .t-comment { max-height: 140px; overflow-y: auto; }
-  .track-body .ms-bible-text { max-height: 120px; overflow-y: auto; }
+  .track-body > .track-left { display: contents; }
+  /* Всё аудио-хозяйство — колонка 1, по строкам подряд. */
+  .track-body > .track-left > * { grid-column: 1; min-width: 0; }
+  /* Текст песни — колонка 2, шапкой и телом. */
+  .track-body > .track-left > .t-lyrics-label { grid-column: 2; grid-row: 1; }
+  .track-body > .track-left > .t-lyrics {
+    grid-column: 2; grid-row: 2 / span 8;
+    height: 220px; max-height: 260px; overflow-y: auto; min-height: 0;
+  }
+  /* Комментарий и библия — колонка 3 одной ячейкой на все строки. */
+  .track-body > .track-right { grid-column: 3; grid-row: 1 / span 9; }
+  .track-body .t-comment { max-height: 120px; overflow-y: auto; }
+  .track-body .ms-bible-text { max-height: 110px; overflow-y: auto; }
 }
 @media (max-width: 1099px) {
   /* Поля не выше 40vh: «Текст песни» на телефоне не должен быть простынёй. */
   .track-body textarea { max-height: 40vh; }
 }
 @media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
+
+/* «Что снимаем» на десктопе: сюжет полем на ~2/3, чекбоксы и перетасовка —
+   колонкой справа от него. Модели-чипы и так строкой во всю ширину. */
+@media (min-width: 1100px) {
+  .ms-sec[data-sec="what"] {
+    display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+    gap: 6px 22px; align-items: start;
+  }
+  .ms-sec[data-sec="what"] > .ms-h,
+  .ms-sec[data-sec="what"] > .ms-hint,
+  .ms-sec[data-sec="what"] > .ms-presets,
+  .ms-sec[data-sec="what"] > .ms-text-models,
+  .ms-sec[data-sec="what"] > .t-mode-fields { grid-column: 1 / -1; }
+  .ms-sec[data-sec="what"] > .ms-story { grid-column: 1; grid-row: span 3; }
+  .ms-sec[data-sec="what"] > .grain-check,
+  .ms-sec[data-sec="what"] > .t-shuffle-cast { grid-column: 2; justify-self: start; }
+  .ms-sec[data-sec="what"] .ms-story-text {
+    max-height: 160px; overflow-y: auto;
+  }
+}
 .t-audio { width: 100%; }
 .t-duration { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); }
 
@@ -4272,51 +4304,40 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   #app.chat-view ~ #chat { height: calc(100dvh - var(--tbh, 64px)); }
 }
 
-/* ─────── Десктоп: тумблер этапов — вертикальная панель у ЛЕВОГО края ───────
-   В шапке он занимал строку и уезжал под название проекта, а на широком
-   экране справа простаивает пустое поле. Панель закреплена по центру высоты:
-   этап видно, не отматывая наверх. В шапке тумблера больше нет вовсе: после
-   перехода на одну полосу он вылезал поверх «Профиля» и «выйти». Мобильная
-   капсула снизу (≤700px) осталась как была — сбоку на телефоне места нет. */
+/* ─────── Тумблер этапов: горизонтальная капсула ВНИЗУ по центру ───────
+   Вертикальную панель слева владелец забраковал («сбоку место занимает»).
+   На всех ширинах >700px — как мобильный низ, но с подписями целиком:
+   закреплённая стеклянная капсула по центру нижнего края, scroll-spy тот
+   же. Контенту возвращена полная ширина. */
 @media (min-width: 701px) {
   .stage-jump {
-    position: fixed; left: 16px; right: auto; top: 50%; transform: translateY(-50%);
-    z-index: 45; flex-direction: column; align-items: stretch; gap: 3px;
-    padding: 6px; border-radius: 20px; corner-shape: squircle;
+    position: fixed; left: 50%; bottom: 14px; top: auto; right: auto;
+    transform: translateX(-50%);
+    z-index: 45; display: flex; flex-direction: row; align-items: center;
+    gap: 2px; padding: 5px; border-radius: 999px; corner-shape: squircle;
+    max-width: min(94vw, 760px); overflow-x: auto; scrollbar-width: none;
     background: color-mix(in srgb, var(--panel) 88%, transparent);
-    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px) saturate(1.2);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
     border: 1px solid rgba(var(--ink-rgb), .12);
-    box-shadow: 0 10px 30px rgba(var(--ink-rgb), .14);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3),
+                0 10px 30px rgba(var(--ink-rgb), .18);
   }
+  .stage-jump::-webkit-scrollbar { display: none; }
   .stage-jump .stage-tab {
-    justify-content: flex-start; gap: 8px; padding: 8px 12px;
-    border-radius: 14px; corner-shape: squircle; white-space: nowrap;
+    flex: none; justify-content: center; gap: 7px; padding: 8px 14px;
+    border-radius: 999px; corner-shape: squircle; white-space: nowrap;
   }
-  /* Контенту — воздух СЛЕВА, иначе панель ложится на карточки сцен.
-     Панель уехала налево 27.08: справа она наезжала на «Профиль» и «выйти»
-     в шапке — правый угол занят личным блоком, а левое поле пустует. */
-  #app { padding-left: 132px; }
-  /* Планшет: панель ужимается до цифр — 132px поля там четверть экрана. */
-  @media (max-width: 1099px) {
-    .stage-jump .stage-tab { font-size: 0; padding: 8px; gap: 0; }
-    .stage-jump .stage-tab .st-num { font-size: 11px; }
-    #app { padding-left: 62px; }
-  }
-  /* Пустой тумблер — это стеклянная пилюля ни о чём: пока этапов нет
-     (школа, тренды, маркетинг, ещё не выбранный трек), панели нет вовсе. */
+  /* Контент во всю ширину; снизу воздух под капсулу. */
+  #app { padding-left: 28px; padding-bottom: 96px; }
   .stage-jump:empty { display: none; }
-  /* Тумблер живёт в body, а не внутри #app (иначе backdrop-filter шапки
-     прибивает его к ней), поэтому «спрятать на страницах без этапов»
-     пишется через :has — иначе он повисает поверх школы и трендов. */
+  /* Тумблер живёт в body (backdrop-filter предка ломал бы fixed) — прячем
+     его на страницах без этапов через :has. */
   body:has(#app.trends-view) #stage-jump,
   body:has(#app.chat-view) #stage-jump,
   body:has(#chat:not(.hidden)) #stage-jump,
   body:has(#music:not(.hidden)) #stage-jump,
   body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
-  .trends-view#app, #app.trends-view { padding-left: 0; }
-  /* Генератор шириной во весь экран: этапов там нет, а поле слева съело бы
-     колонку лент. */
-  #app.chat-view { padding-left: 0; }
 }
 
 /* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */

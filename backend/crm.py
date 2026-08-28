@@ -630,6 +630,44 @@ def admin_trend_preview_generate(preset_id: int, user: User = Depends(admin_user
     return {"ok": True, "poster_url": f"/api/media/{fname}"}
 
 
+@router.post("/api/admin/trends/{preset_id}/preview-animate")
+def admin_trend_preview_animate(preset_id: int, user: User = Depends(admin_user),
+                                db: Session = Depends(db_session)):
+    """Оживить постер тренда его же motion-промптом, бесплатным шлюзом (⚡0).
+
+    Тот же механизм, что «оживить кадр» у сцены (_animate_grok): вход —
+    картинка-постер, выход — mp4. Ролик ложится в sample_filename и крутится
+    и в админ-карточке, и на витрине /trends вместо статики. Синхронно, как
+    и preview-generate: админ один, очередь ему не нужна, а статус виден
+    строкой «оживляю…» в карточке."""
+    import asyncio
+    import os as _os
+    core = _core()
+    t = db.get(core.TrendPreset, preset_id)
+    if not t:
+        raise HTTPException(404, "шаблон не найден")
+    if not t.poster_filename:
+        raise HTTPException(400, "сначала прикрепи или сгенерируй превью-картинку")
+    motion = (t.motion_prompt or "").strip() or (t.image_prompt or "").strip()
+    if not motion:
+        raise HTTPException(400, "у тренда пуст промпт движения")
+    poster = _os.path.join(core.UPLOAD_DIR, t.poster_filename)
+    if not _os.path.isfile(poster):
+        raise HTTPException(400, "файл превью пропал с диска — перегенерируй его")
+    try:
+        core.mediagen.reset_task()
+        fname = asyncio.run(core.mediagen.animate_scene(
+            prompt=motion, first_path=poster, last_path=None,
+            duration_sec=int(t.duration_sec or 6), provider="free",
+            engine="grok", aspect=(t.aspect or "9:16")))
+        core._reg_file(db, fname, None, kind="trend_sample")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"оживить не вышло: {str(e)[:200]}")
+    t.sample_filename = fname
+    db.commit()
+    return {"ok": True, "sample_url": f"/api/media/{fname}"}
+
+
 @router.delete("/api/admin/trends/{preset_id}")
 def admin_trend_delete(preset_id: int, user: User = Depends(admin_user),
                        db: Session = Depends(db_session)):
