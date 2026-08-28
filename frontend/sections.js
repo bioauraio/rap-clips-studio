@@ -779,8 +779,14 @@
     const fillGal = (id, urls) => {
       const holder = $(`[data-gal="${id}"]`, page);
       if (!holder || !urls.length) return;
-      holder.innerHTML = urls.slice(0, 3).map((u) =>
-        `<img src="${esc(u)}" alt="" loading="lazy" />`).join("");
+      // /api/media отдаёт файл не каждому (владельцы файлов); вставляем
+      // только реально загрузившиеся, битых плиток в карточке не держим.
+      urls.slice(0, 3).forEach((u) => {
+        const im = new Image();
+        im.loading = "lazy"; im.alt = "";
+        im.onload = () => { if (holder.children.length < 3) holder.appendChild(im); };
+        im.src = u;
+      });
     };
     // Персонажи и UGC — живые лица из общей базы.
     fetch("/api/characters/all", { credentials: "same-origin" })

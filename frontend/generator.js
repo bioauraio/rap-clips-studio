@@ -306,14 +306,21 @@
       render();
     }));
     // Живые превью мокапов: первые витринные шаблоны вместо статики.
+    // Меняем ТОЛЬКО после реальной загрузки первой картинки: /api/media
+    // прячет чужие файлы от гостя, и без проверки карточка оставалась бы
+    // с тремя битыми <img> вместо запасного кадра.
     fetch("/api/mockup/templates", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         const rows = ((d && d.templates) || []).filter((x) => x.preview_url).slice(0, 3);
         const holder = $("[data-mk-live]", page);
         if (!holder || !rows.length) return;
-        holder.classList.add("gen-art-super");
-        holder.innerHTML = rows.map((x) => img(x.preview_url)).join("");
+        const probe = new Image();
+        probe.onload = () => {
+          holder.classList.add("gen-art-super");
+          holder.innerHTML = rows.map((x) => img(x.preview_url)).join("");
+        };
+        probe.src = rows[0].preview_url;
       }).catch(() => {});
   }
 
