@@ -1823,9 +1823,9 @@ const I18N = {
       },
 
       hero: {
-        eyebrow: "Music videos for your own tracks",
-        title: "Drop a track, leave with a video",
-        sub: "The studio cuts your song into scenes that follow its own dynamics, draws the frames in the style you pick and brings them to life. Vertical 9:16, characters that hold across scenes, frame-by-frame control. The first clip is free and needs no signup.",
+        eyebrow: "AI studio: characters, clips, films",
+        title: "Your 3D character. Your clips. Your films.",
+        sub: "Upload a photo — get a model with your face. It stars in clips for your track, in series, trends and brand videos: the face holds in every frame. Vertical 9:16, frame-by-frame control, the world's best engines under the hood. The first clip is free, no signup.",
         ctaStart: "Start free",
         ctaOpen: "Open the studio",
         ctaLogin: "I already have an account",
@@ -4440,9 +4440,9 @@ const I18N = {
       },
 
       hero: {
-        eyebrow: "Клипы под собственную музыку",
-        title: "Загрузил трек — забрал клип",
-        sub: "Студия режет песню на сцены под её же динамику, рисует кадры в выбранном стиле и оживляет их. Вертикаль 9:16, сквозные персонажи, покадровый контроль. Первый клип — бесплатно и без регистрации.",
+        eyebrow: "ИИ-студия: персонажи, клипы, кино",
+        title: "Свой 3D-персонаж. Свои клипы. Своё кино.",
+        sub: "Загрузи фото — получи модельку со своим лицом. Она снимается в клипах под твой трек, в сериалах, трендах и роликах для бренда: лицо держится в каждом кадре. Вертикаль 9:16, покадровый контроль, лучшие движки мира под капотом. Первый клип — бесплатно и без регистрации.",
         ctaStart: "Начать бесплатно",
         ctaOpen: "Открыть студию",
         ctaLogin: "У меня есть аккаунт",

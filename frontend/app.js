@@ -941,7 +941,11 @@ async function renderAuthButtons(container, opts = {}) {
   };
 
   let shown = 0;
-  if (cfg.telegram && cfg.telegram_bot && !inTg && !linked.telegram) {
+  // Виджет — только на домене, где он настроен у бота (TG_LOGIN_DOMAIN в
+  // infra/.env): иначе Telegram рисует «Bot domain invalid» прямо в форму.
+  const tgDomainOk = cfg.telegram_login_domain
+    && location.hostname === cfg.telegram_login_domain;
+  if (cfg.telegram && cfg.telegram_bot && tgDomainOk && !inTg && !linked.telegram) {
     container.appendChild(tgWidget(cfg.telegram_bot));
     shown += 1;
   }
@@ -12757,12 +12761,16 @@ function mkGroupShowcase(box) {
   ]).then(([lib, cams, chars, prods]) => {
     const L = lib.value || {}; const C = cams.value || {};
     mkShowData = {
-      boards: (L.boards || []).filter((x) => !x.locked && (x.preview_url || (x.preview_urls || [])[0]))
+      // Карточки живут и БЕЗ превью (плашка с инициалами): кадры Тони
+      // догенерируются батчем, и пустая карусель до тех пор — дыра.
+      boards: (L.boards || []).filter((x) => !x.locked)
         .slice(0, 14).map((x) => ({ key: x.key, label: x.label,
-          img: x.preview_url || x.preview_urls[0], text: x.solo || x.first || "" })),
-      cameras: ((C.cameras || C.presets || [])).filter((x) => x.preview_url || (x.preview_urls || [])[0])
+          img: x.preview_url || (x.preview_urls || [])[0] || "",
+          text: x.solo || x.first || "" })),
+      cameras: (C.cameras || C.presets || [])
         .slice(0, 14).map((x) => ({ key: x.key, label: x.label,
-          img: x.preview_url || (x.preview_urls || [])[0], text: x.solo || x.text || "" })),
+          img: x.preview_url || (x.preview_urls || [])[0] || "",
+          text: x.solo || x.text || "" })),
       chars: ((chars.value || {}).characters || []).filter((x) => x.photo_url)
         .slice(0, 14).map((x) => ({ key: "c" + x.id, label: x.name || "—",
           img: x.photo_url, refKind: "vibe" })),

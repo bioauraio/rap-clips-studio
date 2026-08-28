@@ -2479,6 +2479,11 @@ def auth_config():
     return {
         "telegram": bool(TG_BOT_TOKEN and TG_BOT_USERNAME),
         "telegram_bot": TG_BOT_USERNAME,
+        # Домен, на который у бота настроен Login Widget (/setdomain в
+        # BotFather). Пока env пуст — виджет НЕ показывается нигде: на чужом
+        # домене Telegram рисует сырую «Bot domain invalid» прямо в форму,
+        # и скрыть её из iframe нельзя никак.
+        "telegram_login_domain": os.environ.get("TG_LOGIN_DOMAIN", ""),
         "yandex": bool(YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET),
         "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
         "email": bool(UNISENDER_API_KEY and AUTH_MAIL_FROM),

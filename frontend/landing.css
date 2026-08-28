@@ -808,3 +808,38 @@ body:has(#welcome:not(.hidden)) {
   border-radius: var(--r-2);
   box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
 }
+
+/* ─── Новые секции: модельки, режимы, движки ─── */
+.ld-models-row img { width: 100%; max-width: 900px; margin: 0 auto; display: block; border-radius: var(--r-4); border: var(--bw-hair) solid var(--line); }
+.ld-cta-row { text-align: center; margin: var(--s-6) 0 0; }
+.ld-cta-row .ld-cta { text-decoration: none; display: inline-block; padding: 12px 22px; }
+a.ld-cta.primary { color: var(--on-fire); background: var(--fire-ink); border: var(--bw-edge) solid var(--edge); border-radius: var(--r-2); box-shadow: var(--lift-2); font-weight: 800; }
+.ld-modes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--s-3); }
+.ld-mode-card {
+  display: flex; flex-direction: column; gap: 4px; padding: var(--s-2);
+  background: var(--surface); border: var(--bw-hair) solid var(--line);
+  border-radius: var(--r-4); text-decoration: none; color: var(--text);
+  transition: transform var(--t), box-shadow var(--t);
+}
+.ld-mode-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lift); }
+.ld-mode-card img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--r-3); }
+.ld-mode-card b { font: 800 var(--fs-md)/1.2 var(--font-head); margin-top: 4px; }
+.ld-mode-card span { font-size: var(--fs-sm); color: var(--ink-muted); line-height: 1.35; }
+.ld-engines-row { display: flex; flex-wrap: wrap; gap: var(--s-2); justify-content: center; }
+.ld-eng {
+  padding: 10px 18px; border-radius: 999px; font: 800 var(--fs-base)/1 var(--font-head);
+  color: var(--accent-ink); background: var(--accent-wash);
+  border: var(--bw-hair) solid var(--accent-line);
+}
+.ld-engines-note { text-align: center; margin-top: var(--s-4); }
+
+/* Тёмная: витрина клипа и скрины шагов — стеклянные тёмные карточки. */
+:root[data-theme="dark"] .ld-phone, :root:not([data-theme="light"]).os-dark .ld-phone,
+:root[data-theme="dark"] .ld-frames li, :root:not([data-theme="light"]).os-dark .ld-frames li,
+:root[data-theme="dark"] .ld-proof, :root:not([data-theme="light"]).os-dark .ld-proof {
+  background: var(--surface); border-color: var(--line);
+}
+:root[data-theme="dark"] .ld-step-shot img, :root:not([data-theme="light"]).os-dark .ld-step-shot img,
+:root[data-theme="dark"] .guide-shot img, :root:not([data-theme="light"]).os-dark .guide-shot img {
+  border-radius: var(--r-2); box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
