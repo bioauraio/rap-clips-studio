@@ -39,7 +39,9 @@
     video: { model: "", aspect: "", resolution: "", duration: 0, ref: null },
     poll: null,
     sel: null,           // текущее большое превью {url, kind}
-    d3: { files: [], kind: "3d", busy: false, url: "", err: "" },
+    d3: { files: [], kind: "3d", views: "full", layout: "row", busy: false,
+          url: "", err: "", info: null, n: 4, frame: 0, sheet: false,
+          vbusy: "", vurl: "", trends: null },
     blog: { chars: null },
   };
 
@@ -159,8 +161,21 @@
   function render3d(page) {
     page.className = "gen-page gen-3d-view";
     const d = S.d3;
+    if (!d.info) {
+      api("/api/model-sheet").then((r) => { d.info = r; render(); }).catch(() => {});
+    }
+    if (d.trends === null) {
+      d.trends = false;
+      api("/api/trends").then((r) => {
+        d.trends = (r.presets || []).filter((x) => x.poster_url || x.sample_url).slice(0, 12);
+        render();
+      }).catch(() => { d.trends = []; });
+    }
+    const info = d.info || {};
     const kinds = [["3d", t("3D-рендер", "3D render")], ["real", t("фото", "photo")],
                    ["anime", t("аниме", "anime")]];
+    const seg = (cls, items, cur) => `<div class="gen-3d-kinds ${cls}">${items.map(([k, cap]) =>
+      `<button type="button" data-k="${k}" class="${cur === k ? "on" : ""}">${cap}</button>`).join("")}</div>`;
     page.innerHTML = `
       <header class="gen-head"><h1>${t("генератор · 3d-модель", "generator · 3d model")}</h1>
         <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></header>
@@ -174,55 +189,203 @@
                  <small>${t("анфас и три четверти работают лучше всего", "front and three-quarter shots work best")}</small>`}
             <input type="file" accept="image/*" multiple hidden />
           </label>
-          <div class="gen-3d-kinds">${kinds.map(([k, cap]) =>
-            `<button type="button" data-k="${k}" class="${d.kind === k ? "on" : ""}">${cap}</button>`).join("")}</div>
+          <div class="gen-3d-row"><small>${t("стиль", "style")}</small>${seg("k-kind", kinds, d.kind)}</div>
+          <div class="gen-3d-row"><small>${t("ракурсы", "views")}</small>${seg("k-views",
+            (info.views || [{ id: "full", n: 4 }]).map((v) => [v.id, String(v.n)]), d.views)}</div>
+          <div class="gen-3d-row"><small>${t("раскладка", "layout")}</small>${seg("k-layout",
+            [["row", t("лента", "strip")], ["grid", t("сетка", "grid")]], d.layout)}</div>
+          ${info.engine_title ? `<div class="gen-3d-row"><small>${t("движок", "engine")}</small>
+            <span class="gen-3d-eng">${esc(info.engine_title)}</span></div>` : ""}
           <button type="button" class="gen-go gen-3d-go" ${d.files.length && !d.busy ? "" : "disabled"}>
             ${d.busy ? t("делаю модельку…", "building the model…")
-                     : t("сделать 3D-модель", "build the 3D model")}</button>
+                     : t("сделать 3D-модель", "build the 3D model")
+                       + (info.cost ? ` <span>⚡ ${info.cost}</span>` : "")}</button>
           <div class="gen-note ${d.err ? "" : "hidden"}">${esc(d.err)}</div>
-          <p class="gen-3d-hint">${t("лист ракурсов: анфас, три четверти, профиль, спина — он же референс твоего персонажа в клипах",
-            "a turnaround sheet: front, three-quarter, profile, back — it doubles as your character reference in clips")}</p>
+          ${(info.history || []).length ? `
+            <div class="gen-3d-hist"><small>${t("мои модельки", "my models")}</small>
+              <div class="gen-3d-hist-grid">${info.history.map((h) =>
+                `<button type="button" data-h="${esc(h.url)}"><img src="${esc(h.url)}" alt="" loading="lazy"/></button>`).join("")}
+              </div></div>` : ""}
         </div>
         <div class="gen-3d-stage">
-          ${d.busy ? `<span class="gen-spin"></span><b>${t("генерирую разворот — до минуты", "generating the turnaround — up to a minute")}</b>`
-            : d.url ? `<img src="${esc(d.url)}" alt=""/>
+          ${d.busy ? `<div class="skel" style="width:100%;min-height:260px"></div>
+              <b>${t("генерирую разворот — до минуты", "generating the turnaround — up to a minute")}</b>`
+            : d.url ? `
+              <div class="gen-3d-spin3d ${d.sheet ? "hidden" : ""}" data-n="${d.n}">
+                <canvas></canvas>
+                <span class="gen-3d-draghint">⟲ ${t("тяни, чтобы крутить", "drag to spin")}</span>
+              </div>
+              <img class="gen-3d-sheetimg ${d.sheet ? "" : "hidden"}" src="${esc(d.url)}" alt=""/>
               <div class="gen-3d-acts">
+                <button type="button" class="gen-3d-flip">${d.sheet
+                  ? t("вертушка", "spin view") : t("показать лист", "show the sheet")}</button>
                 <a href="${esc(d.url)}" download>⬇ ${t("скачать", "download")}</a>
                 <span class="gen-3d-saved">✓ ${t("сохранено в персонажах", "saved to characters")}</span>
                 <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
+              </div>
+              <div class="gen-3d-video">
+                ${d.vurl ? `<video src="${esc(d.vurl)}" controls autoplay loop muted playsinline></video>` : ""}
+                ${d.vbusy ? `<div class="gen-3d-vbusy"><span class="gen-spin"></span> ${esc(d.vbusy)}</div>` : ""}
+                <div class="gen-3d-vrow">
+                  <button type="button" class="gen-go gen-3d-orbit" ${d.vbusy ? "disabled" : ""}>
+                    ${t("видео-облёт в один клик", "one-click orbit video")} <span>⚡ ${videoCost3d()}</span></button>
+                </div>
+                ${(d.trends || []).length ? `
+                  <small class="gen-3d-vcap">${t("или ролик по тренду с твоей моделькой:", "or a trend video with your model:")}</small>
+                  <div class="gen-3d-trends">${d.trends.map((x) => `
+                    <button type="button" data-trend="${x.id}" title="${esc(x.title)}" ${d.vbusy ? "disabled" : ""}>
+                      ${x.sample_url ? `<video src="${esc(x.sample_url)}" muted loop playsinline preload="metadata"></video>`
+                        : `<img src="${esc(x.poster_url)}" alt="" loading="lazy"/>`}
+                      <i>${esc(x.title)}</i>
+                    </button>`).join("")}</div>` : ""}
               </div>`
-            : `<b>${t("здесь появится твой разворот", "your turnaround appears here")}</b>`}
+            : `<b>${t("здесь появится твой разворот", "your turnaround appears here")}</b>
+               <p class="gen-3d-hint">${t("лист ракурсов соберётся в вертушку, а моделька станет персонажем для клипов",
+                 "the sheet turns into a spinner and the model becomes a clip character")}</p>`}
         </div>
       </section>`;
     $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
     $(".gen-drop input", page).addEventListener("change", (e) => {
       d.files = Array.from(e.target.files || []).slice(0, 4);
-      d.url = ""; d.err = "";
+      d.url = ""; d.err = ""; d.vurl = "";
       render();
     });
-    $$(".gen-3d-kinds button", page).forEach((b) =>
-      b.addEventListener("click", () => { d.kind = b.dataset.k; render(); }));
-    $(".gen-3d-again", page)?.addEventListener("click", () => {
-      d.files = []; d.url = ""; render();
+    $$(".k-kind button", page).forEach((b) => b.addEventListener("click", () => { d.kind = b.dataset.k; render(); }));
+    $$(".k-views button", page).forEach((b) => b.addEventListener("click", () => { d.views = b.dataset.k; render(); }));
+    $$(".k-layout button", page).forEach((b) => b.addEventListener("click", () => { d.layout = b.dataset.k; render(); }));
+    $$(".gen-3d-hist-grid button", page).forEach((b) => b.addEventListener("click", () => {
+      d.url = b.dataset.h; d.sheet = false; d.vurl = ""; d.err = "";
+      d.n = (d.info.views.find((v) => v.id === d.views) || { n: 4 }).n;
+      render();
+    }));
+    $(".gen-3d-flip", page)?.addEventListener("click", () => { d.sheet = !d.sheet; render(); });
+    $(".gen-3d-again", page)?.addEventListener("click", () => { d.files = []; d.url = ""; d.vurl = ""; render(); });
+    $(".gen-3d-go", page)?.addEventListener("click", () => make3d());
+    $(".gen-3d-orbit", page)?.addEventListener("click", () => video3d(null));
+    $$(".gen-3d-trends button", page).forEach((b) =>
+      b.addEventListener("click", () => video3d(parseInt(b.dataset.trend, 10))));
+    if (d.url && !d.sheet) mountSpin3d(page);
+  }
+
+  const videoCost3d = () => {
+    const m = model(S.video.model) || {};
+    return m.points_by_duration?.[S.video.duration] ?? m.points ?? 0;
+  };
+
+  async function make3d() {
+    const d = S.d3;
+    if (!d.files.length || d.busy) return;
+    d.busy = true; d.err = ""; d.vurl = ""; render();
+    try {
+      const ch = await api("/api/characters", { method: "POST",
+        body: { name: t("Моя 3D-модель", "My 3D model") } });
+      for (const f of d.files) {
+        const fd = new FormData(); fd.append("photo", f);
+        await api(`/api/characters/${ch.id}/photos`, { method: "POST", body: fd });
+      }
+      const res = await api(`/api/characters/${ch.id}/generate-model`,
+        { method: "POST", body: { kind: d.kind, views: d.views, layout: d.layout } });
+      const m = (res.photos || []).filter((p) => p.kind === "model").pop();
+      d.url = m ? m.url : "";
+      d.n = (d.info?.views || []).find((v) => v.id === d.views)?.n || 4;
+      d.sheet = false;
+      if (!d.url) d.err = t("модель не вернула лист — попробуй ещё раз", "no sheet returned — try again");
+      else if (d.info) { d.info.history.unshift({ id: 0, url: d.url, char_id: ch.id }); }
+    } catch (e) { d.err = e.message; }
+    d.busy = false; render();
+  }
+
+  /* Вертушка: лист режется canvas'ом на N кадров, драг листает их как
+     вращение. Сетка 2 ряда режется по двум строкам. */
+  function mountSpin3d(page) {
+    const d = S.d3;
+    const box = $(".gen-3d-spin3d", page);
+    const cv = $("canvas", box);
+    const img = new Image();
+    img.onload = () => {
+      const n = d.n || 4;
+      const rows = d.layout === "grid" ? 2 : 1;
+      const cols = Math.ceil(n / rows);
+      const fw = Math.floor(img.naturalWidth / cols);
+      const fh = Math.floor(img.naturalHeight / rows);
+      cv.width = fw; cv.height = fh;
+      const draw = () => {
+        const k = ((d.frame % n) + n) % n;
+        cv.getContext("2d").drawImage(img,
+          (k % cols) * fw, Math.floor(k / cols) * fh, fw, fh, 0, 0, fw, fh);
+      };
+      draw();
+      let sx = null, sf = 0;
+      const move = (x) => { d.frame = sf + Math.round((x - sx) / 45); draw(); };
+      box.onpointerdown = (e) => { sx = e.clientX; sf = d.frame; box.setPointerCapture(e.pointerId); };
+      box.onpointermove = (e) => { if (sx !== null) move(e.clientX); };
+      box.onpointerup = () => { sx = null; };
+    };
+    img.src = d.url;
+  }
+
+  /* Кадр вертушки → jpeg-блоб: он и реф видео, и вход трендов. */
+  async function frameBlob3d() {
+    const d = S.d3;
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const n = d.n || 4, rows = d.layout === "grid" ? 2 : 1;
+        const cols = Math.ceil(n / rows);
+        const fw = Math.floor(img.naturalWidth / cols), fh = Math.floor(img.naturalHeight / rows);
+        const cv = document.createElement("canvas");
+        cv.width = fw; cv.height = fh;
+        cv.getContext("2d").drawImage(img, 0, 0, fw, fh, 0, 0, fw, fh);
+        cv.toBlob((b) => (b ? resolve(b) : reject(new Error("crop failed"))), "image/jpeg", .92);
+      };
+      img.onerror = () => reject(new Error("sheet not readable"));
+      img.src = d.url;
     });
-    $(".gen-3d-go", page)?.addEventListener("click", async () => {
-      if (!d.files.length || d.busy) return;
-      d.busy = true; d.err = ""; render();
-      try {
-        const ch = await api("/api/characters", { method: "POST",
-          body: { name: t("Моя 3D-модель", "My 3D model") } });
-        for (const f of d.files) {
-          const fd = new FormData(); fd.append("photo", f);
-          await api(`/api/characters/${ch.id}/photos`, { method: "POST", body: fd });
+  }
+
+  async function video3d(trendId) {
+    const d = S.d3;
+    if (d.vbusy) return;
+    d.vbusy = t("готовлю кадр…", "preparing the frame…"); d.vurl = ""; render();
+    try {
+      const blob = await frameBlob3d();
+      if (trendId) {
+        const fd = new FormData();
+        fd.append("photo", new File([blob], "model.jpg", { type: "image/jpeg" }));
+        const job = await api(`/api/trends/${trendId}/make`, { method: "POST", body: fd });
+        d.vbusy = t("снимаю ролик по тренду…", "shooting the trend video…"); render();
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const st = await api(`/api/trends/jobs/${job.job_id}`);
+          if (st.status === "error") throw new Error(st.error || "trend failed");
+          if (st.video_url) { d.vurl = st.video_url; break; }
         }
-        const res = await api(`/api/characters/${ch.id}/generate-model`,
-          { method: "POST", body: { kind: d.kind } });
-        const model = (res.photos || []).filter((p) => p.kind === "model").pop();
-        d.url = model ? model.url : "";
-        if (!d.url) d.err = t("модель не вернула лист — попробуй ещё раз", "no sheet returned — try again");
-      } catch (e) { d.err = e.message; }
-      d.busy = false; render();
-    });
+      } else {
+        const fd = new FormData(); fd.append("file", blob, "model.jpg");
+        const up = await api("/api/chat/upload", { method: "POST", body: fd });
+        const beforeIds = new Set(S.msgs.filter((m) => m.kind === "video" && m.url).map((m) => m.id));
+        await api(`/api/chats/${S.chatId}/messages`, { method: "POST", body: {
+          engine: S.video.model,
+          text: "Slow smooth turntable rotation: the character stays in place "
+              + "and the camera orbits a full circle around them. Neutral grey "
+              + "studio background, even light, no zoom.",
+          aspect: "9:16", duration: S.video.duration, file_ids: [up.id],
+        } });
+        d.vbusy = t("снимаю облёт…", "shooting the orbit…"); render();
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          await loadMsgs();
+          const vid = S.msgs.filter((m) => m.role !== "user" && m.kind === "video"
+            && m.url && !beforeIds.has(m.id)).pop();
+          const busyOne = S.msgs.some((m) => m.role !== "user" && m.status
+            && m.status !== "done" && m.status !== "error");
+          if (vid && !busyOne) { d.vurl = vid.url; break; }
+          if (!busyOne && !vid && i > 2) throw new Error(t("видео не вышло — токены возвращены", "video failed — tokens refunded"));
+        }
+      }
+      if (!d.vurl) throw new Error(t("не дождался видео — загляни в супергенератор позже", "timed out — check the supergenerator later"));
+    } catch (e) { d.err = e.message; }
+    d.vbusy = ""; render();
   }
 
   /* ─────────── ИИ-блогеры: выбор ведущего → съёмка ───────────

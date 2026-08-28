@@ -10554,7 +10554,29 @@ MODEL_SHEET_VIEWS = {
         "Even neutral grey studio background, sharp focus on the face, "
         "no text, no labels, no captions, no grid lines, no watermark."
     ),
+    # Шесть и восемь ракурсов — под «вертушку» в генераторе: равные шаги
+    # поворота, чтобы нарезанные кадры листались как вращение.
+    "six": (
+        "Six views left to right, the character rotating in equal 60-degree steps: "
+        "front, front three-quarter, side profile, back three-quarter, back, "
+        "and the opposite side profile. Relaxed A-pose, arms slightly away from "
+        "the body, hands EMPTY, full body head to toe, identical outfit, hair and "
+        "proportions in every view, all six figures the same height on one baseline. "
+        "Even neutral grey studio background, no props, no text, no labels, "
+        "no grid lines, no watermark."
+    ),
+    "eight": (
+        "Eight views left to right, the character rotating in equal 45-degree steps "
+        "through a full turn starting from the front. Relaxed A-pose, arms slightly "
+        "away from the body, hands EMPTY, full body head to toe, identical outfit, "
+        "hair and proportions in every view, all eight figures the same height on "
+        "one baseline. Even neutral grey studio background, no props, no text, "
+        "no labels, no grid lines, no watermark."
+    ),
 }
+
+#: Сколько фигур в листе каждого вида — фронт режет лист на кадры вертушки.
+MODEL_SHEET_VIEW_N = {"full": 4, "closeup": 4, "six": 6, "eight": 8}
 
 # Фото главнее текста по ВНЕШНОСТИ, текст главнее фото по ОДЕЖДЕ и стилю.
 # Без этой строки описание конкурирует с фотографией за лицо и обычно
@@ -10599,7 +10621,8 @@ def _model_sheet_photos(ch: Character, limit: int) -> list:
     return [live[0]] + live[-(limit - 1):]
 
 
-def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list) -> str:
+def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list,
+                        layout: str = "row") -> str:
     """Четыре блока в жёстком порядке: стиль листа → идентичность → описание
     → рамки листа. Порядок не косметика: начало промпта весит больше."""
     base = MODEL_SHEET_STYLES.get(kind) or MODEL_SHEET_STYLES["3d"]
@@ -10619,6 +10642,9 @@ def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list) -> str:
     if desc:
         parts.append(f"CHARACTER (clothing, accessories, character and mood): {desc}")
     parts.append(rules)
+    if layout == "grid":
+        parts.append("Arrange the views in a GRID of two equal rows instead of "
+                     "one row; keep every figure the same size.")
     return "\n\n".join(parts)
 
 
@@ -10734,6 +10760,28 @@ async def generate_attribute_model(attr_id: int, request: Request,
     return {"ok": True, "url": f"/api/media/{fname}", "charged": cost}
 
 
+@app.get("/api/model-sheet")
+def model_sheet_info(user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Витрине 3D-моделек: честная цена по движку пользователя, доступные
+    виды листа и история его разворотов (kind=model) миниатюрами."""
+    engine = _model_sheet_engine(user)
+    spec = mediagen.IMAGE_ENGINES.get(engine, {})
+    resolution = "4K" if "4K" in (spec.get("resolutions") or ()) else ""
+    rows = (db.query(CharacterPhoto)
+            .join(Character, CharacterPhoto.character_id == Character.id)
+            .join(Project, Character.project_id == Project.id)
+            .filter(Project.owner_id == user.id, CharacterPhoto.kind == "model")
+            .order_by(CharacterPhoto.id.desc()).limit(18).all())
+    return {
+        "engine": engine, "engine_title": spec.get("title") or engine,
+        "cost": _image_cost(user, engine, resolution),
+        "views": [{"id": "full", "n": 4}, {"id": "six", "n": 6}, {"id": "eight", "n": 8}],
+        "history": [{"id": p.id, "char_id": p.character_id,
+                     "url": f"/api/media/{p.filename}"} for p in rows],
+    }
+
+
 @app.post("/api/characters/{char_id}/generate-model")
 async def generate_character_model(char_id: int, request: Request,
                                    user: User = Depends(current_user),
@@ -10764,6 +10812,9 @@ async def generate_character_model(char_id: int, request: Request,
     views = str(body.get("views") or "full")
     if views not in MODEL_SHEET_VIEWS:
         views = "full"
+    # Раскладка листа: лента (по умолчанию) или сетка в два ряда. Живёт
+    # ДОПИСКОЙ к правилам вида — сами тексты видов остаются лентой.
+    layout = str(body.get("layout") or "row")
 
     engine = _model_sheet_engine(user)
     spec = mediagen.IMAGE_ENGINES.get(engine, {})
@@ -10808,7 +10859,7 @@ async def generate_character_model(char_id: int, request: Request,
             # должен оставить лист вообще БЕЗ референса, то есть без лица.
             reference = paths[0]
 
-    prompt = _model_sheet_prompt(kind, views, desc, photos)
+    prompt = _model_sheet_prompt(kind, views, desc, photos, layout=layout)
     try:
         data, mime = await mediagen.generate_image(
             prompt, reference,
@@ -10816,7 +10867,8 @@ async def generate_character_model(char_id: int, request: Request,
             engine=engine, resolution=resolution,
             # Разворот — ГОРИЗОНТАЛЬНЫЙ лист. Именно этот параметр, а не слово
             # "horizontal" в промпте, решает, что получится на выходе.
-            aspect="16:9")
+            # Сетке в два ряда вытянутый лист не нужен — там квадрат честнее.
+            aspect="1:1" if layout == "grid" else "16:9")
     except Exception as e:  # noqa: BLE001
         # Не сделали — не берём денег: возврат ровно того, что списали.
         _refund(db, user, cost, f"разворот персонажа {ch.id}")
