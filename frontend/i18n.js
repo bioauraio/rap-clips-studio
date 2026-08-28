@@ -184,7 +184,7 @@ const I18N = {
     // ─────────── АКАДЕМИЯ ───────────
     academy: {
       title: "School",
-      lead: "Everything we know about the pipeline, in the order you actually need it. Every lesson is open on every plan — what the plan decides is whether the lesson's kit can be applied to your project.",
+      lead: "",
       progressAll: "{done} of {total} {word} · {percent}%",
       courseMeta: "{n} {word} · {min} min",
       // Формы множественного числа: массив всегда из трёх (см. tPlural).
@@ -221,7 +221,7 @@ const I18N = {
     // ─────────── КАТАЛОГ ПРИЁМОВ ───────────
     library: {
       title: "Prompts",
-      lead: "A shot is how one scene is filmed. Ours describe the difference between the first and the last frame, because that is how a scene is built here — not a camera path inside one clip.",
+      lead: "",
       searchPh: "Search: push-in, backlight, cut on motion…",
       all: "All",
       packs: "Kits",
@@ -266,7 +266,7 @@ const I18N = {
        означали бы, что человек выбирает размер, а не назначение. */
     promptbase: {
       title: "Prompts",
-      lead: "Four layers that stack in one order: a script sets the whole clip, a scene fills one shot, a motion card replaces the movement, a light card is added to the end of both frames. The track style always comes first and nothing here overrides it.",
+      lead: "",
       searchPh: "Search: push-in, backlight, night shift, rim…",
       tab: {
         scripts: "Scripts",
@@ -567,21 +567,18 @@ const I18N = {
       clip: {
         title: "rap clips",
         full: "rap clips — a video for your own track",
-        note: "Upload the track, pick a style, get a storyboard and a clip.",
       },
       ugc: {
         title: "UGC / bloggers",
         full: "UGC and AI bloggers",
-        note: "One virtual blogger across every video: reviews, unboxings, talking heads.",
       },
       // Чат и аудио — тоже режимы: у чата свой экран (#chat), у звука пока
       // только внутренние ручки. В рейке они есть, чтобы человек видел весь
       // набор инструментов, а не половину.
       chat: { title: "Workshop", full: "Workshop — one frame, one clip, one answer",
-              note: "Text, images and video from an image — in one window." },
+              note: "" },
       music: { title: "music", full: "A track: upload, mastering, release",
-               note: "Your own screen: measurements and a waveform on arrival, "
-                     + "mastering against a reference, release prep." },
+               note: "" },
       // «3D Pixar» — ЯРЛЫК, а не режим: это стиль (STYLES.pixar), у которого
       // нет ни своего объекта, ни шагов, ни каркаса. Подпись обязана говорить
       // это вслух, иначе человек ждёт от него отдельного конвейера.
@@ -593,12 +590,11 @@ const I18N = {
       mockup: {
         title: "mockups",
         full: "Mockups — product photography",
-        note: "Your packshot becomes the law: one product, several angles and sets, square frames for marketplace cards.",
+        note: "The packshot is never redrawn.",
       },
       series: {
         title: "series",
         full: "Series with seasons and episodes",
-        note: "Logline, season arc, beat sheet, an act-by-act script for each episode.",
       },
       object: {
         track: {
@@ -670,7 +666,7 @@ const I18N = {
       },
       aspectLocked: "{engine} only shoots vertical — pick a Nano Banana engine for other shapes.",
       photos: "Packshot references",
-      photosHint: "The silhouette, the label layout and every readable word are taken from these photos and never redrawn.",
+      photosHint: "Matched to these photos letter for letter.",
       photosAdd: "+ add a photo",
       needPhoto: "upload a packshot first — the product is matched against it",
       turnaround: "3D orbit (8 angles)",
@@ -730,7 +726,7 @@ const I18N = {
     textModel: {
       label: "Text model",
       lockedIn: "opens on {plan}",
-      freeNote: "Runs on the service subscription — free, and it is what writes the story, the bible and the storyboard.",
+      freeNote: "",
       paidNote: "{n} tokens per scripting step: story, season bible, episode script, storyboard.",
       // Выбор пережил даунгрейд: он лежит в проекте и ждёт возврата на
       // тариф, но пишет сейчас не он. Молчать об этом нельзя.
@@ -1202,7 +1198,7 @@ const I18N = {
     },
     marketing: {
       title: "Marketing",
-      lead: "Everything about products and brands: packshots, UGC creators and earning with lolq.ai.",
+      lead: "",
       mockups: "Mockups — product photography",
       mockupsNote: "Packshot frames for listings and ads — from a single photo.",
       ugc: "UGC / creators",
@@ -2834,7 +2830,7 @@ const I18N = {
     // ─────────── АКАДЕМИЯ ───────────
     academy: {
       title: "Школа",
-      lead: "Всё, что мы знаем про конвейер, в том порядке, в котором это реально нужно. Уроки открыты на любом тарифе — тариф решает не «покажем ли текст», а применится ли набор приёмов в проект.",
+      lead: "",
       progressAll: "{done} из {total} {word} · {percent}%",
       courseMeta: "{n} {word} · {min} мин",
       lessonWord: ["урок", "урока", "уроков"],
@@ -2869,7 +2865,7 @@ const I18N = {
     // ─────────── КАТАЛОГ ПРИЁМОВ ───────────
     library: {
       title: "Промты",
-      lead: "Приём — это как снята одна сцена. Наши описывают разницу между первым и последним кадром, потому что сцена здесь собирается именно так, а не траекторией камеры внутри одного ролика.",
+      lead: "",
       searchPh: "Поиск: наезд, контровой, склейка на движении…",
       all: "Все",
       packs: "Наборы",
@@ -2911,7 +2907,7 @@ const I18N = {
     /* ───────────────── база промтов: четыре слоя каталога ───────────────── */
     promptbase: {
       title: "Промты",
-      lead: "Четыре слоя, которые складываются в одном порядке: сценарий задаёт весь клип, сцена заполняет один кадр, движение заменяет движение камеры и тела, свет дописывается в конец обоих кадров. Стиль трека идёт первым всегда, и ничто отсюда его не перебивает.",
+      lead: "",
       searchPh: "Поиск: наезд, контровой, ночная смена, ободок…",
       tab: {
         scripts: "Сценарии",
@@ -3212,18 +3208,15 @@ const I18N = {
       clip: {
         title: "rap clips",
         full: "rap clips — клип под свой трек",
-        note: "Загружаешь трек, выбираешь стиль, получаешь раскадровку и клип.",
       },
       ugc: {
         title: "UGC / блогеры",
         full: "UGC и ИИ-блогеры",
-        note: "Один виртуальный блогер во всех роликах: обзоры, распаковки, говорящая голова.",
       },
       chat: { title: "Генератор", full: "Генератор — один кадр, ролик или ответ",
-              note: "Текст, картинки и видео из картинки — в одном окне." },
+              note: "" },
       music: { title: "музыка", full: "Трек: загрузка, мастеринг, релиз",
-               note: "Отдельный экран: замеры и волна сразу после загрузки, "
-                     + "мастеринг по эталону, подготовка релиза." },
+               note: "" },
       pixar: {
         title: "3D Pixar",
         full: "3D Pixar — стиль поверх rap clips",
@@ -3232,12 +3225,11 @@ const I18N = {
       mockup: {
         title: "мокапы",
         full: "Мокапы — предметная съёмка товара",
-        note: "Фото упаковки становится законом: один предмет, несколько ракурсов и обстановок, квадратные кадры под карточку.",
+        note: "Упаковка с фото не перерисовывается.",
       },
       series: {
         title: "сериалы",
         full: "Сериал с сезонами и сериями",
-        note: "Логлайн, арка сезона, поэпизодный план и сценарий каждой серии по актам.",
       },
       object: {
         track: { one: "трек", many: "Треки", add: "+ добавить трек", empty: "треков пока нет",
@@ -3300,7 +3292,7 @@ const I18N = {
       },
       aspectLocked: "{engine} снимает только вертикаль — под другие формы выбери движок семейства Nano Banana.",
       photos: "Фото упаковки",
-      photosHint: "Силуэт, раскладка этикетки и каждое читаемое слово берутся с этих фото и не перерисовываются.",
+      photosHint: "Совпадает с этими фото до буквы.",
       photosAdd: "+ добавить фото",
       needPhoto: "сначала загрузи фото упаковки — по нему совпадает предмет",
       turnaround: "3D-облёт (8 ракурсов)",
@@ -3360,7 +3352,7 @@ const I18N = {
     textModel: {
       label: "Текстовая модель",
       lockedIn: "открывается на {plan}",
-      freeNote: "Идёт через подписку сервиса — бесплатно, и именно она пишет сюжет, библию и раскадровку.",
+      freeNote: "",
       paidNote: "{n} токенов за сценарный шаг: сюжет, библия сезона, сценарий серии, раскадровка.",
       // Выбор пережил даунгрейд: он лежит в проекте и ждёт возврата на
       // тариф, но пишет сейчас не он. Молчать об этом нельзя.
@@ -3823,7 +3815,7 @@ const I18N = {
     },
     marketing: {
       title: "Маркетинг",
-      lead: "Всё про продукты и бренды: предметная съёмка, UGC-блогеры и заработок с lolq.ai.",
+      lead: "",
       mockups: "Мокапы — предметная съёмка товара",
       mockupsNote: "Кадры упаковки для карточек и рекламы — по одному фото.",
       ugc: "UGC / блогеры",

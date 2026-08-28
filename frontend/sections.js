@@ -733,9 +733,10 @@
     const page = document.createElement("main");
     page.id = "marketing-page";
     page.className = "trends-page marketing-page";
+    const mkLead = T("marketing.lead", "");
     page.innerHTML = `<section class="trends-hero">
       <h1>${esc(T("marketing.title", "Маркетинг"))}</h1>
-      <p>${esc(T("marketing.lead", ""))}</p>
+      ${mkLead ? `<p>${esc(mkLead)}</p>` : ""}
       ${window.lolqHowto ? window.lolqHowto("marketing") : ""}
     </section><section class="mk-grid"></section>`;
     const grid = $(".mk-grid", page);

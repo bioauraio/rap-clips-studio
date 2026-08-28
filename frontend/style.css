@@ -4592,3 +4592,9 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
    CSS-анимацией, что у камера-пресетов. */
 .pb-thumb { display: block; margin: 6px 0 8px; }
 .pb-thumb .cam-thumb { aspect-ratio: 16/9; border-radius: 10px; display: block; }
+
+
+/* Зачистка описаний интерфейса (28.08): опустевшие подводки не оставляют
+   пустых обёрток — прячем по :empty, чтобы не ловить каждую в JS. */
+.ms-hint:empty, .ms-text-note:empty, .ac-lead:empty, .sch-muted:empty,
+.trends-hero p:empty, .mkp-hero p:empty { display: none; }
