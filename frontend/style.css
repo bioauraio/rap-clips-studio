@@ -4646,6 +4646,11 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
    CSS-анимацией, что у камера-пресетов. */
 .pb-thumb { display: block; margin: 6px 0 8px; }
 .pb-thumb .cam-thumb { aspect-ratio: 16/9; border-radius: 10px; display: block; }
+/* Живое превью приёма: тот же прямоугольник, что у статичной миниатюры. */
+.pb-thumb-live .pb-vid {
+  display: block; width: 100%; aspect-ratio: 16/9; border-radius: 10px;
+  object-fit: cover; background: var(--inset);
+}
 
 
 /* Зачистка описаний интерфейса (28.08): опустевшие подводки не оставляют

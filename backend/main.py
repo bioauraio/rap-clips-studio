@@ -5172,10 +5172,17 @@ def _decorate_layer(cards: list[dict], layer: str) -> list[dict]:
     previews = _layer_previews()
     for c in cards:
         main, gallery = _preview_entry(previews.get(f"{layer}:{c['key']}"))
-        c["preview_url"] = f"/api/media/{main}" if main else ""
+        # Превью каталога — витрина: /api/media отдаёт их только владельцу
+        # (админу), и у обычного человека карточки слоёв были пустыми.
+        c["preview_url"] = _pub_media_url(main)
         # Несколько кадров Тони на карточку: первый — главный, остальные
         # крутятся hover-сменой.
-        c["preview_urls"] = [f"/api/media/{f}" for f in gallery]
+        c["preview_urls"] = [_pub_media_url(f) for f in gallery]
+        # Движение и камера ОБЯЗАНЫ двигаться: карточка обещает приём — пусть
+        # показывает его, а не стоп-кадр. Анимация лежит в той же записи.
+        _raw = previews.get(f"{layer}:{c['key']}")
+        c["anim_url"] = _pub_media_url(
+            _raw.get("anim") if isinstance(_raw, dict) else "")
     return cards
 
 
@@ -5372,7 +5379,7 @@ def generate_layer_previews(db: Session, layer: str, count: int = 1) -> dict:
 
 def _prompt_page_extras(layer: str, key: str) -> list[str]:
     _m, gallery = _preview_entry(_layer_previews().get(f"{layer}:{key}"))
-    return [f"/api/media/{f}" for f in gallery]
+    return [_pub_media_url(f) for f in gallery]
 
 
 @app.get("/api/p/{layer}/{key}")
@@ -5395,9 +5402,9 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
             "use": "trends",
         })
         if t.sample_filename:
-            out["examples"].append({"url": f"/api/media/{t.sample_filename}", "kind": "video"})
+            out["examples"].append({"url": _pub_media_url(t.sample_filename), "kind": "video"})
         if t.poster_filename:
-            out["examples"].append({"url": f"/api/media/{t.poster_filename}", "kind": "image"})
+            out["examples"].append({"url": _pub_media_url(t.poster_filename), "kind": "image"})
         out["examples"] += [{"url": u, "kind": "image"}
                             for u in _prompt_page_extras("trend", key)]
     elif layer == "mockup":
@@ -5412,7 +5419,7 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
             "use": "mockup",
         })
         if prev:
-            out["examples"].append({"url": f"/api/media/{prev}", "kind": "image"})
+            out["examples"].append({"url": _pub_media_url(prev), "kind": "image"})
         out["examples"] += [{"url": u, "kind": "image"}
                             for u in _prompt_page_extras("mockup", key)]
     elif layer in prompts_library.LAYERS:
@@ -10433,7 +10440,9 @@ def mockup_templates(user: User = Depends(current_user)):
             "emoji": tpl["emoji"], "motion": bool(tpl.get("motion")),
             "showcase": bool(tpl.get("showcase")),
             "prompt": mockup_catalog.scene_prompt(tpl),
-            "preview_url": f"/api/media/{fname}" if fname else "",
+            # Витрина каталога, а не медиа человека: через /api/media превью
+            # видел только админ-владелец файла, остальные получали 404.
+            "preview_url": _pub_media_url(fname),
         })
     return {"templates": out, "categories": list(mockup_catalog.CATEGORIES),
             "cost_points": cost}
