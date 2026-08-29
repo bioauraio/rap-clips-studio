@@ -13,7 +13,16 @@ from sqlalchemy.orm import DeclarativeBase, backref, relationship, sessionmaker
 DB_PATH = os.environ.get("DB_PATH", "/data/rapclips.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+# ПУЛ. Дефолтные 5+10 соединений выгребались досуха: генерации живут в
+# daemon-тредах и держат сессию всё время работы движка (минуты), а поллер и
+# веб-запросы идут поверх. Итог — «QueuePool limit reached, timeout 30s»,
+# сайт висит целиком, хотя контейнер жив (29.08). Даём запас и не ждём
+# вечность на исчерпании; recycle отдаёт залежавшиеся соединения обратно.
+engine = create_engine(
+    f"sqlite:///{DB_PATH}",
+    connect_args={"check_same_thread": False},
+    pool_size=40, max_overflow=60, pool_timeout=15, pool_recycle=1800,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
