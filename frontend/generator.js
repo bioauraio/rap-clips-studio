@@ -35,8 +35,8 @@
     chatId: null,        // личная лента «генератор»
     msgs: [],            // все сообщения ленты
     ws: "",              // "" | "photo" | "video"
-    photo: { model: "", aspect: "", resolution: "", variants: 1, files: [] },
-    video: { model: "", aspect: "", resolution: "", duration: 0, ref: null },
+    photo: { model: "", aspect: "", resolution: "", variants: 1, files: [], prompt: "", sel: null },
+    video: { model: "", aspect: "", resolution: "", duration: 0, ref: null, prompt: "", sel: null },
     poll: null,
     sel: null,           // текущее большое превью {url, kind}
     d3: { files: [], kind: "3d", views: "full", layout: "row", busy: false,
@@ -46,7 +46,7 @@
     // проекта: чистая моделька + 8-ракурсный облёт (turnaround).
     it: { files: [], busy: "", err: "", items: null, sel: null, frame: 0,
           vbusy: "", vurl: "", projectId: 0 },
-    blog: { chars: null },
+    blog: { chars: null, sel: null },
   };
 
   const models = (kind) => (S.meta?.models || []).filter((m) => m.kind === kind);
@@ -185,6 +185,53 @@
     }, 350);
   }
 
+  /* ═══════════ ЕДИНЫЙ МАКЕТ ВСЕХ ЭКРАНОВ ГЕНЕРАТОРА ═══════════
+     Эталон — экран «видео»: слева панель настроек (референс, промпт,
+     параметры, цена и огненная кнопка), в центре стейдж результата,
+     справа история генераций. Один макет на фото, видео, персонажа,
+     предмет и 3D — иначе каждый экран учат заново.
+     История везде живёт НА СЕРВЕРЕ (лента «генератор», /api/model-sheet,
+     /api/items/all, /api/characters/all), поэтому переживает перезагрузку. */
+  function shell(page, o) {
+    page.className = "gen-page gen-studio-view " + (o.cls || "");
+    page.innerHTML = `
+      <header class="gen-head"><h1>${o.title}</h1>
+        <div class="gen-head-tools">${o.tools || ""}
+          <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></div></header>
+      <div class="gen-studio">
+        <aside class="gen-vpanel">${o.panel || ""}</aside>
+        <main class="gen-vstage">${o.stage || ""}</main>
+        <aside class="gen-vhistory">
+          <small>${t("история", "history")}</small>
+          ${o.history || `<div class="gen-vempty-mini">${t("прошлые генерации будут здесь", "past generations live here")}</div>`}
+        </aside>
+      </div>`;
+    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+  }
+
+  /* Карточка истории: миниатюра + подпись. data-h — индекс в своём списке. */
+  const hcard = (i, o) => `<button type="button" class="gen-hcard ${o.on ? "on" : ""}" data-h="${i}"
+      title="${esc(o.cap || "")}">
+      ${o.url
+        ? (o.kind === "video"
+            ? `<video src="${esc(o.url)}" muted loop playsinline preload="metadata"></video>`
+            : `<img src="${esc(o.url)}" alt="" loading="lazy"/>`)
+        : `<span class="gen-hcard-ph">${o.ph || "•"}</span>`}
+      ${o.cap ? `<i>${esc(o.cap)}</i>` : ""}
+      ${o.busy ? `<u><span class="gen-spin"></span></u>` : ""}
+    </button>`;
+
+  /* Промпт генерации лежит на ПРЕДЫДУЩЕМ сообщении роли user: у ответа
+     движка text пустой (см. backend/chat.py). Отсюда «повторить». */
+  function promptOf(msg) {
+    let out = "";
+    for (const m of S.msgs) {
+      if (m.id >= msg.id) break;
+      if (m.role === "user" && m.text) out = m.text;
+    }
+    return out;
+  }
+
   /* ─────────── 3D-моделька с твоим лицом: РАБОЧИЙ флоу ───────────
      Та же механика, что разворот в досье персонажа (generate-model,
      kind=model): создаём персонажа, грузим фото, просим лист ракурсов.
@@ -210,75 +257,79 @@
                    ["anime", t("аниме", "anime")]];
     const seg = (cls, items, cur) => `<div class="gen-3d-kinds ${cls}">${items.map(([k, cap]) =>
       `<button type="button" data-k="${k}" class="${cur === k ? "on" : ""}">${cap}</button>`).join("")}</div>`;
-    page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · 3d-модель", "generator · 3d model")}</h1>
-        <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></header>
-      <section class="gen-3d">
-        <div class="gen-3d-left">
-          <label class="gen-drop ${d.files.length ? "has" : ""}">
-            ${d.files.length
-              ? d.files.map((f) => `<img src="${URL.createObjectURL(f)}" alt=""/>`).join("")
-              : `<span class="gen-drop-plus">＋</span>
-                 <b>${t("загрузи 1–4 своих фото", "upload 1–4 photos of yourself")}</b>
-                 <small>${t("анфас и три четверти работают лучше всего", "front and three-quarter shots work best")}</small>`}
-            <input type="file" accept="image/*" multiple hidden />
-          </label>
-          <div class="gen-3d-row"><small>${t("стиль", "style")}</small>${seg("k-kind", kinds, d.kind)}</div>
-          <div class="gen-3d-row"><small>${t("ракурсы", "views")}</small>${seg("k-views",
-            (info.views || [{ id: "full", n: 4 }]).map((v) => [v.id, String(v.n)]), d.views)}</div>
-          <div class="gen-3d-row"><small>${t("раскладка", "layout")}</small>${seg("k-layout",
-            [["row", t("лента", "strip")], ["grid", t("сетка", "grid")]], d.layout)}</div>
-          ${info.engine_title ? `<div class="gen-3d-row"><small>${t("движок", "engine")}</small>
-            <span class="gen-3d-eng">${esc(info.engine_title)}</span></div>` : ""}
-          <button type="button" class="gen-go gen-3d-go" ${d.files.length && !d.busy ? "" : "disabled"}>
-            ${d.busy ? t("делаю модельку…", "building the model…")
-                     : t("сделать 3D-модель", "build the 3D model")
-                       + (info.cost ? ` <span>⚡ ${info.cost}</span>` : "")}</button>
-          <div class="gen-note ${d.err ? "" : "hidden"}">${esc(d.err)}</div>
-          ${(info.history || []).length ? `
-            <div class="gen-3d-hist"><small>${t("мои модельки", "my models")}</small>
-              <div class="gen-3d-hist-grid">${info.history.map((h) =>
-                `<button type="button" data-h="${esc(h.url)}"><img src="${esc(h.url)}" alt="" loading="lazy"/></button>`).join("")}
-              </div></div>` : ""}
-        </div>
-        <div class="gen-3d-stage">
-          ${d.busy ? `<div class="skel" style="width:100%;min-height:260px"></div>
-              <b>${t("генерирую разворот — до минуты", "generating the turnaround — up to a minute")}</b>`
-            : d.url ? `
-              <div class="gen-3d-spin3d ${d.sheet ? "hidden" : ""}" data-n="${d.n}">
-                <canvas></canvas>
-                <span class="gen-3d-draghint">⟲ ${t("тяни, чтобы крутить", "drag to spin")}</span>
-              </div>
-              <img class="gen-3d-sheetimg ${d.sheet ? "" : "hidden"}" src="${esc(d.url)}" alt=""/>
-              <div class="gen-3d-acts">
-                <button type="button" class="gen-3d-flip">${d.sheet
-                  ? t("вертушка", "spin view") : t("показать лист", "show the sheet")}</button>
-                <a href="${esc(d.url)}" download>⬇ ${t("скачать", "download")}</a>
-                <span class="gen-3d-saved">✓ ${t("сохранено в персонажах", "saved to characters")}</span>
-                <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
-              </div>
-              <div class="gen-3d-video">
-                ${d.vurl ? `<video src="${esc(d.vurl)}" controls autoplay loop muted playsinline></video>` : ""}
-                ${d.vbusy ? `<div class="gen-3d-vbusy"><span class="gen-spin"></span> ${esc(d.vbusy)}</div>` : ""}
-                <div class="gen-3d-vrow">
-                  <button type="button" class="gen-go gen-3d-orbit" ${d.vbusy ? "disabled" : ""}>
-                    ${t("видео-облёт в один клик", "one-click orbit video")} <span>⚡ ${videoCost3d()}</span></button>
-                </div>
-                ${(d.trends || []).length ? `
-                  <small class="gen-3d-vcap">${t("или ролик по тренду с твоей моделькой:", "or a trend video with your model:")}</small>
-                  <div class="gen-3d-trends">${d.trends.map((x) => `
-                    <button type="button" data-trend="${x.id}" title="${esc(x.title)}" ${d.vbusy ? "disabled" : ""}>
-                      ${x.sample_url ? `<video src="${esc(x.sample_url)}" muted loop playsinline preload="metadata"></video>`
-                        : `<img src="${esc(x.poster_url)}" alt="" loading="lazy"/>`}
-                      <i>${esc(x.title)}</i>
-                    </button>`).join("")}</div>` : ""}
-              </div>`
-            : `<b>${t("здесь появится твой разворот", "your turnaround appears here")}</b>
-               <p class="gen-3d-hint">${t("лист ракурсов соберётся в вертушку, а моделька станет персонажем для клипов",
-                 "the sheet turns into a spinner and the model becomes a clip character")}</p>`}
-        </div>
-      </section>`;
-    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+    const hist = info.history || [];
+    shell(page, {
+      cls: "gen-3d-view",
+      title: t("генератор · 3d-модель", "generator · 3d model"),
+      panel: `
+        <label class="gen-drop ${d.files.length ? "has" : ""}">
+          ${d.files.length
+            ? d.files.map((f) => `<img src="${URL.createObjectURL(f)}" alt=""/>`).join("")
+            : `<span class="gen-drop-plus">＋</span>
+               <b>${t("загрузи 1–4 своих фото", "upload 1–4 photos of yourself")}</b>
+               <small>${t("анфас и три четверти работают лучше всего", "front and three-quarter shots work best")}</small>`}
+          <input type="file" accept="image/*" multiple hidden />
+        </label>
+        <div class="gen-3d-row"><small>${t("стиль", "style")}</small>${seg("k-kind", kinds, d.kind)}</div>
+        <div class="gen-3d-row"><small>${t("ракурсы", "views")}</small>${seg("k-views",
+          (info.views || [{ id: "full", n: 4 }]).map((v) => [v.id, String(v.n)]), d.views)}</div>
+        <div class="gen-3d-row"><small>${t("раскладка", "layout")}</small>${seg("k-layout",
+          [["row", t("лента", "strip")], ["grid", t("сетка", "grid")]], d.layout)}</div>
+        ${info.engine_title ? `<div class="gen-3d-row"><small>${t("движок", "engine")}</small>
+          <span class="gen-3d-eng">${esc(info.engine_title)}</span></div>` : ""}
+        <button type="button" class="gen-go gen-vgo gen-3d-go" ${d.files.length && !d.busy ? "" : "disabled"}>
+          ${d.busy ? t("делаю модельку…", "building the model…")
+                   : t("сделать 3D-модель", "build the 3D model")
+                     + (info.cost ? ` <span>⚡ ${info.cost}</span>` : "")}</button>
+        <div class="gen-note ${d.err ? "" : "hidden"}">${esc(d.err)}</div>`,
+      stage: d.busy
+        ? `<div class="gen-vempty"><span class="gen-spin"></span>
+             <b>${t("генерирую разворот — до минуты", "generating the turnaround — up to a minute")}</b></div>`
+        : d.url ? `
+          <div class="gen-3d-spin3d ${d.sheet ? "hidden" : ""}" data-n="${d.n}">
+            <canvas></canvas>
+            <span class="gen-3d-draghint">⟲ ${t("тяни, чтобы крутить", "drag to spin")}</span>
+          </div>
+          <img class="gen-3d-sheetimg ${d.sheet ? "" : "hidden"}" src="${esc(d.url)}" alt=""/>
+          <div class="gen-3d-acts">
+            <button type="button" class="gen-3d-flip">${d.sheet
+              ? t("вертушка", "spin view") : t("показать лист", "show the sheet")}</button>
+            <a href="${esc(d.url)}" download>⬇ ${t("скачать", "download")}</a>
+            <span class="gen-3d-saved">✓ ${t("сохранено в персонажах", "saved to characters")}</span>
+            <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
+          </div>
+          <div class="gen-3d-video">
+            ${d.vurl ? `<video src="${esc(d.vurl)}" controls autoplay loop muted playsinline></video>` : ""}
+            ${d.vbusy ? `<div class="gen-3d-vbusy"><span class="gen-spin"></span> ${esc(d.vbusy)}</div>` : ""}
+            <div class="gen-3d-vrow">
+              <button type="button" class="gen-go gen-3d-orbit" ${d.vbusy ? "disabled" : ""}>
+                ${t("видео-облёт в один клик", "one-click orbit video")} <span>⚡ ${videoCost3d()}</span></button>
+            </div>
+            ${(d.trends || []).length ? `
+              <small class="gen-3d-vcap">${t("или ролик по тренду с твоей моделькой:", "or a trend video with your model:")}</small>
+              <div class="gen-3d-trends">${d.trends.map((x) => `
+                <button type="button" data-trend="${x.id}" title="${esc(x.title)}" ${d.vbusy ? "disabled" : ""}>
+                  ${x.sample_url ? `<video src="${esc(x.sample_url)}" muted loop playsinline preload="metadata"></video>`
+                    : `<img src="${esc(x.poster_url)}" alt="" loading="lazy"/>`}
+                  <i>${esc(x.title)}</i>
+                </button>`).join("")}</div>` : ""}
+          </div>`
+        : `<div class="gen-vempty">
+             <b>${t("здесь появится твой разворот", "your turnaround appears here")}</b>
+             <small>${t("лист ракурсов соберётся в вертушку, а моделька станет персонажем для клипов",
+               "the sheet turns into a spinner and the model becomes a clip character")}</small></div>`,
+      // История разворотов приезжает с сервера (/api/model-sheet) — она на
+      // месте и после перезагрузки страницы, и в другом браузере.
+      history: hist.length
+        ? hist.slice(0, 30).map((h, i) => hcard(i, { url: h.url, on: h.url === d.url })).join("")
+        : "",
+    });
+    $$(".gen-vhistory .gen-hcard", page).forEach((b) => b.addEventListener("click", () => {
+      const h = hist[Number(b.dataset.h)]; if (!h) return;
+      d.url = h.url; d.sheet = false; d.vurl = ""; d.err = "";
+      d.n = ((d.info?.views || []).find((v) => v.id === d.views) || { n: 4 }).n;
+      render();
+    }));
     $(".gen-drop input", page).addEventListener("change", (e) => {
       d.files = Array.from(e.target.files || []).slice(0, 4);
       d.url = ""; d.err = ""; d.vurl = "";
@@ -287,11 +338,6 @@
     $$(".k-kind button", page).forEach((b) => b.addEventListener("click", () => { d.kind = b.dataset.k; render(); }));
     $$(".k-views button", page).forEach((b) => b.addEventListener("click", () => { d.views = b.dataset.k; render(); }));
     $$(".k-layout button", page).forEach((b) => b.addEventListener("click", () => { d.layout = b.dataset.k; render(); }));
-    $$(".gen-3d-hist-grid button", page).forEach((b) => b.addEventListener("click", () => {
-      d.url = b.dataset.h; d.sheet = false; d.vurl = ""; d.err = "";
-      d.n = (d.info.views.find((v) => v.id === d.views) || { n: 4 }).n;
-      render();
-    }));
     $(".gen-3d-flip", page)?.addEventListener("click", () => { d.sheet = !d.sheet; render(); });
     $(".gen-3d-again", page)?.addEventListener("click", () => { d.files = []; d.url = ""; d.vurl = ""; render(); });
     $(".gen-3d-go", page)?.addEventListener("click", () => make3d());
@@ -456,7 +502,6 @@
      «стиль/раскладка» на экране нет, потому что бэкенд их не принимает —
      чего конвейер не умеет, того на экране нет. */
   function renderItem(page) {
-    page.className = "gen-page gen-3d-view";
     const st = S.it;
     if (!S.meta) ensureData().then(() => { if (S.ws === "item3d") render(); }).catch(() => {});
     if (st.items === null) {
@@ -464,73 +509,77 @@
       fetch("/api/items/all", { credentials: "same-origin" })
         .then(async (r) => {
           if (r.status === 401 || r.status === 403) { st.items = "guest"; return; }
-          const d = r.ok ? await r.json() : null;
-          st.items = ((d && d.items) || []).filter((x) => x.url).slice(0, 12);
+          if (!r.ok) { st.items = "fail"; return; }
+          const d = await r.json();
+          st.items = (d.items || []).filter((x) => x.url).slice(0, 30);
         })
-        .catch(() => { st.items = []; })
+        .catch(() => { st.items = "fail"; })
         .then(render);
     }
     const sel = st.sel;
     const frames = (sel && sel.turnaround_urls) || [];
-    page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · предмет", "generator · product")}</h1>
-        <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></header>
-      <section class="gen-3d">
-        <div class="gen-3d-left">
-          <label class="gen-drop ${st.files.length ? "has" : ""}">
-            ${st.files.length
-              ? st.files.map((f) => `<img src="${URL.createObjectURL(f)}" alt=""/>`).join("")
-              : `<span class="gen-drop-plus">＋</span>
-                 <b>${t("загрузи 1–4 фото товара", "upload 1–4 product photos")}</b>
-                 <small>${t("этикетка сохранится точь-в-точь; первое фото — главное", "the label is preserved exactly; the first photo leads")}</small>`}
-            <input type="file" accept="image/*" multiple hidden />
-          </label>
-          <div class="gen-3d-row"><small>${t("ракурсы", "views")}</small>
-            <span class="gen-3d-eng">8 · 360°</span></div>
-          <button type="button" class="gen-go gen-3d-go gen-it-go" ${st.files.length && !st.busy ? "" : "disabled"}>
-            ${st.busy ? esc(st.busy) : t("сделать 3D-предмет", "build the 3D product")}</button>
-          <div class="gen-note ${st.err ? "" : "hidden"}">${esc(st.err)}</div>
-          ${Array.isArray(st.items) && st.items.length ? `
-            <div class="gen-3d-hist"><small>${t("мои предметы", "my products")}</small>
-              <div class="gen-3d-hist-grid">${st.items.map((x) => `
-                <button type="button" data-it="${x.track_id}" title="${esc(x.title)}">
-                  <img src="${esc(x.url)}" alt="" loading="lazy"/></button>`).join("")}
-              </div></div>` : ""}
-        </div>
-        <div class="gen-3d-stage">
-          ${st.busy ? `<div class="skel" style="width:100%;min-height:260px"></div>
-              <b>${esc(st.busy)}</b>`
-            : sel && frames.length ? `
-              <div class="gen-3d-spin3d gen-it-spin" data-n="${frames.length}">
-                <canvas></canvas>
-                <span class="gen-3d-draghint">⟲ ${t("тяни, чтобы крутить", "drag to spin")}</span>
-              </div>
-              <div class="gen-3d-acts">
-                <a href="${esc(frames[0])}" download>⬇ ${t("скачать", "download")}</a>
-                <span class="gen-3d-saved">✓ ${t("сохранено в предметах", "saved to products")}</span>
-                <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
-              </div>
-              <div class="gen-3d-video">
-                ${st.vurl ? `<video src="${esc(st.vurl)}" controls autoplay loop muted playsinline></video>` : ""}
-                ${st.vbusy ? `<div class="gen-3d-vbusy"><span class="gen-spin"></span> ${esc(st.vbusy)}</div>` : ""}
-                <div class="gen-3d-vrow">
-                  <button type="button" class="gen-go gen-it-orbit" ${st.vbusy ? "disabled" : ""}>
-                    ${t("видео-облёт в один клик", "one-click orbit video")} <span>⚡ ${videoCost3d()}</span></button>
-                </div>
-              </div>`
-            : sel ? `
-              <img class="gen-3d-sheetimg" src="${esc(sel.url)}" alt=""/>
-              <div class="gen-3d-acts">
-                <button type="button" class="gen-go gen-it-turn">${t("вертушка · 8 ракурсов", "turnaround · 8 angles")}</button>
-                <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
-              </div>
-              <div class="gen-note ${st.err ? "" : "hidden"}">${esc(st.err)}</div>`
-            : `<b>${t("здесь закрутится твой предмет", "your product spins here")}</b>
-               <p class="gen-3d-hint">${t("фото превратится в чистую модельку и 8 ракурсов по кругу — предмет сохранится в общей базе и станет слотом «Продукт» в маркетинге",
-                 "the photo becomes a clean model and 8 angles around — the product lands in the shared base and powers the Product slot in marketing")}</p>`}
-        </div>
-      </section>`;
-    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+    const list = Array.isArray(st.items) ? st.items : [];
+    shell(page, {
+      cls: "gen-3d-view gen-item-view",
+      title: t("генератор · предмет", "generator · product"),
+      panel: `
+        <label class="gen-drop ${st.files.length ? "has" : ""}">
+          ${st.files.length
+            ? st.files.map((f) => `<img src="${URL.createObjectURL(f)}" alt=""/>`).join("")
+            : `<span class="gen-drop-plus">＋</span>
+               <b>${t("загрузи 1–4 фото товара", "upload 1–4 product photos")}</b>
+               <small>${t("этикетка сохранится точь-в-точь; первое фото — главное", "the label is preserved exactly; the first photo leads")}</small>`}
+          <input type="file" accept="image/*" multiple hidden />
+        </label>
+        <div class="gen-3d-row"><small>${t("ракурсы", "views")}</small>
+          <span class="gen-3d-eng">8 · 360°</span></div>
+        <button type="button" class="gen-go gen-vgo gen-it-go" ${st.files.length && !st.busy ? "" : "disabled"}>
+          ${st.busy ? esc(st.busy) : t("сделать 3D-предмет", "build the 3D product")}</button>
+        <div class="gen-note ${st.err ? "" : "hidden"}">${esc(st.err)}</div>`,
+      stage: st.busy
+        ? `<div class="gen-vempty"><span class="gen-spin"></span><b>${esc(st.busy)}</b></div>`
+        : sel && frames.length ? `
+          <div class="gen-3d-spin3d gen-it-spin" data-n="${frames.length}">
+            <canvas></canvas>
+            <span class="gen-3d-draghint">⟲ ${t("тяни, чтобы крутить", "drag to spin")}</span>
+          </div>
+          <div class="gen-3d-acts">
+            <a href="${esc(frames[0])}" download>⬇ ${t("скачать", "download")}</a>
+            <span class="gen-3d-saved">✓ ${t("сохранено в предметах", "saved to products")}</span>
+            <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
+          </div>
+          <div class="gen-3d-video">
+            ${st.vurl ? `<video src="${esc(st.vurl)}" controls autoplay loop muted playsinline></video>` : ""}
+            ${st.vbusy ? `<div class="gen-3d-vbusy"><span class="gen-spin"></span> ${esc(st.vbusy)}</div>` : ""}
+            <div class="gen-3d-vrow">
+              <button type="button" class="gen-go gen-it-orbit" ${st.vbusy ? "disabled" : ""}>
+                ${t("видео-облёт в один клик", "one-click orbit video")} <span>⚡ ${videoCost3d()}</span></button>
+            </div>
+          </div>`
+        : sel ? `
+          <img class="gen-3d-sheetimg" src="${esc(sel.url)}" alt=""/>
+          <div class="gen-3d-acts">
+            <button type="button" class="gen-go gen-it-turn">${t("вертушка · 8 ракурсов", "turnaround · 8 angles")}</button>
+            <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
+          </div>
+          <div class="gen-note ${st.err ? "" : "hidden"}">${esc(st.err)}</div>`
+        : `<div class="gen-vempty">
+             <b>${t("здесь закрутится твой предмет", "your product spins here")}</b>
+             <small>${t("фото превратится в чистую модельку и 8 ракурсов по кругу — предмет сохранится в общей базе и станет слотом «Продукт» в маркетинге",
+               "the photo becomes a clean model and 8 angles around — the product lands in the shared base and powers the Product slot in marketing")}</small></div>`,
+      // Предметы — общая база владельца: история переживает перезагрузку.
+      history: list.length
+        ? list.map((x, i) => hcard(i, { url: x.url, cap: x.title,
+            on: Boolean(sel && sel.track_id === x.track_id) })).join("")
+        : st.items === "fail"
+          ? `<div class="gen-vempty-mini">${t("база предметов не ответила", "the product base did not answer")}</div>`
+          : "",
+    });
+    $$(".gen-vhistory .gen-hcard", page).forEach((b) => b.addEventListener("click", () => {
+      const x = list[Number(b.dataset.h)]; if (!x) return;
+      st.sel = x; st.frame = 0; st.vurl = ""; st.err = "";
+      render();
+    }));
     $(".gen-drop input", page).addEventListener("change", (e) => {
       st.files = Array.from(e.target.files || []).slice(0, 4);
       st.err = ""; st.vurl = ""; st.sel = null;
@@ -542,12 +591,6 @@
     });
     $(".gen-it-turn", page)?.addEventListener("click", () => spinItem());
     $(".gen-it-orbit", page)?.addEventListener("click", () => itemOrbit());
-    $$(".gen-3d-hist-grid button", page).forEach((b) => b.addEventListener("click", () => {
-      const x = (Array.isArray(st.items) ? st.items : []).find((i) => String(i.track_id) === b.dataset.it);
-      if (!x) return;
-      st.sel = x; st.frame = 0; st.vurl = ""; st.err = "";
-      render();
-    }));
     if (sel && frames.length && !st.busy) mountSpinFrames(page, st, frames);
   }
 
@@ -689,65 +732,78 @@
      конвейер ролика, дублировать его здесь нельзя. Гостю — пример-карточки
      и вход: пустая сетка ничего не продаёт. */
   function renderChars(page) {
-    page.className = "gen-page gen-blog-view";
     const chars = S.blog.chars;
+    const list = Array.isArray(chars) ? chars : [];
+    const sel = S.blog.sel && list.find((c) => c.id === S.blog.sel.id) ? S.blog.sel : list[0] || null;
+    S.blog.sel = sel;
     const demo = [
       { img: "/img/shots/feat-chars.jpg", cap: t("персонаж для клипа", "clip character") },
       { img: "/img/shots/frame-5.jpg", cap: t("ИИ-блогер", "AI blogger") },
       { img: "/img/shots/frame-6.jpg", cap: t("герой сериала", "series hero") },
     ];
-    page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · персонаж", "generator · character")}</h1>
-        <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></header>
-      <section class="gen-blog">
+    shell(page, {
+      cls: "gen-blog-view",
+      title: t("генератор · персонаж", "generator · character"),
+      panel: `
         <p class="gen-blog-lead">${t("персонаж — это лицо, которое держится во всех кадрах: фото, видео, обзоры и распаковки. заведи героя один раз — и снимай с ним что угодно.",
           "a character is a face that holds across every shot: photos, videos, reviews. create one once — and shoot anything with them.")}</p>
-        ${chars === "guest" ? `
-          <div class="gen-blog-grid">${demo.map((x) => `
+        ${chars === "guest"
+          ? `<button type="button" class="gen-go gen-vgo gen-login">${t("войти и завести своего", "sign in to create yours")}</button>`
+          : `<button type="button" class="gen-go gen-vgo gen-blog-make">${t("новый персонаж из фото", "new character from photos")}</button>`}
+        ${chars === "fail" ? `<div class="gen-note">${t("база персонажей не ответила — обнови страницу", "the character base did not answer — reload the page")}
+            <button type="button" class="gen-blog-retry ghosty">${t("повторить", "retry")}</button></div>` : ""}`,
+      stage: chars === null
+        ? `<div class="gen-vempty"><span class="gen-spin"></span></div>`
+        : chars === "guest" ? `
+          <div class="gen-blog-grid gen-blog-demo-grid">${demo.map((x) => `
             <div class="gen-blog-card gen-blog-demo">
               <img src="${x.img}" alt="" loading="lazy"/>
               <b>${x.cap}</b><small>${t("пример", "sample")}</small>
-            </div>`).join("")}</div>
-          <button type="button" class="gen-go gen-blog-cta gen-login">${t("войти и завести своего", "sign in to create yours")}</button>`
-        : chars === null ? `<span class="gen-spin"></span>`
-        : chars.length ? `
-          <div class="gen-blog-grid">
-            ${chars.map((c) => `
-              <div class="gen-blog-card" data-id="${c.id}">
-                ${c.photo_url ? `<img src="${esc(c.photo_url)}" alt="" loading="lazy"/>` : `<span class="gen-blog-ph">👤</span>`}
-                <b>${esc(c.name || "—")}</b>
-                <button type="button" class="gen-go gen-blog-use">${t("использовать", "use")}</button>
-              </div>`).join("")}
-            <button type="button" class="gen-blog-card gen-blog-new">
-              <span class="gen-blog-ph">＋</span><b>${t("новый персонаж", "new character")}</b>
-            </button>
+            </div>`).join("")}</div>`
+        : sel ? `
+          ${sel.photo_url ? `<img class="gen-3d-sheetimg" src="${esc(sel.photo_url)}" alt=""/>`
+            : `<div class="gen-vempty"><span class="gen-blog-ph">👤</span></div>`}
+          <div class="gen-3d-acts">
+            <b class="gen-blog-name">${esc(sel.name || "—")}</b>
+            <button type="button" class="gen-go gen-blog-use">${t("использовать", "use")}</button>
           </div>`
-        : `
-          <div class="gen-blog-empty">
-            <b>${t("пока пусто", "empty for now")}</b>
-            <p>${t("сделай героя из своих фото — 3D-модель сохранится в персонажах и будет держать лицо во всех генерациях",
-              "build a hero from your photos — the 3D model lands in characters and keeps the face everywhere")}</p>
-            <button type="button" class="gen-go gen-blog-cta gen-blog-make">${t("сделать персонажа из фото", "make a character from photos")}</button>
-          </div>`}
-      </section>`;
-    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+        : `<div class="gen-vempty">
+             <b>${t("пока пусто", "empty for now")}</b>
+             <small>${t("сделай героя из своих фото — 3D-модель сохранится в персонажах и будет держать лицо во всех генерациях",
+               "build a hero from your photos — the 3D model lands in characters and keeps the face everywhere")}</small></div>`,
+      // Персонажи приезжают из общей базы владельца — это и есть история.
+      history: list.length
+        ? list.slice(0, 30).map((c, i) => hcard(i, { url: c.photo_url, cap: c.name || "—",
+            ph: "👤", on: Boolean(sel && sel.id === c.id) })).join("")
+        : "",
+    });
     $(".gen-login", page)?.addEventListener("click", () => { closeGenerator(); if (typeof window.showLogin === "function") window.showLogin(); else location.hash = "#/login"; });
-    // «Новый персонаж» и CTA пустого состояния ведут в 3D-флоу: он создаёт
-    // персонажа из фото и сам сохраняет его в общую базу.
+    // «Новый персонаж» ведёт в 3D-флоу: он создаёт персонажа из фото и сам
+    // сохраняет его в общую базу.
     $(".gen-blog-make", page)?.addEventListener("click", () => { S.ws = "model3d"; render(); });
-    $(".gen-blog-new", page)?.addEventListener("click", () => { S.ws = "model3d"; render(); });
-    $$(".gen-blog-use", page).forEach((b) => b.addEventListener("click", () => goStudioMode("ugc")));
-    if (chars === null) {
-      // 401 — это гость, а не сбой: показываем примеры, остальное — пусто.
-      fetch("/api/characters/all", { credentials: "same-origin" })
-        .then(async (r) => {
-          if (r.status === 401 || r.status === 403) { S.blog.chars = "guest"; return; }
-          const d = r.ok ? await r.json() : null;
-          S.blog.chars = (d && d.characters) || [];
-        })
-        .catch(() => { S.blog.chars = []; })
-        .then(render);
-    }
+    $(".gen-blog-retry", page)?.addEventListener("click", () => { S.blog.chars = null; render(); });
+    $(".gen-blog-use", page)?.addEventListener("click", () => goStudioMode("ugc"));
+    $$(".gen-vhistory .gen-hcard", page).forEach((b) => b.addEventListener("click", () => {
+      const c = list[Number(b.dataset.h)]; if (!c) return;
+      S.blog.sel = c; render();
+    }));
+    if (chars === null) loadChars();
+  }
+
+  /* Список героев — ВСЕ проекты владельца (/api/characters/all). Раньше сбой
+     сервера и пустая база выглядели одинаково («пока пусто»), и настоящая
+     ошибка читалась как «у меня нет персонажей». Теперь состояния разные:
+     guest — гость, fail — сервер не ответил, [] — база правда пуста. */
+  function loadChars() {
+    fetch("/api/characters/all", { credentials: "same-origin" })
+      .then(async (r) => {
+        if (r.status === 401 || r.status === 403) { S.blog.chars = "guest"; return; }
+        if (!r.ok) { S.blog.chars = "fail"; return; }
+        const d = await r.json();
+        S.blog.chars = d.characters || [];
+      })
+      .catch(() => { S.blog.chars = "fail"; })
+      .then(render);
   }
 
   /* ─────────── экран выбора ───────────
@@ -883,41 +939,64 @@
       txt: t("Стилизованный 3D-персонаж в полный рост, студийный свет, нейтральный фон, детальная фактура",
              "Stylized full-body 3D character, studio light, neutral background, detailed texture") },
   ];
+  /* ФОТО в том же макете, что видео: панель слева, стейдж по центру,
+     история справа. Плавающая капсула-композер снизу убрана — она была
+     единственным местом сервиса, где настройки жили не в панели. */
   function renderPhoto(page) {
-    page.className = "gen-page gen-photo-view";
     const done = S.msgs.filter((m) => m.role !== "user" && m.kind === "image");
     const st = S.photo; const m = model(st.model) || {};
-    page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · фото", "generator · photo")}</h1>
-        <div class="gen-head-tools">${switcher()}
-          <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></div></header>
-      <section class="gen-gallery">${done.length ? done.slice().reverse().map(card).join("")
+    const hist = done.slice().reverse().slice(0, 30);
+    // Стейдж: выбранное из истории, иначе последняя удачная генерация.
+    const cur = (st.sel && hist.find((x) => x.id === st.sel.id)) || hist.find((x) => x.url) || null;
+    st.sel = cur;
+    const busyOne = done.find((x) => x.status && x.status !== "done" && x.status !== "error");
+    shell(page, {
+      cls: "gen-photo-view",
+      title: t("генератор · фото", "generator · photo"),
+      tools: switcher(),
+      panel: `
+        <div class="gen-vmode">${t("создать изображение", "create an image")}</div>
+        <label class="gen-vref gen-vref-multi">
+          ${st.files.length
+            ? st.files.map((f) => `<img src="${f.thumb_url || f.url}" alt=""/>`).join("")
+            : `<span class="gen-vref-plus">＋</span><b>${t("добавить референс", "add a reference")}</b><small>jpg · png · webp</small>`}
+          <input type="file" accept="image/*" multiple hidden />
+        </label>
+        ${st.files.length ? `<div class="gen-refs">${st.files.map((f) =>
+          `<span class="gen-ref"><img src="${f.thumb_url || f.url}" alt=""/><button data-rm="${f.id}">×</button></span>`).join("")}</div>` : ""}
+        <textarea class="gen-vprompt gen-prompt" maxlength="${S.meta.prompt_limit || 2000}"
+          placeholder="${t("опиши изображение, которое хочешь создать…", "describe the image you want to create…")}">${esc(st.prompt || "")}</textarea>
+        <div class="gen-vrow"><small>${t("модель", "model")}</small>${modelChip("photo")}</div>
+        <div class="gen-vrow">${(m.aspects || []).length > 1 ? `<small>${t("формат", "aspect")}</small>` + chip("aspect", st.aspect, m.aspects) : ""}</div>
+        <div class="gen-vrow">${(m.resolutions || []).length > 1 ? `<small>${t("качество", "quality")}</small>` + chip("resolution", st.resolution, m.resolutions) : ""}</div>
+        <div class="gen-vrow"><small>${t("вариантов", "variants")}</small>
+          <div class="gen-count"><button type="button" data-d="-1">−</button><span>${st.variants}</span><button type="button" data-d="1">＋</button></div></div>
+        <button type="button" class="gen-go gen-vgo">${t("сгенерировать", "generate")} <span>✦ ${cost("photo")}</span></button>
+        <div class="gen-note hidden"></div>`,
+      stage: busyOne
+        ? `<div class="gen-vempty"><span class="gen-spin"></span><b>${t("генерирую…", "generating…")}</b></div>`
+        : cur && cur.url ? `
+          <img class="gen-3d-sheetimg gen-stage-img" src="${esc(cur.url)}" alt=""/>
+          <div class="gen-3d-acts">
+            <a href="${esc(cur.url)}" download>⬇ ${t("скачать", "download")}</a>
+            <button type="button" class="gen-repeat">${t("повторить", "repeat")}</button>
+          </div>`
         : `<div class="gen-ideas">
             <b>${t("с чего начать — выбери образец и поправь под себя", "pick a sample and make it yours")}</b>
             <div class="gen-ideas-row">${photoIdeas().map((x, i) => `
               <button type="button" class="gen-idea" data-i="${i}">
                 <b>${x.cap}</b><small>${x.txt}</small>
               </button>`).join("")}</div>
-          </div>`}
-      </section>
-      <footer class="gen-composer">
-        <div class="gen-refs">${st.files.map((f) =>
-          `<span class="gen-ref"><img src="${f.thumb_url || f.url}" alt=""/><button data-rm="${f.id}">×</button></span>`).join("")}</div>
-        <div class="gen-composer-row gen-composer-top">
-          <label class="gen-attach" title="${t("референсы", "references")}">＋<input type="file" accept="image/*" multiple hidden /></label>
-          <input class="gen-prompt" type="text" maxlength="${S.meta.prompt_limit || 2000}"
-            placeholder="${t("опиши изображение, которое хочешь создать…", "describe the image you want to create…")}" />
-        </div>
-        <div class="gen-composer-row gen-composer-bottom">
-          ${modelChip("photo")}
-          ${chip("aspect", st.aspect, m.aspects || [])}
-          ${chip("resolution", st.resolution, m.resolutions || [])}
-          <div class="gen-count"><button type="button" data-d="-1">−</button><span>${st.variants}</span><button type="button" data-d="1">＋</button></div>
-          <span class="gen-flex"></span>
-          <button type="button" class="gen-go">${t("сгенерировать", "generate")} <span>✦ ${cost("photo")}</span></button>
-        </div>
-        <div class="gen-note hidden"></div>
-      </footer>`;
+          </div>`,
+      // История — сообщения ленты «генератор» с сервера: остаётся после
+      // перезагрузки страницы и видна с любого устройства.
+      history: hist.length
+        ? hist.map((msg, i) => hcard(i, {
+            url: msg.thumb_url || msg.url, kind: "image",
+            busy: Boolean(msg.status && msg.status !== "done" && msg.status !== "error"),
+            on: Boolean(cur && cur.id === msg.id) })).join("")
+        : "",
+    });
     bindSwitch(page);
     bindChips(page, {
       model: (v) => { st.model = v; syncCaps("photo"); },
@@ -925,8 +1004,9 @@
       resolution: (v) => { st.resolution = v; syncCaps("photo"); },
       variants: (v) => { st.variants = parseInt(v, 10) || 1; },
     });
-    bindGallery(page);
-    $(".gen-attach input", page).addEventListener("change", (e) => uploadRefs(e.target.files, st, page));
+    const ta = $(".gen-prompt", page);
+    ta.addEventListener("input", () => { st.prompt = ta.value; });
+    $(".gen-vref input", page).addEventListener("change", (e) => uploadRefs(e.target.files, st, page));
     $$(".gen-ref button", page).forEach((b) => b.addEventListener("click", () => {
       st.files = st.files.filter((f) => String(f.id) !== b.dataset.rm); render();
     }));
@@ -935,33 +1015,27 @@
       st.variants = Math.max(1, Math.min(maxV, (st.variants || 1) + parseInt(b.dataset.d, 10)));
       render();
     }));
-    $(".gen-composer .gen-go", page).addEventListener("click", () => sendPhoto(page));
-    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
-    $(".gen-prompt", page).addEventListener("keydown", (e) => { if (e.key === "Enter") sendPhoto(page); });
+    $(".gen-vgo", page).addEventListener("click", () => sendPhoto(page));
+    $(".gen-stage-img", page)?.addEventListener("click", () => showBig(cur.url, "image"));
+    // «Повторить» — промпт той генерации обратно в поле: он лежит на
+    // предыдущем сообщении роли user, у ответа движка text пустой.
+    $(".gen-repeat", page)?.addEventListener("click", () => {
+      st.prompt = promptOf(cur) || st.prompt || "";
+      render();
+      $(".gen-prompt", page)?.focus();
+    });
+    $$(".gen-vhistory .gen-hcard", page).forEach((b) => b.addEventListener("click", () => {
+      const msg = hist[Number(b.dataset.h)]; if (!msg) return;
+      st.sel = msg; render();
+    }));
     const ideas = photoIdeas();
     $$(".gen-idea", page).forEach((b) => b.addEventListener("click", () => {
-      const inp = $(".gen-prompt", page);
-      inp.value = ideas[Number(b.dataset.i)].txt;
-      inp.focus();
+      st.prompt = ideas[Number(b.dataset.i)].txt;
+      render();
+      $(".gen-prompt", page)?.focus();
     }));
   }
 
-  function card(msg) {
-    const busy = msg.status && msg.status !== "done" && msg.status !== "error";
-    if (busy) return `<div class="gen-card gen-busy"><span class="gen-spin"></span><small>${t("генерирую…", "generating…")}</small></div>`;
-    if (msg.status === "error") return `<div class="gen-card gen-err" title="${esc(msg.error)}">⚠ ${t("не получилось — токены возвращены", "failed — tokens refunded")}</div>`;
-    if (!msg.url) return "";
-    return msg.kind === "video"
-      ? `<div class="gen-card" data-url="${esc(msg.url)}" data-kind="video"><video src="${msg.url}" muted loop playsinline preload="metadata"></video></div>`
-      : `<div class="gen-card" data-url="${esc(msg.url)}" data-kind="image"><img src="${msg.thumb_url || msg.url}" loading="lazy" alt=""/></div>`;
-  }
-  function bindGallery(page) {
-    $$(".gen-card[data-url]", page).forEach((c) => {
-      const v = $("video", c);
-      if (v) { c.addEventListener("mouseenter", () => v.play().catch(() => {})); c.addEventListener("mouseleave", () => v.pause()); }
-      c.addEventListener("click", () => showBig(c.dataset.url, c.dataset.kind));
-    });
-  }
   function showBig(url, kind) {
     const w = document.createElement("div");
     w.className = "gen-big";
@@ -1001,64 +1075,80 @@
         variants: st.variants, file_ids: st.files.map((f) => f.id),
       } });
       st.files = [];
+      st.sel = null;  // стейдж показывает свежую генерацию, а не старый выбор
       await loadMsgs(); render();
     } catch (e) { note.textContent = e.message; note.classList.remove("hidden"); }
   }
 
   /* ─────────── ВИДЕО ─────────── */
   function renderVideo(page) {
-    page.className = "gen-page gen-video-view";
     const vids = S.msgs.filter((m) => m.role !== "user" && m.kind === "video");
-    const latest = vids[vids.length - 1];
     const st = S.video; const m = model(st.model) || {};
     const durs = m.durations || S.meta.durations || [];
-    page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · видео", "generator · video")}</h1>
-        <div class="gen-head-tools">${switcher()}
-          <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></div></header>
-      <div class="gen-studio">
-        <aside class="gen-vpanel">
-          <div class="gen-vmode">${t("создать видео", "create a video")}</div>
-          <label class="gen-vref">
-            ${st.ref ? `<img src="${st.ref.thumb_url || st.ref.url}" alt=""/><span class="gen-vref-swap">✎</span>`
-              : `<span class="gen-vref-plus">＋</span><b>${t("добавить референс", "add a reference")}</b><small>jpg · png · webp</small>`}
-            <input type="file" accept="image/*" hidden />
-          </label>
-          ${st.ref ? `<button type="button" class="gen-vref-rm">${t("убрать референс", "remove reference")}</button>` : ""}
-          <textarea class="gen-vprompt" maxlength="${S.meta.prompt_limit || 2000}"
-            placeholder="${t("опиши, что должно происходить в видео…", "describe what should happen in the video…")}"></textarea>
-          <div class="gen-vrow"><small>${t("модель", "model")}</small>${modelChip("video")}</div>
-          <div class="gen-vrow">${durs.length > 1 ? `<small>${t("длительность", "duration")}</small>` + chip("duration", st.duration + "s", durs.map((d) => ({ v: d, label: d + "s" }))) : ""}</div>
-          <div class="gen-vrow">${(m.aspects || []).length > 1 ? `<small>${t("формат", "aspect")}</small>` + chip("aspect", st.aspect, m.aspects) : ""}</div>
-          <div class="gen-vrow">${(m.resolutions || []).length > 1 ? `<small>${t("качество", "quality")}</small>` + chip("resolution", st.resolution, m.resolutions) : ""}</div>
-          <button type="button" class="gen-go gen-vgo">${t("сгенерировать", "generate")} <span>✦ ${cost("video")}</span></button>
-          <div class="gen-note hidden"></div>
-        </aside>
-        <main class="gen-vstage">
-          ${latest && latest.url ? `<video src="${latest.url}" controls loop playsinline></video>`
-            : latest && latest.status && latest.status !== "error" && latest.status !== "done"
-              ? `<div class="gen-vempty"><span class="gen-spin"></span><b>${t("видео генерируется…", "generating the video…")}</b></div>`
-              : `<div class="gen-vempty"><b>${t("здесь появится твоё видео", "your video will appear here")}</b><small>${t("загрузи фото, опиши движение и нажми «сгенерировать»", "upload a photo, describe the motion and hit generate")}</small></div>`}
-        </main>
-        <aside class="gen-vhistory">
-          <small>${t("история", "history")}</small>
-          ${vids.length ? vids.slice().reverse().map(card).join("") : `<div class="gen-vempty-mini">${t("прошлые генерации будут здесь", "past generations live here")}</div>`}
-        </aside>
-      </div>`;
+    const hist = vids.slice().reverse().slice(0, 30);
+    const cur = (st.sel && hist.find((x) => x.id === st.sel.id)) || hist.find((x) => x.url) || null;
+    st.sel = cur;
+    const busyOne = vids.find((x) => x.status && x.status !== "done" && x.status !== "error");
+    shell(page, {
+      cls: "gen-video-view",
+      title: t("генератор · видео", "generator · video"),
+      tools: switcher(),
+      panel: `
+        <div class="gen-vmode">${t("создать видео", "create a video")}</div>
+        <label class="gen-vref">
+          ${st.ref ? `<img src="${st.ref.thumb_url || st.ref.url}" alt=""/><span class="gen-vref-swap">✎</span>`
+            : `<span class="gen-vref-plus">＋</span><b>${t("добавить референс", "add a reference")}</b><small>jpg · png · webp</small>`}
+          <input type="file" accept="image/*" hidden />
+        </label>
+        ${st.ref ? `<button type="button" class="gen-vref-rm">${t("убрать референс", "remove reference")}</button>` : ""}
+        <textarea class="gen-vprompt" maxlength="${S.meta.prompt_limit || 2000}"
+          placeholder="${t("опиши, что должно происходить в видео…", "describe what should happen in the video…")}">${esc(st.prompt || "")}</textarea>
+        <div class="gen-vrow"><small>${t("модель", "model")}</small>${modelChip("video")}</div>
+        <div class="gen-vrow">${durs.length > 1 ? `<small>${t("длительность", "duration")}</small>` + chip("duration", st.duration + "s", durs.map((d) => ({ v: d, label: d + "s" }))) : ""}</div>
+        <div class="gen-vrow">${(m.aspects || []).length > 1 ? `<small>${t("формат", "aspect")}</small>` + chip("aspect", st.aspect, m.aspects) : ""}</div>
+        <div class="gen-vrow">${(m.resolutions || []).length > 1 ? `<small>${t("качество", "quality")}</small>` + chip("resolution", st.resolution, m.resolutions) : ""}</div>
+        <button type="button" class="gen-go gen-vgo">${t("сгенерировать", "generate")} <span>✦ ${cost("video")}</span></button>
+        <div class="gen-note hidden"></div>`,
+      stage: busyOne && !(cur && cur.url)
+        ? `<div class="gen-vempty"><span class="gen-spin"></span><b>${t("видео генерируется…", "generating the video…")}</b></div>`
+        : cur && cur.url ? `
+          <video src="${esc(cur.url)}" controls loop playsinline></video>
+          <div class="gen-3d-acts">
+            <a href="${esc(cur.url)}" download>⬇ ${t("скачать", "download")}</a>
+            <button type="button" class="gen-repeat">${t("повторить", "repeat")}</button>
+          </div>`
+        : `<div class="gen-vempty"><b>${t("здесь появится твоё видео", "your video will appear here")}</b><small>${t("загрузи фото, опиши движение и нажми «сгенерировать»", "upload a photo, describe the motion and hit generate")}</small></div>`,
+      // История видео — те же серверные сообщения ленты «генератор».
+      history: hist.length
+        ? hist.map((msg, i) => hcard(i, {
+            url: msg.url, kind: "video",
+            busy: Boolean(msg.status && msg.status !== "done" && msg.status !== "error"),
+            on: Boolean(cur && cur.id === msg.id) })).join("")
+        : "",
+    });
     bindSwitch(page);
-    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
     bindChips(page, {
       model: (v) => { st.model = v; syncCaps("video"); },
       duration: (v) => { st.duration = parseInt(v, 10) || 0; },
       aspect: (v) => { st.aspect = v; },
       resolution: (v) => { st.resolution = v; },
     });
-    bindGallery(page);
+    const ta = $(".gen-vprompt", page);
+    ta.addEventListener("input", () => { st.prompt = ta.value; });
     $(".gen-vref input", page).addEventListener("change", (e) => uploadRefs(e.target.files, st, page));
     $(".gen-vref-rm", page)?.addEventListener("click", () => { st.ref = null; render(); });
+    $(".gen-repeat", page)?.addEventListener("click", () => {
+      st.prompt = promptOf(cur) || st.prompt || "";
+      render();
+      $(".gen-vprompt", page)?.focus();
+    });
+    $$(".gen-vhistory .gen-hcard", page).forEach((b) => b.addEventListener("click", () => {
+      const msg = hist[Number(b.dataset.h)]; if (!msg) return;
+      st.sel = msg; render();
+    }));
     $(".gen-vgo", page).addEventListener("click", async () => {
       const note = $(".gen-note", page);
-      const text = $(".gen-vprompt", page).value.trim();
+      const text = ($(".gen-vprompt", page).value || "").trim();
       const mm = model(st.model) || {};
       if (mm.needs_image && !st.ref) { note.textContent = t("этой модели нужен кадр: загрузи фото-референс", "this model needs a frame: upload a photo"); note.classList.remove("hidden"); return; }
       try {
@@ -1067,6 +1157,7 @@
           file_ids: st.ref ? [st.ref.id] : [],
         } });
         st.ref = null;
+        st.sel = null;
         await loadMsgs(); render();
       } catch (e) { note.textContent = e.message; note.classList.remove("hidden"); }
     });

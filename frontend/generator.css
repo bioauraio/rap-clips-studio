@@ -36,15 +36,8 @@
   box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 10px 30px rgba(0,0,0,.38);
 }
 
-/* фото: галерея */
-.gen-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
-.gen-card { position: relative; overflow: hidden; border-radius: 14px; corner-shape: squircle; border: 1px solid var(--border); background: var(--surface-2); aspect-ratio: 3/4; cursor: pointer; }
-.gen-card img, .gen-card video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.gen-card.gen-busy, .gen-card.gen-err { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--ink-muted); font-size: 12px; cursor: default; }
-.gen-card.gen-err { color: var(--danger-ink); }
-.gen-empty { grid-column: 1/-1; padding: 90px 20px; border: 1px dashed var(--border-bright); border-radius: 18px; corner-shape: squircle; color: var(--ink-muted); text-align: center; }
-/* пустая галерея: примеры-подсказки карточками, клик кладёт промт в поле */
-.gen-ideas { grid-column: 1/-1; display: flex; flex-direction: column; gap: 12px; padding: 26px 0 8px; }
+/* пустой стейдж: примеры-подсказки карточками, клик кладёт промт в поле */
+.gen-ideas { display: flex; flex-direction: column; gap: 12px; padding: 26px 0 8px; }
 .gen-ideas > b { font: 700 14px/1.3 var(--font-head); color: var(--ink-muted); }
 .gen-ideas-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
 .gen-idea {
@@ -64,11 +57,9 @@
 .gen-3d-kinds button.on:hover:not(:disabled) { background: var(--fire-ink); }
 .gen-chip-btn:hover:not(:disabled) { background: var(--inset); }
 .gen-chip-menu button:hover:not(:disabled) { background: var(--gold-wash); }
-.gen-blog-new:hover:not(:disabled) { background: var(--inset); }
 .gen-blog-card .gen-go:hover:not(:disabled),
 .gen-go:hover:not(:disabled) { background: var(--fire-ink); }
 .gen-back.ghosty:hover:not(:disabled) { background: var(--card-solid); }
-.gen-3d-hist-grid button:hover:not(:disabled),
 .gen-3d-trends button:hover:not(:disabled) { background: var(--surface-2); }
 .gen-3d-flip:hover:not(:disabled), .gen-3d-again:hover:not(:disabled) { background: var(--card-solid); }
 .gen-vref-rm:hover:not(:disabled) { background: var(--inset); }
@@ -77,16 +68,6 @@
 .gen-spin { width: 22px; height: 22px; border: 2px solid rgba(var(--ink-rgb),.2); border-top-color: var(--accent); border-radius: 50%; animation: genspin .8s linear infinite; }
 @keyframes genspin { to { transform: rotate(360deg); } }
 
-/* фото: композер — стеклянная панель на наших токенах */
-.gen-composer {
-  position: fixed; z-index: 60; left: 50%; bottom: 18px; transform: translateX(-50%);
-  width: min(1080px, calc(100vw - 24px)); padding: 10px 12px;
-  border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle;
-  background: var(--card-solid); box-shadow: 0 18px 70px rgba(0,0,0,.22);
-}
-.gen-composer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.gen-attach { display: flex; width: 38px; height: 38px; align-items: center; justify-content: center; border: 1px dashed var(--border-bright); border-radius: 11px; corner-shape: squircle; color: var(--ink); font-size: 18px; cursor: pointer; }
-.gen-prompt { flex: 1; min-width: 200px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--inset); color: var(--text); font-size: 14px; }
 .gen-refs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .gen-refs:empty { display: none; }
 .gen-ref { position: relative; width: 46px; height: 46px; border-radius: 9px; overflow: hidden; }
@@ -126,14 +107,40 @@
 .gen-vrow:empty { display: none; }
 .gen-vrow small { color: var(--ink-muted); font-size: 11px; }
 .gen-vgo { width: 100%; padding: 14px; font-size: 15px; }
-.gen-vstage { display: flex; min-height: 62vh; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle; background: radial-gradient(rgba(var(--ink-rgb),.12) 1px, transparent 1px) 0 0/9px 9px var(--card-warm); }
+.gen-vstage { display: flex; flex-direction: column; gap: 12px; min-height: 62vh; padding: 18px; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle; background: radial-gradient(rgba(var(--ink-rgb),.12) 1px, transparent 1px) 0 0/9px 9px var(--card-warm); }
 .gen-vstage video { max-width: 92%; max-height: 74vh; border-radius: 14px; }
 .gen-vempty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--ink-muted); text-align: center; padding: 30px; }
 .gen-vempty b { font: 700 16px/1.3 var(--font-head); color: var(--text); }
+.gen-vstage > .gen-3d-sheetimg, .gen-vstage .gen-stage-img { max-width: 92%; max-height: 66vh; border-radius: 14px; corner-shape: squircle; }
+.gen-vstage .gen-stage-img { cursor: zoom-in; }
 .gen-vhistory { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow: auto; scrollbar-width: none; }
+.gen-vhistory::-webkit-scrollbar { display: none; }
 .gen-vhistory small { color: var(--ink-muted); font-size: 11px; }
-.gen-vhistory .gen-card { aspect-ratio: 9/16; flex: 0 0 auto; }
 .gen-vempty-mini { padding: 20px 8px; border: 1px dashed var(--border); border-radius: 12px; corner-shape: squircle; color: var(--ink-muted); font-size: 11px; text-align: center; }
+
+/* КАРТОЧКА ИСТОРИИ — одна на все экраны генератора: миниатюра, подпись,
+   отметка текущего. Данные истории серверные, поэтому она переживает
+   перезагрузку страницы и видна с другого устройства. */
+.gen-hcard {
+  position: relative; flex: 0 0 auto; width: 100%; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle;
+  background: var(--surface-2); box-shadow: none; aspect-ratio: 3/4; cursor: pointer;
+}
+.gen-hcard img, .gen-hcard video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.gen-hcard.on { border-color: var(--border-bright); box-shadow: 0 0 0 2px var(--gold-wash); }
+.gen-hcard:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-bright); transform: none; }
+.gen-hcard-ph { display: grid; place-items: center; width: 100%; height: 100%; font-size: 26px; color: var(--ink-muted); }
+.gen-hcard i {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 5px 4px;
+  font: 700 9.5px/1.15 var(--font-head); font-style: normal; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.72));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gen-hcard u { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(var(--ink-rgb),.35); }
+.gen-video-view .gen-hcard { aspect-ratio: 9/16; }
+/* Референсы фото — компактной лентой под дропзоной панели. */
+.gen-vref-multi { flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 6px; }
+.gen-vref-multi img { position: static; width: 54px; height: 54px; border-radius: 9px; }
 
 /* большое превью */
 .gen-big { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.82); }
@@ -144,26 +151,19 @@
 .gen-big-close { border: 0; background: transparent; color: #fff; font-size: 16px; box-shadow: none; }
 
 @media (max-width: 980px) {
+  /* Узкий экран: панель, стейдж и история — сверху вниз, история лентой. */
   .gen-studio { grid-template-columns: 1fr; }
   .gen-vhistory { flex-direction: row; max-height: none; overflow-x: auto; }
-  .gen-vhistory .gen-card { width: 110px; }
+  .gen-vhistory small { display: none; }
+  .gen-hcard { width: 96px; }
 }
 
 /* страница генератора живёт в app-режиме «страница поверх студии» */
 #app.trends-view > #generator-page { display: block !important; }
 
-/* композер супергенератора: поле без рамки внутри стеклянной панели */
-.gen-photo-view .gen-prompt { background: transparent; border: 0; color: var(--text); font-size: 15px; outline: none; }
-.gen-photo-view .gen-prompt::placeholder { color: var(--ink-muted); }
-.gen-photo-view .gen-chip-btn { background: var(--inset); }
-.gen-photo-view .gen-chip-static .gen-chip-btn { cursor: default; }
-.gen-composer-top { margin-bottom: 8px; }
 .gen-count { display: flex; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: 11px; corner-shape: squircle; background: var(--inset); color: var(--text); }
 .gen-count button { width: 30px; padding: 8px 0; border: 0; background: transparent; color: var(--text); font-size: 14px; box-shadow: none; }
 .gen-count span { min-width: 18px; text-align: center; font: 700 12px/1 var(--font-head); }
-.gen-flex { flex: 1; }
-.gen-photo-view .gen-go { padding: 13px 26px; font-size: 15px; }
-.gen-photo-view .gen-go:hover { filter: brightness(1.06); }
 
 /* при открытом генераторе на странице нет ничего, кроме него и шапки */
 body.gen-open > :not(#app):not(script):not(style):not(link):not(.gen-big) { display: none !important; }
@@ -186,8 +186,6 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 }
 
 /* ─── 3D-модель: рабочий экран ─── */
-.gen-3d { display: grid; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); gap: 22px; align-items: start; }
-.gen-3d-left { display: flex; flex-direction: column; gap: 12px; }
 .gen-drop {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 6px; min-height: 180px; padding: 14px; cursor: pointer; text-align: center;
@@ -203,21 +201,13 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 .gen-3d-kinds button { border: 0; box-shadow: none; background: transparent; padding: 7px 13px; border-radius: 999px; font: 700 12.5px/1 var(--font-head); color: var(--ink-muted); }
 .gen-3d-kinds button.on { background: var(--fire-ink); color: var(--on-fire); }
 .gen-3d-hint { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.5; max-width: 40ch; }
-.gen-3d-stage {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  min-height: 48vh; padding: 18px; border: 1px solid var(--border);
-  border-radius: 20px; corner-shape: squircle; background: var(--card);
-  color: var(--ink-muted); text-align: center;
-}
-.gen-3d-stage img { max-width: 100%; max-height: 60vh; border-radius: 14px; }
 .gen-3d-acts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .gen-3d-acts a { color: var(--accent-ink); font-weight: 700; text-decoration: none; }
 .gen-3d-saved { color: var(--ok-ink); font-size: 12.5px; font-weight: 700; }
 .gen-3d-again { border: 1px solid var(--border); border-radius: 999px; background: var(--card-solid); padding: 7px 13px; font-size: 12.5px; box-shadow: none; }
-@media (max-width: 900px) { .gen-3d { grid-template-columns: 1fr; } }
 
 /* ─── персонаж: база героев ─── */
-.gen-blog-lead { max-width: 62ch; color: var(--ink-muted); margin: 0 0 16px; line-height: 1.5; }
+.gen-blog-lead { margin: 0; color: var(--ink-muted); font-size: 12.5px; line-height: 1.5; }
 .gen-blog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-width: 900px; }
 .gen-blog-card {
   display: flex; flex-direction: column; gap: 6px; padding: 8px;
@@ -233,25 +223,12 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 .gen-blog-card b { font: 700 13px/1.2 var(--font-head); padding: 0 2px 2px; }
 .gen-blog-card small { color: var(--ink-muted); font-size: 11px; padding: 0 2px 2px; }
 .gen-blog-use { margin-top: 2px; padding: 9px 12px; font-size: 12.5px; border-radius: 11px; }
-.gen-blog-new { cursor: pointer; align-items: center; justify-content: center; min-height: 180px; border-style: dashed; background: var(--inset); }
 /* пустое состояние — дверь: текст + одно огненное действие */
-.gen-blog-empty {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
-  max-width: 56ch; padding: 22px; border: 1.5px dashed var(--border-bright);
-  border-radius: 18px; corner-shape: squircle; background: var(--inset);
-}
-.gen-blog-empty b { font: 800 16px/1.2 var(--font-head); }
-.gen-blog-empty p { margin: 0; color: var(--ink-muted); line-height: 1.5; }
-.gen-blog-cta { margin-top: 14px; }
 
 /* ─── 3D v2: панель, история, вертушка, видео ─── */
 .gen-3d-row { display: flex; align-items: center; gap: 10px; }
 .gen-3d-row > small { min-width: 74px; color: var(--ink-muted); font-size: 11.5px; }
 .gen-3d-eng { font: 700 12px/1 var(--font-mono); color: var(--gold-ink); }
-.gen-3d-hist small { color: var(--ink-muted); font-size: 11.5px; }
-.gen-3d-hist-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 6px; }
-.gen-3d-hist-grid button { padding: 0; border: 1px solid var(--border); border-radius: 10px; corner-shape: squircle; overflow: hidden; background: var(--surface-2); box-shadow: none; aspect-ratio: 16/10; }
-.gen-3d-hist-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* Кадр вертушки влезает во вьюпорт ЦЕЛИКОМ: высота ограничена, ширина
    следует за аспектом, кадр по центру — низ модельки не режется краем. */
 .gen-3d-spin3d { position: relative; display: flex; justify-content: center; width: 100%; max-width: 460px; cursor: grab; touch-action: none; }
