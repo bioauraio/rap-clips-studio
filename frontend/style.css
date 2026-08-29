@@ -4740,11 +4740,11 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
 
 /* Прогресс генерации: тонкая огненная шкала с процентами. */
 .mk-progress { display: flex; align-items: center; gap: 8px; }
-.mk-bar {
+.mk-progress-bar {
   flex: 1 1 120px; max-width: 220px; height: 4px; border-radius: 999px;
   overflow: hidden; background: var(--surface-2); border: 1px solid var(--border);
 }
-.mk-bar i { display: block; height: 100%; background: var(--fire-ink); transition: width 1s linear; }
+.mk-progress-bar i { display: block; height: 100%; background: var(--fire-ink); transition: width 1s linear; }
 .mk-progress em { font: 700 11px/1 var(--font-mono); font-style: normal; color: var(--accent-ink); min-width: 32px; }
 .mk-progress u { text-decoration: none; font-size: 11px; color: var(--ink-muted); }
 /* Карточка в работе мягко дышит; результат появляется fade+scale. */
@@ -4754,5 +4754,5 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
 @keyframes mk-appear { from { opacity: 0; transform: scale(.97); } }
 @media (prefers-reduced-motion: reduce) {
   .chat-msg:has(.mk-progress), .chat-media, .mk-variant img { animation: none; }
-  .mk-bar i { transition: none; }
+  .mk-progress-bar i { transition: none; }
 }

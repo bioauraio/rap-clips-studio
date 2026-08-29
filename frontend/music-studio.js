@@ -749,7 +749,7 @@
     // не нужна: это тот же трек, просто размеченный.
     const a = o.analysis;
     if (a && (a.sections || []).length && o.duration_sec) {
-      const strip = el("div", "mus-sections");
+      const strip = el("div", "mus-secbar");
       a.sections.forEach((s) => {
         const seg = el("div", "mus-sec mus-sec-" + (s.label || "steady"));
         seg.style.flex = String(Math.max(0.02, (s.end - s.start) / o.duration_sec));

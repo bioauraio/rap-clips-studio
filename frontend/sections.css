@@ -1500,13 +1500,24 @@
 @media (max-width: 700px) {
   .topbar.has-sections > .tb-sections {
     height: 54px; padding: 4px 5px; gap: 0;
-    justify-content: space-between; overflow: visible;
+    /* ЛЕНТА ПРОКРУЧИВАЕТСЯ ПАЛЬЦЕМ. Здесь стояло overflow: visible — оно
+       перебивало overflow-x: auto базового правила, и лента, упёршись в
+       max-width: calc(100vw - 24px), просто ОБРЕЗАЛАСЬ краем экрана:
+       последний раздел («Музыка») с телефона был недостижим вообще.
+       justify-content: space-between при max-content-ширине всё равно
+       ничего не раздвигал, а при переполнении мешает докрутить до начала. */
+    justify-content: flex-start;
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
     background: color-mix(in srgb, var(--card-solid) 78%, transparent);
     border: 1px solid rgba(var(--ink-rgb), .10);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4),
                 0 8px 24px rgba(var(--ink-rgb), .16);
   }
-  .topbar.has-sections .tb-sec { min-height: 0; padding: 4px 7px; gap: 2px; }
+  .topbar.has-sections > .tb-sections::-webkit-scrollbar { display: none; }
+  .topbar.has-sections .tb-sec { min-height: 0; padding: 4px 7px; gap: 2px; flex: none; }
   .topbar.has-sections .tb-sec[data-ico]::before,
   .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
     width: 19px; height: 19px;

@@ -12122,7 +12122,7 @@ function mkStatusLine(m) {
       ? Math.min(10, 4 + secs)
       : Math.min(85, 12 + (secs / expect) * 73);
     s.className = "status mk-progress";
-    s.innerHTML = `<span class="mk-bar"><i style="width:${pct.toFixed(0)}%"></i></span>
+    s.innerHTML = `<span class="mk-progress-bar"><i style="width:${pct.toFixed(0)}%"></i></span>
       <em>${pct.toFixed(0)}%</em>
       <u>${escHtml(t(m.status === "queued" ? "chat.queued" : "chat.running"))}</u>`;
     return s;

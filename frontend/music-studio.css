@@ -233,7 +233,7 @@
 .mus-num b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
 .mus-num s { text-decoration: none; font-size: 11px; color: var(--ink-muted); margin-left: 3px; }
 .mus-player { width: 100%; margin-top: 12px; }
-.mus-sections { display: flex; gap: 4px; margin-top: 10px; height: 10px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(45, 33, 26, .16); }
+.mus-secbar { display: flex; gap: 4px; margin-top: 10px; height: 10px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(45, 33, 26, .16); }
 .mus-sec { height: 100%; }
 .mus-sec-quiet { background: rgba(45, 33, 26, .12); }
 .mus-sec-steady { background: rgba(255, 181, 69, .45); }
