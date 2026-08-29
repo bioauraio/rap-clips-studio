@@ -600,6 +600,97 @@ async def supergen_cancel(request: Request):
         db.close()
 
 
+# ───────────────────── уведомления о готовых генерациях ─────────────────────
+
+# Событие старше суток не доставляем: получить «клип готов» через неделю
+# после клипа — хуже, чем не получить ничего.
+BOT_EVENT_TTL_S = int(os.environ.get("BOT_EVENT_TTL_S", "86400"))
+
+
+@router.post("/internal/bot-events")
+async def bot_events(request: Request):
+    """Пачка недоставленных событий «генерация готова» для бота.
+
+    Доставка at-most-once: строки помечаются delivered ПРИ ВЫДАЧЕ. Упавший
+    между выдачей и отправкой бот теряет уведомление, но никогда не шлёт его
+    дважды — для уведомлений это правильная сторона ошибки. События людей без
+    tg_id гасятся сразу: писать им некуда и копить эти строки незачем."""
+    if not _key_ok(request):
+        return _deny(503 if not BOT_INTERNAL_KEY else 403, "internal_key", "ключ не сошёлся")
+    core = _core()
+    body = await request.json()
+    limit = max(1, min(50, int(body.get("limit") or 20)))
+    import datetime as _dt  # noqa: PLC0415
+    edge = core.now() - _dt.timedelta(seconds=BOT_EVENT_TTL_S)
+    db = core.SessionLocal()
+    try:
+        from db import BotEvent  # noqa: PLC0415
+        rows = (db.query(BotEvent).filter(BotEvent.delivered.is_(False))
+                .order_by(BotEvent.id).limit(limit).all())
+        out = []
+        for ev in rows:
+            ev.delivered = True
+            if ev.created_at and ev.created_at < edge:
+                continue  # протухло — гасим молча
+            user = db.get(core.User, ev.user_id)
+            if not user or not user.tg_id:
+                continue  # писать некуда
+            out.append({
+                "id": ev.id, "kind": ev.kind, "status": ev.status,
+                "tg_id": user.tg_id, "user_id": ev.user_id,
+                "track_id": ev.track_id, "job_id": ev.job_id,
+                "scene_id": ev.scene_id, "filename": ev.filename,
+                "title": ev.title, "error": ev.error,
+            })
+        db.commit()
+        return {"events": out}
+    finally:
+        db.close()
+
+
+@router.get("/internal/witness-media/{filename}")
+def witness_media(filename: str, request: Request, thumb: int = 0):
+    """Витринные картинки для бота: постеры трендов и превью мокап-шаблонов.
+
+    Они зарегистрированы без владельца (user_id=0), и /api/media отдаёт их
+    только админу — сайту хватает, а бот показывает витрину ЛЮБОМУ человеку.
+    Ослаблять общий гвард приватности ради витрины нельзя, поэтому узкий
+    служебный роут: только файлы, которые прямо сейчас числятся витриной."""
+    if not _key_ok(request):
+        return _deny(503 if not BOT_INTERNAL_KEY else 403, "internal_key", "ключ не сошёлся")
+    core = _core()
+    fname = os.path.basename(filename)
+    db = core.SessionLocal()
+    try:
+        row = (db.query(core.TrendPreset)
+               .filter((core.TrendPreset.poster_filename == fname)
+                       | (core.TrendPreset.sample_filename == fname)).first())
+        allowed = row is not None
+    finally:
+        db.close()
+    if not allowed:
+        allowed = fname in set(core._mockup_previews().values())
+    path = os.path.join(core.UPLOAD_DIR, fname)
+    if not allowed or not os.path.exists(path):
+        return _deny(404, "no_file", "это не витринный файл")
+    if thumb:
+        # Миниатюра как у /api/thumb: витрина в чате не должна весить 4К.
+        dst = os.path.join(core.THUMB_DIR, fname + ".jpg")
+        if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(path):
+            try:
+                r = subprocess.run(
+                    ["ffmpeg", "-y", "-i", path, "-vf", "scale=640:-2",
+                     "-q:v", "5", dst], capture_output=True, timeout=60)
+                if r.returncode != 0 or not os.path.exists(dst):
+                    dst = ""
+            except (OSError, subprocess.SubprocessError):
+                dst = ""
+        if dst and os.path.exists(dst):
+            from fastapi.responses import FileResponse  # noqa: PLC0415
+            return FileResponse(dst)
+    return core._media_response(path, request)
+
+
 # ───────────────────────────── самодиагностика ─────────────────────────────
 
 @router.get("/internal/bot-capabilities")
@@ -616,6 +707,7 @@ def capabilities(request: Request):
         "ok": True,
         "supergen_cancel": hasattr(core.Track, "supergen_cancel"),
         "supergen_stage": hasattr(core.Track, "supergen_stage"),
+        "bot_events": hasattr(core, "_bot_event"),
         "styles": len(_load_styles()),
         "public_base": core.PUBLIC_BASE_URL,
         "brand": os.environ.get("BRAND_NAME", "lolq.ai"),

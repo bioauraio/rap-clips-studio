@@ -42,7 +42,7 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, ChangeLog, EarnClick, EarnSale, TeamProject, TeamTask, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, BotEvent, ChangeLog, EarnClick, EarnSale, TeamProject, TeamTask, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
     AuthCode, TrackPhoto, User, init_db, now,
@@ -1014,6 +1014,33 @@ def _spawn_gen(user: "User", fn, *args, kind: str = "gen") -> None:
     через _spawn_gen. Иначе пачка занимала бы слот и ждала собственных детей,
     которым слот уже не достался бы, — на FREE это вечный дедлок."""
     gate.spawn(user.id, _parallel_limit(user), fn, args, kind=kind)
+
+
+def _bot_event(user_id, kind: str, status: str = "done", *, track_id: int = 0,
+               job_id: int = 0, scene_id: int = 0, filename: str = "",
+               title: str = "", error: str = "") -> None:
+    """Уведомление телеграм-боту: «у этого человека готова генерация».
+
+    СВОЯ сессия, а не сессия воркера: хуки зовутся и из успешных веток, и из
+    except после rollback — подсаживаться в чужую транзакцию в таком месте
+    значит однажды утащить за собой основной commit. Ошибка записи глотается
+    с логом: уведомление — вторичный продукт, генерацию оно не стоит.
+    Доставляет строку контейнер бота через /internal/bot-events (см. bot_api)."""
+    if not user_id:
+        return
+    try:
+        s = SessionLocal()
+        try:
+            s.add(BotEvent(user_id=int(user_id), kind=kind, status=status,
+                           track_id=int(track_id or 0), job_id=int(job_id or 0),
+                           scene_id=int(scene_id or 0),
+                           filename=os.path.basename(filename or ""),
+                           title=(title or "")[:200], error=(error or "")[:300]))
+            s.commit()
+        finally:
+            s.close()
+    except Exception as e:  # noqa: BLE001
+        log.warning("bot-событие %s для user %s не записалось: %s", kind, user_id, e)
 
 
 def _plan_image_engine(user: "User | None", want: str = "") -> str:
@@ -2304,6 +2331,8 @@ def _run_trend_job(job_id: int) -> None:
         job.status = "done"
         db.commit()
         log.info("тренд %s: ролик готов для user %s", job.preset_id, job.user_id)
+        _bot_event(job.user_id, "trend", job_id=job.id,
+                   filename=job.video_filename, title=(t.title if t else ""))
     except Exception as e:  # noqa: BLE001 — вернуть токены и сказать правду
         db.rollback()
         job = db.get(TrendJob, job_id)
@@ -2314,6 +2343,8 @@ def _run_trend_job(job_id: int) -> None:
             if owner and job.charged_points:
                 _refund(db, owner, job.charged_points, f"тренд не получился ({job.id})")
             db.commit()
+            _bot_event(job.user_id, "trend", "error", job_id=job.id,
+                       error=job.error)
         log.warning("тренд-задача %s упала: %s", job_id, e)
     finally:
         db.close()
@@ -9240,6 +9271,11 @@ def _run_assemble(track_id: int) -> None:
         _remove_media(old, db)
         db.commit()
         log.info("клип трека %s собран из %s сцен", track_id, len(videos))
+        # Уведомление боту — только у САМОСТОЯТЕЛЬНОЙ сборки: внутри
+        # супергенерации статус running, и финальное событие пришлёт она сама.
+        if track.supergen_status != "running":
+            _bot_event(track.project.owner_id, "clip", track_id=track_id,
+                       filename=track.clip_filename or "", title=track.title or "")
     except Exception as e:  # noqa: BLE001
         db.rollback()
         track = db.get(Track, track_id)
@@ -9259,6 +9295,9 @@ def _run_assemble(track_id: int) -> None:
                         fresh.commit()
                 finally:
                     fresh.close()
+        if track and track.supergen_status != "running":
+            _bot_event(track.project.owner_id, "clip", "error", track_id=track_id,
+                       title=track.title or "", error=_err_text(e, 300))
         log.warning("сборка клипа трека %s упала: %s", track_id, e)
     finally:
         db.close()
@@ -9368,6 +9407,13 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
             t.supergen_status = status
             t.supergen_note = txt
             db.commit()
+            # Финал конвейера — повод для уведомления в Telegram. Именно
+            # здесь, а не в _run_assemble: во время супергенерации сборка —
+            # промежуточный шаг, и событие с неё было бы дублем этого.
+            if status in ("done", "error"):
+                _bot_event(t.project.owner_id, "clip", status,
+                           track_id=track_id, filename=t.clip_filename or "",
+                           title=t.title or "", error=txt if status == "error" else "")
 
     try:
         track = db.get(Track, track_id)
@@ -10312,8 +10358,11 @@ def _mockup_frame_cost(user: User, engine: str) -> int:
 
 @app.get("/api/mockup/templates")
 def mockup_templates(user: User = Depends(current_user)):
-    del user  # каталог одинаков для всех, но виден только своим
+    # Каталог одинаков для всех, но ЦЕНА кадра — тарифная: боту и витрине
+    # нужна честная цифра до нажатия, а не сюрприз в списании.
     previews = _mockup_previews()
+    engine = _plan_image_engine(user)
+    cost = _mockup_frame_cost(user, engine)
     out = []
     for tpl in mockup_catalog.TEMPLATES:
         fname = previews.get(tpl["id"]) or ""
@@ -10321,10 +10370,12 @@ def mockup_templates(user: User = Depends(current_user)):
             "id": tpl["id"], "ru": tpl["ru"], "en": tpl["en"],
             "category": tpl["category"], "tara": tpl["tara"],
             "emoji": tpl["emoji"], "motion": bool(tpl.get("motion")),
+            "showcase": bool(tpl.get("showcase")),
             "prompt": mockup_catalog.scene_prompt(tpl),
             "preview_url": f"/api/media/{fname}" if fname else "",
         })
-    return {"templates": out, "categories": list(mockup_catalog.CATEGORIES)}
+    return {"templates": out, "categories": list(mockup_catalog.CATEGORIES),
+            "cost_points": cost}
 
 
 def _run_marketing_frame(track_id: int, scene_id: int, prompt: str,
@@ -10361,6 +10412,9 @@ def _run_marketing_frame(track_id: int, scene_id: int, prompt: str,
         scene.style_keys = track.style_keys or ""
         db.commit()
         log.info("маркетинг-кадр сцены %s трека %s готов", scene_id, track_id)
+        _bot_event(track.project.owner_id, "mockup", track_id=track_id,
+                   scene_id=scene_id, filename=fname,
+                   title=scene.shot_note or track.title or "")
     except Exception as e:  # noqa: BLE001
         db.rollback()
         scene = db.get(Scene, scene_id)
@@ -10368,6 +10422,11 @@ def _run_marketing_frame(track_id: int, scene_id: int, prompt: str,
             scene.image_status = "error"
             scene.image_error = _err_text(e, 300)
             db.commit()
+            tr0 = db.get(Track, track_id)
+            if tr0:
+                _bot_event(tr0.project.owner_id, "mockup", "error",
+                           track_id=track_id, scene_id=scene_id,
+                           error=scene.image_error)
         track = db.get(Track, track_id)
         if track:
             owner = (db.get(User, track.project.owner_id)

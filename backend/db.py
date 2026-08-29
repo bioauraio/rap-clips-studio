@@ -1153,6 +1153,30 @@ class PointEvent(Base):
     track_id = Column(Integer, nullable=False, default=0)
 
 
+class BotEvent(Base):
+    """Очередь уведомлений телеграм-бота о ГОТОВЫХ генерациях.
+
+    Генерации завершаются в тредах API, а сообщение человеку шлёт отдельный
+    контейнер бота — единственный, кто знает рабочий маршрут до api.telegram.org.
+    Прямого пуша между ними нет намеренно (бот — поллер без своего HTTP-порта),
+    поэтому завершение пишет строку сюда, а бот забирает их пачкой через
+    /internal/bot-events. Таблица, а не память процесса: рестарт API между
+    «готово» и опросом бота не должен молча съедать уведомление."""
+    __tablename__ = "bot_events"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    kind = Column(String, nullable=False, default="")    # clip | trend | mockup
+    status = Column(String, nullable=False, default="done")  # done | error
+    track_id = Column(Integer, nullable=False, default=0)
+    job_id = Column(Integer, nullable=False, default=0)
+    scene_id = Column(Integer, nullable=False, default=0)
+    filename = Column(String, nullable=False, default="")
+    title = Column(String, nullable=False, default="")
+    error = Column(String, nullable=False, default="")
+    delivered = Column(Boolean, nullable=False, default=False, index=True)
+
+
 class AdminAction(Base):
     """Что админ сделал руками. Журнал токенов покрывает ТОЛЬКО токены: смена
     тарифа, блокировка и продление в него не ложатся, а знать, кто и когда
