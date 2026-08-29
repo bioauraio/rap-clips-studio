@@ -2530,7 +2530,11 @@ class Bot:
 
         Ловит и то, что человек запустил НА САЙТЕ: клип, тренд, мокап-кадр.
         Доставка at-most-once — сервер помечает строки при выдаче."""
-        if not self.api.caps.get("bot_events"):
+        # capabilities(), а не кэш напрямую: на старте бот мог подняться
+        # раньше API (docker перезапускает оба разом), и пустой кэш без
+        # повторного запроса выключал бы уведомления навсегда.
+        caps = await self.api.capabilities()
+        if not caps.get("bot_events"):
             return
         try:
             data = await self.api._internal("/internal/bot-events", {"limit": 20})
