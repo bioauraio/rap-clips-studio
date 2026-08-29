@@ -440,8 +440,9 @@
         <span class="cover-ph"></span>
       </label>
       <input id="project-name" class="project-name" data-i18n-ph="top.projectNamePh" />
-      <!-- Навигация по этапам активного трека — закреплена в этой панели. -->
-      <div id="stage-jump" class="stage-jump"></div>
+      <!-- Тумблер этапов уехал в конец body: внутри .topbar его прибивал
+           backdrop-filter — position:fixed считался от шапки, и капсула
+           «этапов» вылезала наверх вместо нижнего края экрана. -->
       <!-- Вид проекта (альбом/сингл) остаётся в DOM: на него пишет
            renderProjectBar, а $("#…") в app.js — голый querySelector без
            проверок. В шапке он скрыт стилем: то же самое написано в карточке
@@ -1562,5 +1563,9 @@
   document.body.appendChild(js);
 })();
 </script>
+<!-- Навигация по этапам активного трека: fixed-капсула у нижнего края.
+     Живёт на уровне body — предок с backdrop-filter/transform превращает
+     fixed в «прибит к предку» (так капсула и оказывалась в шапке). -->
+<div id="stage-jump" class="stage-jump"></div>
 </body>
 </html>
