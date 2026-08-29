@@ -7649,11 +7649,12 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     # последним слотом коллажа, персонажи всегда важнее по местам.
     style_tail = _style_ref_paths(scene.track)[:1]
     if scene_refs:
-        models = _character_model_paths(
-            chars or [c for c in project.characters if c.is_main], 4, prefer_photo=True)
-        # Реф первым: первая картинка коллажа для генератора — главная.
-        return (_ref_collage(db, [scene_refs[0], *models, *style_tail],
-                             project.owner_id) or scene_refs[0])
+        # КОЛЛАЖА ЗДЕСЬ БОЛЬШЕ НЕТ. Шлюз берёт одну картинку, и склейка
+        # «реф + модельки» сама была сеткой — ChatGPT честно перерисовывал
+        # именно её: вместо сцены выходил второй character sheet (29.08,
+        # владелец: «почему всё генерируется тупо модельками»). Отдаём ОДИН
+        # снимок; узнаваемость держит текст промпта и легенда персонажей.
+        return scene_refs[0]
 
     attr_path = _scene_attribute_photo(scene, chars)
     if attr_path:
@@ -7663,11 +7664,12 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     # Лимит по движку: Nano Banana 2 берёт 14 картинок, Pro — 8, шлюз — 1.
     paths = _character_model_paths(chars, 6, prefer_photo=True)
     if not paths:
-        return (_ref_collage(db, style_tail, project.owner_id) or style_tail[0]) \
-            if style_tail else None
-    # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
-    # бок, иначе генератор видит только первого и рисует остальных от балды.
-    return _ref_collage(db, [*paths, *style_tail], project.owner_id) or paths[0]
+        return style_tail[0] if style_tail else None
+    # Тоже без склейки: сетка из лиц бок о бок — прямая инструкция «нарисуй
+    # сетку». Один герой = одно фото. Многогеройные кадры на шлюзе теряют
+    # часть лиц, зато остаются КАДРАМИ; для точной идентичности всех героев
+    # есть движки с мультиреференсом (Nano Banana берёт до 14 картинок).
+    return paths[0]
 
 
 def _reference_legend(scene: Scene, project: Project) -> str:
@@ -7885,6 +7887,10 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "no contact sheets, no turnarounds, no character sheets, no collage, no white or grey "
         "studio cyclorama, no repeated figures of the same character within the frame."
     )
+    # Тот же запрет ПЕРВОЙ строкой промпта: длинные инструкции модель читает
+    # с начала, и хвостовые правила теряются на фоне описания сцены.
+    parts.insert(0, "OUTPUT: one single cinematic photograph of a scene. NOT a character sheet, "
+                    "NOT a turnaround, NOT a grid or collage of poses.")
     # 4c. Идентичность важнее красоты: генераторы склонны «улучшать» лицо и
     # подменять человека похожим типажом — для сквозного героя альбома это
     # разрушает всю затею.
