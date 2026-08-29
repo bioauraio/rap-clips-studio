@@ -99,8 +99,10 @@
       title: () => T("nav.titles.studio", ""),
       /* Школа живёт ВНУТРИ #app своей страницей и переменную sheet не
          трогает — без этой проверки подсвечивались сразу два раздела:
-         «Студия» (потому что #app виден) и «Школа». */
+         «Студия» (потому что #app виден) и «Школа». Генератор — такая же
+         страница внутри #app (#generator-page), исключаем и его. */
       active: () => shown("#app") && !shown("#chat") && !shown("#music") && !sheet
+        && !$("#generator-page")
         && !(window.QlolSchool && window.QlolSchool.visible()),
       open() {
         // Выход из мастерской знает только app.js — у него там поллинг и
@@ -116,7 +118,10 @@
         if (typeof window.showApp === "function") window.showApp();
       },
     },
-    { id: "make", adopt: "#chat-btn", active: () => shown("#chat") },
+    // «Генератор» горит и когда открыта его страница поверх студии:
+    // кнопку шапки перехватывает generator.js, и #chat при этом скрыт.
+    { id: "make", adopt: "#chat-btn",
+      active: () => shown("#chat") || Boolean($("#generator-page")) },
     {
       // Тренды — витрина шаблонов «фото → ролик»: стоит первой из
       // контент-разделов, потому что это самый короткий путь новичка

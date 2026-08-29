@@ -201,7 +201,10 @@ async function api(path, opts = {}) {
         return await api(path, { ...opts, _retry: true });
       } catch (e) { /* не опознал — падаем ниже общим путём */ }
     }
-    if (!(window.TGA && TGA.active)) showLogin();
+    // Открытый генератор — витрина для гостя: его страницы сами показывают
+    // «нужен вход», а при body.gen-open виден только #app — экран логина
+    // поверх него превратился бы в пустую страницу.
+    if (!(window.TGA && TGA.active) && !$("#generator-page")) showLogin();
     throw new ApiError({ error: "unauthorized" }, 401);
   }
   if (!res.ok) {
@@ -9337,7 +9340,10 @@ rebuildAddTrackPicker();
   // Без сессии гость видит главную, а не форму пароля. С живой сессией сразу
   // открывается студия — кроме случая, когда человек пришёл именно на главную
   // (ссылка с ?home или якорь #ld-…): тогда первый экран зовёт в студию.
-  if (me.authed && !ldWantsLanding()) showApp(); else showWelcome();
+  // Исключение — открытый генератор (/generator): это витрина, гость ходит
+  // по ней без сессии, и уводить его на лендинг = отобрать страницу из рук.
+  if (me.authed && !ldWantsLanding()) showApp();
+  else if (!$("#generator-page")) showWelcome();
   // Экран закрепляется в адресе: раньше логотип оставлял ?home, и КАЖДАЯ
   // перезагрузка снова открывала главную вместо места работы.
   if (me.authed && !ldWantsLanding()
@@ -11871,18 +11877,6 @@ async function chatLoadOlder() {
 
 // ────────── ЦЕНТР: карточка модели ──────────
 
-function mkFactRow(box, key, value) {
-  if (!value) return;
-  const k = document.createElement("div");
-  k.className = "mk-fact-k";
-  k.textContent = t(key);
-  const v = document.createElement("div");
-  v.className = "mk-fact-v";
-  v.textContent = value;
-  box.appendChild(k);
-  box.appendChild(v);
-}
-
 // Описание движка живёт в словаре, а не приезжает с сервера строкой: реестр
 // движков написан по-русски, и англоязычный интерфейс получал бы русский
 // абзац. Нет ключа — берём серверную заметку, чтобы новый движок не остался
@@ -11911,21 +11905,6 @@ function mkCan(model) {
   return out.join(" · ");
 }
 
-function mkCannot(model) {
-  if (model.kind === "video") return t("make.cannotVideo");
-  if (model.kind === "image") return t("make.cannotImage");
-  return t("make.cannotText");
-}
-
-function mkInput(model) {
-  if (model.kind === "video") return t("make.inputVideo");
-  if (model.kind === "image") {
-    return model.max_refs > 1
-      ? t("make.inputImageRefs", { n: model.max_refs })
-      : t("make.inputImage");
-  }
-  return t("make.inputText");
-}
 
 function mkPriceFact(model) {
   if (model.kind === "video") {
@@ -11982,13 +11961,12 @@ function mkRenderCard(feed) {
     card.appendChild(p);
   }
 
-  const facts = document.createElement("div");
-  facts.className = "mk-facts";
-  mkFactRow(facts, "make.factCan", mkCan(model));
-  mkFactRow(facts, "make.factCannot", mkCannot(model));
-  mkFactRow(facts, "make.factInput", mkInput(model));
-  mkFactRow(facts, "make.factPrice", mkPriceFact(model));
-  card.appendChild(facts);
+  // Вместо простыни «умеет / не умеет / вход / цена» — две короткие строки
+  // фактов. Цена обязана жить ДО первого нажатия (разброс тридцатикратный),
+  // формат — чтобы не гадать; остальное читается в карточке движка.
+  const canLine = mkCan(model);
+  if (canLine) mkFactLine(card, canLine);
+  mkFactLine(card, `✦ ${mkPriceFact(model)}`);
 
   // ЧЕТЫРЕ РАЗНЫХ ЧЕСТНЫХ СОСТОЯНИЯ. Закрытое тарифом ведёт к тарифам,
   // неподключённое честно говорит «включим — заработает», не подходящее
@@ -12018,7 +11996,80 @@ function mkRenderCard(feed) {
     warn.textContent = t("make.needFrame");
     card.appendChild(warn);
   }
+
+  // ТРИ СТАРТОВЫЕ КНОПКИ. Пустое поле — стена: человек не знает, с чего
+  // начать, и уходит. Клик кладёт готовый промт в поле — дальше он его
+  // правит под себя. Огня на кнопках нет: главное действие — «сгенерировать».
+  if (model.allowed && model.live) {
+    const starters = mkStarters(model);
+    if (starters.length) {
+      const row = document.createElement("div");
+      row.className = "mk-starters";
+      starters.forEach((s) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "mk-starter";
+        b.textContent = s.label;
+        b.title = s.text;
+        b.addEventListener("click", () => {
+          const ta = chatEl("cc-text");
+          if (!ta) return;
+          ta.value = s.text;
+          ta.dispatchEvent(new Event("input"));
+          ta.focus();
+        });
+        row.appendChild(b);
+      });
+      card.appendChild(row);
+    }
+  }
   feed.appendChild(card);
+}
+
+/* Стартовые промты по виду модели. Инлайн-словарь той же схемой, что
+   карусели (mkGroupShowcase): ключей в i18n у этого блока нет. */
+function mkStarters(model) {
+  const ru = LANG === "ru";
+  if (model.kind === "video") {
+    return [
+      { label: ru ? "Оживи фото" : "Bring a photo to life",
+        text: ru
+          ? "Лёгкое живое движение: дыхание, моргание, волосы шевелит ветер. Камера почти неподвижна, свет не меняется."
+          : "Subtle lifelike motion: breathing, blinking, hair moving in the wind. Camera nearly static, light unchanged." },
+      { label: ru ? "Облёт камеры" : "Camera orbit",
+        text: ru
+          ? "Медленный облёт камеры вокруг героя на 360°, фон в мягком боке, плавный ход без рывков."
+          : "Slow 360° camera orbit around the subject, background in soft bokeh, smooth motion without jerks." },
+      { label: ru ? "Неоновый проезд" : "Neon drive",
+        text: ru
+          ? "Ночная улица в неоне, лёгкий дождь, камера медленно едет вперёд сквозь пар и отражения."
+          : "Neon-lit night street, light rain, camera slowly pushing forward through steam and reflections." },
+    ];
+  }
+  if (model.kind === "image") {
+    return [
+      { label: ru ? "Обложка трека" : "Track cover",
+        text: ru
+          ? "Обложка трека: крупный портрет в контровом свете, зерно плёнки, глубокие тени, место под крупную типографику."
+          : "Track cover art: close portrait in rim light, film grain, deep shadows, room for bold typography." },
+      { label: ru ? "Кадр клипа" : "Clip frame",
+        text: ru
+          ? "Кинематографичный кадр: 35мм, неглубокая резкость, тёплый закатный свет, живая уличная сцена."
+          : "Cinematic frame: 35mm, shallow depth of field, warm sunset light, candid street scene." },
+      { label: ru ? "Предметка" : "Product shot",
+        text: ru
+          ? "Предметная съёмка товара на чистом фоне: мягкие студийные тени, лёгкий отблеск, этикетка читается."
+          : "Product shot on a clean background: soft studio shadows, subtle highlight, label clearly readable." },
+    ];
+  }
+  return [
+    { label: ru ? "Хук на 8 строк" : "8-bar hook",
+      text: ru ? "Напиши хук на 8 строк: дерзко, с внутренними рифмами, без клише." : "Write an 8-bar hook: bold, internal rhymes, no clichés." },
+    { label: ru ? "Идея сцены" : "Scene idea",
+      text: ru ? "Предложи идею сцены для клипа: локация, движение камеры, что делает герой." : "Pitch a clip scene idea: location, camera move, what the hero does." },
+    { label: ru ? "Разбор референса" : "Reference breakdown",
+      text: ru ? "Разбери референс: чем он цепляет и как повторить приём в моём ролике." : "Break down a reference: why it works and how to reuse the trick in my video." },
+  ];
 }
 
 // ────────── ЛЕНТА ──────────

@@ -114,10 +114,10 @@
     document.body.classList.add("gen-open");
     app.classList.add("trends-view"); // тот же механизм «страницы поверх студии»
     history.pushState({}, "", "/generator");
-    page.innerHTML = `<p class="muted" style="text-align:center;padding:60px 0">${t("загружаю…", "loading…")}</p>`;
-    ensureData().then(render).catch((e) => {
-      page.innerHTML = `<p class="muted" style="text-align:center;padding:60px 0">${esc(e.message)}</p>`;
-    });
+    // Выбор «что создаём?» не требует данных — рисуем мгновенно и гостю.
+    // Модели и личная лента грузятся при входе в супергенератор (render).
+    render();
+    window.QlolSections?.paint(); // подсветка «Генератор» в общей шапке
   }
   window.qlolOpenGenerator = openGenerator;
 
@@ -128,6 +128,7 @@
     if (location.pathname === "/generator") history.replaceState({}, "", "/studio");
     document.body.classList.remove("gen-open");
     $("#app")?.classList.remove("trends-view");
+    window.QlolSections?.paint();
   }
   // Уход в другой раздел: чужие кнопки ленты просто убирают нашу страницу.
   document.addEventListener("click", (ev) => {
@@ -137,11 +138,36 @@
 
   function render() {
     const page = $("#generator-page"); if (!page) return;
+    // Супергенератору нужны модели и личная лента — грузим ПРИ ВХОДЕ в него,
+    // а не на открытии генератора: выбор и витрина персонажей открываются
+    // мгновенно, гость видит экраны, а не «Unauthorized» вместо страницы.
+    if ((S.ws === "photo" || S.ws === "video") && !S.meta) {
+      page.className = "gen-page";
+      page.innerHTML = `<p class="muted" style="text-align:center;padding:60px 0">${t("загружаю…", "loading…")}</p>`;
+      ensureData().then(render).catch((e) => renderLocked(page, e));
+      return;
+    }
     if (S.ws === "photo") return renderPhoto(page);
     if (S.ws === "video") return renderVideo(page);
     if (S.ws === "model3d") return render3d(page);
-    if (S.ws === "blogger") return renderBlogger(page);
+    if (S.ws === "blogger") return renderChars(page);
     renderEntry(page);
+  }
+
+  /* Гость упирается в супергенератор 401-м. Это дверь, а не ошибка:
+     говорим про вход человеческим текстом, огонь — на главном действии. */
+  function renderLocked(page, e) {
+    const auth = /авториз|unauthor|401/i.test(String((e && e.message) || ""));
+    page.className = "gen-page gen-entry-view";
+    page.innerHTML = `<section class="gen-entry gen-locked">
+      <h1>${auth ? t("нужен вход", "sign in required") : esc((e && e.message) || "")}</h1>
+      ${auth ? `<p class="gen-locked-sub">${t("войди в аккаунт — и генератор откроется", "sign in and the generator opens up")}</p>` : ""}
+      <div class="gen-locked-row">
+        ${auth ? `<button type="button" class="gen-go gen-login">${t("войти", "sign in")}</button>` : ""}
+        <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button>
+      </div></section>`;
+    $(".gen-login", page)?.addEventListener("click", () => { closeGenerator(); if (typeof window.showLogin === "function") window.showLogin(); else location.hash = "#/login"; });
+    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
   }
 
   /* Карточки «Клипы» и «Предметы» не дублируют студию — они В НЕЁ ведут:
@@ -161,6 +187,9 @@
   function render3d(page) {
     page.className = "gen-page gen-3d-view";
     const d = S.d3;
+    // Модели нужны кнопке «видео-облёт» (цена, движок). Тянем фоном и молча:
+    // гостю страница обязана открыться без сессии — это витрина флоу.
+    if (!S.meta) ensureData().then(() => { if (S.ws === "model3d") render(); }).catch(() => {});
     if (!d.info) {
       api("/api/model-sheet").then((r) => { d.info = r; render(); }).catch(() => {});
     }
@@ -348,6 +377,7 @@
     if (d.vbusy) return;
     d.vbusy = t("готовлю кадр…", "preparing the frame…"); d.vurl = ""; render();
     try {
+      if (!S.meta) await ensureData(); // цена и движок видео — из моделей
       const blob = await frameBlob3d();
       if (trendId) {
         const fd = new FormData();
@@ -388,39 +418,72 @@
     d.vbusy = ""; render();
   }
 
-  /* ─────────── ИИ-блогеры: выбор ведущего → съёмка ───────────
-     Не дублируем UGC-конвейер — выбираем/создаём блогера и уводим в него. */
-  function renderBlogger(page) {
+  /* ─────────── Персонаж: общая база героев ───────────
+     Персонаж — лицо, которое держится во всех генерациях; ИИ-блогер — его
+     работа. Залогиненному — герои из общей базы (/api/characters/all),
+     «использовать» уводит в UGC-режим студии: там персона, формат и весь
+     конвейер ролика, дублировать его здесь нельзя. Гостю — пример-карточки
+     и вход: пустая сетка ничего не продаёт. */
+  function renderChars(page) {
     page.className = "gen-page gen-blog-view";
     const chars = S.blog.chars;
+    const demo = [
+      { img: "/img/shots/feat-chars.jpg", cap: t("персонаж для клипа", "clip character") },
+      { img: "/img/shots/frame-5.jpg", cap: t("ИИ-блогер", "AI blogger") },
+      { img: "/img/shots/frame-6.jpg", cap: t("герой сериала", "series hero") },
+    ];
     page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · ИИ-блогеры", "generator · AI bloggers")}</h1>
+      <header class="gen-head"><h1>${t("генератор · персонаж", "generator · character")}</h1>
         <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></header>
       <section class="gen-blog">
-        <p class="gen-blog-lead">${t("блогер — это персонаж: лицо держится во всех роликах. выбери своего или заведи нового — и снимай обзоры, распаковки и говорящую голову.",
-          "a blogger is a character: the face holds across videos. pick yours or create one — then shoot reviews, unboxings and talking heads.")}</p>
-        <div class="gen-blog-grid">
-          ${chars === null ? `<span class="gen-spin"></span>`
-            : (chars || []).map((c) => `
-              <button type="button" class="gen-blog-card" data-id="${c.id}">
-                ${c.photo_url ? `<img src="${esc(c.photo_url)}" alt=""/>` : `<span class="gen-blog-ph">👤</span>`}
+        <p class="gen-blog-lead">${t("персонаж — это лицо, которое держится во всех кадрах: фото, видео, обзоры и распаковки. заведи героя один раз — и снимай с ним что угодно.",
+          "a character is a face that holds across every shot: photos, videos, reviews. create one once — and shoot anything with them.")}</p>
+        ${chars === "guest" ? `
+          <div class="gen-blog-grid">${demo.map((x) => `
+            <div class="gen-blog-card gen-blog-demo">
+              <img src="${x.img}" alt="" loading="lazy"/>
+              <b>${x.cap}</b><small>${t("пример", "sample")}</small>
+            </div>`).join("")}</div>
+          <button type="button" class="gen-go gen-blog-cta gen-login">${t("войти и завести своего", "sign in to create yours")}</button>`
+        : chars === null ? `<span class="gen-spin"></span>`
+        : chars.length ? `
+          <div class="gen-blog-grid">
+            ${chars.map((c) => `
+              <div class="gen-blog-card" data-id="${c.id}">
+                ${c.photo_url ? `<img src="${esc(c.photo_url)}" alt="" loading="lazy"/>` : `<span class="gen-blog-ph">👤</span>`}
                 <b>${esc(c.name || "—")}</b>
-              </button>`).join("")}
-          <button type="button" class="gen-blog-card gen-blog-new">
-            <span class="gen-blog-ph">＋</span><b>${t("новый блогер", "new blogger")}</b>
-          </button>
-        </div>
+                <button type="button" class="gen-go gen-blog-use">${t("использовать", "use")}</button>
+              </div>`).join("")}
+            <button type="button" class="gen-blog-card gen-blog-new">
+              <span class="gen-blog-ph">＋</span><b>${t("новый персонаж", "new character")}</b>
+            </button>
+          </div>`
+        : `
+          <div class="gen-blog-empty">
+            <b>${t("пока пусто", "empty for now")}</b>
+            <p>${t("сделай героя из своих фото — 3D-модель сохранится в персонажах и будет держать лицо во всех генерациях",
+              "build a hero from your photos — the 3D model lands in characters and keeps the face everywhere")}</p>
+            <button type="button" class="gen-go gen-blog-cta gen-blog-make">${t("сделать персонажа из фото", "make a character from photos")}</button>
+          </div>`}
       </section>`;
     $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+    $(".gen-login", page)?.addEventListener("click", () => { closeGenerator(); if (typeof window.showLogin === "function") window.showLogin(); else location.hash = "#/login"; });
+    // «Новый персонаж» и CTA пустого состояния ведут в 3D-флоу: он создаёт
+    // персонажа из фото и сам сохраняет его в общую базу.
+    $(".gen-blog-make", page)?.addEventListener("click", () => { S.ws = "model3d"; render(); });
+    $(".gen-blog-new", page)?.addEventListener("click", () => { S.ws = "model3d"; render(); });
+    $$(".gen-blog-use", page).forEach((b) => b.addEventListener("click", () => goStudioMode("ugc")));
     if (chars === null) {
-      api("/api/characters/all").then((r) => { S.blog.chars = r.characters || []; render(); })
-        .catch(() => { S.blog.chars = []; render(); });
+      // 401 — это гость, а не сбой: показываем примеры, остальное — пусто.
+      fetch("/api/characters/all", { credentials: "same-origin" })
+        .then(async (r) => {
+          if (r.status === 401 || r.status === 403) { S.blog.chars = "guest"; return; }
+          const d = r.ok ? await r.json() : null;
+          S.blog.chars = (d && d.characters) || [];
+        })
+        .catch(() => { S.blog.chars = []; })
+        .then(render);
     }
-    $$(".gen-blog-card", page).forEach((b) => b.addEventListener("click", () => {
-      // И существующий, и новый ведут в UGC-режим студии: там персона,
-      // формат и весь конвейер ролика. Дублировать его здесь нельзя.
-      goStudioMode("ugc");
-    }));
   }
 
   /* ─────────── экран выбора ───────────
@@ -542,7 +605,9 @@
     const done = S.msgs.filter((m) => m.role !== "user" && m.kind === "image");
     const st = S.photo; const m = model(st.model) || {};
     page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · фото", "generator · photo")}</h1>${switcher()}</header>
+      <header class="gen-head"><h1>${t("генератор · фото", "generator · photo")}</h1>
+        <div class="gen-head-tools">${switcher()}
+          <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></div></header>
       <section class="gen-gallery">${done.length ? done.slice().reverse().map(card).join("")
         : `<div class="gen-empty">${t("здесь появятся твои изображения — опиши первое в панели снизу", "your images will appear here — describe the first one below")}</div>`}
       </section>
@@ -581,7 +646,8 @@
       st.variants = Math.max(1, Math.min(maxV, (st.variants || 1) + parseInt(b.dataset.d, 10)));
       render();
     }));
-    $(".gen-go", page).addEventListener("click", () => sendPhoto(page));
+    $(".gen-composer .gen-go", page).addEventListener("click", () => sendPhoto(page));
+    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
     $(".gen-prompt", page).addEventListener("keydown", (e) => { if (e.key === "Enter") sendPhoto(page); });
   }
 
@@ -652,7 +718,9 @@
     const st = S.video; const m = model(st.model) || {};
     const durs = m.durations || S.meta.durations || [];
     page.innerHTML = `
-      <header class="gen-head"><h1>${t("генератор · видео", "generator · video")}</h1>${switcher()}</header>
+      <header class="gen-head"><h1>${t("генератор · видео", "generator · video")}</h1>
+        <div class="gen-head-tools">${switcher()}
+          <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></div></header>
       <div class="gen-studio">
         <aside class="gen-vpanel">
           <div class="gen-vmode">${t("создать видео", "create a video")}</div>
@@ -683,6 +751,7 @@
         </aside>
       </div>`;
     bindSwitch(page);
+    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
     bindChips(page, {
       model: (v) => { st.model = v; syncCaps("video"); },
       duration: (v) => { st.duration = parseInt(v, 10) || 0; },
