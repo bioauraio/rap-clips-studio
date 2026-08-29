@@ -355,6 +355,21 @@ def _reset_orphan_jobs() -> None:
         # готов — забираем его. Иначе каждый деплой сжигал токены за работу,
         # которая была сделана.
         rescued = _rescue_paid_jobs(db)
+
+        # ВОЗОБНОВЛЯЕМ КАДРЫ, А НЕ ХОРОНИМ. Деплой или падение убивали тред, и
+        # десятки оплаченных сцен превращались в «прервано перезапуском —
+        # запусти заново»: человек видел стену ошибок и кликал руками. Деньги
+        # за них уже списаны при постановке, поэтому просто поднимаем работу
+        # заново — по одной, чтобы не завалить движки на старте.
+        resumed = 0
+        for sc in db.query(Scene).filter(
+                Scene.image_status.in_(("queued", "running"))).order_by(Scene.id).all():
+            which = "both" if (sc.image_filename and sc.image_last_filename) else "first"
+            threading.Thread(target=_run_scene_frames, args=(sc.id, which, ""), daemon=True).start()
+            resumed += 1
+        if resumed:
+            log.info("возобновлено кадров после перезапуска: %s", resumed)
+
         note = "прервано перезапуском сервиса — запусти заново"
         n = 0
         for model, pairs in (
@@ -363,8 +378,9 @@ def _reset_orphan_jobs() -> None:
                      ("clip_status", "clip_error"),
                      ("restyle_status", "restyle_note"),
                      ("supergen_status", "supergen_note"))),
-            (Scene, (("image_status", "image_error"),
-                     ("video_status", "video_error"))),
+            # image_status здесь больше НЕТ: кадры возобновляются выше,
+            # помечать их ошибкой значило бы стереть только что поднятую работу.
+            (Scene, (("video_status", "video_error"),)),
             (Project, (("story_status", "story_error"),)),
         ):
             for col, err in pairs:
