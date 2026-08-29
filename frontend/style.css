@@ -615,6 +615,10 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   box-shadow: 0 1px 2px rgba(var(--ink-rgb),.14);
 }
 .strip-arrow:active:not(:disabled) { transform: translateY(calc(-50% + 3px)); box-shadow: 0 0 0 var(--ink); }
+/* СТРЕЛКИ ГАСНУТ, КОГДА ЛИСТАТЬ НЕЧЕГО. Они были активны всегда и на пустой
+   ленте висели поверх текста «сцен пока нет», предлагая листать пустоту. */
+.strip-arrow:disabled { opacity: .28; cursor: default; box-shadow: none; }
+.strip-wrap.strip-still .strip-arrow { display: none; }
 .strip-prev { left: -8px; }
 .strip-next { right: -8px; }
 .scene-card {
@@ -664,10 +668,11 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; line-height: 1; color: rgba(var(--ink-rgb), .5);
   cursor: pointer; font-family: var(--font-mono);
-  /* Пустой слот — не кадр: узкая планка во всю высоту ряда, а не плитка
-     размером с картинку. */
-  aspect-ratio: auto; width: 30px; max-height: none;
-  align-self: stretch; min-height: 88px;
+  /* Пустой слот — ТАКАЯ ЖЕ плитка кадра, только пунктиром: планка 30×88
+     в ряду картинок читалась как разделитель, а не как «добавить кадр».
+     Уже настоящего превью — чтобы ширину по-прежнему забирали картинки. */
+  aspect-ratio: 9/16; width: 104px; max-height: 270px;
+  border-style: dashed; font-size: 22px;
 }
 .s-thumb-add:hover { color: var(--accent-ink); border-color: var(--accent); }
 /* Верхняя строка кадра: слева референсы и «+ реф», справа — движок видео и
@@ -2932,6 +2937,17 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 /* Кнопки листа неактивны, пока листа нет: серая кнопка честнее, чем кнопка,
    которая молча ничего не делает. */
 .board-bar button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+/* ЕДИНАЯ ВЫСОТА. Кнопки в этих строках приходят из разных мест (.primary,
+   .ghost, a.clip-download) со своим padding и своим кеглем — в одной строке
+   они стояли лесенкой. Высоту задаём строке, а не каждой кнопке. */
+.board-bar > button, .board-bar > a.ghost, .board-bar > a.primary,
+.row > button, .row > a.ghost, .row > a.primary, .row > a.clip-download {
+  min-height: 34px; padding-block: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+@media (max-width: 700px) {
+  .board-bar > button, .row > button { min-height: 32px; }
+}
 
 @media (max-width: 700px) {
   .board-bar { gap: 6px; }

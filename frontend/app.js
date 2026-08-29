@@ -1359,7 +1359,9 @@ async function renderAccountPane(pane) {
       <div class="dash-card">
         <span>${escHtml(t("dash.plan"))}</span>
         <b>${escHtml(a.plan_title || t("dash.planFree"))}</b>
-        <span class="dash-sub">${escHtml(payLine(a) || a.plan_note || "")}</span>
+        <span class="dash-sub">${escHtml(payLine(a)
+          || t(`landing.pricing.plans.${a.plan || "free"}.note`)
+          || a.plan_note || "")}</span>
       </div>
       <div class="dash-card">
         <span>${escHtml(t("dash.spent30", { n: usage ? usage.days : 30 }))}</span>
@@ -1410,6 +1412,7 @@ async function renderAccountPane(pane) {
   }
   // Строка настроек кабинета: тема и язык работают общими делегатами на
   // document; выход и «сохранить аккаунт» жмут свои кнопки шапки.
+  paintThemeSwitch();
   const accLogout = $(".acc-logout", pane);
   if (accLogout) accLogout.addEventListener("click", () => {
     closeModal();
@@ -4595,10 +4598,31 @@ function setStage(card, key) {
 
 // Стрелки ‹ › у горизонтальной ленты сцен.
 function bindStrip(wrap) {
+  // Карточка трека перерисовывается на каждом опросе, а bindStrip зовут по
+  // всем .strip-wrap внутри неё: без этого замка обработчики накапливались
+  // и один клик листал ленту на несколько шагов.
+  if (wrap.dataset.stripBound) return;
+  wrap.dataset.stripBound = "1";
   const box = $(".scenes", wrap);
+  const prev = $(".strip-prev", wrap);
+  const next = $(".strip-next", wrap);
+  if (!box || !prev || !next) return;
   const step = () => Math.max(280, Math.round(box.clientWidth * 0.8));
-  $(".strip-prev", wrap).addEventListener("click", () => box.scrollBy({ left: -step(), behavior: "smooth" }));
-  $(".strip-next", wrap).addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
+  // Стрелки были активны ВСЕГДА: на пустой ленте они висели поверх текста
+  // «сцен пока нет» и предлагали листать пустоту. Теперь их состояние —
+  // правда о ленте: нечего листать — стрелок нет вовсе.
+  const paint = () => {
+    const room = box.scrollWidth - box.clientWidth;
+    wrap.classList.toggle("strip-still", room <= 4);
+    prev.disabled = room <= 4 || box.scrollLeft <= 2;
+    next.disabled = room <= 4 || box.scrollLeft >= room - 2;
+  };
+  prev.addEventListener("click", () => box.scrollBy({ left: -step(), behavior: "smooth" }));
+  next.addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
+  box.addEventListener("scroll", paint, { passive: true });
+  window.addEventListener("resize", paint);
+  if (window.ResizeObserver) new ResizeObserver(paint).observe(box);
+  paint();
 }
 
 
@@ -6242,6 +6266,14 @@ function renderTrack(tr) {
         for (const [k, el] of marks) {
           if (el && el.getBoundingClientRect().top <= 260) best = k;
         }
+        // «СБОРКА» НЕДОСТИЖИМА ОБЫЧНОЙ МЕРКОЙ: это низ карточки, и докрутить
+        // его верх до 260px нельзя — страница кончается раньше. Поэтому у
+        // последнего блока вторая примета: доскроллили до конца. Проверку
+        // включаем, только если документ вообще прокручивается, иначе при
+        // прокрутке внутри контейнера условие было бы верно всегда.
+        const sc = document.scrollingElement || document.documentElement;
+        const room = sc.scrollHeight - sc.clientHeight;
+        if (room > 40 && room - sc.scrollTop <= 40 && $(".clip-dock", cur)) best = "clip";
         $$(".stage-tab", jump).forEach((el) =>
           el.classList.toggle("on", el.dataset.stage === best));
       };
@@ -10940,14 +10972,22 @@ function applyTheme(mode) {
     root.dataset.theme = (h >= 21 || h < 8) ? "dark" : "light";
   }
   localStorage.setItem("rc_theme", mode);
-  document.querySelectorAll(".theme-switch button").forEach((b) => {
-    b.classList.toggle("on", b.dataset.themeSet === mode);
-  });
+  paintThemeSwitch(mode);
   // Внутри Telegram цвет клиента (шапка, фон, нижняя полоса) красится нашим
   // --bg: без этой строки смена темы перекрашивала приложение, а хром
   // мини-аппа оставался светлым — те самые белые прогалы вокруг панелей.
   if (window.TGA && window.TGA.repaint) window.TGA.repaint();
 }
+/* Подсветка выбранной темы. Отдельной функцией, потому что кнопки живут не
+   только в шапке: панель кабинета рисуется заново на каждом открытии, и
+   раньше в ней не подсвечивалась НИ ОДНА тема — до первого клика. */
+function paintThemeSwitch(mode) {
+  const m = mode || localStorage.getItem("rc_theme") || "auto";
+  document.querySelectorAll(".theme-switch button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.themeSet === m);
+  });
+}
+window.paintThemeSwitch = paintThemeSwitch;
 window.applyTheme = applyTheme;   // меню профиля (sections.js) листает тему
 // Меню «⋯» карточки кадра гасим кликом мимо и по Esc — один слушатель на
 // документ вместо слушателя в каждой карточке (их на треке тридцать).
@@ -11020,6 +11060,14 @@ function paAddMsg(cls, text) {
 async function paAsk(text) {
   const feed = paEl("pa-feed");
   if (text) paAddMsg("me", text);
+  // БЕЗ ПРОЕКТА НЕ СТУЧИМСЯ. Ассистент видит проект — это его смысл; на
+  // витрине генератора проекта ещё нет, и запрос уходил с project_id=0,
+  // получая 400 в консоль на каждый вопрос. Честная строка лучше ошибки.
+  if (!activeProjectId) {
+    paAddMsg("bot muted", t("agent.needProject")
+      || "Сначала создай проект — я подсказываю по нему.");
+    return;
+  }
   const wait = paAddMsg("bot muted", t("agent.thinking"));
   let d;
   const call = () => api("/api/chat/agent", {
