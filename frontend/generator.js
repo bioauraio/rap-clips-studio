@@ -600,6 +600,22 @@
   }
 
   /* ─────────── ФОТО ─────────── */
+  // Пустая галерея — не одинокая подсказка по центру, а примеры-карточки:
+  // клик кладёт готовый промт в композер, человек стартует с образца.
+  const photoIdeas = () => [
+    { cap: t("обложка трека", "track cover"),
+      txt: t("Обложка трека: крупный портрет в контровом свете, зерно плёнки, глубокие тени, место под крупную типографику",
+             "Track cover: close portrait in rim light, film grain, deep shadows, room for bold typography") },
+    { cap: t("неоновый кадр", "neon frame"),
+      txt: t("Ночная улица в неоне, лёгкий дождь, отражения в лужах, кинематографичный кадр 35мм",
+             "Neon-lit night street, light rain, puddle reflections, cinematic 35mm frame") },
+    { cap: t("предметка", "product shot"),
+      txt: t("Предметная съёмка товара на чистом фоне: мягкие студийные тени, лёгкий отблеск, этикетка читается",
+             "Product shot on a clean background: soft studio shadows, subtle highlight, readable label") },
+    { cap: t("3D-персонаж", "3D character"),
+      txt: t("Стилизованный 3D-персонаж в полный рост, студийный свет, нейтральный фон, детальная фактура",
+             "Stylized full-body 3D character, studio light, neutral background, detailed texture") },
+  ];
   function renderPhoto(page) {
     page.className = "gen-page gen-photo-view";
     const done = S.msgs.filter((m) => m.role !== "user" && m.kind === "image");
@@ -609,7 +625,13 @@
         <div class="gen-head-tools">${switcher()}
           <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></div></header>
       <section class="gen-gallery">${done.length ? done.slice().reverse().map(card).join("")
-        : `<div class="gen-empty">${t("здесь появятся твои изображения — опиши первое в панели снизу", "your images will appear here — describe the first one below")}</div>`}
+        : `<div class="gen-ideas">
+            <b>${t("с чего начать — выбери образец и поправь под себя", "pick a sample and make it yours")}</b>
+            <div class="gen-ideas-row">${photoIdeas().map((x, i) => `
+              <button type="button" class="gen-idea" data-i="${i}">
+                <b>${x.cap}</b><small>${x.txt}</small>
+              </button>`).join("")}</div>
+          </div>`}
       </section>
       <footer class="gen-composer">
         <div class="gen-refs">${st.files.map((f) =>
@@ -649,6 +671,12 @@
     $(".gen-composer .gen-go", page).addEventListener("click", () => sendPhoto(page));
     $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
     $(".gen-prompt", page).addEventListener("keydown", (e) => { if (e.key === "Enter") sendPhoto(page); });
+    const ideas = photoIdeas();
+    $$(".gen-idea", page).forEach((b) => b.addEventListener("click", () => {
+      const inp = $(".gen-prompt", page);
+      inp.value = ideas[Number(b.dataset.i)].txt;
+      inp.focus();
+    }));
   }
 
   function card(msg) {
