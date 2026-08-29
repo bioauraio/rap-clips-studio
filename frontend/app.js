@@ -6527,6 +6527,14 @@ function renderTrack(tr) {
   // ролика обходить нечего.
   gate(".t-nostory-wrap", trMode.needs_audio);
   if (!trMode.needs_audio) audioEl.style.display = "none";
+  // Колонки «Материала» существуют только под реальный контент: спрятанные
+  // аудио и текст оставляли ПУСТЫЕ грид-колонки, и остальное уезжало в
+  // узкую правую треть при пустой левой половине экрана.
+  const tBody = $(".track-body", card);
+  if (tBody) {
+    tBody.classList.toggle("no-audio", !trMode.needs_audio);
+    tBody.classList.toggle("no-lyrics", !trMode.needs_lyrics);
+  }
   $(".save-track", card).textContent = objT("save", trMode) || t("track.saveTrack");
   // Раньше подпись искалась как ПРЯМОЙ потомок панели настройки; в едином
   // блоке она лежит в секции «Как выглядит», и у неё есть свой класс.

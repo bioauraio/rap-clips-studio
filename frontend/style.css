@@ -411,6 +411,24 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   .track-body > .track-right { grid-column: 3; grid-row: 1 / span 9; }
   .track-body .t-comment { max-height: 120px; overflow-y: auto; }
   .track-body .ms-bible-text { max-height: 110px; overflow-y: auto; }
+
+  /* КОЛОНКИ — ТОЛЬКО ПОД РЕАЛЬНЫЙ КОНТЕНТ (классы ставит renderTrack).
+     Скрытые аудио и текст оставляли ПУСТЫЕ грид-колонки: остальное уезжало
+     в узкую правую треть, а левая половина экрана стояла пустой. */
+  .track-body.no-lyrics {                       /* [дорожка][комментарий] */
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+  .track-body.no-lyrics > .track-right { grid-column: 2; }
+  .track-body.no-audio:not(.no-lyrics) {        /* [текст][комментарий] */
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+  .track-body.no-audio:not(.no-lyrics) > .track-left > .t-lyrics-label,
+  .track-body.no-audio:not(.no-lyrics) > .track-left > .t-lyrics { grid-column: 1; }
+  .track-body.no-audio:not(.no-lyrics) > .track-right { grid-column: 2; }
+  .track-body.no-audio.no-lyrics {              /* только комментарий — во всю ширину */
+    grid-template-columns: 1fr;
+  }
+  .track-body.no-audio.no-lyrics > .track-right { grid-column: 1; grid-row: auto; }
 }
 @media (max-width: 1099px) {
   /* Поля не выше 40vh: «Текст песни» на телефоне не должен быть простынёй. */
