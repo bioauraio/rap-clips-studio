@@ -505,11 +505,17 @@
 .trends-page .trend-card > video, .trends-page .trend-card > img, .trends-page .trend-card > .trend-ph {
   position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; aspect-ratio: auto; object-fit: cover;
 }
+/* ИМЯ ТРЕНДА ВИДНО ВСЕГДА. Раньше оно пряталось по ховеру, а кнопка по
+   ховеру появлялась: на тач-устройстве, где ховера нет вовсе, карточка
+   оставалась немой картинкой без названия и без действия. Теперь имя —
+   постоянная плашка на градиенте по нижней кромке. */
 .trend-card-name {
-  position: absolute; z-index: 4; left: 14px; right: 14px; bottom: 14px; color: white;
-  font: 900 clamp(15px,1.6vw,23px)/1 var(--font-head); letter-spacing: -.025em;
-  text-shadow: 0 2px 18px rgba(0,0,0,.75); text-transform: lowercase;
-  transition: opacity .18s ease, transform .18s ease;
+  position: absolute; z-index: 4; left: 0; right: 0; bottom: 0;
+  padding: 30px 14px 12px; color: #fff;
+  font: 900 clamp(15px,1.6vw,23px)/1.05 var(--font-head); letter-spacing: -.025em;
+  text-shadow: 0 2px 14px rgba(0,0,0,.6); text-transform: lowercase;
+  background: linear-gradient(transparent, rgba(14, 8, 4, .8));
+  pointer-events: none;
 }
 .trend-card-action {
   position: absolute; z-index: 6; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -517,18 +523,26 @@
   backdrop-filter: blur(2px); transition: opacity .18s ease;
 }
 .trend-card-action span {
-  padding: 10px 18px; border: 1px solid rgba(255,255,255,.65); border-radius: 999px;
-  background: rgba(20,10,5,.62); font: 800 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .04em;
+  padding: 11px 20px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
+  /* Фирменный огонь вместо чёрной пилюли: это главное действие витрины,
+     а оно выглядело как служебная подпись. */
+  background: var(--fire-ink); color: var(--on-fire);
+  box-shadow: 0 6px 20px rgba(20, 10, 5, .35);
+  font: 800 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .04em;
 }
 .trend-card:hover .trend-card-action, .trend-card:focus-within .trend-card-action { opacity: 1; }
-.trend-card:hover .trend-card-name, .trend-card:focus-within .trend-card-name { opacity: 0; transform: translateY(8px); }
+/* ТАЧ: ховера нет — кнопка просто видна. Затемняющую подложку при этом
+   убираем, иначе каждая карточка каталога уедет под серую плёнку. */
+@media (hover: none) {
+  .trend-card-action { opacity: 1; background: transparent; backdrop-filter: none; }
+  .trend-card-action span { padding: 9px 15px; font-size: 11px; }
+}
 .trends-page .trend-state { position: absolute; z-index: 8; inset: 0; padding: 14px; background: var(--card-solid); overflow: auto; }
 
 /* До загрузки настоящего ролика карточка не пустая: это самостоятельная
    процедурная заставка, собранная из CSS-слоёв. Цвет и геометрия вычисляются
    из названия — поэтому каталог живой, но не копирует чужие превью. */
 .trend-visual { position: relative; isolation: isolate; overflow: hidden; background: #070707; }
-}
 .trend-visual::before, .trend-visual::after, .trend-visual i { content: ""; position: absolute; display: block; }
 .trend-visual::before { inset: -35%; background: repeating-conic-gradient(from 20deg, transparent 0 12deg, hsla(var(--th2), 100%, 88%, .3) 13deg 15deg); animation: tv-spin 12s linear infinite; animation-delay: var(--td); }
 .trend-visual::after { inset: 0; background: linear-gradient(115deg, transparent 25%, rgba(255,255,255,.33) 48%, transparent 66%); transform: translateX(-120%); animation: tv-scan 3.8s ease-in-out infinite; animation-delay: var(--td); }
@@ -542,10 +556,35 @@
 .trend-visual[data-visual="5"] i { width: 78%; left: 11%; border-radius: 50%; }
 .trend-visual[data-visual="6"] { filter: saturate(.25) contrast(1.35); }
 .trend-visual[data-visual="7"]::before { background: linear-gradient(90deg, transparent 48%, rgba(255,255,255,.35) 49% 51%, transparent 52%); animation: tv-scan 2.8s ease-in-out infinite; }
-.trends-page .trend-card[class*="trend-tile-"] .trend-visual::before,
+/* ЗАГЛУШКА ВМЕСТО ЧЁРНОГО ПРЯМОУГОЛЬНИКА. Пресет без готового превью
+   заливался сплошным #070707: ряд чёрных плиток читается как упавшая
+   витрина, а не как «превью ещё рисуется». Теперь это тёплая стеклянная
+   карточка — оттенок считается из названия, поэтому каталог живой и
+   неповторяющийся, а имя тренда и его метка видны сразу. Анимацию на
+   странице каталога по-прежнему не крутим: полсотни плиток разом. */
 .trends-page .trend-card[class*="trend-tile-"] .trend-visual::after,
 .trends-page .trend-card[class*="trend-tile-"] .trend-visual i { display: none; animation: none; }
-.trends-page .trend-card .trend-visual { background: #070707; }
+.trends-page .trend-card[class*="trend-tile-"] .trend-visual::before {
+  display: block; inset: -20%; opacity: .5; animation: none;
+  background: repeating-conic-gradient(from 20deg, transparent 0 14deg,
+              hsla(var(--th2), 100%, 88%, .14) 15deg 17deg);
+}
+.trends-page .trend-card .trend-visual {
+  background:
+    radial-gradient(120% 90% at 20% 12%, hsla(var(--th), 62%, 62%, .32), transparent 62%),
+    radial-gradient(100% 80% at 85% 88%, hsla(var(--th2), 70%, 58%, .28), transparent 60%),
+    linear-gradient(165deg, rgba(255, 255, 255, .10), rgba(28, 18, 11, .58));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+/* Метка заглушки: длительность и цена — то немногое, что о пресете уже
+   известно без картинки. */
+.trend-ph-meta {
+  position: absolute; left: 12px; top: 12px; z-index: 5;
+  padding: 4px 9px; border-radius: 999px; font-style: normal;
+  background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .22);
+  color: rgba(255, 255, 255, .94); font: 800 10px/1 var(--font-mono);
+  letter-spacing: .06em; text-transform: uppercase; backdrop-filter: blur(6px);
+}
 .trends-page .trend-card .trend-card-name { color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,.75); }
 @keyframes tv-spin { to { transform: rotate(360deg) scale(1.08); } }
 @keyframes tv-scan { 45%,100% { transform: translateX(120%); } }
@@ -1552,7 +1591,9 @@
 
 /* ⓘ на карточке тренда — вход на страницу промта. */
 .trend-info {
-  position: absolute; right: 8px; top: 8px; z-index: 3;
+  /* Выше .trend-card-action (z-index 6): оверлей «сгенерить» растянут на всю
+     карточку и перехватывал клик по ⓘ — кнопка выглядела сломанной. */
+  position: absolute; right: 8px; top: 8px; z-index: 7;
   width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%;
   background: rgba(20, 12, 6, .55); color: #fff; font-size: 13px;
   box-shadow: none; cursor: pointer;

@@ -861,7 +861,7 @@
     return title;
   }
 
-  function trendVisual(title, index) {
+  function trendVisual(title, index, meta) {
     let hash = 2166136261;
     for (const ch of String(title || "")) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
     const hue = Math.abs(hash) % 360;
@@ -869,7 +869,16 @@
     const variant = Math.abs(hash >> 8) % 8;
     return `<div class="trend-ph trend-visual" data-visual="${variant}"
       style="--th:${hue};--th2:${hue2};--td:${-(index % 9) * .19}s">
-      <i></i><i></i><i></i></div>`;
+      <i></i><i></i><i></i>${meta ? `<em class="trend-ph-meta">${esc(meta)}</em>` : ""}</div>`;
+  }
+
+  // Метка заглушки: пока превью не нарисовано, о пресете честно известны
+  // только длительность и цена — их и показываем, вместо пустого чёрного.
+  function trendMeta(t) {
+    const bits = [];
+    if (t.duration_sec) bits.push(`${t.duration_sec}${lang() === "ru" ? " с" : "s"}`);
+    if (t.cost_points) bits.push(`⚡ ${t.cost_points}`);
+    return bits.join(" · ");
   }
 
   function openTrends() {
@@ -918,7 +927,7 @@
             ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
                  ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
             : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
-            : trendVisual(t.title, index)}
+            : trendVisual(t.title, index, trendMeta(t))}
           <div class="trend-card-name">${esc(displayTitle)}</div>
           <label class="trend-card-action">
             <span>${lang() === "ru" ? "Сгенерить" : "Generate"}</span>
@@ -933,6 +942,13 @@
         }
         const inp = card.querySelector("input");
         inp.addEventListener("change", () => trendMake(card, t, inp));
+        const info = card.querySelector(".trend-info");
+        if (info) info.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          closeTrendsPage(false);
+          if (window.QlolPromptPage) window.QlolPromptPage.open("trend", String(t.id));
+        });
         grid.appendChild(card);
       });
       body.appendChild(grid);

@@ -1938,8 +1938,8 @@ def _trend_dict(t: TrendPreset, user: "User | None" = None) -> dict:
             + _points_of_usd(mediagen.video_engine_usd(v_eng, t.duration_sec or 6)))
     return {
         "id": t.id, "title": t.title, "duration_sec": t.duration_sec,
-        "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
-        "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
+        "poster_url": _pub_media_url(t.poster_filename),
+        "sample_url": _pub_media_url(t.sample_filename),
         "cost_points": cost,
     }
 
@@ -9737,6 +9737,44 @@ def export_frame(filename: str, res: str = "4k", aspect: str = "",
 # постер стиля такой же публичный объект, как его описание.
 STYLE_ASSETS_DIR = os.environ.get("STYLE_ASSETS_DIR", "/data/styles")
 os.makedirs(STYLE_ASSETS_DIR, exist_ok=True)
+
+# ─────────── ВИТРИНА КАТАЛОГОВ: постеры публичны, как и их тексты ───────────
+# Постер тренда, пример его ролика, превью шаблона мокапа и кадр карточки
+# промта — ВИТРИНА сервиса, ровно такой же публичный объект, как её описание.
+# Рождаются они в приватном UPLOAD_DIR, и ссылка вела на /api/media, который
+# требует и сессию, и владельца: анонимный гость на /trends получал 401 на
+# КАЖДУЮ картинку, а вошедший не-админ — 404 (файлы записаны на админа).
+# Витрина выглядела упавшей, хотя все файлы лежали на диске.
+# Чинится не ослаблением /api/media (там живут чужие кадры, клипы и аудио),
+# а переносом витринного файла в каталог, который УЖЕ публичен по замыслу:
+# жёсткая ссылка в STYLE_ASSETS_DIR (тот же том — ноль лишних байт) и раздача
+# существующим /style-assets/{filename}. Приватный путь не трогаем вовсе.
+_published: "set[str]" = set()
+
+
+def _pub_media_url(filename: str) -> str:
+    """Публичная ссылка на витринный файл каталога. Пустое имя — пустая
+    строка; если опубликовать не вышло, честно отдаём приватный /api/media,
+    чтобы админка продолжала видеть превью."""
+    fname = os.path.basename(str(filename or ""))
+    if not fname:
+        return ""
+    dst = os.path.join(STYLE_ASSETS_DIR, fname)
+    if fname not in _published:
+        try:
+            if not os.path.exists(dst):
+                src = os.path.join(UPLOAD_DIR, fname)
+                if not os.path.exists(src):
+                    return f"/api/media/{fname}"
+                try:
+                    os.link(src, dst)          # один и тот же том — без копии
+                except OSError:
+                    shutil.copy2(src, dst)     # разные тома — придётся копией
+            _published.add(fname)
+        except Exception:  # noqa: BLE001 — витрина не стоит отказа страницы
+            log.warning("витрина: %s не опубликовался", fname, exc_info=True)
+            return f"/api/media/{fname}"
+    return f"/style-assets/{fname}"
 
 
 def _remove_style_asset(filename: str) -> None:

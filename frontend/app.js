@@ -360,7 +360,14 @@ function showApp() {
     }, 400);
   }
   if (path === "/make" || path === "/generator") showChat();
-  else if (path === "/music" && typeof showMusic === "function") showMusic();
+  else if (path === "/music") {
+    let musTries = 0;
+    const musTick = () => {
+      if (window.QlolMusic && window.QlolMusic.show) { window.QlolMusic.show(); return; }
+      if (musTries++ < 20) setTimeout(musTick, 300);
+    };
+    setTimeout(musTick, 300);
+  }
   else if (["/trends", "/academy", "/prompts", "/marketing"].includes(path)) {
     const id = path.slice(1);
     setTimeout(() => {
@@ -9351,6 +9358,9 @@ rebuildAddTrackPicker();
   // Исключение — открытый генератор (/generator): это витрина, гость ходит
   // по ней без сессии, и уводить его на лендинг = отобрать страницу из рук.
   if (me.authed && !ldWantsLanding()) showApp();
+  // /login — прямая ссылка на вход, её шлют в поддержке и кладут в закладку.
+  // Гость по ней попадал на лендинг и должен был искать кнопку входа сам.
+  else if (location.pathname.replace(/\/+$/, "") === "/login") showLogin();
   else if (!$("#generator-page")) showWelcome();
   // Экран закрепляется в адресе: раньше логотип оставлял ?home, и КАЖДАЯ
   // перезагрузка снова открывала главную вместо места работы.
