@@ -42,6 +42,10 @@
     d3: { files: [], kind: "3d", views: "full", layout: "row", busy: false,
           url: "", err: "", info: null, n: 4, frame: 0, sheet: false,
           vbusy: "", vurl: "", trends: null },
+    // Предмет — тот же экран, что 3D-персонаж, но сущность — трек мокап-
+    // проекта: чистая моделька + 8-ракурсный облёт (turnaround).
+    it: { files: [], busy: "", err: "", items: null, sel: null, frame: 0,
+          vbusy: "", vurl: "", projectId: 0 },
     blog: { chars: null },
   };
 
@@ -150,6 +154,7 @@
     if (S.ws === "photo") return renderPhoto(page);
     if (S.ws === "video") return renderVideo(page);
     if (S.ws === "model3d") return render3d(page);
+    if (S.ws === "item3d") return renderItem(page);
     if (S.ws === "blogger") return renderChars(page);
     renderEntry(page);
   }
@@ -324,8 +329,26 @@
     d.busy = false; render();
   }
 
-  /* Вертушка: лист режется canvas'ом на N кадров, драг листает их как
-     вращение. Сетка 2 ряда режется по двум строкам. */
+  /* Вертушка: лист режется canvas'ом на N кадров ТЕМИ ЖЕ ДОЛЯМИ, что и
+     серверная резка листа (CELL_INSET в main.py): наивная width/N цепляла
+     края соседних панелей — по бокам кадра торчали руки соседних ракурсов.
+     Сетка режется в ДВА измерения (и ширина, и высота своей долей). Драг
+     листает кадры, отпускание снапит к ближайшему ракурсу; все кадры — из
+     одного уже загруженного листа, мигать нечему. */
+  const CELL_INSET = 0.012; // доля ячейки, зеркалит бэкенд-резку листа
+  function bindSpinDrag(box, st, n, draw) {
+    let sx = null, sf = 0;
+    box.onpointerdown = (e) => { sx = e.clientX; sf = st.frame; box.setPointerCapture(e.pointerId); };
+    box.onpointermove = (e) => { if (sx !== null) { st.frame = sf + (e.clientX - sx) / 45; draw(); } };
+    const drop = () => {
+      if (sx === null) return;
+      sx = null;
+      st.frame = ((Math.round(st.frame) % n) + n) % n; // снап без дрожи
+      draw();
+    };
+    box.onpointerup = drop;
+    box.onpointercancel = drop;
+  }
   function mountSpin3d(page) {
     const d = S.d3;
     const box = $(".gen-3d-spin3d", page);
@@ -335,20 +358,19 @@
       const n = d.n || 4;
       const rows = d.layout === "grid" ? 2 : 1;
       const cols = Math.ceil(n / rows);
-      const fw = Math.floor(img.naturalWidth / cols);
-      const fh = Math.floor(img.naturalHeight / rows);
-      cv.width = fw; cv.height = fh;
+      const cw = img.naturalWidth / cols;
+      const ch = img.naturalHeight / rows;
+      const ix = cw * CELL_INSET, iy = ch * CELL_INSET;
+      cv.width = Math.round(cw - 2 * ix);
+      cv.height = Math.round(ch - 2 * iy);
       const draw = () => {
-        const k = ((d.frame % n) + n) % n;
+        const k = ((Math.round(d.frame) % n) + n) % n;
         cv.getContext("2d").drawImage(img,
-          (k % cols) * fw, Math.floor(k / cols) * fh, fw, fh, 0, 0, fw, fh);
+          (k % cols) * cw + ix, Math.floor(k / cols) * ch + iy,
+          cw - 2 * ix, ch - 2 * iy, 0, 0, cv.width, cv.height);
       };
       draw();
-      let sx = null, sf = 0;
-      const move = (x) => { d.frame = sf + Math.round((x - sx) / 45); draw(); };
-      box.onpointerdown = (e) => { sx = e.clientX; sf = d.frame; box.setPointerCapture(e.pointerId); };
-      box.onpointermove = (e) => { if (sx !== null) move(e.clientX); };
-      box.onpointerup = () => { sx = null; };
+      bindSpinDrag(box, d, n, draw);
     };
     img.src = d.url;
   }
@@ -361,15 +383,39 @@
       img.onload = () => {
         const n = d.n || 4, rows = d.layout === "grid" ? 2 : 1;
         const cols = Math.ceil(n / rows);
-        const fw = Math.floor(img.naturalWidth / cols), fh = Math.floor(img.naturalHeight / rows);
+        const cw = img.naturalWidth / cols, ch = img.naturalHeight / rows;
+        const ix = cw * CELL_INSET, iy = ch * CELL_INSET; // та же резка, что у вертушки
         const cv = document.createElement("canvas");
-        cv.width = fw; cv.height = fh;
-        cv.getContext("2d").drawImage(img, 0, 0, fw, fh, 0, 0, fw, fh);
+        cv.width = Math.round(cw - 2 * ix); cv.height = Math.round(ch - 2 * iy);
+        cv.getContext("2d").drawImage(img, ix, iy, cw - 2 * ix, ch - 2 * iy, 0, 0, cv.width, cv.height);
         cv.toBlob((b) => (b ? resolve(b) : reject(new Error("crop failed"))), "image/jpeg", .92);
       };
       img.onerror = () => reject(new Error("sheet not readable"));
       img.src = d.url;
     });
+  }
+
+  /* Общий видео-облёт: кадр → чат-конвейер видео. Работает и персонажу,
+     и предмету — различается только промпт и объект состояния (vbusy/vurl). */
+  async function orbitFromBlob(blob, st, prompt) {
+    const fd = new FormData(); fd.append("file", blob, "model.jpg");
+    const up = await api("/api/chat/upload", { method: "POST", body: fd });
+    const beforeIds = new Set(S.msgs.filter((m) => m.kind === "video" && m.url).map((m) => m.id));
+    await api(`/api/chats/${S.chatId}/messages`, { method: "POST", body: {
+      engine: S.video.model, text: prompt,
+      aspect: "9:16", duration: S.video.duration, file_ids: [up.id],
+    } });
+    st.vbusy = t("снимаю облёт…", "shooting the orbit…"); render();
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      await loadMsgs();
+      const vid = S.msgs.filter((m) => m.role !== "user" && m.kind === "video"
+        && m.url && !beforeIds.has(m.id)).pop();
+      const busyOne = S.msgs.some((m) => m.role !== "user" && m.status
+        && m.status !== "done" && m.status !== "error");
+      if (vid && !busyOne) { st.vurl = vid.url; break; }
+      if (!busyOne && !vid && i > 2) throw new Error(t("видео не вышло — токены возвращены", "video failed — tokens refunded"));
+    }
   }
 
   async function video3d(trendId) {
@@ -391,31 +437,249 @@
           if (st.video_url) { d.vurl = st.video_url; break; }
         }
       } else {
-        const fd = new FormData(); fd.append("file", blob, "model.jpg");
-        const up = await api("/api/chat/upload", { method: "POST", body: fd });
-        const beforeIds = new Set(S.msgs.filter((m) => m.kind === "video" && m.url).map((m) => m.id));
-        await api(`/api/chats/${S.chatId}/messages`, { method: "POST", body: {
-          engine: S.video.model,
-          text: "Slow smooth turntable rotation: the character stays in place "
-              + "and the camera orbits a full circle around them. Neutral grey "
-              + "studio background, even light, no zoom.",
-          aspect: "9:16", duration: S.video.duration, file_ids: [up.id],
-        } });
-        d.vbusy = t("снимаю облёт…", "shooting the orbit…"); render();
-        for (let i = 0; i < 60; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
-          await loadMsgs();
-          const vid = S.msgs.filter((m) => m.role !== "user" && m.kind === "video"
-            && m.url && !beforeIds.has(m.id)).pop();
-          const busyOne = S.msgs.some((m) => m.role !== "user" && m.status
-            && m.status !== "done" && m.status !== "error");
-          if (vid && !busyOne) { d.vurl = vid.url; break; }
-          if (!busyOne && !vid && i > 2) throw new Error(t("видео не вышло — токены возвращены", "video failed — tokens refunded"));
-        }
+        await orbitFromBlob(blob, d,
+          "Slow smooth turntable rotation: the character stays in place "
+          + "and the camera orbits a full circle around them. Neutral grey "
+          + "studio background, even light, no zoom.");
       }
       if (!d.vurl) throw new Error(t("не дождался видео — загляни в супергенератор позже", "timed out — check the supergenerator later"));
     } catch (e) { d.err = e.message; }
     d.vbusy = ""; render();
+  }
+
+  /* ─────────── Предмет: 3D-вертушка товара ───────────
+     Тот же вид, что экран персонажа, но сущность — ПРЕДМЕТ (трек мокап-
+     проекта): фото товара → чистая моделька (/api/items/from-photo) →
+     8-ракурсный облёт (/api/tracks/{id}/turnaround) → вертушка из кадров.
+     Предмет ложится в ОБЩУЮ базу — дальше он слот «Продукт» в маркетинге
+     и референс везде. Ракурсов ровно 8 и стиль решает конвейер: контролов
+     «стиль/раскладка» на экране нет, потому что бэкенд их не принимает —
+     чего конвейер не умеет, того на экране нет. */
+  function renderItem(page) {
+    page.className = "gen-page gen-3d-view";
+    const st = S.it;
+    if (!S.meta) ensureData().then(() => { if (S.ws === "item3d") render(); }).catch(() => {});
+    if (st.items === null) {
+      st.items = false; // «грузится» — от повторных запросов
+      fetch("/api/items/all", { credentials: "same-origin" })
+        .then(async (r) => {
+          if (r.status === 401 || r.status === 403) { st.items = "guest"; return; }
+          const d = r.ok ? await r.json() : null;
+          st.items = ((d && d.items) || []).filter((x) => x.url).slice(0, 12);
+        })
+        .catch(() => { st.items = []; })
+        .then(render);
+    }
+    const sel = st.sel;
+    const frames = (sel && sel.turnaround_urls) || [];
+    page.innerHTML = `
+      <header class="gen-head"><h1>${t("генератор · предмет", "generator · product")}</h1>
+        <button type="button" class="gen-back ghosty">← ${t("к выбору", "back")}</button></header>
+      <section class="gen-3d">
+        <div class="gen-3d-left">
+          <label class="gen-drop ${st.files.length ? "has" : ""}">
+            ${st.files.length
+              ? st.files.map((f) => `<img src="${URL.createObjectURL(f)}" alt=""/>`).join("")
+              : `<span class="gen-drop-plus">＋</span>
+                 <b>${t("загрузи 1–4 фото товара", "upload 1–4 product photos")}</b>
+                 <small>${t("этикетка сохранится точь-в-точь; первое фото — главное", "the label is preserved exactly; the first photo leads")}</small>`}
+            <input type="file" accept="image/*" multiple hidden />
+          </label>
+          <div class="gen-3d-row"><small>${t("ракурсы", "views")}</small>
+            <span class="gen-3d-eng">8 · 360°</span></div>
+          <button type="button" class="gen-go gen-3d-go gen-it-go" ${st.files.length && !st.busy ? "" : "disabled"}>
+            ${st.busy ? esc(st.busy) : t("сделать 3D-предмет", "build the 3D product")}</button>
+          <div class="gen-note ${st.err ? "" : "hidden"}">${esc(st.err)}</div>
+          ${Array.isArray(st.items) && st.items.length ? `
+            <div class="gen-3d-hist"><small>${t("мои предметы", "my products")}</small>
+              <div class="gen-3d-hist-grid">${st.items.map((x) => `
+                <button type="button" data-it="${x.track_id}" title="${esc(x.title)}">
+                  <img src="${esc(x.url)}" alt="" loading="lazy"/></button>`).join("")}
+              </div></div>` : ""}
+        </div>
+        <div class="gen-3d-stage">
+          ${st.busy ? `<div class="skel" style="width:100%;min-height:260px"></div>
+              <b>${esc(st.busy)}</b>`
+            : sel && frames.length ? `
+              <div class="gen-3d-spin3d gen-it-spin" data-n="${frames.length}">
+                <canvas></canvas>
+                <span class="gen-3d-draghint">⟲ ${t("тяни, чтобы крутить", "drag to spin")}</span>
+              </div>
+              <div class="gen-3d-acts">
+                <a href="${esc(frames[0])}" download>⬇ ${t("скачать", "download")}</a>
+                <span class="gen-3d-saved">✓ ${t("сохранено в предметах", "saved to products")}</span>
+                <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
+              </div>
+              <div class="gen-3d-video">
+                ${st.vurl ? `<video src="${esc(st.vurl)}" controls autoplay loop muted playsinline></video>` : ""}
+                ${st.vbusy ? `<div class="gen-3d-vbusy"><span class="gen-spin"></span> ${esc(st.vbusy)}</div>` : ""}
+                <div class="gen-3d-vrow">
+                  <button type="button" class="gen-go gen-it-orbit" ${st.vbusy ? "disabled" : ""}>
+                    ${t("видео-облёт в один клик", "one-click orbit video")} <span>⚡ ${videoCost3d()}</span></button>
+                </div>
+              </div>`
+            : sel ? `
+              <img class="gen-3d-sheetimg" src="${esc(sel.url)}" alt=""/>
+              <div class="gen-3d-acts">
+                <button type="button" class="gen-go gen-it-turn">${t("вертушка · 8 ракурсов", "turnaround · 8 angles")}</button>
+                <button type="button" class="gen-3d-again">${t("сделать ещё", "make another")}</button>
+              </div>
+              <div class="gen-note ${st.err ? "" : "hidden"}">${esc(st.err)}</div>`
+            : `<b>${t("здесь закрутится твой предмет", "your product spins here")}</b>
+               <p class="gen-3d-hint">${t("фото превратится в чистую модельку и 8 ракурсов по кругу — предмет сохранится в общей базе и станет слотом «Продукт» в маркетинге",
+                 "the photo becomes a clean model and 8 angles around — the product lands in the shared base and powers the Product slot in marketing")}</p>`}
+        </div>
+      </section>`;
+    $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+    $(".gen-drop input", page).addEventListener("change", (e) => {
+      st.files = Array.from(e.target.files || []).slice(0, 4);
+      st.err = ""; st.vurl = ""; st.sel = null;
+      render();
+    });
+    $(".gen-it-go", page)?.addEventListener("click", () => makeItem());
+    $(".gen-3d-again", page)?.addEventListener("click", () => {
+      st.files = []; st.sel = null; st.vurl = ""; st.err = ""; render();
+    });
+    $(".gen-it-turn", page)?.addEventListener("click", () => spinItem());
+    $(".gen-it-orbit", page)?.addEventListener("click", () => itemOrbit());
+    $$(".gen-3d-hist-grid button", page).forEach((b) => b.addEventListener("click", () => {
+      const x = (Array.isArray(st.items) ? st.items : []).find((i) => String(i.track_id) === b.dataset.it);
+      if (!x) return;
+      st.sel = x; st.frame = 0; st.vurl = ""; st.err = "";
+      render();
+    }));
+    if (sel && frames.length && !st.busy) mountSpinFrames(page, st, frames);
+  }
+
+  /* Вертушка предмета: кадры облёта — ОТДЕЛЬНЫЕ файлы, резать нечего.
+     Прегружаем все 8, чтобы драг не мигал белым, дальше та же механика. */
+  function mountSpinFrames(page, st, urls) {
+    const box = $(".gen-it-spin", page);
+    const cv = $("canvas", box);
+    let loaded = 0;
+    const imgs = urls.map((u) => {
+      const im = new Image();
+      im.onload = () => { loaded += 1; if (loaded === urls.length) start(); };
+      im.onerror = () => { loaded += 1; if (loaded === urls.length) start(); };
+      im.src = u;
+      return im;
+    });
+    const start = () => {
+      const first = imgs.find((im) => im.naturalWidth);
+      if (!first || !box.isConnected) return;
+      cv.width = first.naturalWidth; cv.height = first.naturalHeight;
+      const n = imgs.length;
+      const draw = () => {
+        const k = ((Math.round(st.frame) % n) + n) % n;
+        const im = imgs[k].naturalWidth ? imgs[k] : first;
+        const ctx = cv.getContext("2d");
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(im, 0, 0, cv.width, cv.height);
+      };
+      draw();
+      bindSpinDrag(box, st, n, draw);
+    };
+  }
+
+  async function makeItem() {
+    const st = S.it;
+    if (!st.files.length || st.busy) return;
+    st.err = ""; st.vurl = ""; st.sel = null;
+    st.busy = t("создаю предмет…", "creating the product…"); render();
+    try {
+      // Предметы живут в мокап-проекте: берём существующий или заводим один.
+      if (!st.projectId) {
+        const ps = await api("/api/projects");
+        const mk = (Array.isArray(ps) ? ps : []).find((p) => p.mode === "mockup");
+        st.projectId = mk ? mk.id
+          : (await api("/api/projects", { method: "POST",
+              body: { name: t("Предметы", "Products"), kind: "mockup" } })).id;
+      }
+      const fd = new FormData(); fd.append("photo", st.files[0]);
+      const made = await api(`/api/items/from-photo?project_id=${st.projectId}`,
+        { method: "POST", body: fd });
+      // Остальные фото — референсами того же предмета.
+      for (const f of st.files.slice(1)) {
+        const fd2 = new FormData(); fd2.append("photo", f);
+        await api(`/api/tracks/${made.track_id}/photos`, { method: "POST", body: fd2 }).catch(() => {});
+      }
+      st.busy = t("чищу фон — рисую модельку предмета…", "cleaning up — drawing the product model…"); render();
+      let tr = await waitItem(made.track_id, st);
+      st.busy = t("снимаю 8 ракурсов по кругу…", "shooting 8 angles around…"); render();
+      await api(`/api/tracks/${made.track_id}/turnaround`, { method: "POST" });
+      tr = await waitItem(made.track_id, st);
+      const frames = tr.turnaround_urls || [];
+      if (!frames.length) throw new Error(t("облёт не вышел — токены возвращены", "turnaround failed — tokens refunded"));
+      st.sel = { track_id: made.track_id, title: tr.title || "", url: frames[0], turnaround_urls: frames };
+      st.frame = 0;
+      st.files = [];
+      st.items = null; // база пополнилась — перечитается при отрисовке
+    } catch (e) { st.err = e.message; }
+    st.busy = ""; render();
+  }
+
+  /* Вертушка для предмета из истории, у которого облёта ещё нет. */
+  async function spinItem() {
+    const st = S.it;
+    const sel = st.sel;
+    if (!sel || st.busy) return;
+    st.err = "";
+    st.busy = t("снимаю 8 ракурсов по кругу…", "shooting 8 angles around…"); render();
+    try {
+      if (!st.projectId && sel.project_id) st.projectId = sel.project_id;
+      if (!st.projectId) {
+        const ps = await api("/api/projects");
+        const mk = (Array.isArray(ps) ? ps : []).find((p) => p.mode === "mockup");
+        st.projectId = mk ? mk.id : 0;
+      }
+      await api(`/api/tracks/${sel.track_id}/turnaround`, { method: "POST" });
+      const tr = await waitItem(sel.track_id, st, sel.project_id);
+      const frames = tr.turnaround_urls || [];
+      if (!frames.length) throw new Error(t("облёт не вышел — токены возвращены", "turnaround failed — tokens refunded"));
+      st.sel = { ...sel, turnaround_urls: frames };
+      st.frame = 0;
+      st.items = null;
+    } catch (e) { st.err = e.message; }
+    st.busy = ""; render();
+  }
+
+  async function waitItem(tid, st, projectId) {
+    const pid = projectId || st.projectId;
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const p = await api(`/api/project?project_id=${pid}`);
+      const tr = (p.tracks || []).find((x) => x.id === tid);
+      if (!tr) throw new Error(t("предмет пропал из проекта", "the item vanished from the project"));
+      const s = tr.turnaround_status || "";
+      if (s === "error") throw new Error(tr.turnaround_note || t("не получилось — токены возвращены", "failed — tokens refunded"));
+      if (s !== "queued" && s !== "running") return tr;
+      // Прогресс облёта приходит заметкой «i/8» — показываем живой счёт.
+      if (/^\d+\/\d+$/.test(tr.turnaround_note || "")) {
+        st.busy = t("ракурс ", "angle ") + tr.turnaround_note + "…"; render();
+      }
+    }
+    throw new Error(t("не дождался генерации — загляни позже", "timed out — check back later"));
+  }
+
+  /* Видео-облёт предмета: текущий кадр вертушки → тот же чат-конвейер. */
+  async function itemOrbit() {
+    const st = S.it;
+    const sel = st.sel;
+    const frames = (sel && sel.turnaround_urls) || [];
+    if (!frames.length || st.vbusy) return;
+    st.vbusy = t("готовлю кадр…", "preparing the frame…"); st.vurl = ""; render();
+    try {
+      if (!S.meta) await ensureData(); // движок и цена видео — из моделей
+      const k = ((Math.round(st.frame) % frames.length) + frames.length) % frames.length;
+      const blob = await (await fetch(frames[k], { credentials: "same-origin" })).blob();
+      await orbitFromBlob(blob, st,
+        "Slow smooth turntable rotation: the exact product stays in place and "
+        + "the camera orbits a full circle around it. Clean neutral studio "
+        + "background, soft even light, every label letter identical to the "
+        + "reference, no zoom.");
+      if (!st.vurl) throw new Error(t("не дождался видео — загляни в супергенератор позже", "timed out — check the supergenerator later"));
+    } catch (e) { st.err = e.message; }
+    st.vbusy = ""; render();
   }
 
   /* ─────────── Персонаж: общая база героев ───────────
@@ -504,7 +768,7 @@
         <button type="button" class="gen-entry-card" data-go="mockup">
           <span class="gen-entry-art gen-art-mk" data-mk-live>${img("/img/shots/frame-4.jpg")}</span>
           <b>${t("предметы", "products")}</b>
-          <small>${t("мокапы: съёмка товара по одному фото", "mockups: product shots from one photo")}</small>
+          <small>${t("моделька и 3D-вертушка товара по фото", "a clean model and 3D spin from a photo")}</small>
         </button>
         <button type="button" class="gen-entry-card" data-go="clip">
           <span class="gen-entry-art">${img("/img/shots/clip.jpg")}</span>
@@ -527,7 +791,10 @@
     </section>`;
     $$(".gen-entry-card", page).forEach((c) => c.addEventListener("click", () => {
       const go = c.dataset.go;
-      if (go === "mockup" || go === "clip") return goStudioMode(go);
+      // «Предметы» открывают РАБОЧИЙ экран сразу — как 3D-модель, только
+      // для товара; полный мокап-конвейер по-прежнему в студии.
+      if (go === "mockup") { S.ws = "item3d"; render(); return; }
+      if (go === "clip") return goStudioMode(go);
       S.ws = go === "photo" ? "photo" : go;
       render();
     }));

@@ -252,9 +252,11 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 .gen-3d-hist-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 6px; }
 .gen-3d-hist-grid button { padding: 0; border: 1px solid var(--border); border-radius: 10px; corner-shape: squircle; overflow: hidden; background: var(--surface-2); box-shadow: none; aspect-ratio: 16/10; }
 .gen-3d-hist-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.gen-3d-spin3d { position: relative; width: 100%; max-width: 420px; cursor: grab; touch-action: none; }
+/* Кадр вертушки влезает во вьюпорт ЦЕЛИКОМ: высота ограничена, ширина
+   следует за аспектом, кадр по центру — низ модельки не режется краем. */
+.gen-3d-spin3d { position: relative; display: flex; justify-content: center; width: 100%; max-width: 460px; cursor: grab; touch-action: none; }
 .gen-3d-spin3d:active { cursor: grabbing; }
-.gen-3d-spin3d canvas { width: 100%; height: auto; border-radius: 14px; corner-shape: squircle; background: var(--surface-2); display: block; }
+.gen-3d-spin3d canvas { width: auto; height: auto; max-width: 100%; max-height: 66vh; border-radius: 14px; corner-shape: squircle; background: var(--surface-2); display: block; }
 /* Подсказка лежит НА кадре — плашка тёмная в обеих темах, текст белый. */
 .gen-3d-draghint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); font-size: 11px; color: #fff; background: rgba(0,0,0,.55); padding: 3px 10px; border-radius: 999px; pointer-events: none; }
 .gen-3d-sheetimg { max-width: 100%; max-height: 56vh; border-radius: 14px; }
