@@ -1480,9 +1480,12 @@ def admin_prompt_card(layer: str, key: str, user: User = Depends(admin_user)):
     card["ru"] = {f: ov.get(f + "_ru", "")
                   for f in prompts_library.PROMPT_FIELDS[layer]}
     core = _core()
-    main, gallery = core._preview_entry(core._layer_previews().get(f"{layer}:{key}"))
+    entry = core._layer_previews().get(f"{layer}:{key}")
+    main, gallery = core._preview_entry(entry)
     card["preview_url"] = f"/api/media/{main}" if main else ""
     card["preview_gallery"] = [{"filename": g, "url": f"/api/media/{g}"} for g in gallery]
+    anim = entry.get("anim", "") if isinstance(entry, dict) else ""
+    card["anim_url"] = f"/api/media/{anim}" if anim else ""
     return card
 
 

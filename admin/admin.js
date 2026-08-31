@@ -710,11 +710,30 @@
     }
   }
 
+  // Движки с живыми ценами — один раз на сессию админки. Кадровые идут в
+  // «Сгенерировать превью», видео — в «Анимировать превью».
+  let admEnginesCache = null;
+  async function admEngines() {
+    if (admEnginesCache) return admEnginesCache;
+    try {
+      const d = await api("/api/providers");
+      admEnginesCache = {
+        images: (d.images || []).filter((e) => e.live),
+        videos: (d.engines || []).filter((e) => e.live),
+      };
+    } catch (e) {
+      admEnginesCache = { images: [], videos: [] };
+    }
+    return admEnginesCache;
+  }
+
   async function layerEditor(box, host) {
     loading(box);
-    let c;
-    try { c = await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`); }
-    catch (e) { return fail(box, e); }
+    let c, eng;
+    try {
+      c = await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`);
+      eng = await admEngines();
+    } catch (e) { return fail(box, e); }
 
     const isPrompt = (f) => (c.prompt_fields || []).includes(f);
     const isBi = (f) => (c.bilingual || []).includes(f);
@@ -784,15 +803,33 @@
         <div class="adm-fields" style="margin-top:12px">
           <div class="adm-field"><label>Превью карточки</label>
             <div class="adm-row" style="align-items:center">
-              ${c.preview_url
-                ? `<img src="${esc(c.preview_url)}" style="width:96px;aspect-ratio:3/4;object-fit:cover;border-radius:10px">`
-                : '<span class="muted">превью нет — загрузи или сгенерируй</span>'}
+              ${c.anim_url
+                ? `<video src="${esc(c.anim_url)}" muted loop autoplay playsinline
+                     style="width:96px;aspect-ratio:3/4;object-fit:cover;border-radius:10px"></video>`
+                : c.preview_url
+                  ? `<img src="${esc(c.preview_url)}" style="width:96px;aspect-ratio:3/4;object-fit:cover;border-radius:10px">`
+                  : '<span class="muted">превью нет — загрузи или сгенерируй</span>'}
               <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--adm-border,#ccc);border-radius:8px">
                 Загрузить свою картинку
                 <input type="file" class="l-prev-up" accept="image/*" style="display:none">
               </label>
-              <button type="button" class="ghost l-prev-gen">Сгенерировать превью ⚡0</button>
               <span class="l-prev-msg muted"></span>
+            </div>
+            <div class="adm-row" style="align-items:center;margin-top:6px;flex-wrap:wrap">
+              <select class="l-eng-img" title="движок кадра">
+                <option value="chatgpt">кадр: шлюз ⚡0</option>
+                ${eng.images.filter((e) => e.id !== "chatgpt").map((e) =>
+                  `<option value="${esc(e.id)}">кадр: ${esc(e.title)} ⚡${e.frames_cost || 0}</option>`).join("")}
+              </select>
+              <button type="button" class="ghost l-prev-gen">Сгенерировать превью ⚡0</button>
+            </div>
+            <div class="adm-row" style="align-items:center;margin-top:6px;flex-wrap:wrap">
+              <select class="l-eng-vid" title="видео-движок">
+                <option value="grok">видео: шлюз Grok ⚡0</option>
+                ${eng.videos.filter((e) => e.id !== "grok").map((e) =>
+                  `<option value="${esc(e.id)}">видео: ${esc(e.title)} ⚡${e.video_cost || 0}</option>`).join("")}
+              </select>
+              <button type="button" class="ghost l-prev-anim" ${c.preview_url ? "" : "disabled title=\"сначала нужна превью-картинка\""}>Анимировать превью ⚡0</button>
             </div>
             ${(c.preview_gallery || []).length > 1 ? `
             <div class="adm-row l-gallery" style="flex-wrap:wrap;margin-top:6px">
@@ -838,16 +875,43 @@
         layerEditor(box, host);
       } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
     });
+    // Цена на кнопках живёт от выбранного движка; дефолт — бесплатный шлюз.
+    const engImg = $(".l-eng-img", box);
+    const engVid = $(".l-eng-vid", box);
     const prevGen = $(".l-prev-gen", box);
+    const prevAnim = $(".l-prev-anim", box);
+    const engCost = (sel, list, field) => {
+      const e = (list || []).find((x) => x.id === sel.value);
+      return e ? (e[field] || 0) : 0;
+    };
+    const syncCosts = () => {
+      if (engImg && prevGen)
+        prevGen.textContent = `Сгенерировать превью ⚡${engCost(engImg, eng.images, "frames_cost")}`;
+      if (engVid && prevAnim)
+        prevAnim.textContent = `Анимировать превью ⚡${engCost(engVid, eng.videos, "video_cost")}`;
+    };
+    if (engImg) engImg.addEventListener("change", syncCosts);
+    if (engVid) engVid.addEventListener("change", syncCosts);
+    syncCosts();
     if (prevGen) prevGen.addEventListener("click", async () => {
       const m = $(".l-prev-msg", box);
       prevGen.disabled = true;
       m.textContent = "генерю по промпту карточки…";
       try {
         await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}/preview-generate`,
-                  { method: "POST" });
+                  { method: "POST", body: { engine: engImg ? engImg.value : "chatgpt" } });
         layerEditor(box, host);
       } catch (e) { m.textContent = "не вышло: " + (e.message || e); prevGen.disabled = false; }
+    });
+    if (prevAnim) prevAnim.addEventListener("click", async () => {
+      const m = $(".l-prev-msg", box);
+      prevAnim.disabled = true;
+      m.textContent = "оживляю промптом движения карточки… (до пары минут)";
+      try {
+        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}/preview-animate`,
+                  { method: "POST", body: { engine: engVid ? engVid.value : "grok" } });
+        layerEditor(box, host);
+      } catch (e) { m.textContent = "не вышло: " + (e.message || e); prevAnim.disabled = false; }
     });
     $$(".l-gallery img", box).forEach((im) => im.addEventListener("click", async () => {
       try {

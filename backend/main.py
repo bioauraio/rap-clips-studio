@@ -5500,29 +5500,102 @@ def admin_layer_previews_batch(layer: str, user: User = Depends(current_user),
     return generate_layer_previews(db, layer)
 
 
-@app.post("/api/admin/prompts/{layer}/{key}/preview-generate")
-def admin_layer_preview_generate(layer: str, key: str,
-                                 user: User = Depends(current_user),
-                                 db: Session = Depends(db_session)):
-    """Сгенерировать превью ОДНОЙ карточки по её собственному промпту (⚡0)."""
-    if not user.is_admin:
-        raise HTTPException(403, "только для админа")
+def _layer_card_or_404(layer: str, key: str) -> dict:
     if layer not in prompts_library.LAYERS:
         raise HTTPException(404, "нет такого слоя")
     card = next((r for r in prompts_library.layer_rows(layer)
                  if r["key"] == key), None)
     if not card:
         raise HTTPException(404, "нет такой карточки")
+    return card
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview-generate")
+async def admin_layer_preview_generate(layer: str, key: str, request: Request,
+                                       user: User = Depends(current_user),
+                                       db: Session = Depends(db_session)):
+    """Сгенерировать превью ОДНОЙ карточки по её собственному промпту.
+
+    Движок кадра выбирается в карточке (body.engine); по умолчанию —
+    бесплатный шлюз (⚡0)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    card = _layer_card_or_404(layer, key)
+    engine = "chatgpt"
     try:
-        fname = _generate_layer_preview(db, layer, card)
+        body = await request.json()
+        engine = str(body.get("engine") or "chatgpt")
+    except Exception:  # noqa: BLE001
+        pass
+    if engine not in mediagen.IMAGE_ENGINES:
+        raise HTTPException(400, f"нет такого движка кадров: {engine}")
+    try:
+        fname = _generate_layer_preview(db, layer, card, engine=engine)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"превью не вышло: {_err_text(e, 200)}")
     previews = _layer_previews()
-    _m, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    entry = previews.get(f"{layer}:{key}")
+    anim = entry.get("anim", "") if isinstance(entry, dict) else ""
+    _m, gallery = _preview_entry(entry)
     gallery = [fname] + gallery
-    previews[f"{layer}:{key}"] = {"main": fname, "all": gallery}
+    previews[f"{layer}:{key}"] = {"main": fname, "all": gallery, "anim": anim}
     _layer_previews_save(previews)
     return {"ok": True, "preview_url": f"/api/media/{fname}"}
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview-animate")
+async def admin_layer_preview_animate(layer: str, key: str, request: Request,
+                                      user: User = Depends(current_user),
+                                      db: Session = Depends(db_session)):
+    """Оживить превью карточки её же ПРОМПТОМ ДВИЖЕНИЯ.
+
+    Та же механика, что у трендов (admin_trend_preview_animate): вход —
+    главная превью-картинка, выход — mp4 в поле "anim" записи layer_previews.
+    Ролик крутится и в админ-карточке, и на витрине (anim_url в
+    _decorate_layer). Движок — body.engine из VIDEO_ENGINES, по умолчанию
+    бесплатный шлюз. Синхронно: админ один, очередь ему не нужна."""
+    import asyncio
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    card = _layer_card_or_404(layer, key)
+    engine = "grok"
+    try:
+        body = await request.json()
+        engine = str(body.get("engine") or "grok")
+    except Exception:  # noqa: BLE001
+        pass
+    if engine not in mediagen.VIDEO_ENGINES:
+        raise HTTPException(400, f"нет такого видео-движка: {engine}")
+    previews = _layer_previews()
+    entry = previews.get(f"{layer}:{key}")
+    main, gallery = _preview_entry(entry)
+    if not main:
+        raise HTTPException(400, "сначала прикрепи или сгенерируй превью-картинку")
+    poster = os.path.join(UPLOAD_DIR, main)
+    if not os.path.isfile(poster):
+        raise HTTPException(400, "файл превью пропал с диска — перегенерируй его")
+    # Промпт движения — СОБСТВЕННЫЙ текст записи: у камер это проезд,
+    # у движений — motion-текст, у света текст приёма.
+    motion = " ".join(str(card.get("camera") or card.get("text")
+                          or card.get("solo") or card.get("add") or "").split())[:600]
+    motion = motion.replace("{character}", "the person in the frame").replace(
+        "{location}", "the scene in the frame")
+    if not motion:
+        raise HTTPException(400, "у карточки пуст промпт движения")
+    try:
+        mediagen.reset_task()
+        fname = asyncio.run(mediagen.animate_scene(
+            prompt=motion, first_path=poster, last_path=None,
+            duration_sec=6, provider="free", engine=engine, aspect="3:4"))
+        _reg_file(db, fname, None, kind="layer_preview")
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"оживить не вышло: {_err_text(e, 200)}")
+    previews = _layer_previews()
+    _m2, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    previews[f"{layer}:{key}"] = {"main": main, "all": gallery, "anim": fname}
+    _layer_previews_save(previews)
+    return {"ok": True, "anim_url": f"/api/media/{fname}"}
 
 
 def seed_camera_refs(db: Session) -> dict:
