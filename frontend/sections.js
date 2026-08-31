@@ -1073,23 +1073,28 @@
     const page = document.createElement("main");
     page.id = "trends-page";
     page.className = "trends-page";
-    page.innerHTML = `<p class="muted trends-loading">${esc(T("common.loading", "загружаю…"))}</p>`;
+    page.innerHTML = `<section class="trends-hero">
+      <h1>${lang() === "ru" ? "вирусные тренды" : "viral trends"}</h1>
+      <div class="trends-filters" role="tablist"></div>
+    </section><section class="trends-catalog"><p class="muted trends-loading">${esc(T("common.loading", "загружаю…"))}</p></section>`;
     app.appendChild(page);
     paint();
+    const body = $(".trends-catalog", page);
     (async () => {
       let d;
       try {
         d = await api("/api/trends");
       } catch (e) {
-        failed(page, "trends.failed");
+        failed(body, "trends.failed");
         return;
       }
+      body.innerHTML = "";
       const presets = d.presets || [];
       if (!presets.length) {
         const empty = document.createElement("p");
         empty.className = "muted";
         empty.textContent = T("trends.empty", "Шаблоны скоро появятся.");
-        page.replaceChildren(empty);
+        body.appendChild(empty);
         return;
       }
       const grid = document.createElement("div");
