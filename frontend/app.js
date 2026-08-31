@@ -11057,6 +11057,28 @@ function paAddMsg(cls, text) {
   return div;
 }
 
+// САМОЛЕЧЕНИЕ rc_project: id в localStorage мог указывать на удалённый или
+// чужой проект — сервер отвечает 400/404 «проект не найден» на каждый запрос
+// агента. Чиним сами и ровно один раз за сессию: сбрасываем метку,
+// перечитываем /api/projects и берём первый живой проект.
+let paHealTried = false;
+async function paHealStaleProject(e) {
+  const msg = String((e && e.message) || e);
+  const stale = e && (e.status === 400 || e.status === 404) && msg.includes("проект не найден");
+  if (!stale || paHealTried) return false;
+  paHealTried = true;
+  try {
+    localStorage.removeItem("rc_project");
+    const list = await api("/api/projects");
+    if (!list || !list.length) return false;
+    activeProjectId = list[0].id;
+    localStorage.setItem("rc_project", activeProjectId);
+    return true;
+  } catch (e2) {
+    return false;
+  }
+}
+
 async function paAsk(text) {
   const feed = paEl("pa-feed");
   if (text) paAddMsg("me", text);
@@ -11079,7 +11101,9 @@ async function paAsk(text) {
   } catch (e) {
     // 502 почти всегда значит «сервис как раз перекатывается»: одна пауза и
     // повтор превращают минутный деплой из поломки в задержку.
-    if (String(e.message || e).includes("502")) {
+    if (await paHealStaleProject(e)) {
+      try { d = await call(); } catch (e2) { wait.textContent = errText(e2); return; }
+    } else if (String(e.message || e).includes("502")) {
       wait.textContent = t("agent.redeploying") || "сервис обновляется, повторяю…";
       await new Promise((ok) => setTimeout(ok, 8000));
       try { d = await call(); } catch (e2) { wait.textContent = errText(e2); return; }
@@ -11161,13 +11185,19 @@ async function askAgent(text) {
   reply.textContent = t("agent.thinking");
   acts.innerHTML = "";
   let d;
+  const call = () => api("/api/chat/agent", {
+    method: "POST", body: { text: text || "", project_id: activeProjectId },
+  });
   try {
-    d = await api("/api/chat/agent", {
-      method: "POST", body: { text: text || "", project_id: activeProjectId },
-    });
+    d = await call();
   } catch (e) {
-    reply.textContent = errText(e);
-    return;
+    // Протухший rc_project лечим один раз и повторяем запрос.
+    if (await paHealStaleProject(e)) {
+      try { d = await call(); } catch (e2) { reply.textContent = errText(e2); return; }
+    } else {
+      reply.textContent = errText(e);
+      return;
+    }
   }
   reply.textContent = d.reply || "";
   // Модель любит предлагать одно и то же трижды («Сгенерировать кадры» на
@@ -11233,6 +11263,12 @@ function showChat() {
   if (location.hash !== "#/make" && location.hash !== "#/chat") {
     history.replaceState(null, "", "#/make");
   }
+  // ДЕДУП: showChat дёргают и path-роут (/generator, /make), и hash-роут,
+  // и кнопки шапки — за одну отрисовку сюда прилетало до четырёх вызовов,
+  // и каждый ходил в /api/chat/agent. Бут и приветствие — один раз за вход.
+  const now = Date.now();
+  if (showChat._bootAt && now - showChat._bootAt < 2000) return;
+  showChat._bootAt = now;
   chatBoot();
   // Ассистент здоровается состоянием проекта, а не пустым «чем помочь»:
   // человек открывает окно и сразу видит, что в его проекте не доделано.

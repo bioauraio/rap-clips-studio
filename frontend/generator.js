@@ -203,10 +203,31 @@
         <main class="gen-vstage">${o.stage || ""}</main>
         <aside class="gen-vhistory">
           <small>${t("история", "history")}</small>
-          ${o.history || `<div class="gen-vempty-mini">${t("прошлые генерации будут здесь", "past generations live here")}</div>`}
+          ${o.history || `<div class="gen-vempty-mini">${t("прошлые генерации будут здесь", "past generations live here")}
+            <button type="button" class="gen-vcta" data-go="@first">${t("начать первую", "start the first one")}</button></div>`}
         </aside>
       </div>`;
     $(".gen-back", page).addEventListener("click", () => { S.ws = ""; render(); });
+    // ПУСТЫШКИ С ДЕЙСТВИЕМ. Любая кнопка .gen-vcta ведёт к первому шагу:
+    // data-go — селектор элемента панели (file input кликаем, поле текста
+    // фокусируем, кнопку жмём), "@first" — первое осмысленное поле панели.
+    page.addEventListener("click", (ev) => {
+      const b = ev.target.closest(".gen-vcta");
+      if (!b) return;
+      const panel = $(".gen-vpanel", page);
+      let el = null;
+      if (b.dataset.go === "@first") {
+        el = panel && ($("textarea", panel) || $("input[type=file]", panel) || $("button.gen-go", panel));
+      } else if (b.dataset.go) {
+        el = $(b.dataset.go, page);
+      }
+      if (!el) return;
+      if (el.matches("input[type=file]")) el.click();
+      else if (el.matches("textarea, input")) {
+        el.focus();
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else el.click();
+    });
   }
 
   /* Карточка истории: миниатюра + подпись. data-h — индекс в своём списке. */
@@ -317,7 +338,8 @@
         : `<div class="gen-vempty">
              <b>${t("здесь появится твой разворот", "your turnaround appears here")}</b>
              <small>${t("лист ракурсов соберётся в вертушку, а моделька станет персонажем для клипов",
-               "the sheet turns into a spinner and the model becomes a clip character")}</small></div>`,
+               "the sheet turns into a spinner and the model becomes a clip character")}</small>
+             <button type="button" class="gen-vcta" data-go=".gen-drop input">${t("загрузить фото", "upload photos")}</button></div>`,
       // История разворотов приезжает с сервера (/api/model-sheet) — она на
       // месте и после перезагрузки страницы, и в другом браузере.
       history: hist.length
@@ -566,7 +588,8 @@
         : `<div class="gen-vempty">
              <b>${t("здесь закрутится твой предмет", "your product spins here")}</b>
              <small>${t("фото превратится в чистую модельку и 8 ракурсов по кругу — предмет сохранится в общей базе и станет слотом «Продукт» в маркетинге",
-               "the photo becomes a clean model and 8 angles around — the product lands in the shared base and powers the Product slot in marketing")}</small></div>`,
+               "the photo becomes a clean model and 8 angles around — the product lands in the shared base and powers the Product slot in marketing")}</small>
+             <button type="button" class="gen-vcta" data-go=".gen-drop input">${t("загрузить фото", "upload a photo")}</button></div>`,
       // Предметы — общая база владельца: история переживает перезагрузку.
       history: list.length
         ? list.map((x, i) => hcard(i, { url: x.url, cap: x.title,
@@ -770,7 +793,8 @@
         : `<div class="gen-vempty">
              <b>${t("пока пусто", "empty for now")}</b>
              <small>${t("сделай героя из своих фото — 3D-модель сохранится в персонажах и будет держать лицо во всех генерациях",
-               "build a hero from your photos — the 3D model lands in characters and keeps the face everywhere")}</small></div>`,
+               "build a hero from your photos — the 3D model lands in characters and keeps the face everywhere")}</small>
+             <button type="button" class="gen-vcta" data-go=".gen-blog-make">${t("новый персонаж из фото", "new character from photos")}</button></div>`,
       // Персонажи приезжают из общей базы владельца — это и есть история.
       history: list.length
         ? list.slice(0, 30).map((c, i) => hcard(i, { url: c.photo_url, cap: c.name || "—",
@@ -1117,7 +1141,9 @@
             <a href="${esc(cur.url)}" download>⬇ ${t("скачать", "download")}</a>
             <button type="button" class="gen-repeat">${t("повторить", "repeat")}</button>
           </div>`
-        : `<div class="gen-vempty"><b>${t("здесь появится твоё видео", "your video will appear here")}</b><small>${t("загрузи фото, опиши движение и нажми «сгенерировать»", "upload a photo, describe the motion and hit generate")}</small></div>`,
+        : `<div class="gen-vempty"><b>${t("здесь появится твоё видео", "your video will appear here")}</b><small>${t("загрузи фото, опиши движение и нажми «сгенерировать»", "upload a photo, describe the motion and hit generate")}</small>
+             <button type="button" class="gen-vcta" data-go=".gen-vref input">${t("загрузить фото", "upload a photo")}</button>
+             <button type="button" class="gen-vcta" data-go=".gen-vprompt">${t("опиши первую генерацию", "describe your first generation")}</button></div>`,
       // История видео — те же серверные сообщения ленты «генератор».
       history: hist.length
         ? hist.map((msg, i) => hcard(i, {

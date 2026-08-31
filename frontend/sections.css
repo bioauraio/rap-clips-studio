@@ -514,30 +514,35 @@
      затемняющую плёнку и всё равно пропадало — ровно то, от чего ушли.
      Кликам не мешает: pointer-events отключены. */
   position: absolute; z-index: 7; left: 0; right: 0; bottom: 0;
-  padding: 30px 14px 12px; color: #fff;
+  /* Справа оставлено место под постоянную пилюлю «Сгенерить». */
+  padding: 30px 110px 14px 14px; color: #fff;
   font: 900 clamp(15px,1.6vw,23px)/1.05 var(--font-head); letter-spacing: -.025em;
   text-shadow: 0 2px 14px rgba(0,0,0,.6); text-transform: lowercase;
   background: linear-gradient(transparent, rgba(14, 8, 4, .8));
   pointer-events: none;
 }
+/* КНОПКА ВИДНА ВСЕГДА — и на десктопе тоже. Раньше пилюля жила в
+   полноэкранном оверлее с opacity:0 до ховера, и на десктопе карточка
+   выглядела некликабельной. Теперь это постоянная огненная пилюля в нижнем
+   правом углу, рядом с именем; ховер лишь добавляет акцент. */
 .trend-card-action {
-  position: absolute; z-index: 6; inset: 0; display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: #fff; background: rgba(20,10,5,.28); opacity: 0;
-  backdrop-filter: blur(2px); transition: opacity .18s ease;
+  position: absolute; z-index: 8; right: 12px; bottom: 12px;
+  display: flex; cursor: pointer; color: #fff;
 }
 .trend-card-action span {
-  padding: 11px 20px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
+  padding: 10px 16px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
   /* Фирменный огонь вместо чёрной пилюли: это главное действие витрины,
      а оно выглядело как служебная подпись. */
   background: var(--fire-ink); color: var(--on-fire);
   box-shadow: 0 6px 20px rgba(20, 10, 5, .35);
   font: 800 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .04em;
+  transition: transform .18s ease, box-shadow .18s ease;
 }
-.trend-card:hover .trend-card-action, .trend-card:focus-within .trend-card-action { opacity: 1; }
-/* ТАЧ: ховера нет — кнопка просто видна. Затемняющую подложку при этом
-   убираем, иначе каждая карточка каталога уедет под серую плёнку. */
+.trend-card:hover .trend-card-action span, .trend-card:focus-within .trend-card-action span {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 10px 26px rgba(20, 10, 5, .5);
+}
 @media (hover: none) {
-  .trend-card-action { opacity: 1; background: transparent; backdrop-filter: none; }
   .trend-card-action span { padding: 9px 15px; font-size: 11px; }
 }
 .trends-page .trend-state { position: absolute; z-index: 8; inset: 0; padding: 14px; background: var(--card-solid); overflow: auto; }
@@ -1348,7 +1353,10 @@
    — навигация, а не главное действие экрана. */
 .mk-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
-  width: min(1080px, 94vw); margin: 0 auto; padding: 0 4px;
+  /* max-width вместо width: 94vw не знает про паддинги родителя, и на 375px
+     сетка уезжала за правый край на 6px с перекошенными полями. */
+  width: 100%; max-width: 1080px; box-sizing: border-box;
+  margin: 0 auto; padding: 0 4px;
 }
 .mk-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px;

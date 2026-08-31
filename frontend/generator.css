@@ -117,6 +117,16 @@
 .gen-vhistory::-webkit-scrollbar { display: none; }
 .gen-vhistory small { color: var(--ink-muted); font-size: 11px; }
 .gen-vempty-mini { padding: 20px 8px; border: 1px dashed var(--border); border-radius: 12px; corner-shape: squircle; color: var(--ink-muted); font-size: 11px; text-align: center; }
+/* CTA в пустышках: пустое состояние всегда ведёт к первому шагу. */
+.gen-vcta {
+  margin-top: 4px; padding: 9px 16px; border: 1px solid rgba(45, 33, 26, .22);
+  border-radius: 999px; background: var(--fire-ink); color: var(--on-fire);
+  font: 700 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .03em;
+  cursor: pointer; box-shadow: 0 4px 14px rgba(20, 10, 5, .18);
+}
+.gen-vcta:hover { transform: translateY(-1px); }
+.gen-vempty .gen-vcta + .gen-vcta { background: transparent; color: var(--text); box-shadow: none; }
+.gen-vempty-mini .gen-vcta { display: block; margin: 10px auto 0; }
 
 /* КАРТОЧКА ИСТОРИИ — одна на все экраны генератора: миниатюра, подпись,
    отметка текущего. Данные истории серверные, поэтому она переживает

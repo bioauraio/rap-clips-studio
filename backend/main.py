@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import mimetypes
 import re
 import random
 import secrets
@@ -9622,7 +9623,14 @@ def _media_response(path: str, request: Request) -> Response:
     диапазон и ждёт 206 Partial Content. FileResponse отвечал 200 и целым
     файлом — плеер такое не проигрывает и не перематывает."""
     file_size = os.path.getsize(path)
-    mime = "video/mp4" if path.lower().endswith(".mp4") else None
+    # Тип считаем сами: FileResponse доверяет системной таблице mimetypes, а в
+    # минимальном образе она не знает webp — картинки уезжали как text/plain.
+    _MIME = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+             ".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg",
+             ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml",
+             ".avif": "image/avif"}
+    ext = os.path.splitext(path)[1].lower()
+    mime = _MIME.get(ext) or mimetypes.guess_type(path)[0]
     range_header = request.headers.get("range") or request.headers.get("Range")
     if not range_header or not range_header.startswith("bytes="):
         resp = FileResponse(path, media_type=mime) if mime else FileResponse(path)
