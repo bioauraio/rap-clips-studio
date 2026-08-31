@@ -10853,6 +10853,32 @@ function renderLanding() {
   }
   ldRenderText();
   ldLoadPricing();
+  ldRenderWall();
+}
+
+// ─── Живая стена трендов на лендинге ───
+// Настоящие превью из /api/trends (эндпоинт публичный): постеры плиткой,
+// у кого есть ролик — тихое видео. Клик ведёт в каталог трендов.
+let ldWallDone = false;
+function ldWallEsc(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function ldRenderWall() {
+  const wall = $("#ld-wall");
+  if (!wall || ldWallDone) return;
+  ldWallDone = true;
+  api("/api/trends").then((d) => {
+    const withMedia = (d.presets || []).filter((t) => t.poster_url || t.sample_url);
+    if (!withMedia.length) { $("#ld-trendwall")?.classList.add("hidden"); return; }
+    wall.innerHTML = withMedia.slice(0, 12).map((t) => `
+      <a class="ld-wall-tile" href="/trends?trend=${encodeURIComponent(t.id)}">
+        ${t.sample_url
+          ? `<video src="${t.sample_url}" muted loop autoplay playsinline preload="metadata"
+               ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+          : `<img src="${t.poster_url}" alt="" loading="lazy" />`}
+        <span>${ldWallEsc(t.title || "")}</span>
+      </a>`).join("");
+  }).catch(() => { $("#ld-trendwall")?.classList.add("hidden"); });
 }
 
 // Вернувшийся пользователь может попасть на главную по ссылке или якорю —

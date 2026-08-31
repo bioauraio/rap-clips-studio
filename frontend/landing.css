@@ -309,7 +309,8 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .landing .ld-period button.on,
 .landing .ld-period button.on:hover:not(:disabled) {
   background: var(--surface); color: var(--text); font-weight: 600;
-  border: var(--bw-edge) solid var(--edge); box-shadow: var(--lift-1);
+  border: var(--bw-hair) solid var(--line-strong); box-shadow: var(--shadow-soft);
+  border-radius: var(--r-2);
 }
 .ld-period .ld-save {
   font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--accent-ink);
@@ -317,19 +318,27 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 }
 
 .ld-plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); align-items: stretch; }
+/* Карточка тарифа — то же жидкое стекло, что панели студии (правка
+   владельца 31.08): полупрозрачная, с бликом сверху, волосяная рамка вместо
+   картонной. Выделенный план поднят тенью, а не толстой обводкой. */
 .ld-plan {
   position: relative; display: flex; flex-direction: column; gap: var(--s-2);
-  padding: var(--s-4); background: var(--surface);
-  border: var(--bw-edge) solid var(--line-strong); border-radius: var(--r-3);
-  box-shadow: var(--lift-1);
+  padding: var(--s-6) var(--s-4); background: rgba(255, 253, 249, .66);
+  backdrop-filter: blur(18px) saturate(1.15); -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  border: var(--bw-hair) solid var(--line); border-radius: 24px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), var(--shadow-soft);
 }
-.ld-plan-hi { border: var(--bw-hero) solid var(--edge); box-shadow: var(--lift-3); }
+.ld-plan-hi {
+  border-color: var(--line-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8), var(--shadow-lift);
+}
 .ld-plan-badge {
   position: absolute; top: calc(-1 * var(--s-3)); right: var(--s-3);
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; font-weight: 700; color: var(--text);
-  background: var(--gold-wash); border: var(--bw-hair) solid var(--line-strong);
-  border-radius: 999px; padding: 3px var(--s-3);
+  text-transform: uppercase; font-weight: 700; color: #241a14;
+  background: var(--fire-ink); border: none;
+  border-radius: 999px; padding: 4px var(--s-3);
+  box-shadow: var(--glow-cta);
 }
 .ld-plan-name {
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
@@ -343,8 +352,8 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-plan-year { font-size: var(--fs-sm); color: var(--ink-muted); min-height: 18px; }
 .ld-plan-clips {
   align-self: flex-start; font-size: var(--fs-sm); font-weight: 600; color: var(--accent-ink);
-  background: var(--accent-wash); border: var(--bw-hair) solid var(--accent-line);
-  border-radius: var(--r-1); padding: 3px var(--s-2);
+  background: var(--accent-wash); border: none;
+  border-radius: 999px; padding: 3px var(--s-3);
 }
 .ld-plan-note { margin: 0; font-size: var(--fs-sm); color: var(--ink-muted); }
 .ld-plan-feats {
@@ -387,12 +396,12 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-range:focus-visible { box-shadow: var(--ring); }
 .ld-range::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 26px; height: 26px; border-radius: 50%;
-  background: var(--surface); border: var(--bw-hero) solid var(--edge);
-  box-shadow: var(--lift-2); cursor: grab; margin-top: -11px;
+  background: var(--surface); border: var(--bw-hair) solid var(--line-strong);
+  box-shadow: var(--shadow-soft), 0 1px 4px rgba(45, 33, 26, .25); cursor: grab; margin-top: -11px;
 }
 .ld-range::-moz-range-thumb {
   width: 24px; height: 24px; border-radius: 50%;
-  background: var(--surface); border: var(--bw-hero) solid var(--edge); cursor: grab;
+  background: var(--surface); border: var(--bw-hair) solid var(--line-strong); cursor: grab;
 }
 .ld-ticks { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--s-1); }
 .landing .ld-ticks button {
@@ -407,8 +416,10 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 
 .ld-readout {
   display: flex; flex-direction: column; gap: var(--s-2);
-  padding: var(--s-4); background: var(--surface-2);
-  border: var(--bw-edge) solid var(--edge); border-radius: var(--r-3); box-shadow: var(--lift-2);
+  padding: var(--s-4); background: rgba(255, 253, 249, .72);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: var(--bw-hair) solid var(--line-strong); border-radius: 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), var(--shadow-soft);
 }
 .ld-readout-price {
   font-family: var(--font-head); font-size: 34px; font-weight: 700; line-height: 1;
@@ -843,3 +854,26 @@ a.ld-cta.primary { color: var(--on-fire); background: var(--fire-ink); border: v
 :root[data-theme="dark"] .guide-shot img, :root:not([data-theme="light"]).os-dark .guide-shot img {
   border-radius: var(--r-2); box-shadow: 0 10px 30px rgba(0,0,0,.5);
 }
+
+/* ────────── живая стена трендов ────────── */
+/* Настоящие превью из /api/trends мозаикой-колонками, как в самой витрине.
+   Плитки кликабельны и ведут на страницу тренда. */
+.ld-wall { column-count: 4; column-gap: var(--s-2); }
+.ld-wall-tile {
+  position: relative; display: block; margin: 0 0 var(--s-2); overflow: hidden;
+  border-radius: 18px; background: #070707; break-inside: avoid;
+  transition: transform var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+.ld-wall-tile:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.ld-wall-tile > img, .ld-wall-tile > video { display: block; width: 100%; height: auto; }
+.ld-wall-tile > span {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 12px 10px;
+  color: #fff; font: 800 13px/1.1 var(--font-head); letter-spacing: -.02em; text-transform: lowercase;
+  background: linear-gradient(transparent, rgba(14, 8, 4, .78));
+  text-shadow: 0 2px 12px rgba(0, 0, 0, .6);
+}
+.ld-wall-more { margin: var(--s-4) 0 0; font-size: var(--fs-sm); }
+.ld-wall-more a { color: var(--accent-ink); font-weight: 700; text-decoration: none; }
+.ld-wall-more a:hover { text-decoration: underline; }
+@media (max-width: 900px) { .ld-wall { column-count: 3; } }
+@media (max-width: 620px) { .ld-wall { column-count: 2; } }

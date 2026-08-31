@@ -1882,6 +1882,12 @@ const I18N = {
         ],
       },
 
+      wall: {
+        eyebrow: "Live wall",
+        title: "Made here, this week",
+        lead: "Real previews from the trend catalog — not stock renders. Tap any tile and repeat it with your photo.",
+        more: "open all trends →",
+      },
       features: {
         eyebrow: "What is inside",
         title: "Tools, not one “make it pretty” button",
@@ -4502,6 +4508,12 @@ const I18N = {
         ],
       },
 
+      wall: {
+        eyebrow: "Живая стена",
+        title: "Сделано здесь, на этой неделе",
+        lead: "Настоящие превью из каталога трендов — не стоковые рендеры. Нажми любую плитку и повтори со своим фото.",
+        more: "открыть все тренды →",
+      },
       features: {
         eyebrow: "Что внутри",
         title: "Инструменты, а не одна кнопка «сделать красиво»",
