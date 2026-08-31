@@ -97,7 +97,13 @@
       id: "studio",
       label: () => T("nav.sections.studio", "Студия"),
       title: () => T("nav.titles.studio", ""),
-      active: () => shown("#app") && !shown("#chat") && !shown("#music") && !sheet,
+      /* Школа живёт ВНУТРИ #app своей страницей и переменную sheet не
+         трогает — без этой проверки подсвечивались сразу два раздела:
+         «Студия» (потому что #app виден) и «Школа». Генератор — такая же
+         страница внутри #app (#generator-page), исключаем и его. */
+      active: () => shown("#app") && !shown("#chat") && !shown("#music") && !sheet
+        && !$("#generator-page")
+        && !(window.QlolSchool && window.QlolSchool.visible()),
       open() {
         // Выход из мастерской знает только app.js — у него там поллинг и
         // адресная строка. Своей копии этой логики здесь быть не должно.
@@ -112,7 +118,10 @@
         if (typeof window.showApp === "function") window.showApp();
       },
     },
-    { id: "make", adopt: "#chat-btn", active: () => shown("#chat") },
+    // «Генератор» горит и когда открыта его страница поверх студии:
+    // кнопку шапки перехватывает generator.js, и #chat при этом скрыт.
+    { id: "make", adopt: "#chat-btn",
+      active: () => shown("#chat") || Boolean($("#generator-page")) },
     {
       // Тренды — витрина шаблонов «фото → ролик»: стоит первой из
       // контент-разделов, потому что это самый короткий путь новичка
@@ -124,31 +133,35 @@
       open: () => openTrends(),
     },
     {
-      // Заработок: партнёрские продукты — сгенерил ролик, запостил со своей
-      // ссылкой, получаешь долю с заказов. Витрина на механике трендов.
-      id: "earn",
-      label: () => T("nav.sections.earn", "Заработок"),
-      title: () => T("nav.titles.earn", ""),
-      active: () => sheet === "earn",
-      open: () => openEarn(),
+      // Маркетинг: всё про продукты и бренды одним хабом — предметная
+      // съёмка (мокапы), UGC-ролики и партнёрский заработок. Раньше здесь
+      // стоял «Заработок»; /earn продолжает открывать его напрямую.
+      id: "marketing",
+      label: () => T("nav.sections.marketing", "Маркетинг"),
+      title: () => T("nav.titles.marketing", ""),
+      active: () => sheet === "earn" || Boolean($("#marketing-page")),
+      open: () => openMarketing(),
     },
     {
+      // «Школа» — полноценная страница с курсами и базой знаний. Модалка
+      // академии осталась жива и открывается по клику на урок базы знаний:
+      // текст урока-маркдауна читается в шторке, курс — на странице.
       id: "academy",
-      label: () => T("nav.sections.academy", "Академия"),
+      label: () => T("nav.sections.academy", "Школа"),
       title: () => T("nav.titles.academy", ""),
-      active: () => sheet === "academy",
-      open: () => openAcademy(),
+      active: () => sheet === "academy"
+        || Boolean(window.QlolSchool && window.QlolSchool.visible()),
+      open: () => (window.QlolSchool
+        ? window.QlolSchool.open("courses") : openAcademy()),
     },
-    {
-      id: "prompts",
-      label: () => T("nav.sections.prompts", "Промты"),
-      title: () => T("nav.titles.prompts", ""),
-      active: () => sheet === "prompts",
-      open: () => openLibrary(),
-    },
+    /* «Промты» ИЗ ПУБЛИЧНОГО МЕНЮ УБРАНЫ 27.08.2026 по решению владельца.
+       Каталог никуда не делся и открывается оттуда, где он нужен: кнопкой
+       на карточке кадра (.s-lib — сразу с номером кадра), кнопкой «Промты»
+       в Генераторе и из админки. Раздел верхнего яруса он не заслуживал:
+       это инструмент внутри работы, а не место, куда «идут». */
     { id: "music", adopt: "#music-btn", active: () => shown("#music") },
-    { id: "account", adopt: "#account-btn", active: () => false },
-    { id: "admin", adopt: "#admin-btn", active: () => false },
+    // «Профиль» и «Админка» НЕ в ленте: профиль — правый угол шапки
+    // (капсула с авой в .tb-user), админка — компактная шестерёнка рядом.
   ];
 
   /* ───────────────────────────── лента разделов ───────────────────────────── */
@@ -161,12 +174,16 @@
     nav.className = "tb-sections";
     nav.setAttribute("aria-label", T("nav.aria", "Разделы сервиса"));
 
+    // Иконка раздела — для мобильного сегмента (подпись мелко под значком).
+    const ICONS = { studio: "🎬", make: "✨", trends: "🔥", marketing: "📦",
+                    academy: "🎓", prompts: "📝", music: "🎵" };
     SECTIONS.forEach((s) => {
       if (s.adopt) {
         const node = $(s.adopt);
         if (!node) return;
         node.classList.add("tb-sec");
         node.dataset.sec = s.id;
+        if (ICONS[s.id]) node.dataset.ico = ICONS[s.id];
         nav.appendChild(node);        // ПЕРЕНОС: обработчики и .hidden целы
         return;
       }
@@ -175,6 +192,7 @@
       b.className = "tb-sec";
       b.id = "sec-" + s.id;
       b.dataset.sec = s.id;
+      if (ICONS[s.id]) b.dataset.ico = ICONS[s.id];
       b.textContent = s.label();
       if (s.title()) b.title = s.title();
       b.addEventListener("click", () => go(s.id));
@@ -184,6 +202,25 @@
     // Лента встаёт СРАЗУ ЗА МАРКОЙ: разделы — верхний ярус, и читать их надо
     // первыми, слева направо, а не выискивать справа между кнопкой выхода и
     // переключателем языка, где они лежали раньше.
+    // Подложка активного пункта — ОДНА на всю ленту и ездит под ним, а не
+    // заливка на каждой кнопке. Заливка мигает: она появляется в одном месте
+    // и исчезает в другом, и глаз не связывает эти два события. Подложка
+    // едет — переход читается как переключение тумблера.
+    const ind = document.createElement("span");
+    ind.className = "tb-seg-ind";
+    ind.setAttribute("aria-hidden", "true");
+    nav.prepend(ind);
+
+    /* Тумблер этапов ВЫНОСИМ ИЗ ШАПКИ В BODY. Он закреплён position:fixed,
+       а у шапки есть backdrop-filter — любой backdrop-filter у предка делает
+       его containing block для fixed-потомков, и панель прилипала к шапке
+       вместо края экрана (лезла на «Профиль» сверху и на режимную строку на
+       телефоне). Узел тот же, id тот же: app.js ищет его глобально. */
+    const jump = $("#stage-jump");
+    if (jump && jump.parentNode !== document.body) document.body.appendChild(jump);
+
+    profileMenu();
+
     const brand = $("#brand");
     if (brand && brand.parentNode === bar) brand.after(nav);
     else bar.prepend(nav);
@@ -191,10 +228,101 @@
     paint();
   }
 
+  /* МЕНЮ ПРОФИЛЯ. «выйти» стояло голой кнопкой в шапке и удлиняло правый
+     край ради действия, которое делают раз в месяц. Теперь по клику на
+     «Профиль» открывается список: Кабинет, Админка (владельцу), Выйти.
+     Оригинальные кнопки НЕ дублируются, а нажимаются — у них свои
+     обработчики в app.js, и вторая копия означала бы второе поведение. */
+  function profileMenu() {
+    const btn = $("#account-btn");
+    const user = $(".tb-user");
+    if (!btn || !user || $("#tb-profile-menu")) return;
+    const menu = document.createElement("div");
+    menu.id = "tb-profile-menu";
+    menu.className = "tb-pmenu hidden";
+    user.appendChild(menu);
+
+    let pass = false;                 // пропуск клика к «родному» обработчику
+    const hide = () => menu.classList.add("hidden");
+    const ru = () => LANG === "ru";
+    const item = (label, onPick, cls) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tb-pitem" + (cls ? " " + cls : "");
+      b.textContent = label;
+      b.addEventListener("click", () => { hide(); onPick(); });
+      return b;
+    };
+    const build = () => {
+      menu.innerHTML = "";
+      // Шапка меню: ава + подпись. НЕ кнопка и не поле — просто кто ты.
+      {
+        const head = document.createElement("div");
+        head.className = "tb-phead";
+        const srcImg = $(".profile-ava-img", btn);
+        const ini = $(".profile-ava-ini", btn);
+        head.innerHTML = (srcImg && srcImg.src && !srcImg.classList.contains("hidden")
+          ? `<span class="tb-pava" style="background-image:url('${srcImg.src}')"></span>`
+          : `<span class="tb-pava">${(ini && ini.textContent) || "•"}</span>`)
+          + `<span>${ru() ? "Профиль" : "Profile"}</span>`;
+        menu.appendChild(head);
+      }
+      // Пункты — КОРОТКИЕ имена. Никаких описаний из title-словаря: «клиенты,
+      // рассылки, стили…» — это подсказка админки, в меню она мусор.
+      menu.appendChild(item(ru() ? "Кабинет" : "Account", () => {
+        pass = true;
+        btn.click();
+      }));
+      const adm = $("#admin-btn");
+      if (adm && !adm.classList.contains("hidden")) {
+        menu.appendChild(item("⚙ " + (ru() ? "Админка" : "Admin"), () => adm.click()));
+      }
+      // Тема — циклом: авто → светлая → тёмная. Меню не закрываем.
+      {
+        const names = { auto: ["авто", "auto"], light: ["светлая", "light"],
+                        dark: ["тёмная", "dark"], system: ["системная", "system"] };
+        const cur = () => localStorage.getItem("rc_theme") || "auto";
+        const label = () => ((ru() ? "Тема: " : "Theme: ")
+          + (names[cur()] || names.auto)[ru() ? 0 : 1] + " ▸");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-pitem";
+        b.textContent = label();
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const next = { auto: "light", light: "dark", dark: "auto" }[cur()] || "auto";
+          if (typeof window.applyTheme === "function") window.applyTheme(next);
+          else localStorage.setItem("rc_theme", next);
+          b.textContent = label();
+        });
+        menu.appendChild(b);
+      }
+      const out = $("#logout-btn");
+      if (out) {
+        menu.appendChild(item(ru() ? "Выйти" : "Sign out", () => out.click(), "danger"));
+      }
+    };
+    btn.addEventListener("click", (e) => {
+      if (pass) { pass = false; return; }
+      e.preventDefault();
+      e.stopPropagation();
+      build();
+      menu.classList.toggle("hidden");
+    }, true);
+    document.addEventListener("click", (e) => {
+      if (!menu.contains(e.target) && e.target !== btn) hide();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+  }
+
   function go(id) {
     const s = SECTIONS.find((x) => x.id === id);
     if (!s) return;
     if (id !== "trends") closeTrendsPage(false);
+    if (id !== "marketing") closeMarketingPage(false);
+    // Школа — такая же страница внутри #app: уходя в другой раздел, её
+    // нужно убрать, иначе два раздела окажутся открыты одновременно.
+    if (id !== "academy" && window.QlolSchool) window.QlolSchool.close(false);
     if (s.adopt) {
       const node = $(s.adopt);
       if (node) node.click();
@@ -212,6 +340,32 @@
                    : $$(`[data-sec="${s.id}"]`);
   }
 
+  /* Подложку двигаем ПОСЛЕ расстановки классов и только если активный пункт
+     виден: у скрытых кнопок (музыка гостю) ширина 0, и подложка схлопнулась
+     бы в точку посреди ленты. Нет активного — подложка гаснет. */
+  function moveIndicator() {
+    const nav = $("#tb-sections");
+    const ind = nav && $(".tb-seg-ind", nav);
+    if (!nav || !ind) return;
+    const all = $$(".tb-sec.on", nav);
+    const on = all[all.length - 1];
+    if (!on || !on.offsetWidth) { ind.style.opacity = "0"; return; }
+    ind.style.opacity = "1";
+    ind.style.width = on.offsetWidth + "px";
+    ind.style.height = on.offsetHeight + "px";
+    ind.style.transform =
+      `translate(${on.offsetLeft - nav.clientLeft}px, ${on.offsetTop}px)`;
+  }
+
+  /* Высота шапки — в переменную: под ней живёт экран Генератора, а шапка на
+     телефоне занимает три строки. Фиксированное число в CSS срезало бы низ
+     ленты сообщений ровно на высоту лишней строки. */
+  function measureBar() {
+    const bar = $(".topbar");
+    if (!bar) return;
+    document.documentElement.style.setProperty("--tbh", bar.offsetHeight + "px");
+  }
+
   function paint() {
     SECTIONS.forEach((s) => {
       const on = Boolean(s.active && s.active());
@@ -223,6 +377,20 @@
         else node.removeAttribute("aria-current");
       });
     });
+    // requestAnimationFrame: сразу после смены классов ширина кнопки ещё
+    // старая (жирный шрифт активного пункта её меняет), и подложка встала бы
+    // на полпикселя мимо.
+    requestAnimationFrame(() => { moveIndicator(); measureBar(); });
+  }
+
+  // Ширина ленты меняется от языка, поворота экрана и появления «Кабинета»
+  // после входа: подложка обязана переехать вместе с кнопкой.
+  window.addEventListener("resize", () => { moveIndicator(); measureBar(); });
+  // Шрифт грузится позже первой раскраски, кнопки меняют ширину — подложка
+  // обязана переехать следом, иначе она стоит со сдвигом до первого клика.
+  window.addEventListener("load", () => { moveIndicator(); measureBar(); });
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => moveIndicator()).catch(() => {});
   }
 
   function relabel() {
@@ -395,30 +563,38 @@
         body.appendChild(empty);
         return;
       }
+      // СВОЯ сетка, а не .trend-grid: та — masonry из абсолютных плиток под
+      // витрину трендов, и партнёрская карточка в ней разъезжалась (пустое
+      // превью 9:16 и текст враспор). Здесь карточка товарная: превью
+      // фиксированной высоты, компактный блок текста, действия одной строкой.
       const grid = document.createElement("div");
-      grid.className = "trend-grid";
+      grid.className = "earn-grid";
       d.products.forEach((t) => {
         const card = document.createElement("div");
-        card.className = "trend-card";
+        card.className = "earn-card";
         card.innerHTML = `
-          ${t.sample_url
-            ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
-                 ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
-            : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
-            : `<div class="trend-ph"></div>`}
-          <div class="trend-meta">
-            <b>${esc(t.title)}</b>
-            <span class="earn-reward">${esc(t.reward_note || "")}</span>
-            <span class="muted">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
+          <div class="earn-shot">
+            ${t.sample_url
+              ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
+                   ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+              : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+              : `<span class="earn-ph">📦</span>`}
+            ${t.reward_note ? `<span class="earn-reward">${esc(t.reward_note)}</span>` : ""}
           </div>
-          <input type="text" class="earn-style" maxlength="200"
-                 placeholder="${T("earn.stylePh", "свой стиль: мульт, ИИ-блогер, 3D…")}" />
-          ${t.my_link ? `
-          <button type="button" class="earn-link ghost">${T("earn.copy", "Скопировать мою ссылку")}</button>` : ""}
-          <label class="trend-go">
-            <span>${T("earn.make", "Сделать ролик с продуктом")}</span>
-            <input type="file" accept="image/*" hidden />
-          </label>
+          <div class="earn-body">
+            <b class="earn-name">${esc(t.title)}</b>
+            <span class="muted earn-meta">${t.duration_sec} ${T("trends.sec", "с")} · ⚡ ${t.cost_points}</span>
+            <input type="text" class="earn-style" maxlength="200"
+                   placeholder="${T("earn.stylePh", "свой стиль: мульт, ИИ-блогер, 3D…")}" />
+            <div class="earn-acts">
+              <label class="trend-go earn-go">
+                <span>${T("earn.make", "Сделать ролик с продуктом")}</span>
+                <input type="file" accept="image/*" hidden />
+              </label>
+              ${t.my_link ? `
+              <button type="button" class="earn-link ghost">${T("earn.copy", "Скопировать мою ссылку")}</button>` : ""}
+            </div>
+          </div>
           <div class="trend-state hidden"></div>`;
         const linkBtn = card.querySelector(".earn-link");
         if (linkBtn) linkBtn.addEventListener("click", async () => {
@@ -427,6 +603,11 @@
         });
         const inp = card.querySelector("input");
         inp.addEventListener("change", () => trendMake(card, t, inp));
+        card.querySelector(".trend-info").addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeTrendsPage(false);
+          if (window.QlolPromptPage) window.QlolPromptPage.open("trend", String(t.id));
+        });
         grid.appendChild(card);
       });
       body.appendChild(grid);
@@ -443,6 +624,214 @@
     if (updateUrl !== false && location.pathname === "/trends") history.pushState({}, "", "/studio");
     paint();
   }
+
+  /* ─────────────────────────── маркетинг ───────────────────────────
+     Хаб «всё про продукты и бренды»: три стеклянные карточки — мокапы, UGC
+     и партнёрка. Своя страница на механике трендов (#trends-page): студия
+     прячется классом trends-view, human-URL /marketing, закрытие при уходе
+     в любой другой раздел — через go(). */
+
+  /* Общая база предметов/персонажей: сетка карточек с фото и поиском.
+     Правка открывает ТЕ ЖЕ модалки студии (openItemModal / досье героя) —
+     второго редактора не заводим. */
+  async function openBase(kind) {
+    const isItems = kind === "items";
+    const title = isItems ? T("marketing.items", "Предметы")
+                          : T("marketing.chars", "Персонажи");
+    openSheet("base", title, async (body) => {
+      busy(body);
+      let rows = [];
+      try {
+        rows = isItems
+          ? (await api("/api/items/all")).items || []
+          : (await api("/api/characters/all")).characters || [];
+      } catch (e) { failed(body, "trends.failed"); return; }
+      body.innerHTML = `
+        <input type="search" class="base-search"
+               placeholder="${T("common.search", "поиск…")}" />
+        <div class="base-grid"></div>`;
+      const grid = $(".base-grid", body);
+      const paintRows = () => {
+        const q = ($(".base-search", body).value || "").trim().toLowerCase();
+        grid.innerHTML = "";
+        const list = rows.filter((r) =>
+          !q || ((r.title || r.name || "").toLowerCase().includes(q)));
+        if (!list.length) {
+          // Пустое состояние — ДВЕРЬ, а не табличка: «пока пусто» без кнопки
+          // оставляло человека в тупике.
+          grid.innerHTML = "";
+          const p = document.createElement("p");
+          p.className = "muted";
+          p.textContent = T("base.empty", "пока пусто");
+          const cta = document.createElement("button");
+          cta.type = "button";
+          cta.className = "primary";
+          cta.textContent = lang() === "ru"
+            ? (isItems ? "+ Добавить предмет" : "+ Добавить персонажа")
+            : (isItems ? "+ Add an item" : "+ Add a character");
+          cta.addEventListener("click", () => {
+            if (isItems) goStudioMode("mockup");
+            else {
+              go("studio");
+              setTimeout(() => {
+                const b = document.querySelector("#add-character-btn, .char-add");
+                if (b) b.click();
+              }, 500);
+            }
+          });
+          grid.append(p, cta);
+          return;
+        }
+        list.forEach((r) => {
+          const url = isItems ? r.url : r.photo_url;
+          const name = r.title || r.name || "—";
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "base-card";
+          b.innerHTML = (url
+            ? `<img src="${url}" alt="" loading="lazy" />`
+            : `<span class="base-ph">${isItems ? "📦" : "👤"}</span>`)
+            + `<span class="base-cap">${esc(name)}</span>`;
+          b.addEventListener("click", () => {
+            // Правка живёт в студии: уходим туда и открываем досье.
+            if (isItems && window.qlolOpenItem) window.qlolOpenItem(r.track_id);
+            else if (!isItems && window.qlolOpenChar) window.qlolOpenChar(r.id);
+          });
+          grid.appendChild(b);
+        });
+      };
+      paintRows();
+      $(".base-search", body).addEventListener("input", paintRows);
+    });
+  }
+
+  function closeMarketingPage(updateUrl) {
+    const page = $("#marketing-page");
+    if (!page) return;
+    page.remove();
+    const app = $("#app");
+    if (app && !$("#trends-page")) app.classList.remove("trends-view");
+    if (sheet === "marketing") sheet = "";
+    if (updateUrl !== false && location.pathname === "/marketing") {
+      history.pushState({}, "", "/studio");
+    }
+    paint();
+  }
+
+  /* Увести в студию сразу в нужный режим: тот же путь, что клик по чипу
+     режима, — pick() открывает карточку режима с кнопкой «Открыть/Создать». */
+  function goStudioMode(modeId) {
+    closeMarketingPage(false);
+    if (location.pathname === "/marketing") history.pushState({}, "", "/studio");
+    const studio = SECTIONS.find((x) => x.id === "studio");
+    if (studio && studio.open) studio.open();
+    if (window.QlolModeMenu && window.QlolModeMenu.pick) {
+      window.QlolModeMenu.pick(modeId);
+    }
+    paint();
+  }
+
+  function openMarketing() {
+    if (window.QlolSchool) window.QlolSchool.close(false);
+    closeTrendsPage(false);
+    closeMarketingPage(false);
+    const app = $("#app");
+    if (!app) return;
+    sheet = "marketing";
+    app.classList.add("trends-view");
+    if (location.pathname !== "/marketing") history.pushState({}, "", "/marketing");
+    const page = document.createElement("main");
+    page.id = "marketing-page";
+    page.className = "trends-page marketing-page";
+    const mkLead = T("marketing.lead", "");
+    page.innerHTML = `<section class="trends-hero">
+      <h1>${esc(T("marketing.title", "Маркетинг"))}</h1>
+      ${mkLead ? `<p>${esc(mkLead)}</p>` : ""}
+      ${window.lolqHowto ? window.lolqHowto("marketing") : ""}
+    </section><section class="mk-grid"></section>`;
+    const grid = $(".mk-grid", page);
+    const cards = [
+      { icon: "📦",
+        t: T("marketing.mockups", "Мокапы — предметная съёмка товара"),
+        d: T("marketing.mockupsNote", "Кадры упаковки для карточек и рекламы — по одному фото."),
+        go: () => goStudioMode("mockup") },
+      { icon: "🤳",
+        t: T("marketing.ugc", "UGC / блогеры"),
+        d: T("marketing.ugcNote", "ИИ-блогер рассказывает про твой продукт как живой человек."),
+        go: () => goStudioMode("ugc") },
+      { icon: "💸",
+        t: T("marketing.earn", "Заработок с lolq.ai"),
+        d: T("marketing.earnNote", "Постишь ролики с продуктами — получаешь долю с продаж."),
+        go: () => openEarn() },
+      // Общие базы: те же сущности, что в студии, отдельным входом.
+      { icon: "🧴",
+        t: T("marketing.items", "Предметы"),
+        d: T("marketing.itemsNote", "Общая база предметов всех проектов: фото, описание, модельки."),
+        go: () => openBase("items") },
+      { icon: "👥",
+        t: T("marketing.chars", "Персонажи"),
+        d: T("marketing.charsNote", "Общая база героев: лица держатся во всех проектах и режимах."),
+        go: () => openBase("chars") },
+    ];
+    // Иконка — моно-SVG маской (см. sections.css .mk-ico-*), не эмодзи;
+    // галерея — ЖИВЫЕ примеры: мокапы и UGC дозаполняются превью ниже.
+    const ids = ["mockups", "ugc", "earn", "items", "chars"];
+    cards.forEach((c, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-card";
+      const gal = `<span class="mk-card-gallery" data-gal="${ids[i]}"></span>`;
+      b.innerHTML = `<span class="mk-ico mk-ico-${ids[i]}" aria-hidden="true"></span>
+        <b>${esc(c.t)}</b><span class="mk-note">${esc(c.d)}</span>${gal}`;
+      b.addEventListener("click", c.go);
+      grid.appendChild(b);
+    });
+    const fillGal = (id, urls) => {
+      const holder = $(`[data-gal="${id}"]`, page);
+      if (!holder || !urls.length) return;
+      // /api/media отдаёт файл не каждому (владельцы файлов); вставляем
+      // только реально загрузившиеся, битых плиток в карточке не держим.
+      urls.slice(0, 3).forEach((u) => {
+        const im = new Image();
+        im.loading = "lazy"; im.alt = "";
+        im.onload = () => { if (holder.children.length < 3) holder.appendChild(im); };
+        im.src = u;
+      });
+    };
+    // Персонажи и UGC — живые лица из общей базы.
+    fetch("/api/characters/all", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const urls = ((d && d.characters) || []).map((x) => x.photo_url).filter(Boolean);
+        fillGal("ugc", urls);
+        fillGal("chars", urls.slice(3, 6).length ? urls.slice(3, 6) : urls);
+      }).catch(() => {});
+    // Предметы — фото товаров.
+    fetch("/api/mockup/products", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => fillGal("items",
+        ((d && d.products) || []).map((x) => x.url).filter(Boolean)))
+      .catch(() => {});
+    // Живые превью шаблонов подъезжают асинхронно; без сессии или без
+    // сгенерированных превью карточка остаётся на плашках — это норма.
+    fetch("/api/mockup/templates", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const withPrev = ((data && data.templates) || [])
+          .filter((x) => x.preview_url).slice(0, 3);
+        fillGal("mockups", withPrev.map((x) => x.preview_url));
+        fillGal("earn", withPrev.map((x) => x.preview_url).slice(0, 1));
+      })
+      .catch(() => {});
+    app.appendChild(page);
+    paint();
+  }
+
+  const NEW_TRENDS = new Set([
+    "agamemnon", "fallen angel", "bullet time", "cyclope", "pigeons",
+    "pearl earring", "argus", "dolphin ride", "skatedog", "monet muse",
+    "puffin ride", "lost in a book", "penguin ride",
+  ]);
 
   const TREND_TITLES_RU = {
     "Agamemnon":"Агамемнон", "Earth Zoom":"Зум Земли", "Ink Riot":"Чернильный бунт",
@@ -560,7 +949,7 @@
       : "a ready-made visual scenario: upload one photo and get a video in the selected style.";
   }
 
-  function trendVisual(title, index) {
+  function trendVisual(title, index, meta) {
     let hash = 2166136261;
     for (const ch of String(title || "")) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
     const hue = Math.abs(hash) % 360;
@@ -568,7 +957,16 @@
     const variant = Math.abs(hash >> 8) % 8;
     return `<div class="trend-ph trend-visual" data-visual="${variant}"
       style="--th:${hue};--th2:${hue2};--td:${-(index % 9) * .19}s">
-      <i></i><i></i><i></i></div>`;
+      <i></i><i></i><i></i>${meta ? `<em class="trend-ph-meta">${esc(meta)}</em>` : ""}</div>`;
+  }
+
+  // Метка заглушки: пока превью не нарисовано, о пресете честно известны
+  // только длительность и цена — их и показываем, вместо пустого чёрного.
+  function trendMeta(t) {
+    const bits = [];
+    if (t.duration_sec) bits.push(`${t.duration_sec}${lang() === "ru" ? " с" : "s"}`);
+    if (t.cost_points) bits.push(`⚡ ${t.cost_points}`);
+    return bits.join(" · ");
   }
 
   function showTrendDetail(page, t) {
@@ -665,6 +1063,7 @@
   }
 
   function openTrends() {
+    if (window.QlolSchool) window.QlolSchool.close(false);
     closeTrendsPage(false);
     const app = $("#app");
     if (!app) return;
@@ -693,10 +1092,59 @@
         page.replaceChildren(empty);
         return;
       }
-      const selected = new URLSearchParams(location.search).get("trend");
-      const trend = selected && presets.find((t) => String(t.id) === selected);
-      if (trend) showTrendDetail(page, trend);
-      else showTrendsCatalog(page, presets);
+      const grid = document.createElement("div");
+      grid.className = "trend-grid";
+      d.presets.forEach((t, index) => {
+        const card = document.createElement("div");
+        card.className = `trend-card trend-tile-${index % 12}`;
+        card.dataset.title = t.title;
+        const displayTitle = trendTitle(t.title);
+        card.innerHTML = `
+          ${t.sample_url
+            ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
+                 ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+            : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+            : trendVisual(t.title, index, trendMeta(t))}
+          <div class="trend-card-name">${esc(displayTitle)}</div>
+          <label class="trend-card-action">
+            <span>${lang() === "ru" ? "Сгенерить" : "Generate"}</span>
+            <input type="file" accept="image/*" hidden />
+          </label>
+          <button type="button" class="trend-info" title="${lang() === "ru" ? "страница тренда" : "trend page"}">ⓘ</button>
+          <div class="trend-state hidden"></div>`;
+        const vid = card.querySelector("video");
+        if (vid) {
+          card.addEventListener("mouseenter", () => vid.play().catch(() => {}));
+          card.addEventListener("mouseleave", () => vid.pause());
+        }
+        const inp = card.querySelector("input");
+        inp.addEventListener("change", () => trendMake(card, t, inp));
+        const info = card.querySelector(".trend-info");
+        if (info) info.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          closeTrendsPage(false);
+          if (window.QlolPromptPage) window.QlolPromptPage.open("trend", String(t.id));
+        });
+        grid.appendChild(card);
+      });
+      body.appendChild(grid);
+      const filters = $(".trends-filters", page);
+      const tags = [{ title: T("trends.filterAll", "Все"), display: T("trends.filterAll", "Все"), all: true },
+        ...d.presets.map((t) => ({ title: t.title, display: trendTitle(t.title) }))];
+      tags.forEach((item, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "trends-filter" + (i === 0 ? " on" : "");
+        const fresh = NEW_TRENDS.has(String(item.title).toLowerCase());
+        b.innerHTML = `<span>${esc(item.display)}</span>${fresh
+          ? `<em class="trend-new">${lang() === "ru" ? "новое" : "new"}</em>` : ""}`;
+        b.addEventListener("click", () => {
+          $$(".trends-filter", filters).forEach((x) => x.classList.toggle("on", x === b));
+          $$(".trend-card", grid).forEach((c) => c.classList.toggle("hidden", !item.all && c.dataset.title !== item.title));
+        });
+        filters.appendChild(b);
+      });
     })();
   }
 
@@ -766,6 +1214,110 @@
     try { return Boolean(window.me && window.me.user); } catch (e) { return true; }
   }
 
+  /* ─────────── Школа: база знаний «как это работает» ───────────
+     Одни и те же тексты живут в двух местах: свёрнутым блоком на странице
+     раздела (details «Как это работает») и оглавлением в «Школе». */
+  const SCHOOL = {
+    ru: [
+      { id: "clips", icon: "🎬", title: "Клипы", steps: [
+        "Создай проект и загрузи трек — сервис разберёт текст и ритм.",
+        "Выбери стиль и персонажей: их фото держат лицо во всех кадрах.",
+        "Сгенерируй раскадровку — каждая строка песни станет сценой.",
+        "Cinema-бар над раскадровкой добавляет свободную сцену одним промптом, @ зовёт персонажа.",
+        "Кадры → видео → сборка. «Супергенерация» проходит весь путь одной кнопкой.",
+      ] },
+      { id: "marketing", icon: "📦", title: "Маркетинг и мокапы", steps: [
+        "Создай проект «Мокапы» и загрузи фото товара — этикетка сохранится точь-в-точь.",
+        "Выбери готовый шаблон сцены в маркетинг-студии или опиши свою.",
+        "Слоты «Персонаж» и «Продукт» подмешивают референсы из любой твоей базы.",
+        "Кадр ложится в раскадровку — его можно оживить и собрать в ролик.",
+        "3D-облёт крутит товар на 360° по восьми ракурсам.",
+      ] },
+      { id: "ugc", icon: "🤳", title: "UGC-ролики", steps: [
+        "Создай проект UGC и выбери формат ролика — каркас уже расписан по слотам.",
+        "Задай персону блогера и локацию — они держатся из ролика в ролик.",
+        "Напиши бриф или доверься формату: раскадровка соберётся сама.",
+        "Кадры и видео — тем же конвейером, что и клипы.",
+      ] },
+      { id: "earn", icon: "💸", title: "Заработок", steps: [
+        "Сделай ролик с любым продуктом из витрины.",
+        "Возьми свою ссылку в разделе «Заработок» и поставь её в пост.",
+        "Каждый заказ с твоего трафика приносит долю с продажи.",
+      ] },
+      { id: "music", icon: "🎵", title: "Музыка", steps: [
+        "Опиши трек или загрузи свой — студия соберёт бит и вокал.",
+        "Мастеринг выравнивает громкость под площадки.",
+        "Готовый трек сразу можно превратить в клип.",
+      ] },
+      { id: "tokens", icon: "⚡", title: "Токены и цены", steps: [
+        "Каждая генерация стоит токены — цена написана прямо на кнопке (⚡).",
+        "Цена зависит от движка: шлюзовые дешевле, топовые модели дороже.",
+        "Если генерация упала, токены возвращаются автоматически.",
+        "Пакеты токенов и тарифы — в кабинете.",
+      ] },
+    ],
+    en: [
+      { id: "clips", icon: "🎬", title: "Clips", steps: [
+        "Create a project and upload a track — the service parses lyrics and rhythm.",
+        "Pick a style and characters: their photos keep the face consistent.",
+        "Generate the storyboard — every line becomes a scene.",
+        "The cinema bar above the storyboard adds a free scene from one prompt, @ mentions a character.",
+        "Frames → video → assembly. \u201cSupergen\u201d runs the whole pipeline in one click.",
+      ] },
+      { id: "marketing", icon: "📦", title: "Marketing & mockups", steps: [
+        "Create a Mockups project and upload product photos — the label is preserved exactly.",
+        "Pick a ready-made scene template in the marketing studio or describe your own.",
+        "\u201cCharacter\u201d and \u201cProduct\u201d slots mix in references from any of your projects.",
+        "The frame lands in the storyboard — animate it and build a video.",
+        "The 3D turnaround spins the product through eight angles.",
+      ] },
+      { id: "ugc", icon: "🤳", title: "UGC videos", steps: [
+        "Create a UGC project and pick a format — the slots are pre-planned.",
+        "Set the creator persona and location — they persist across videos.",
+        "Write a brief or trust the format: the storyboard builds itself.",
+        "Frames and video run on the same pipeline as clips.",
+      ] },
+      { id: "earn", icon: "💸", title: "Earning", steps: [
+        "Make a video with any product from the showcase.",
+        "Grab your link in the Earn section and put it in your post.",
+        "Every order from your traffic pays you a share.",
+      ] },
+      { id: "music", icon: "🎵", title: "Music", steps: [
+        "Describe a track or upload your own — the studio builds beat and vocals.",
+        "Mastering levels the loudness for the platforms.",
+        "A finished track can become a clip right away.",
+      ] },
+      { id: "tokens", icon: "⚡", title: "Tokens & prices", steps: [
+        "Every generation costs tokens — the price is right on the button (⚡).",
+        "The price depends on the engine: gateway ones are cheaper, top models cost more.",
+        "If a generation fails, tokens are refunded automatically.",
+        "Token packs and plans live in the account.",
+      ] },
+    ],
+  };
+
+  function schoolCats() {
+    return SCHOOL[(typeof LANG !== "undefined" && LANG === "ru") ? "ru" : "en"];
+  }
+
+  /* Свёрнутый блок «Как это работает» для страницы раздела. */
+  window.lolqHowto = function lolqHowto(id) {
+    const cat = schoolCats().find((c) => c.id === id);
+    if (!cat) return "";
+    const head = (typeof LANG !== "undefined" && LANG === "ru")
+      ? "Как это работает" : "How it works";
+    return `<details class="ms-howto"><summary>${cat.icon} ${esc(head)}</summary>
+      <ol>${cat.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>`;
+  };
+
+  function schoolBlock() {
+    const lead = (typeof LANG !== "undefined" && LANG === "ru")
+      ? "База знаний: как устроен каждый раздел." : "Knowledge base: how every section works.";
+    return `<div class="school-grid"><p class="ac-lead">${esc(lead)}</p>` + schoolCats().map((c) =>
+      `<details class="ms-howto school-cat"><summary>${c.icon} ${esc(c.title)}</summary>
+        <ol>${c.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>`).join("") + "</div>";
+  }
+
   function openAcademy(slug) {
     openSheet("academy", T("academy.title", "Академия"), async (body) => {
       busy(body);
@@ -797,7 +1349,8 @@
 
   function renderCourses(body) {
     const rows = academy.courses || [];
-    body.innerHTML = courseHead() + `<div class="ac-courses">${rows.map(courseCard).join("")}</div>`;
+    body.innerHTML = schoolBlock() + courseHead()
+      + `<div class="ac-courses">${rows.map(courseCard).join("")}</div>`;
     $$(".ac-lesson", body).forEach((b) =>
       b.addEventListener("click", () => renderLesson(body, b.dataset.slug)));
   }
@@ -1107,12 +1660,14 @@
     if (typeof window.onLangChange === "function") {
       window.onLangChange(() => {
         const trendsOpen = Boolean($("#trends-page"));
+        const mkOpen = Boolean($("#marketing-page"));
         relabel();
         academy = null;
         if (window.QlolLibrary) window.QlolLibrary.forget();
         // Страница трендов собрана JS, поэтому data-i18n её не обновит.
         // Перестраиваем её на новом языке без перезагрузки и смены URL.
         if (trendsOpen) openTrends();
+        if (mkOpen) openMarketing();
         paint();
       });
     }
@@ -1140,13 +1695,22 @@
     boot();
   }
 
+  /* Закрыть все страницы-разделы. Нужна школе (и любому будущему разделу
+     со своей страницей): убрать чужой узел напрямую значит оставить раздел
+     подсвеченным, а его запись — в адресной строке. */
+  function closePages() {
+    closeTrendsPage(false);
+    closeMarketingPage(false);
+  }
+
   /* Обвязка листа отдаётся library.js ЦЕЛИКОМ, а не переписывается там заново.
      Тост, перевод, экранирование, список треков и диалоги применения приёма и
      набора — это ровно те места, где две копии означали бы два поведения: одно
      в академии, другое в каталоге. Отсюда же берётся openSheet, поэтому
      подсветка раздела продолжает работать, кто бы лист ни рисовал. */
   window.QlolSections = {
-    mount, go, paint, openAcademy, openLibrary,
+    mount, go, paint, openAcademy, openLibrary, openMarketing, openEarn,
+    closePages, toast, moveIndicator,
     ui: {
       T, TF, esc, lang, num, plural, toast, errorText, busy, failed,
       planName, tracksOf, sceneOptions, slotFields, readSlots,

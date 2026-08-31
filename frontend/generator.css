@@ -1,0 +1,249 @@
+/* Генератор: вход, фото-галерея с композером, видео-студия. Токены — из
+   общей дизайн-системы, ничего чужого. */
+.gen-page { width: 100%; min-height: calc(100vh - 84px); padding: clamp(24px, 3vw, 44px) clamp(14px, 2vw, 30px) 140px; }
+/* Локальная строка экрана — ПОД общей шапкой приложения: «← к выбору»,
+   заголовок, табы фото/видео. Своей навигации у генератора нет. */
+.gen-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 22px; flex-wrap: wrap; }
+.gen-head h1 { margin: 0; font: 800 clamp(22px, 2.4vw, 34px)/1 var(--font-head); letter-spacing: -.03em; }
+.gen-head-tools { display: flex; align-items: center; gap: 10px; }
+.gen-switch { display: flex; gap: 4px; padding: 4px; border-radius: 12px; corner-shape: squircle; background: var(--surface-2); }
+.gen-switch button { padding: 8px 16px; border: 0; border-radius: 9px; corner-shape: squircle; background: transparent; color: var(--ink-muted); font: 700 13px/1 var(--font-head); box-shadow: none; }
+.gen-switch button.on { background: var(--fire-ink); color: var(--on-fire); }
+
+/* вход */
+.gen-entry { display: flex; min-height: 60vh; flex-direction: column; align-items: center; justify-content: center; gap: clamp(28px, 4vw, 48px); }
+.gen-entry h1 { margin: 0; font: 800 clamp(34px, 5vw, 64px)/1 var(--font-head); letter-spacing: -.045em; }
+.gen-entry-cards { display: grid; grid-template-columns: repeat(4, minmax(170px, 225px)); gap: 14px; justify-content: center; }
+.gen-entry-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 5px;
+  padding: 10px 10px 12px; border: 1px solid var(--border);
+  border-radius: 20px; corner-shape: squircle;
+  background: color-mix(in srgb, var(--card-solid) 72%, transparent);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 6px 22px rgba(var(--ink-rgb),.08);
+  text-align: left; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.gen-entry-card:hover { border-color: var(--border-bright); }
+.gen-entry-card:hover { transform: translateY(-4px); box-shadow: 0 18px 60px rgba(0,0,0,.14); }
+.gen-entry-card b { font: 800 15px/1.15 var(--font-head); }
+.gen-entry-card small { color: var(--ink-muted); font-size: 11.5px; line-height: 1.35; }
+.gen-entry-art { position: relative; display: flex; gap: 3px; width: 100%; aspect-ratio: 4/3; margin-bottom: 5px; overflow: hidden; border-radius: 14px; corner-shape: squircle; background: var(--surface-2); }
+.gen-entry-art > img { width: 100%; height: 100%; object-fit: cover; display: block; flex: 1; min-width: 0; }
+.gen-art-super > img { width: 33.4%; }
+/* В ночи стеклянная карточка держит канонную кромку, а не дневной блик. */
+:root[data-theme="dark"] .gen-entry-card,
+:root.os-dark:not([data-theme="light"]) .gen-entry-card {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 10px 30px rgba(0,0,0,.38);
+}
+
+/* пустой стейдж: примеры-подсказки карточками, клик кладёт промт в поле */
+.gen-ideas { display: flex; flex-direction: column; gap: 12px; padding: 26px 0 8px; }
+.gen-ideas > b { font: 700 14px/1.3 var(--font-head); color: var(--ink-muted); }
+.gen-ideas-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.gen-idea {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 14px; border: 1px solid var(--border); border-radius: 16px; corner-shape: squircle;
+  background: var(--card); box-shadow: none; text-align: left; cursor: pointer;
+}
+.gen-idea:hover { border-color: var(--border-bright); transform: none; }
+
+/* Глобальный button:hover красит кнопки в #fff — в ночи это белые пятна.
+   Наши поверхности держат свой фон и на ховере. */
+.gen-idea:hover:not(:disabled) { background: var(--card); }
+.gen-switch button:hover:not(:disabled),
+.gen-3d-kinds button:hover:not(:disabled),
+.gen-count button:hover:not(:disabled) { background: transparent; }
+.gen-switch button.on:hover:not(:disabled),
+.gen-3d-kinds button.on:hover:not(:disabled) { background: var(--fire-ink); }
+.gen-chip-btn:hover:not(:disabled) { background: var(--inset); }
+.gen-chip-menu button:hover:not(:disabled) { background: var(--gold-wash); }
+.gen-blog-card .gen-go:hover:not(:disabled),
+.gen-go:hover:not(:disabled) { background: var(--fire-ink); }
+.gen-back.ghosty:hover:not(:disabled) { background: var(--card-solid); }
+.gen-3d-trends button:hover:not(:disabled) { background: var(--surface-2); }
+.gen-3d-flip:hover:not(:disabled), .gen-3d-again:hover:not(:disabled) { background: var(--card-solid); }
+.gen-vref-rm:hover:not(:disabled) { background: var(--inset); }
+.gen-idea b { font: 800 13.5px/1.2 var(--font-head); color: var(--accent-ink); }
+.gen-idea small { color: var(--ink-muted); font-size: 12px; line-height: 1.45; }
+.gen-spin { width: 22px; height: 22px; border: 2px solid rgba(var(--ink-rgb),.2); border-top-color: var(--accent); border-radius: 50%; animation: genspin .8s linear infinite; }
+@keyframes genspin { to { transform: rotate(360deg); } }
+
+.gen-refs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.gen-refs:empty { display: none; }
+.gen-ref { position: relative; width: 46px; height: 46px; border-radius: 9px; overflow: hidden; }
+.gen-ref img { width: 100%; height: 100%; object-fit: cover; }
+.gen-ref button { position: absolute; top: 0; right: 0; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 0 0 0 8px; background: rgba(0,0,0,.65); color: #fff; font-size: 10px; line-height: 1; }
+.gen-go { padding: 11px 18px; border: 0; border-radius: 13px; corner-shape: squircle; background: var(--fire-ink); color: var(--on-fire); font: 800 14px/1 var(--font-head); box-shadow: 0 2px 14px rgba(200,96,20,.3); }
+.gen-go:hover { filter: brightness(1.06); }
+.gen-go span { opacity: .7; font-weight: 700; }
+.gen-note { margin-top: 6px; color: var(--danger-ink); font-size: 12px; }
+
+/* чипы */
+.gen-chip { position: relative; }
+.gen-chip-btn { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 11px; corner-shape: squircle; background: transparent; color: var(--ink); font: 700 12px/1 var(--font-head); box-shadow: none; }
+.gen-chip-menu { position: absolute; z-index: 70; bottom: calc(100% + 6px); left: 0; min-width: 130px; max-height: 300px; overflow: auto; padding: 5px; border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle; background: var(--card-solid); box-shadow: 0 14px 50px rgba(0,0,0,.2); }
+.gen-chip-menu button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; font-size: 12px; box-shadow: none; }
+.gen-chip-menu button.on, .gen-chip-menu button:hover { background: var(--gold-wash); }
+.gen-chip-menu button:disabled { opacity: .5; }
+.gen-model-menu { min-width: 230px; }
+.gen-model-menu b { display: block; font: 700 13px/1.2 var(--font-head); }
+.gen-model-menu small { color: var(--ink-muted); font-size: 11px; }
+
+/* видео-студия */
+.gen-video-view { background: var(--bg); color: var(--text); }
+.gen-video-view .gen-head h1 { color: var(--text); }
+.gen-studio { display: grid; grid-template-columns: 300px minmax(0, 1fr) 180px; gap: 14px; align-items: start; }
+.gen-vpanel { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle; background: var(--card-solid); }
+.gen-vmode { padding: 9px 12px; border-radius: 10px; corner-shape: squircle; background: var(--gold-wash); color: var(--gold-ink); font: 700 12px/1 var(--font-head); }
+.gen-vref { position: relative; display: flex; min-height: 120px; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1.5px dashed var(--border-bright); border-radius: 14px; corner-shape: squircle; background: var(--inset); cursor: pointer; overflow: hidden; }
+.gen-vref img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.gen-vref-plus { font-size: 22px; color: var(--accent-ink); }
+.gen-vref b { font: 700 13px/1 var(--font-head); }
+.gen-vref small { color: var(--ink-muted); font-size: 11px; }
+.gen-vref-swap { position: absolute; right: 8px; top: 8px; z-index: 2; padding: 4px 7px; border-radius: 8px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; }
+.gen-vref-rm { padding: 7px; border: 0; border-radius: 9px; corner-shape: squircle; background: var(--inset); color: var(--ink-muted); font-size: 11px; box-shadow: none; }
+.gen-vprompt { min-height: 110px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle; background: var(--inset); color: var(--text); font-size: 13px; resize: vertical; }
+.gen-vrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gen-vrow:empty { display: none; }
+.gen-vrow small { color: var(--ink-muted); font-size: 11px; }
+.gen-vgo { width: 100%; padding: 14px; font-size: 15px; }
+.gen-vstage { display: flex; flex-direction: column; gap: 12px; min-height: 62vh; padding: 18px; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle; background: radial-gradient(rgba(var(--ink-rgb),.12) 1px, transparent 1px) 0 0/9px 9px var(--card-warm); }
+.gen-vstage video { max-width: 92%; max-height: 74vh; border-radius: 14px; }
+.gen-vempty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--ink-muted); text-align: center; padding: 30px; }
+.gen-vempty b { font: 700 16px/1.3 var(--font-head); color: var(--text); }
+.gen-vstage > .gen-3d-sheetimg, .gen-vstage .gen-stage-img { max-width: 92%; max-height: 66vh; border-radius: 14px; corner-shape: squircle; }
+.gen-vstage .gen-stage-img { cursor: zoom-in; }
+.gen-vhistory { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow: auto; scrollbar-width: none; }
+.gen-vhistory::-webkit-scrollbar { display: none; }
+.gen-vhistory small { color: var(--ink-muted); font-size: 11px; }
+.gen-vempty-mini { padding: 20px 8px; border: 1px dashed var(--border); border-radius: 12px; corner-shape: squircle; color: var(--ink-muted); font-size: 11px; text-align: center; }
+
+/* КАРТОЧКА ИСТОРИИ — одна на все экраны генератора: миниатюра, подпись,
+   отметка текущего. Данные истории серверные, поэтому она переживает
+   перезагрузку страницы и видна с другого устройства. */
+.gen-hcard {
+  position: relative; flex: 0 0 auto; width: 100%; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle;
+  background: var(--surface-2); box-shadow: none; aspect-ratio: 3/4; cursor: pointer;
+}
+.gen-hcard img, .gen-hcard video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.gen-hcard.on { border-color: var(--border-bright); box-shadow: 0 0 0 2px var(--gold-wash); }
+.gen-hcard:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-bright); transform: none; }
+.gen-hcard-ph { display: grid; place-items: center; width: 100%; height: 100%; font-size: 26px; color: var(--ink-muted); }
+.gen-hcard i {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 5px 4px;
+  font: 700 9.5px/1.15 var(--font-head); font-style: normal; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.72));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gen-hcard u { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(var(--ink-rgb),.35); }
+.gen-video-view .gen-hcard { aspect-ratio: 9/16; }
+/* Референсы фото — компактной лентой под дропзоной панели. */
+.gen-vref-multi { flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 6px; }
+.gen-vref-multi img { position: static; width: 54px; height: 54px; border-radius: 9px; }
+
+/* большое превью */
+.gen-big { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.82); }
+.gen-big-body { position: relative; max-width: 92vw; max-height: 90vh; }
+.gen-big-body img, .gen-big-body video { max-width: 92vw; max-height: 84vh; border-radius: 12px; }
+.gen-big-actions { display: flex; justify-content: space-between; margin-top: 10px; }
+.gen-big-actions a { color: var(--accent-ink); font: 700 13px/1 var(--font-head); text-decoration: none; }
+.gen-big-close { border: 0; background: transparent; color: #fff; font-size: 16px; box-shadow: none; }
+
+@media (max-width: 980px) {
+  /* Узкий экран: панель, стейдж и история — сверху вниз, история лентой. */
+  .gen-studio { grid-template-columns: 1fr; }
+  .gen-vhistory { flex-direction: row; max-height: none; overflow-x: auto; }
+  .gen-vhistory small { display: none; }
+  .gen-hcard { width: 96px; }
+}
+
+/* страница генератора живёт в app-режиме «страница поверх студии» */
+#app.trends-view > #generator-page { display: block !important; }
+
+.gen-count { display: flex; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: 11px; corner-shape: squircle; background: var(--inset); color: var(--text); }
+.gen-count button { width: 30px; padding: 8px 0; border: 0; background: transparent; color: var(--text); font-size: 14px; box-shadow: none; }
+.gen-count span { min-width: 18px; text-align: center; font: 700 12px/1 var(--font-head); }
+
+/* при открытом генераторе на странице нет ничего, кроме него и шапки */
+body.gen-open > :not(#app):not(script):not(style):not(link):not(.gen-big) { display: none !important; }
+body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !important; }
+
+@media (max-width: 1100px) { .gen-entry-cards { grid-template-columns: repeat(2, minmax(170px, 260px)); } }
+@media (max-width: 560px) { .gen-entry-cards { grid-template-columns: repeat(2, 1fr); } }
+
+/* «нужен вход»: гость упёрся в супергенератор — дверь, а не ошибка */
+.gen-locked { min-height: 46vh; }
+.gen-locked-sub { margin: 0; max-width: 44ch; color: var(--ink-muted); text-align: center; line-height: 1.5; }
+.gen-locked-row { display: flex; align-items: center; gap: 12px; }
+
+
+/* ─── назад: наш «призрак», не чужая синяя кнопка ─── */
+.gen-back.ghosty {
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 999px;
+  corner-shape: squircle; background: var(--card-solid); color: var(--ink);
+  font: 700 13px/1 var(--font-head); box-shadow: none;
+}
+
+/* ─── 3D-модель: рабочий экран ─── */
+.gen-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; min-height: 180px; padding: 14px; cursor: pointer; text-align: center;
+  border: 1.5px dashed var(--border-bright); border-radius: 18px; corner-shape: squircle;
+  background: var(--inset);
+}
+.gen-drop.has { flex-direction: row; flex-wrap: wrap; }
+.gen-drop.has img { width: 72px; height: 72px; object-fit: cover; border-radius: 12px; }
+.gen-drop-plus { font-size: 26px; color: var(--accent-ink); }
+.gen-drop b { font: 700 14px/1.3 var(--font-head); }
+.gen-drop small { color: var(--ink-muted); font-size: 11.5px; }
+.gen-3d-kinds { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface-2); width: max-content; }
+.gen-3d-kinds button { border: 0; box-shadow: none; background: transparent; padding: 7px 13px; border-radius: 999px; font: 700 12.5px/1 var(--font-head); color: var(--ink-muted); }
+.gen-3d-kinds button.on { background: var(--fire-ink); color: var(--on-fire); }
+.gen-3d-hint { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.5; max-width: 40ch; }
+.gen-3d-acts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.gen-3d-acts a { color: var(--accent-ink); font-weight: 700; text-decoration: none; }
+.gen-3d-saved { color: var(--ok-ink); font-size: 12.5px; font-weight: 700; }
+.gen-3d-again { border: 1px solid var(--border); border-radius: 999px; background: var(--card-solid); padding: 7px 13px; font-size: 12.5px; box-shadow: none; }
+
+/* ─── персонаж: база героев ─── */
+.gen-blog-lead { margin: 0; color: var(--ink-muted); font-size: 12.5px; line-height: 1.5; }
+.gen-blog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-width: 900px; }
+.gen-blog-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  border: 1px solid var(--border); border-radius: 16px; corner-shape: squircle;
+  background: var(--card); box-shadow: none; text-align: left; color: var(--ink);
+}
+.gen-blog-card:hover { border-color: var(--border-bright); }
+.gen-blog-card img, .gen-blog-ph {
+  width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 12px; corner-shape: squircle;
+  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
+  font-size: 30px; color: var(--ink-muted);
+}
+.gen-blog-card b { font: 700 13px/1.2 var(--font-head); padding: 0 2px 2px; }
+.gen-blog-card small { color: var(--ink-muted); font-size: 11px; padding: 0 2px 2px; }
+.gen-blog-use { margin-top: 2px; padding: 9px 12px; font-size: 12.5px; border-radius: 11px; }
+/* пустое состояние — дверь: текст + одно огненное действие */
+
+/* ─── 3D v2: панель, история, вертушка, видео ─── */
+.gen-3d-row { display: flex; align-items: center; gap: 10px; }
+.gen-3d-row > small { min-width: 74px; color: var(--ink-muted); font-size: 11.5px; }
+.gen-3d-eng { font: 700 12px/1 var(--font-mono); color: var(--gold-ink); }
+/* Кадр вертушки влезает во вьюпорт ЦЕЛИКОМ: высота ограничена, ширина
+   следует за аспектом, кадр по центру — низ модельки не режется краем. */
+.gen-3d-spin3d { position: relative; display: flex; justify-content: center; width: 100%; max-width: 460px; cursor: grab; touch-action: none; }
+.gen-3d-spin3d:active { cursor: grabbing; }
+.gen-3d-spin3d canvas { width: auto; height: auto; max-width: 100%; max-height: 66vh; border-radius: 14px; corner-shape: squircle; background: var(--surface-2); display: block; }
+/* Подсказка лежит НА кадре — плашка тёмная в обеих темах, текст белый. */
+.gen-3d-draghint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); font-size: 11px; color: #fff; background: rgba(0,0,0,.55); padding: 3px 10px; border-radius: 999px; pointer-events: none; }
+.gen-3d-sheetimg { max-width: 100%; max-height: 56vh; border-radius: 14px; }
+.gen-3d-flip { border: 1px solid var(--border); border-radius: 999px; background: var(--card-solid); padding: 7px 13px; font-size: 12.5px; box-shadow: none; }
+.gen-3d-video { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 460px; align-items: center; border-top: 1px solid var(--border); padding-top: 14px; }
+.gen-3d-video video { width: 100%; max-height: 46vh; border-radius: 14px; background: #000; }
+.gen-3d-vbusy { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 13px; }
+.gen-3d-vcap { color: var(--ink-muted); font-size: 12px; }
+.gen-3d-trends { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; width: 100%; padding: 2px; }
+.gen-3d-trends::-webkit-scrollbar { display: none; }
+.gen-3d-trends button { position: relative; flex: none; width: 76px; aspect-ratio: 9/16; padding: 0; border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle; overflow: hidden; background: var(--surface-2); box-shadow: none; }
+.gen-3d-trends img, .gen-3d-trends video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.gen-3d-trends i { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 4px 4px; font: 700 9px/1.1 var(--font-head); font-style: normal; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.72)); text-align: center; }

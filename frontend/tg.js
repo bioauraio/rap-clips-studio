@@ -39,20 +39,32 @@
   function safe(fn) { try { return fn(); } catch (e) { return undefined; } }
 
   // ────────── тема ──────────
-  // Остаёмся светлым «картоном» и красим ПОД СЕБЯ хром Telegram. Подставлять
-  // 16 цветов темы Telegram в дизайн-систему из 1400 строк — верный способ
-  // получить мешанину; честно светлый экран в тёмном клиенте читается лучше,
-  // чем полутёмный. Тёмная тема — отдельная работа по канону, не побочный
-  // эффект мини-аппа.
-  const SKIN = { bg: "#faf7f2", head: "#faf7f2", btn: "#ff3d3d", btnText: "#ffffff" };
+  // Красим хром Telegram ПОД СЕБЯ — цветом НАШЕЙ темы, а не константой.
+  // Пока здесь стоял жёстко светлый #faf7f2, тёмная тема давала битый экран:
+  // панели тёмные, а фон страницы и хром клиента светлые, и между блоками
+  // светились белые прогалы. Цвет берём из живого --bg: одно место правды,
+  // и переключение темы внутри мини-аппа перекрашивает клиент вместе с
+  // приложением. Цвета темы САМОГО Telegram по-прежнему не подставляем:
+  // шестнадцать чужих переменных в нашу палитру — это мешанина.
+  const SKIN = { btn: "#dd6a50", btnText: "#ffffff" };
+
+  function skinBg() {
+    try {
+      const v = getComputedStyle(document.documentElement)
+        .getPropertyValue("--bg").trim();
+      return v || "#faf7f2";
+    } catch (e) { return "#faf7f2"; }
+  }
 
   function paint() {
-    safe(() => W.setHeaderColor(ok("6.9") ? SKIN.head : "bg_color"));
-    safe(() => W.setBackgroundColor(SKIN.bg));
-    if (ok("7.10")) safe(() => W.setBottomBarColor(SKIN.bg));
+    const bg = skinBg();
+    safe(() => W.setHeaderColor(ok("6.9") ? bg : "bg_color"));
+    safe(() => W.setBackgroundColor(bg));
+    if (ok("7.10")) safe(() => W.setBottomBarColor(bg));
     const el = document.documentElement;
-    el.style.setProperty("--tg-skin-bg", SKIN.bg);
+    el.style.setProperty("--tg-skin-bg", bg);
   }
+  TG.repaint = paint;
 
   // ────────── вьюпорт и safe area ──────────
   // 100vh внутри Telegram неверен. Сетку строим на stable-высоте (она не

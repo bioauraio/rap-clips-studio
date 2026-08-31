@@ -201,7 +201,10 @@ async function api(path, opts = {}) {
         return await api(path, { ...opts, _retry: true });
       } catch (e) { /* не опознал — падаем ниже общим путём */ }
     }
-    if (!(window.TGA && TGA.active)) showLogin();
+    // Открытый генератор — витрина для гостя: его страницы сами показывают
+    // «нужен вход», а при body.gen-open виден только #app — экран логина
+    // поверх него превратился бы в пустую страницу.
+    if (!(window.TGA && TGA.active) && !$("#generator-page")) showLogin();
     throw new ApiError({ error: "unauthorized" }, 401);
   }
   if (!res.ok) {
@@ -274,6 +277,10 @@ function hideScreens() {
     const el = $(sel);
     if (el) el.classList.add("hidden");
   });
+  // chat-view — временный режим #app (видна одна шапка). Снимаем ВСЕГДА:
+  // иначе студия, открытая после мастерской, осталась бы пустой шапкой.
+  const app = $("#app");
+  if (app) app.classList.remove("chat-view");
 }
 
 // Экран блокировки. Заблокированному отвечают 403 ВСЕ рабочие роуты, а
@@ -310,6 +317,15 @@ function showLogin() {
     const label = $("#login-auth-label");
     if (label) label.classList.toggle("hidden", !n);
   });
+  // Вкладки «Email» и «Телефон» — только когда сервер реально умеет слать
+  // письма/SMS. Без ключей экран выглядит ровно как раньше.
+  authConfig().then((cfg) => {
+    const tabs = $("#auth-tabs");
+    if (!tabs) return;
+    tabs.querySelector('[data-tab="email"]').classList.toggle("hidden", !cfg.email);
+    tabs.querySelector('[data-tab="phone"]').classList.toggle("hidden", !cfg.phone);
+    tabs.classList.toggle("hidden", !cfg.email && !cfg.phone);
+  });
 }
 function showApp() {
   // Уходя в студию, забываем «покажи главную»: иначе ?home липнет к адресу
@@ -336,14 +352,46 @@ function showApp() {
   // Человеческие адреса разделов: /make, /trends, /academy… Сервер отдаёт
   // на них index.html, раздел открываем здесь по pathname.
   const path = location.pathname.replace(/\/+$/, "");
+  // Школа — свой раздел со страницей курса: /school и /school/course/{id}.
+  // Она сама разбирает адрес, поэтому здесь только зовём её.
+  if (path.indexOf("/school") === 0) {
+    setTimeout(() => {
+      if (window.QlolSchool) window.QlolSchool.fromPath();
+    }, 400);
+  }
   if (path === "/make" || path === "/generator") showChat();
-  else if (path === "/music" && typeof showMusic === "function") showMusic();
-  else if (["/trends", "/academy", "/prompts"].includes(path)) {
+  else if (path === "/music") {
+    let musTries = 0;
+    const musTick = () => {
+      if (window.QlolMusic && window.QlolMusic.show) { window.QlolMusic.show(); return; }
+      if (musTries++ < 20) setTimeout(musTick, 300);
+    };
+    setTimeout(musTick, 300);
+  }
+  else if (["/trends", "/academy", "/prompts", "/marketing"].includes(path)) {
     const id = path.slice(1);
     setTimeout(() => {
-      const btn = document.querySelector(`.sec-btn[data-sec="${id}"]`);
+      // Кнопка раздела есть и в шапке (.tb-sec), и в рельсе верстака
+      // (.sec-btn) — ищем по data-sec, чтобы работали обе разметки.
+      const btn = document.querySelector(`[data-sec="${id}"]`);
       if (btn) btn.click();
     }, 400);
+  }
+  // /earn остаётся прямым входом в партнёрку, хотя пункт навигации теперь
+  // «Маркетинг»: ссылка разошлась по постам, ломать её нельзя.
+  else if (path === "/earn") {
+    // Разделы поднимаются позже приложения: одна попытка через 400мс на
+    // холодном старте промахивалась, и /earn показывал голую студию.
+    let tries = 0;
+    const tick = () => {
+      if (window.QlolSections && window.QlolSections.openEarn
+          && typeof window.openModal === "function") {
+        window.QlolSections.openEarn();
+        return;
+      }
+      if (tries++ < 20) setTimeout(tick, 300);
+    };
+    setTimeout(tick, 300);
   }
   if (location.hash === "#/chat" || location.hash === "#/make") showChat();
   // То же для музыки: /#/music — рабочая ссылка, её кладут в закладку.
@@ -386,7 +434,17 @@ function renderUserBar() {
   // В шапке — общий остаток, потому что тратится он одним кошельком. Из чего
   // он сложен, видно в подсказке и подробно в кабинете: смешивать два числа
   // в бейдже значит заставлять человека считать в уме на каждом экране.
-  badge.textContent = `${tNum(u.gen_points)} ${t("top.pointsUnit")}`;
+  badge.textContent = window.matchMedia("(max-width: 700px)").matches
+    ? `⚡${tNum(u.gen_points)}`
+    : `${tNum(u.gen_points)} ${t("top.pointsUnit")}`;
+  if (!badge.dataset.wired) {
+    badge.dataset.wired = "1";
+    badge.style.cursor = "pointer";
+    badge.addEventListener("click", () => {
+      const acc = $("#account-btn");
+      if (acc) acc.click();
+    });
+  }
   badge.title = u.bonus_points
     ? t("top.pointsSplit", { paid: tNum(u.paid_points), bonus: tNum(u.bonus_points) })
     : "";
@@ -419,6 +477,110 @@ $("#login-form").addEventListener("submit", async (e) => {
     $("#login-error").textContent = t("auth.fail");
     $("#login-error").classList.remove("hidden");
   }
+});
+
+// ── Вкладки способов входа и формы email/телефон ──
+// Ошибка сервера приходит человеческой фразой в detail — показываем её,
+// а не общее «неверный логин».
+function loginErr(err, fallbackKey) {
+  const el = $("#login-error");
+  const msg = (err && err.data && (err.data.detail || err.data.error)) || "";
+  el.textContent = typeof msg === "string" && msg ? msg : t(fallbackKey || "auth.fail");
+  el.classList.remove("hidden");
+}
+function loginErrHide() { $("#login-error").classList.add("hidden"); }
+
+$("#auth-tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-tab]");
+  if (!btn) return;
+  loginErrHide();
+  $$("#auth-tabs [data-tab]").forEach((b) => b.classList.toggle("on", b === btn));
+  $$("#login .auth-pane").forEach((p) =>
+    p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab));
+});
+
+// Email: режимы signin | signup | forgot; после отправки кода — шаг code.
+const em = { mode: "signin", step: "form" };
+function emRender() {
+  const codeStep = em.step === "code";
+  $("#em-code").classList.toggle("hidden", !codeStep);
+  $("#em-password").classList.toggle("hidden", em.mode === "forgot" && !codeStep);
+  $("#em-email").disabled = codeStep;
+  $("#em-note").classList.toggle("hidden", !codeStep);
+  $("#em-note").textContent = codeStep ? t("auth.codeSentEmail") : "";
+  $("#em-submit").textContent = codeStep ? t("auth.confirm")
+    : em.mode === "signin" ? t("auth.submit")
+    : em.mode === "signup" ? t("auth.signupBtn") : t("auth.sendCode");
+  $("#em-mode").textContent = em.mode === "signin" ? t("auth.wantSignup") : t("auth.wantSignin");
+  $("#em-forgot").classList.toggle("hidden", em.mode !== "signin");
+  $("#em-password").placeholder =
+    (em.mode === "forgot" && codeStep) ? t("auth.newPasswordPh") : t("auth.passwordPh");
+}
+$("#em-mode").addEventListener("click", () => {
+  em.mode = em.mode === "signin" ? "signup" : "signin";
+  em.step = "form"; $("#em-email").disabled = false; loginErrHide(); emRender();
+});
+$("#em-forgot").addEventListener("click", () => {
+  em.mode = "forgot"; em.step = "form"; loginErrHide(); emRender();
+});
+$("#email-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  loginErrHide();
+  const email = $("#em-email").value.trim();
+  const password = $("#em-password").value;
+  const code = $("#em-code").value.trim();
+  const q = refCode ? `?ref=${encodeURIComponent(refCode)}` : "";
+  try {
+    if (em.step === "code") {
+      if (em.mode === "signup") {
+        await api("/api/auth/verify-email", { method: "POST", body: { email, code } });
+      } else if (em.mode === "forgot") {
+        await api("/api/auth/reset", { method: "POST", body: { email, code, password } });
+      }
+      me = await api("/api/me");
+      showApp();
+      return;
+    }
+    if (em.mode === "signin") {
+      await api("/api/login", { method: "POST", body: { login: email, password } });
+      me = await api("/api/me");
+      showApp();
+    } else if (em.mode === "signup") {
+      await api(`/api/auth/register-email${q}`, { method: "POST", body: { email, password } });
+      em.step = "code"; emRender();
+    } else {
+      await api("/api/auth/forgot", { method: "POST", body: { email } });
+      em.step = "code"; $("#em-password").value = ""; emRender();
+    }
+  } catch (err) { loginErr(err); }
+});
+
+// Телефон: сначала «получить код», потом тем же submit — вход по коду.
+const ph = { step: "form" };
+function phRender() {
+  const codeStep = ph.step === "code";
+  $("#ph-code").classList.toggle("hidden", !codeStep);
+  $("#ph-phone").disabled = codeStep;
+  $("#ph-note").classList.toggle("hidden", !codeStep);
+  $("#ph-note").textContent = codeStep ? t("auth.codeSentSms") : "";
+  $("#ph-submit").textContent = codeStep ? t("auth.submit") : t("auth.sendCode");
+}
+$("#phone-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  loginErrHide();
+  const phone = $("#ph-phone").value.trim();
+  const q = refCode ? `?ref=${encodeURIComponent(refCode)}` : "";
+  try {
+    if (ph.step === "code") {
+      await api(`/api/auth/phone/verify${q}`,
+                { method: "POST", body: { phone, code: $("#ph-code").value.trim() } });
+      me = await api("/api/me");
+      showApp();
+      return;
+    }
+    await api("/api/auth/phone/start", { method: "POST", body: { phone } });
+    ph.step = "code"; phRender();
+  } catch (err) { loginErr(err); }
 });
 
 // «Старт» = гостевой аккаунт сразу: без формы, регистрация — потом, по желанию.
@@ -734,7 +896,7 @@ window.onTelegramAuth = async function (user) {
 
 function tgWidget(botName) {
   const holder = document.createElement("div");
-  holder.className = "auth-widget";
+  holder.className = "auth-widget hidden";
   const s = document.createElement("script");
   s.async = true;
   s.src = "https://telegram.org/js/telegram-widget.js?22";
@@ -744,6 +906,18 @@ function tgWidget(botName) {
   s.setAttribute("data-userpic", "false");
   s.setAttribute("data-onauth", "onTelegramAuth(user)");
   holder.appendChild(s);
+  // Виджет Telegram при неправильном домене рисует СЫРУЮ ошибку «Bot domain
+  // invalid» прямо в форму входа, причём ВНУТРИ iframe — прочитать её нельзя.
+  // Отличие живой кнопки: она шлёт родителю postMessage с oauth.telegram.org
+  // (ресайз под свой размер), ошибка молчит. Показываем блок только после
+  // такого сообщения.
+  const reveal = (e) => {
+    if (!String(e.origin || "").includes("oauth.telegram.org")) return;
+    holder.classList.remove("hidden");
+    window.removeEventListener("message", reveal);
+  };
+  window.addEventListener("message", reveal);
+  setTimeout(() => window.removeEventListener("message", reveal), 15000);
   return holder;
 }
 
@@ -777,7 +951,11 @@ async function renderAuthButtons(container, opts = {}) {
   };
 
   let shown = 0;
-  if (cfg.telegram && cfg.telegram_bot && !inTg && !linked.telegram) {
+  // Виджет — только на домене, где он настроен у бота (TG_LOGIN_DOMAIN в
+  // infra/.env): иначе Telegram рисует «Bot domain invalid» прямо в форму.
+  const tgDomainOk = cfg.telegram_login_domain
+    && location.hostname === cfg.telegram_login_domain;
+  if (cfg.telegram && cfg.telegram_bot && tgDomainOk && !inTg && !linked.telegram) {
     container.appendChild(tgWidget(cfg.telegram_bot));
     shown += 1;
   }
@@ -1095,7 +1273,21 @@ async function renderAccountPane(pane) {
   const scenesLeft = sceneCost > 0 ? Math.floor((a.points || 0) / sceneCost) : 0;
   const burn = usage ? usage.burn_day : 0;
 
+  const saveVisible = !$("#save-account-btn").classList.contains("hidden");
   pane.innerHTML = `
+    <div class="acc-settings row">
+      <div class="theme-switch" role="group" aria-label="Тема">
+        <button type="button" data-theme-set="system" title="как в системе">🖥</button>
+        <button type="button" data-theme-set="light" title="светлая">☀️</button>
+        <button type="button" data-theme-set="dark" title="тёмная">🌙</button>
+      </div>
+      <div class="lang-switch" role="group">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="ru">RU</button>
+      </div>
+      ${saveVisible ? `<button type="button" class="acc-save-btn ghost">${escHtml(t("top.saveAccount"))}</button>` : ""}
+      <button type="button" class="acc-logout ghost">${escHtml(t("top.logout"))}</button>
+    </div>
     <div class="acc-head">
       ${a.avatar_url
         ? `<img class="acc-avatar" src="${escHtml(a.avatar_url)}" alt="" />`
@@ -1103,6 +1295,22 @@ async function renderAccountPane(pane) {
       <div class="acc-who">
         <b>${escHtml(a.name || t("account.guest"))}</b>
         <span class="muted">${escHtml(a.email || a.login || t("account.noContacts"))}</span>
+        ${a.tg_linked
+          ? `<span class="muted acc-tg-ok">✓ Telegram${a.tg_username ? " @" + escHtml(a.tg_username) : ""}</span>`
+          : `<span class="acc-tg-link"></span>`}
+        ${a.phone_linked
+          ? `<span class="muted acc-phone-ok">✓ ${escHtml(a.phone_masked || "")}</span>`
+          : `<span class="acc-phone-wrap">
+               <button type="button" class="acc-phone-btn ghost">${escHtml(t("account.phoneLink"))}</button>
+               <span class="acc-phone-flow hidden">
+                 <input class="acc-phone-num" type="tel" inputmode="tel" placeholder="+7 900 000-00-00" />
+                 <button type="button" class="acc-phone-send ghost">${escHtml(t("account.phoneSend"))}</button>
+                 <input class="acc-phone-code hidden" inputmode="numeric" maxlength="8"
+                        placeholder="${escHtml(t("account.phoneCodePh"))}" />
+                 <button type="button" class="acc-phone-verify primary hidden">${escHtml(t("account.phoneVerify"))}</button>
+                 <span class="acc-phone-msg status"></span>
+               </span>
+             </span>`}
       </div>
     </div>
 
@@ -1151,7 +1359,9 @@ async function renderAccountPane(pane) {
       <div class="dash-card">
         <span>${escHtml(t("dash.plan"))}</span>
         <b>${escHtml(a.plan_title || t("dash.planFree"))}</b>
-        <span class="dash-sub">${escHtml(payLine(a) || a.plan_note || "")}</span>
+        <span class="dash-sub">${escHtml(payLine(a)
+          || t(`landing.pricing.plans.${a.plan || "free"}.note`)
+          || a.plan_note || "")}</span>
       </div>
       <div class="dash-card">
         <span>${escHtml(t("dash.spent30", { n: usage ? usage.days : 30 }))}</span>
@@ -1192,6 +1402,61 @@ async function renderAccountPane(pane) {
   // сих пор не знал вообще, и это прямой источник обиды: накопил, оплатил,
   // часть сгорела. Теперь он видит её заранее, а не постфактум.
   const lim = usage && usage.limits;
+  // «Привязать Telegram» из кабинета: тот же виджет, что на входе; бэкенд
+  // видит живую сессию и привязывает tg_id к текущему аккаунту.
+  const tgSlot = $(".acc-tg-link", pane);
+  if (tgSlot) {
+    api("/api/auth/config").then((cfg) => {
+      if (cfg.telegram && cfg.telegram_bot) tgSlot.appendChild(tgWidget(cfg.telegram_bot));
+    }).catch(() => {});
+  }
+  // Строка настроек кабинета: тема и язык работают общими делегатами на
+  // document; выход и «сохранить аккаунт» жмут свои кнопки шапки.
+  paintThemeSwitch();
+  const accLogout = $(".acc-logout", pane);
+  if (accLogout) accLogout.addEventListener("click", () => {
+    closeModal();
+    $("#logout-btn").click();
+  });
+  const accSave = $(".acc-save-btn", pane);
+  if (accSave) accSave.addEventListener("click", () => {
+    closeModal();
+    $("#save-account-btn").click();
+  });
+  // «Привязать телефон»: SMS-код → verify с link:true — номер цепляется к
+  // ТЕКУЩЕМУ аккаунту (сервер отвечает 409, если номер занят другим).
+  const phoneBtn = $(".acc-phone-btn", pane);
+  if (phoneBtn) {
+    const flow = $(".acc-phone-flow", pane);
+    const pmsg = $(".acc-phone-msg", pane);
+    phoneBtn.addEventListener("click", () => {
+      phoneBtn.classList.add("hidden");
+      flow.classList.remove("hidden");
+      $(".acc-phone-num", pane).focus();
+    });
+    $(".acc-phone-send", pane).addEventListener("click", async () => {
+      pmsg.textContent = "";
+      try {
+        await api("/api/auth/phone/start", {
+          method: "POST", body: { phone: $(".acc-phone-num", pane).value } });
+        pmsg.textContent = t("account.phoneSent");
+        $(".acc-phone-code", pane).classList.remove("hidden");
+        $(".acc-phone-verify", pane).classList.remove("hidden");
+        $(".acc-phone-code", pane).focus();
+      } catch (e) { pmsg.textContent = errText(e); }
+    });
+    $(".acc-phone-verify", pane).addEventListener("click", async () => {
+      pmsg.textContent = "";
+      try {
+        const r = await api("/api/auth/phone/verify", {
+          method: "POST",
+          body: { phone: $(".acc-phone-num", pane).value,
+                  code: $(".acc-phone-code", pane).value, link: true } });
+        $(".acc-phone-wrap", pane).innerHTML =
+          `<span class="muted acc-phone-ok">✓ ${escHtml(r.phone_masked || "")}</span>`;
+      } catch (e) { pmsg.textContent = errText(e); }
+    });
+  }
   if (lim) {
     const box = document.createElement("div");
     box.className = "lim-grid";
@@ -3022,7 +3287,11 @@ async function loadProject() {
 function renderProjectBar() {
   const sel = $("#project-select");
   sel.innerHTML = "";
-  for (const p of projects) {
+  // ПРОЕКТЫ РАЗНЫХ РЕЖИМОВ — РАЗНЫЕ СПИСКИ. Одним списком клипы и мокапы
+  // читались как один проект с двумя лицами: человек выбирал «товар» и
+  // попадал в раскадровку песни. Группируем через optgroup, свой режим —
+  // первым, остальные ниже.
+  const mkOpt = (p) => {
     const o = document.createElement("option");
     o.value = p.id;
     o.textContent = p.name;
@@ -3031,8 +3300,24 @@ function renderProjectBar() {
     o.dataset.kind = p.kind || "album";
     o.dataset.mode = p.mode || "clip";
     if (p.id === activeProjectId) o.selected = true;
-    sel.appendChild(o);
-  }
+    return o;
+  };
+  const nowMode = (project && project.mode) || "clip";
+  const byMode = new Map();
+  projects.forEach((p) => {
+    const id = p.mode || "clip";
+    if (!byMode.has(id)) byMode.set(id, []);
+    byMode.get(id).push(p);
+  });
+  const order = [nowMode, ...[...byMode.keys()].filter((x) => x !== nowMode)];
+  order.forEach((id) => {
+    const rows = byMode.get(id);
+    if (!rows || !rows.length) return;
+    const g = document.createElement("optgroup");
+    g.label = t(`modes.${id}.title`) || id;
+    rows.forEach((p) => g.appendChild(mkOpt(p)));
+    sel.appendChild(g);
+  });
   $("#project-kind").textContent = kindLabel(project.kind);
   // Режим — не второй вид проекта, а его прочтение: album/single читаются как
   // «rap clips». Раньше здесь красился статичный бейдж; теперь тот же узел —
@@ -3264,6 +3549,7 @@ function projectBusy() {
         // Перерисовка идёт очередью в фоне — без неё поллер гаснет, и
         // прогресс «12 из 30» замирает на нуле до ручной перезагрузки.
         ["queued", "running"].includes(t.restyle_status) ||
+        ["queued", "running"].includes(t.turnaround_status) ||
         (t.scenes || []).some(sceneBusy),
     );
 }
@@ -3367,6 +3653,18 @@ function trackStatus(tr, ts, card) {
     tr.restyle_note = ts.restyle_note;
     const rn = $(".t-restyle-status", card);
     if (rn) rn.textContent = ts.restyle_note || "";
+  }
+  // 3D-облёт товара: прогресс «3/8» рисуем на месте, полная перезагрузка —
+  // только когда облёт доделался и приехали файлы ракурсов.
+  if (tr.turnaround_status !== ts.turnaround_status) {
+    const finished = busy(tr.turnaround_status) && !busy(ts.turnaround_status);
+    tr.turnaround_status = ts.turnaround_status;
+    if (finished) reload = true;
+  }
+  if (card && tr.turnaround_note !== ts.turnaround_note) {
+    tr.turnaround_note = ts.turnaround_note;
+    const el = $(".ta-status", card);
+    if (el && busy(ts.turnaround_status)) el.textContent = ts.turnaround_note || "";
   }
   if (card && tr.supergen_note !== ts.supergen_note) {
     tr.supergen_note = ts.supergen_note;
@@ -3501,6 +3799,9 @@ async function autoAssembleTick() {
 }
 
 function fmtTime(sec) {
+  // Секунды приходят и дробными (длительность видео, метки таймлайна) —
+  // без округления наружу утекал хвост вида 30.439999999999998.
+  sec = Math.round(Number(sec) || 0);
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
@@ -3532,6 +3833,9 @@ function statusLabel(status, doneWord) {
    блока на экране значило бы предлагать написать сюжет дважды. */
 function applyMode() {
   const m = curMode();
+  // Своя студия мокапов: CSS по этому классу прячет клиповые этапы
+  // (тумблер Настройка/Раскадровка/…, cinema-бар) внутри карточек товаров.
+  document.body.classList.toggle("mode-mockup", m.id === "mockup");
   const storyPanel = $("#story").closest(".panel");
   const docsPanel = $("#docs-panel");
   const isClip = m.id === "clip";
@@ -3548,7 +3852,10 @@ function applyMode() {
   const charsTitle = $("[data-i18n='chars.title']");
   if (charsTitle) charsTitle.textContent = objT("chars", m) || t("chars.title");
   const addPanel = $("#add-track-panel");
-  addPanel.classList.toggle("hidden", !canAddObject());
+  // В МОКАПАХ ЭТОЙ ФОРМЫ НЕТ. Форма добавления трека несёт стиль клипа,
+  // текст песни и аудио — у предмета нет ничего из этого. Там своя кнопка
+  // «+ добавить предмет» (addItemFlow), как у персонажа.
+  addPanel.classList.toggle("hidden", !canAddObject() || m.id === "mockup");
   const summary = $("#add-track-panel .add-track > summary");
   if (summary) summary.textContent = objT("add", m);
   // Лирика и аудио — свойства клипа: у ролика реплики пишет генератор, у
@@ -3603,8 +3910,10 @@ const scrollKeep = new Map();
 
 function scrollKey(el, i) {
   const card = el.closest(".track-card, [data-id]");
+  // Второй класс различает ленты (scenes-board / scenes-anim): обе видимы
+  // одновременно, и общий ключ «scenes» заставлял их затирать позиции друг друга.
   return (card && card.dataset.id ? `t${card.dataset.id}:` : `n${i}:`)
-    + el.className.split(" ")[0];
+    + (el.classList[1] || el.classList[0]);
 }
 
 function saveScroll() {
@@ -3675,6 +3984,7 @@ async function dropSceneBefore(movedId, targetId) {
    куска мышью, минимальный эквалайзер и нарезка дорожки по выделению.      */
 
 const waveCache = new Map();   // trackId → пики (форма волны не меняется)
+const beatsCache = new Map();  // trackId → сетка долей (метки на волне)
 const eqChains = new Map();    // trackId → узлы WebAudio, чтобы не пересоздавать
 
 async function wavePeaks(trackId) {
@@ -3723,6 +4033,7 @@ function mountWavePlayer(card, tr, audioEl) {
   const cutBtn = $(".wp-cut", box);
   const clearBtn = $(".wp-clear", box);
   let peaks = null;
+  let beatsGrid = null;       // {beats, downbeats, bpm} — метки долей на волне
   let sel = null;             // выделенный кусок {a, b} в секундах
   const dur = () => audioEl.duration || tr.audio_duration_sec || 0;
 
@@ -3730,7 +4041,9 @@ function mountWavePlayer(card, tr, audioEl) {
   // посередине, а не после сборки клипа.
   const bounds = () => (tr.scenes || [])
     .slice().sort((a, b) => a.position - b.position)
-    .map((s) => ({ at: s.start_sec, n: s.position }));
+    .map((s) => ({ at: s.start_sec, n: s.position, id: s.id }));
+  // Какую границу тащим прямо сейчас (и куда она уже уехала визуально).
+  let dragBound = null;
 
   function draw() {
     const w = cv.clientWidth || 600;
@@ -3753,11 +4066,38 @@ function mountWavePlayer(card, tr, audioEl) {
         g.fillRect(x, mid - bar / 2, 1, bar);
       }
     }
-    g.strokeStyle = "rgba(45, 33, 26, .35)";
-    g.lineWidth = 1;
-    bounds().forEach((b) => {
+    // Метки долей: сильные доли (начала тактов) — заметные риски сверху,
+    // остальные — едва видимые. По ним видно, попадает ли склейка в музыку.
+    if (beatsGrid && total) {
+      (beatsGrid.beats || []).forEach((tb) => {
+        const x = Math.round((tb / total) * w) + 0.5;
+        g.strokeStyle = "rgba(45, 33, 26, .14)";
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 5); g.stroke();
+      });
+      (beatsGrid.downbeats || []).forEach((tb) => {
+        const x = Math.round((tb / total) * w) + 0.5;
+        g.strokeStyle = "rgba(193, 64, 27, .45)";
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 11); g.stroke();
+      });
+    }
+    // Границы кадров: линия + захватываемая ручка сверху и номер кадра.
+    // Ручка нужна ровно затем, чтобы было понятно, что метку МОЖНО тащить —
+    // невидимая зона перетаскивания это не функция, а секрет.
+    bounds().forEach((b, i) => {
       const x = Math.round((b.at / total) * w) + 0.5;
+      const hot = dragBound && dragBound.id === b.id;
+      g.strokeStyle = hot ? "#e0503a" : "rgba(45, 33, 26, .35)";
+      g.lineWidth = hot ? 2 : 1;
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+      if (i === 0) return;                 // нулевую границу не двигают
+      g.fillStyle = hot ? "#e0503a" : "rgba(45, 33, 26, .55)";
+      g.beginPath();
+      g.moveTo(x - 5, 0); g.lineTo(x + 5, 0); g.lineTo(x, 9); g.closePath();
+      g.fill();
+      g.font = "10px ui-monospace, monospace";
+      g.fillText(String(b.n), x + 3, h - 3);
     });
     const px = Math.round((audioEl.currentTime / total) * w) + 0.5;
     g.strokeStyle = "#2d211a"; g.lineWidth = 2;
@@ -3776,18 +4116,73 @@ function mountWavePlayer(card, tr, audioEl) {
   // Щелчок — перемотка, протяжка — выделение. Разделяем по пройденному
   // расстоянию: иначе дрожание руки на клике каждый раз давало бы выделение.
   let dragFrom = null;
+  /* Метка под курсором — в пикселях, а не в секундах: на трёхминутном треке
+     секунда это два пикселя, и «попадание в 0.5с» означало бы попадание
+     пальцем в один пиксель. */
+  const boundAt = (ev) => {
+    const total = dur() || 1;
+    const r = cv.getBoundingClientRect();
+    const px = ev.clientX - r.left;
+    let best = null;
+    bounds().forEach((b, i) => {
+      if (i === 0) return;
+      const bx = (b.at / total) * r.width;
+      const d = Math.abs(px - bx);
+      if (d <= 7 && (!best || d < best.d)) best = { ...b, d };
+    });
+    return best;
+  };
+  cv.addEventListener("pointermove", (ev) => {
+    if (!dragFrom && !dragBound) cv.style.cursor = boundAt(ev) ? "ew-resize" : "";
+  });
   cv.addEventListener("pointerdown", (ev) => {
+    const b = boundAt(ev);
+    if (b) {
+      dragBound = { ...b, at: b.at };
+      cv.setPointerCapture(ev.pointerId);
+      draw();
+      return;
+    }
     dragFrom = { x: ev.clientX, at: atX(ev) };
     cv.setPointerCapture(ev.pointerId);
   });
   cv.addEventListener("pointermove", (ev) => {
+    if (dragBound) {
+      dragBound.at = Math.round(atX(ev));
+      // Рисуем по локальному состоянию: сервер узнает результат один раз,
+      // на отпускании, а не тридцать раз за перетаскивание.
+      const sc = (tr.scenes || []).find((x) => x.id === dragBound.id);
+      if (sc) sc.start_sec = dragBound.at;
+      draw();
+      return;
+    }
     if (!dragFrom) return;
     if (Math.abs(ev.clientX - dragFrom.x) < 4) return;
     const now = atX(ev);
     sel = { a: Math.min(dragFrom.at, now), b: Math.max(dragFrom.at, now) };
     draw();
   });
-  cv.addEventListener("pointerup", (ev) => {
+  cv.addEventListener("pointerup", async (ev) => {
+    if (dragBound) {
+      const moved = dragBound;
+      dragBound = null;
+      draw();
+      try {
+        const res = await api(`/api/tracks/${tr.id}/scenes/retime`, {
+          method: "POST",
+          body: { scene_id: moved.id, start_sec: Math.round(moved.at) },
+        });
+        // Сервер прижимает границу к минимальной длине кадра — читаем его
+        // ответ, а не верим своей картинке.
+        (res.scenes || []).forEach((row) => {
+          const sc = (tr.scenes || []).find((x) => x.id === row.id);
+          if (sc) { sc.start_sec = row.start_sec; sc.duration_sec = row.duration_sec; }
+        });
+        draw();
+        await loadProject();
+      } catch (e) { fail(e); await loadProject(); }
+      return;
+    }
     if (dragFrom && Math.abs(ev.clientX - dragFrom.x) < 4) {
       audioEl.currentTime = dragFrom.at;
       sel = null;
@@ -3844,6 +4239,12 @@ function mountWavePlayer(card, tr, audioEl) {
   });
 
   draw();
+  if (beatsCache.has(tr.id)) beatsGrid = beatsCache.get(tr.id);
+  else api(`/api/tracks/${tr.id}/beats`).then((d) => {
+    beatsCache.set(tr.id, d);
+    beatsGrid = d;
+    draw();
+  }).catch(() => { /* сетки нет (речь/эмбиент/нет numpy) — волна живёт без меток */ });
   wavePeaks(tr.id).then((d) => { peaks = d.peaks; draw(); })
     .catch(() => { /* волна не обязательна: плеер работает и без картинки */ });
 }
@@ -3894,6 +4295,17 @@ function renderInner() {
   }
 
   const container = $("#tracks");
+  /* ПЕРЕРИСОВКА БЕЗ ДЁРГАНЬЯ. Лента треков строится заново целиком, и без
+     этих двух мер каждый клик по кнопке карточки выглядел как «мигнуло и
+     ускакало»:
+       1) scrollLeft каждой горизонтальной ленты (раскадровка, версии,
+          персонажи) запоминается по номеру появления и возвращается после
+          перерисовки — ленты не отматываются к началу;
+       2) вертикальный скролл страницы прибивается на время замены DOM —
+          браузер не «догоняет» изменившуюся высоту. */
+  const stripPos = $$(".scenes, .versions-strip, .s-thumbs, .chars", container)
+    .map((el) => el.scrollLeft);
+  const pageY = window.scrollY;
   container.innerHTML = "";
   const mode = curMode();
   if (mode.group_by === "season_no") {
@@ -3919,6 +4331,10 @@ function renderInner() {
     empty.textContent = objT("empty", mode);
     container.appendChild(empty);
   }
+  renderMockupStudio();
+  $$(".scenes, .versions-strip, .s-thumbs, .chars", container)
+    .forEach((el, i) => { if (stripPos[i]) el.scrollLeft = stripPos[i]; });
+  window.scrollTo({ top: pageY, behavior: "instant" });
 }
 
 
@@ -4182,10 +4598,31 @@ function setStage(card, key) {
 
 // Стрелки ‹ › у горизонтальной ленты сцен.
 function bindStrip(wrap) {
+  // Карточка трека перерисовывается на каждом опросе, а bindStrip зовут по
+  // всем .strip-wrap внутри неё: без этого замка обработчики накапливались
+  // и один клик листал ленту на несколько шагов.
+  if (wrap.dataset.stripBound) return;
+  wrap.dataset.stripBound = "1";
   const box = $(".scenes", wrap);
+  const prev = $(".strip-prev", wrap);
+  const next = $(".strip-next", wrap);
+  if (!box || !prev || !next) return;
   const step = () => Math.max(280, Math.round(box.clientWidth * 0.8));
-  $(".strip-prev", wrap).addEventListener("click", () => box.scrollBy({ left: -step(), behavior: "smooth" }));
-  $(".strip-next", wrap).addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
+  // Стрелки были активны ВСЕГДА: на пустой ленте они висели поверх текста
+  // «сцен пока нет» и предлагали листать пустоту. Теперь их состояние —
+  // правда о ленте: нечего листать — стрелок нет вовсе.
+  const paint = () => {
+    const room = box.scrollWidth - box.clientWidth;
+    wrap.classList.toggle("strip-still", room <= 4);
+    prev.disabled = room <= 4 || box.scrollLeft <= 2;
+    next.disabled = room <= 4 || box.scrollLeft >= room - 2;
+  };
+  prev.addEventListener("click", () => box.scrollBy({ left: -step(), behavior: "smooth" }));
+  next.addEventListener("click", () => box.scrollBy({ left: step(), behavior: "smooth" }));
+  box.addEventListener("scroll", paint, { passive: true });
+  window.addEventListener("resize", paint);
+  if (window.ResizeObserver) new ResizeObserver(paint).observe(box);
+  paint();
 }
 
 
@@ -4680,31 +5117,826 @@ function msPhotos(card, tr, mode) {
     st.textContent = "";
     await loadProject();
   });
+  msTurnaround(card, tr);
+  // В мокапах имя объекта — вход в досье предмета (фото, описание), а не
+  // просто поле ввода: заводили и правили его тем же интерфейсом.
+  if (mode.id === "mockup") {
+    const openBtn = $(".ms-open-item", card) || document.createElement("button");
+    if (!openBtn.dataset.bound) {
+      openBtn.type = "button";
+      openBtn.className = "ms-open-item ghost";
+      openBtn.textContent = t("item.open");
+      openBtn.dataset.bound = "1";
+      openBtn.addEventListener("click", () => openItemModal(tr.id));
+      const holder = $(".ms-photos", card);
+      if (holder) holder.prepend(openBtn);
+    }
+  }
+}
+
+/* 3D-облёт товара: 8 ракурсов по кругу, листаются drag'ом по горизонтали —
+   выглядит как вращение 3D-модельки. Кнопка живёт рядом с фото товара:
+   без референса облёт — фантазия, поэтому она мертва до первого фото. */
+function msTurnaround(card, tr) {
+  const box = $(".ms-turnaround", card);
+  if (!box) return;
+  const btn = $(".ms-ta-btn", card);
+  const st = $(".ta-status", card);
+  const busy = ["queued", "running"].includes(tr.turnaround_status);
+  const hasPhoto = Boolean((tr.photos || []).length);
+  const urls = tr.turnaround_urls || [];
+  btn.textContent = (urls.length ? t("modeSetup.turnaroundRedo") : t("modeSetup.turnaround"))
+    + (tr.turnaround_cost ? ` · ⚡ ${tr.turnaround_cost}` : "");
+  btn.disabled = busy || !hasPhoto;
+  btn.title = hasPhoto ? "" : t("modeSetup.turnaroundNeed");
+  st.textContent = busy
+    ? (tr.turnaround_note || t("status.running"))
+    : (tr.turnaround_status === "error" ? (tr.turnaround_note || "") : "");
+  st.classList.toggle("err", tr.turnaround_status === "error");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    st.classList.remove("err");
+    st.textContent = t("status.queued");
+    try {
+      await api(`/api/tracks/${tr.id}/turnaround`, { method: "POST" });
+    } catch (e) { fail(e); st.textContent = ""; btn.disabled = false; return; }
+    tr.turnaround_status = "queued";
+    schedulePoll();
+  });
+  const view = $(".ms-ta-viewer", card);
+  view.innerHTML = "";
+  view.classList.toggle("hidden", urls.length < 2);
+  if (urls.length < 2) return;
+  // Прелоад всех ракурсов: drag листает картинки мгновенно, без миганий.
+  urls.forEach((u) => { const im = new Image(); im.src = u; });
+  const img = document.createElement("img");
+  img.src = urls[0];
+  img.alt = "";
+  img.draggable = false;
+  view.appendChild(img);
+  const hint = document.createElement("span");
+  hint.className = "ms-ta-hint";
+  hint.textContent = t("modeSetup.turnaroundDrag");
+  view.appendChild(hint);
+  let idx = 0, downX = null, startIdx = 0;
+  const show = (i) => {
+    idx = ((i % urls.length) + urls.length) % urls.length;
+    img.src = urls[idx];
+  };
+  view.addEventListener("pointerdown", (e) => {
+    downX = e.clientX; startIdx = idx;
+    try { view.setPointerCapture(e.pointerId); } catch (err) { /* не критично */ }
+    e.preventDefault();
+  });
+  view.addEventListener("pointermove", (e) => {
+    if (downX == null) return;
+    show(startIdx + Math.round((e.clientX - downX) / 28));
+  });
+  const up = () => { downX = null; };
+  view.addEventListener("pointerup", up);
+  view.addEventListener("pointercancel", up);
+}
+
+/* ─────────── Студия режима «Мокапы»: своя структура страницы ───────────
+   Hero → промпт-бар с витриной → «Мои генерации» → свёрнутые настройки
+   (фирменный мир, персонажи бренда, товары). Клиповая раскадровка и этапы
+   в этом режиме не показываются: кадры живут в общей галерее. */
+function applyMockupLayout(on) {
+  const pairs = [["#docs-panel", "world"], ["#story-panel", "world"],
+                 ["#chars-panel", "chars"], ["#tracks-panel", "goods"],
+                 ["#add-track-panel", "goods"]];
+  let set = $("#mockup-settings");
+  if (on) {
+    if (!set) {
+      set = document.createElement("section");
+      set.id = "mockup-settings";
+      set.className = "panel mkp-settings";
+      set.innerHTML = ["world", "chars", "goods"].map((k) =>
+        `<details class="ms-howto mkp-set" data-set="${k}">
+           <summary>${escHtml(t("mkp.set_" + k))}</summary>
+           <div class="mkp-set-body" data-body="${k}"></div>
+         </details>`).join("");
+      const studio = $("#mockup-studio");
+      if (studio) studio.after(set);
+    }
+    pairs.forEach(([sel, k]) => {
+      const el = $(sel);
+      if (!el || el.closest("#mockup-settings")) return;
+      // Метка исходного места: панель вернётся ровно туда при смене режима.
+      if (!el.dataset.ph) {
+        const ph = document.createElement("div");
+        ph.id = "ph-" + sel.slice(1);
+        ph.className = "hidden";
+        el.before(ph);
+        el.dataset.ph = ph.id;
+      }
+      const body = $(`[data-body="${k}"]`, set);
+      if (body) body.appendChild(el);
+      el.classList.add("mkp-inset");
+    });
+    // «+ добавить предмет» — своя кнопка рядом со списком предметов.
+    const goods = $('[data-body="goods"]', set);
+    if (goods && !$(".mkp-add-item", goods)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mkp-add-item primary";
+      b.textContent = t("item.add");
+      b.addEventListener("click", () => addItemFlow());
+      const byPhoto = document.createElement("button");
+      byPhoto.type = "button";
+      byPhoto.className = "mkp-add-item ghost";
+      byPhoto.textContent = t("item.byPhoto");
+      byPhoto.addEventListener("click", () => itemFromPhotoFlow());
+      goods.prepend(byPhoto);
+      goods.prepend(b);
+    }
+  } else if (set) {
+    pairs.forEach(([sel]) => {
+      const el = $(sel);
+      if (!el || !el.dataset.ph) return;
+      const ph = document.getElementById(el.dataset.ph);
+      if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph);
+      el.classList.remove("mkp-inset");
+    });
+    set.remove();
+  }
+}
+
+function mockupScenes() {
+  const out = [];
+  (project.tracks || []).forEach((tr) => (tr.scenes || []).forEach((sc) => {
+    if (sc.image_url || ["queued", "running"].includes(sc.image_status)
+        || sc.image_status === "error") out.push(sc);
+  }));
+  return out.sort((a, b) => b.id - a.id);
+}
+
+function openMkpViewer(sc) {
+  openModal(t("mkp.frame"), (body) => {
+    const vidBusy = ["queued", "running"].includes(sc.video_status);
+    body.innerHTML = `<div class="mkp-view">
+      ${sc.video_url ? `<video src="${escHtml(sc.video_url)}" controls autoplay loop muted playsinline></video>`
+                     : `<img src="${escHtml(sc.image_url)}" alt="" />`}
+      <div class="row">
+        <a class="ghost mkp-btn" href="${escHtml(sc.image_url)}" download>${escHtml(t("mkp.download"))}</a>
+        <button type="button" class="primary mkp-anim" ${vidBusy ? "disabled" : ""}>
+          ${escHtml(vidBusy ? t("scene.videoBusy") : (sc.video_url ? t("scene.regenVideo") : t("mkp.animate")))}</button>
+        <button type="button" class="mkp-del">${escHtml(t("common.del"))}</button>
+      </div></div>`;
+    $(".mkp-anim", body).addEventListener("click", async () => {
+      try {
+        await api(`/api/scenes/${sc.id}/generate-video`, { method: "POST", body: {} });
+        closeModal();
+        mkToast(t("mkp.animQueued"));
+        schedulePoll();
+        await loadProject();
+      } catch (e) { fail(e); }
+    });
+    $(".mkp-del", body).addEventListener("click", async () => {
+      if (!confirm(t("scene.delConfirm"))) return;
+      try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
+      closeModal();
+      await loadProject();
+    });
+  }, { medium: true });
+}
+
+let mkpAutoTrack = false;  // служебный товар создаётся один раз, не в цикле
+
+async function renderMockupStudio() {
+  const box = $("#mockup-studio");
+  if (!box) return;
+  const mode = curMode();
+  const on = mode.id === "mockup";
+  box.classList.toggle("hidden", !on);
+  applyMockupLayout(on);
+  if (!on) return;
+  let tr = (project.tracks || [])[0];
+  if (!tr) {
+    // Товаров ещё нет — под капотом заводится служебный: сценам промпт-бара
+    // нужен контейнер, но человеку про это знать незачем.
+    if (mkpAutoTrack) return;
+    mkpAutoTrack = true;
+    try {
+      const fd = new FormData();
+      fd.append("title", t("mkp.firstItem"));
+      fd.append("style_keys", "");
+      fd.append("lyrics", "");
+      fd.append("comment", "");
+      await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
+      await loadProject();
+    } catch (e) { mkpAutoTrack = false; }
+    return;
+  }
+  // Загрузка фото товара из слота «продукт» — свой input на странице.
+  const input = $(".ms-photo-input", box);
+  if (input && !input.dataset.bound) {
+    input.dataset.bound = "1";
+    input.addEventListener("change", async () => {
+      const files = Array.from(input.files || []);
+      if (!files.length) return;
+      for (const f of files) {
+        const fd = new FormData();
+        fd.append("photo", f);
+        try { await api(`/api/tracks/${tr.id}/photos`, { method: "POST", body: fd }); }
+        catch (e) { fail(e); break; }
+      }
+      input.value = "";
+      mkProducts = null; mkCatalog = null;  // база товаров изменилась
+      await loadProject();
+    });
+  }
+  msMarketingStudio(box, tr, mode);
+  mkpStageNav();
+  // «Мои генерации»: кадры всех товаров проекта одной masonry-галереей.
+  const gal = $("#mkp-gallery");
+  if (!gal) return;
+  gal.innerHTML = "";
+  const scenes = mockupScenes();
+  if (!scenes.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = t("mkp.galleryEmpty");
+    gal.appendChild(p);
+    return;
+  }
+  scenes.forEach((sc) => {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "mkp-item";
+    if (sc.image_url) {
+      cell.innerHTML = `<img src="${escHtml(sc.image_url)}" alt="" loading="lazy" />`
+        + (sc.video_url ? '<span class="mkp-badge">▶</span>' : "")
+        + (["queued", "running"].includes(sc.video_status) ? `<span class="mkp-busy">${escHtml(t("status.running"))}</span>` : "");
+      cell.addEventListener("click", () => openMkpViewer(sc));
+    } else if (sc.image_status === "error") {
+      cell.classList.add("err");
+      // Клик по упавшей карточке ПОВТОРЯЕТ генерацию — промпт у сцены уже
+      // есть. Удаление — маленьким крестиком, а не главным жестом.
+      cell.innerHTML = `<span class="mkp-ph">⚠</span>
+        <i>${escHtml(t("mkp.failed"))} · ${escHtml(LANG === "ru" ? "повторить" : "retry")}</i>
+        <span class="mkp-del" title="${escHtml(t("common.delTitle"))}">✕</span>`;
+      cell.addEventListener("click", async (ev) => {
+        if (ev.target.closest(".mkp-del")) {
+          if (!confirm(t("scene.delConfirm"))) return;
+          try { await api(`/api/scenes/${sc.id}`, { method: "DELETE" }); } catch (e) { fail(e); return; }
+          await loadProject();
+          return;
+        }
+        cell.classList.remove("err");
+        cell.classList.add("busy");
+        try { await api(`/api/scenes/${sc.id}/generate-frames`, { method: "POST" }); }
+        catch (e) { fail(e); }
+        schedulePoll();
+        await loadProject();
+      });
+    } else {
+      cell.classList.add("busy");
+      cell.innerHTML = `<span class="mkp-ph">✨</span><i>${escHtml(t("status.running"))}</i>`;
+    }
+    gal.appendChild(cell);
+  });
+}
+
+/* Левая вертикальная панель (#stage-jump) в режиме мокапов: клиповые этапы
+   «Настройка/Раскадровка/Анимация/Сборка» здесь чужие. Тот же узел и тот же
+   стиль, но пункты — блоки СТРАНИЦЫ МОКАПОВ, якорями-скроллами. Принцип
+   владельца: у каждого режима своя навигация, чужие этапы не показываем. */
+function mkpStageNav() {
+  const jump = document.querySelector("#stage-jump");
+  if (!jump || jump.dataset.kind === "mockup") return;
+  jump.dataset.kind = "mockup";
+  jump.dataset.for = "";
+  jump.innerHTML = "";
+  const items = [
+    [LANG === "ru" ? "Продукт" : "Product",
+      () => {
+        const d = document.querySelector('#mockup-settings [data-set="goods"]');
+        if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      }],
+    [LANG === "ru" ? "Шаблоны" : "Templates",
+      () => { const el = $(".mk-tpl-grid"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
+    [LANG === "ru" ? "Мои генерации" : "My renders",
+      () => { const el = $("#mkp-gallery"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
+    [LANG === "ru" ? "Настройки" : "Settings",
+      () => { const el = $("#mockup-settings"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
+  ];
+  items.forEach(([cap, goTo], i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "stage-tab";
+    const num = document.createElement("span");
+    num.className = "st-num";
+    num.textContent = String(i + 1);
+    b.append(num, document.createTextNode(cap));
+    b.addEventListener("click", () => {
+      $$(".stage-tab", jump).forEach((el) => el.classList.toggle("on", el === b));
+      goTo();
+    });
+    jump.appendChild(b);
+  });
+}
+
+/* ─────────── Маркетинг-студия: промпт-бар + витрина шаблонов ───────────
+   Сверху генератор одной строкой (промпт, ракурс, аспект, слоты «персонаж»
+   и «продукт» из ОБЩЕЙ базы всех проектов), под ним сетка готовых сцен с
+   фильтром по категориям. Клик по шаблону не генерит сразу — подставляет
+   сцену в бар как референс. */
+let mkCatalog = null;   // {templates, categories} — грузится один раз
+let mkChars = null;     // общая база героев (все проекты владельца)
+let mkProducts = null;  // общая база товаров
+
+function mkToast(text) {
+  let el = $("#mk-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "mk-toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("show"), 3200);
+}
+
+async function msMarketingStudio(card, tr, mode) {
+  const box = $(".mk-studio", card);
+  if (!box) return;
+  const on = mode.id === "mockup";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  if (!mkCatalog) {
+    try {
+      [mkCatalog, mkChars, mkProducts] = await Promise.all([
+        api("/api/mockup/templates"),
+        api("/api/characters/all").then((r) => r.characters || []).catch(() => []),
+        api("/api/mockup/products").then((r) => r.products || []).catch(() => []),
+      ]);
+    } catch (e) { box.classList.add("hidden"); return; }
+  }
+  const st = tr._mk || (tr._mk = {
+    cat: "", tplId: "", camera: "", aspect: "1:1",
+    charId: 0, productTrackId: 0, useProduct: true, video: false, prompt: "",
+  });
+  const tpls = mkCatalog.templates || [];
+  const frameCost = Math.max(1, Math.round((tr.turnaround_cost || 8) / 8));
+  const chip = (label, active, onClick, cls = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `mk-chip ${cls}` + (active ? " on" : "");
+    b.innerHTML = label;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  box.innerHTML = `
+    <label class="mk-title">${escHtml(t("mk.title"))}</label>
+    <div class="mk-bar">
+      <textarea class="mk-prompt" rows="2" placeholder="${escHtml(t("mk.promptPh"))}"></textarea>
+      <div class="mk-bar-row">
+        <div class="mk-chips mk-kind"></div>
+        <div class="mk-chips mk-camera"></div>
+        <div class="mk-chips mk-aspect"></div>
+        <div class="mk-slots"></div>
+        <button type="button" class="mk-go">${escHtml(t("mk.generate"))} · ⚡ ${frameCost}</button>
+      </div>
+      <span class="mk-status status"></span>
+    </div>
+    <div class="mk-filter"></div>
+    <div class="mk-tpl-grid"></div>`;
+  const promptEl = $(".mk-prompt", box);
+  if (st.prompt) promptEl.value = st.prompt;
+  promptEl.addEventListener("input", () => { st.prompt = promptEl.value; });
+
+  // Товары общей базы: текущий трек первым, дальше все остальные с фото.
+  const ownPhoto = (tr.photos || []).length
+    ? { track_id: tr.id, title: tr.title || `#${tr.id}`, url: tr.photos[0].url } : null;
+  const products = [
+    ...(ownPhoto ? [ownPhoto] : []),
+    ...(mkProducts || []).filter((p) => p.track_id !== tr.id),
+  ];
+
+  const paintBar = () => {
+    const kind = $(".mk-kind", box);
+    kind.innerHTML = "";
+    kind.append(
+      chip(escHtml(t("mk.image")), !st.video, () => { st.video = false; paintBar(); }),
+      chip(escHtml(t("mk.video")), false, () => { mkToast(t("mk.videoSoon")); }, "soon"));
+    const cam = $(".mk-camera", box);
+    cam.innerHTML = "";
+    [["", "camAuto"], ["closeup", "camCloseup"], ["medium", "camMedium"], ["wide", "camWide"]]
+      .forEach(([v, k]) => cam.appendChild(chip(escHtml(t(`mk.${k}`)), st.camera === v,
+        () => { st.camera = v; paintBar(); })));
+    const asp = $(".mk-aspect", box);
+    asp.innerHTML = "";
+    ["9:16", "3:4", "1:1"].forEach((v) => asp.appendChild(
+      chip(v, st.aspect === v, () => { st.aspect = v; paintBar(); })));
+    const slots = $(".mk-slots", box);
+    slots.innerHTML = "";
+    // Слот «персонаж»: клик листает героев ВСЕХ проектов, последний клик
+    // очищает слот. Фото героя уезжает референсом.
+    const chars = mkChars || [];
+    const ch = chars.find((c) => c.id === st.charId);
+    const cSlot = document.createElement("button");
+    cSlot.type = "button";
+    cSlot.className = "mk-slot" + (ch ? " filled" : "");
+    cSlot.title = ch ? ch.name : t("mk.slotChar");
+    cSlot.innerHTML = ch
+      ? (ch.photo_url ? `<img src="${escHtml(ch.photo_url)}" alt="" />` : `<b>${escHtml((ch.name || "?")[0])}</b>`)
+      : `<span>👤</span><i>${escHtml(t("mk.slotChar"))}</i>`;
+    cSlot.addEventListener("click", () => {
+      if (!chars.length) { mkToast(t("mk.noChars")); return; }
+      const idx = chars.findIndex((c) => c.id === st.charId);
+      const next = chars[idx + 1];
+      st.charId = next ? next.id : 0;
+      paintBar();
+    });
+    // Слот «продукт»: клик листает товары общей базы; без единого фото —
+    // открывает аплоад фото товара текущего трека.
+    const prod = products.find((p) => p.track_id === st.productTrackId)
+      || (st.useProduct ? products[0] : null);
+    const pSlot = document.createElement("button");
+    pSlot.type = "button";
+    pSlot.className = "mk-slot" + (st.useProduct && prod ? " filled" : "");
+    pSlot.title = prod ? prod.title : t("mk.slotProduct");
+    pSlot.innerHTML = (st.useProduct && prod)
+      ? `<img src="${escHtml(prod.url)}" alt="" />`
+      : `<span>📦</span><i>${escHtml(t("mk.slotProduct"))}</i>`;
+    pSlot.addEventListener("click", () => {
+      if (!products.length) {
+        const input = $(".ms-photo-input", card);
+        if (input) input.click();
+        return;
+      }
+      if (!st.useProduct) { st.useProduct = true; st.productTrackId = products[0].track_id; }
+      else {
+        const idx = products.findIndex((p) => p.track_id === (st.productTrackId || products[0].track_id));
+        const next = products[idx + 1];
+        if (next) st.productTrackId = next.track_id;
+        else { st.useProduct = false; st.productTrackId = 0; }
+      }
+      paintBar();
+    });
+    slots.append(cSlot, pSlot);
+  };
+  paintBar();
+
+  // Витрина шаблонов: фильтр-чипы по категориям + плиточная сетка.
+  const cats = mkCatalog.categories || [];
+  const filt = $(".mk-filter", box);
+  const grid = $(".mk-tpl-grid", box);
+  const paintGrid = () => {
+    filt.innerHTML = "";
+    filt.appendChild(chip(escHtml(t("mk.catAll")), !st.cat,
+      () => { st.cat = ""; paintGrid(); }));
+    cats.forEach((c) => filt.appendChild(chip(escHtml(t(`mk.cat_${c}`)), st.cat === c,
+      () => { st.cat = c; paintGrid(); })));
+    grid.innerHTML = "";
+    tpls.filter((x) => !st.cat || x.category === st.cat).forEach((x) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-tpl" + (st.tplId === x.id ? " on" : "");
+      const name = LANG === "ru" ? x.ru : x.en;
+      b.innerHTML = (x.preview_url
+        ? `<img src="${escHtml(x.preview_url)}" alt="" loading="lazy" />`
+        : `<span class="mk-tpl-ph">${x.emoji}</span>`)
+        + `<span class="mk-tpl-cap"><b>${escHtml(name)}</b>`
+        + `<i>${escHtml(t(`mk.cat_${x.category}`))}${x.motion ? " · 🎬" : ""}</i></span>`
+        + `<span class="mk-tpl-info" title="${escHtml(LANG === "ru" ? "страница шаблона" : "template page")}">ⓘ</span>`;
+      $(".mk-tpl-info", b) && $(".mk-tpl-info", b).addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (window.QlolPromptPage) window.QlolPromptPage.open("mockup", x.id);
+      });
+      b.addEventListener("click", () => {
+        st.tplId = st.tplId === x.id ? "" : x.id;
+        st.prompt = st.tplId ? x.prompt : "";
+        promptEl.value = st.prompt;
+        paintGrid();
+        if (st.tplId) box.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      grid.appendChild(b);
+    });
+  };
+  paintGrid();
+
+  const go = $(".mk-go", box);
+  const stEl = $(".mk-status", box);
+  go.addEventListener("click", async () => {
+    const text = (promptEl.value || "").trim();
+    const tpl = tpls.find((x) => x.id === st.tplId);
+    if (!tpl && !text) { mkToast(t("mk.needPrompt")); return; }
+    const useProduct = Boolean(st.useProduct && products.length);
+    if (!useProduct && !st.charId) { mkToast(t("mk.needProduct")); return; }
+    const body = {
+      camera: st.camera, aspect: st.aspect,
+      character_id: st.charId || 0,
+      use_product: useProduct,
+      product_track_id: useProduct
+        ? (st.productTrackId || products[0].track_id) : 0,
+    };
+    // Текст совпадает с промптом шаблона — шлём шаблон; правленый или
+    // свой текст едет как есть, чтобы сервер не склеил его сам с собой.
+    if (tpl && text === tpl.prompt) body.template_id = tpl.id;
+    else body.prompt = text;
+    go.disabled = true;
+    const goWas = go.textContent;
+    go.textContent = LANG === "ru" ? "генерирую…" : "generating…";
+    stEl.textContent = t("status.queued");
+    // МГНОВЕННАЯ ОБРАТНАЯ СВЯЗЬ. «Нажал — и всё куда-то пропало» — потому
+    // что результат появлялся в галерее за экраном. Плейсхолдер встаёт в
+    // «Мои генерации» ДО ответа сервера, и страница сама едет к нему.
+    const gal = $("#mkp-gallery");
+    let ph = null;
+    if (gal) {
+      ph = document.createElement("div");
+      ph.className = "mkp-item busy mkp-pending";
+      ph.innerHTML = `<span class="mkp-ph mkp-spin">✦</span>
+        <i>${escHtml(tpl ? (tpl.name || tpl.id) : text.slice(0, 40))}</i>`;
+      gal.prepend(ph);
+      ph.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    try {
+      await api(`/api/tracks/${tr.id}/marketing-gen`, { method: "POST", body });
+      mkToast((tpl && tpl.motion) ? t("mk.addedMotion") : t("mk.added"));
+      stEl.textContent = "";
+      schedulePoll();
+      await loadProject();
+      // Перерисовка заменила плейсхолдер серверной busy-карточкой — едем к ней.
+      const cell = document.querySelector("#mkp-gallery .mkp-item.busy");
+      if (cell) cell.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e) {
+      if (ph) ph.remove();
+      fail(e);
+      stEl.textContent = "";
+    }
+    go.disabled = false;
+    go.textContent = goWas;
+  });
+}
+
+/* ─────────── Cinema-бар: свободная сцена одним промптом ───────────
+   Живёт над раскадровкой. «@» зовёт персонажа из ОБЩЕЙ базы (все проекты),
+   чипы камеры/света/палитры/длительности собирают промпт, Image рисует
+   кадры новой сцены, Video гонит полный круг (кадры + видео). Никакого
+   отдельного движка: та же add_scene + generate-frames / full-circle. */
+const CINE_CAMERA = {
+  "": "", static: "Locked-off static camera, no movement.",
+  push: "Slow cinematic push-in toward the subject.",
+  orbit: "Smooth orbital camera move around the subject.",
+  track: "Tracking shot following the subject.",
+};
+const CINE_LIGHT = {
+  "": "", day: "natural daylight", neon: "neon night lighting",
+  sunset: "warm golden-hour sunset light", studio: "clean soft studio lighting",
+};
+const CINE_PALETTE = {
+  "": "", warm: "warm color palette", cold: "cold blue color palette",
+  bw: "black and white, monochrome",
+};
+
+async function msCinemaBar(card, tr, mode) {
+  const box = $(".cine-bar", card);
+  if (!box) return;
+  const on = mode.id !== "mockup";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  if (!mkChars) {
+    try { mkChars = (await api("/api/characters/all")).characters || []; }
+    catch (e) { mkChars = (project && project.characters) || []; }
+  }
+  const st = tr._cine || (tr._cine = {
+    camera: "", light: "", palette: "", dur: 6, video: false, prompt: "",
+  });
+  const img = imageEngineById(effImageEngine(tr));
+  const vid = videoEngineById(effVideoEngine(tr));
+  const framesCost = img ? img.frames_cost : 0;
+  const fullCost = framesCost + (vid ? vid.video_cost : 0);
+  const chip = (label, active, onClick, cls = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `mk-chip ${cls}` + (active ? " on" : "");
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  // Подпись берём из общего словаря, а если ключа там нет — из запасной
+  // пары ru/en рядом. Правка i18n.js под каждую подпись бара — это правка
+  // общего файла на 5000 строк ради двух слов.
+  const ct = (key, ru, en) => t(key) || (LANG === "ru" ? ru : en);
+  box.innerHTML = `
+    <div class="mk-bar cine-card">
+      <span class="cine-title">${escHtml(ct("cine.title", "Свободная сцена",
+        "Free scene"))}</span>
+      <div class="cine-line">
+        <div class="cine-wrap">
+          <textarea class="cine-prompt" rows="1"
+            placeholder="${escHtml(t("cine.promptPh"))}"></textarea>
+          <div class="cine-ac hidden"></div>
+        </div>
+        <div class="mk-chips cine-kind"></div>
+        <button type="button" class="mk-go cine-go"></button>
+      </div>
+      <span class="cine-hint hidden">${escHtml(t("cine.hint"))}</span>
+      <div class="cine-foot">
+        <button type="button" class="cine-more" aria-expanded="false">⚙ ${
+          escHtml(ct("cine.more", "Настройки кадра", "Shot settings"))}</button>
+        <span class="cine-sum"></span>
+      </div>
+      <div class="cine-opts hidden">
+        <label class="cine-opt"><span>${escHtml(ct("cine.camera", "Камера", "Camera"))}</span>
+          <select class="cine-camera"></select></label>
+        <label class="cine-opt"><span>${escHtml(ct("cine.light", "Свет", "Light"))}</span>
+          <select class="cine-light"></select></label>
+        <label class="cine-opt"><span>${escHtml(ct("cine.palette", "Палитра", "Palette"))}</span>
+          <select class="cine-palette"></select></label>
+        <label class="cine-opt"><span>${escHtml(ct("cine.dur", "Длительность", "Duration"))}</span>
+          <select class="cine-dur"></select></label>
+      </div>
+      <span class="cine-status status"></span>
+    </div>`;
+  {
+    // Параметры свёрнуты по умолчанию: на виду только «опиши сцену» и
+    // «сгенерировать». Две строки чипов вперемешку («камера: авто…»,
+    // «свет…», «5s 6s 8s 10s») — это панель настроек, выданная за строку
+    // ввода; выбирают из них раз в двадцать сцен.
+    const more = $(".cine-more", box);
+    const opts = $(".cine-opts", box);
+    more.addEventListener("click", () => {
+      const open = opts.classList.toggle("hidden") === false;
+      more.setAttribute("aria-expanded", String(open));
+      more.classList.toggle("on", open);
+    });
+  }
+  const promptEl = $(".cine-prompt", box);
+  if (st.prompt) promptEl.value = st.prompt;
+  const ac = $(".cine-ac", box);
+  const acHide = () => ac.classList.add("hidden");
+  promptEl.addEventListener("input", () => {
+    st.prompt = promptEl.value;
+    // @-автокомплит: последний токен начинается с @ — показываем героев.
+    const uptoCaret = promptEl.value.slice(0, promptEl.selectionStart);
+    const m = uptoCaret.match(/@([\wа-яА-ЯёЁ-]*)$/u);
+    if (!m) { acHide(); return; }
+    const q = (m[1] || "").toLowerCase();
+    const opts = (mkChars || []).filter((c) =>
+      (c.name || "").toLowerCase().startsWith(q)).slice(0, 6);
+    if (!opts.length) { acHide(); return; }
+    ac.innerHTML = "";
+    opts.forEach((c) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cine-ac-item";
+      b.innerHTML = (c.photo_url ? `<img src="${escHtml(c.photo_url)}" alt="" />` : "👤")
+        + `<span>${escHtml(c.name)}</span>`;
+      b.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const pos = promptEl.selectionStart;
+        promptEl.value = uptoCaret.replace(/@[\wа-яА-ЯёЁ-]*$/u, c.name)
+          + promptEl.value.slice(pos);
+        st.prompt = promptEl.value;
+        acHide();
+        promptEl.focus();
+      });
+      ac.appendChild(b);
+    });
+    ac.classList.remove("hidden");
+  });
+  promptEl.addEventListener("blur", () => setTimeout(acHide, 150));
+  {
+    // Подсказка про «@» появляется при фокусе и уходит вместе с ним: висеть
+    // под полем постоянно ей незачем — это шум для того, кто уже понял.
+    const hint = $(".cine-hint", box);
+    promptEl.addEventListener("focus", () => hint.classList.remove("hidden"));
+    promptEl.addEventListener("blur", () => setTimeout(() =>
+      hint.classList.add("hidden"), 150));
+  }
+
+  const goEl = $(".cine-go", box);
+  const CAM = [["", "camAuto"], ["static", "camStatic"], ["push", "camPush"],
+               ["orbit", "camOrbit"], ["track", "camTrack"]];
+  const LIGHT = [["", "lightAuto"], ["day", "lightDay"], ["neon", "lightNeon"],
+                 ["sunset", "lightSunset"], ["studio", "lightStudio"]];
+  const PAL = [["", "palAuto"], ["warm", "palWarm"], ["cold", "palCold"],
+               ["bw", "palBw"]];
+  /* Дропдаун вместо полосы чипов: пять вариантов камеры в ряд — это пять
+     кнопок, из которых четыре всегда лишние. Свёрнутый селект показывает
+     ровно выбранное. */
+  const fillSel = (sel, items, cur, onPick) => {
+    sel.innerHTML = items.map(([v, label]) =>
+      `<option value="${escHtml(v)}"${v === cur ? " selected" : ""}>${
+        escHtml(label)}</option>`).join("");
+    sel.onchange = () => onPick(sel.value);
+  };
+  const paintBar = () => {
+    const kind = $(".cine-kind", box);
+    kind.innerHTML = "";
+    kind.append(
+      chip(t("mk.image"), !st.video, () => { st.video = false; paintBar(); }),
+      chip(t("mk.video"), st.video, () => { st.video = true; paintBar(); }));
+    // Базовые варианты + камера-пресеты каталога (значение "preset:<key>").
+    const camItems = CAM.map(([v, k]) => [v, t(`cine.${k}`)])
+      .concat((cameraPresetsCache || []).filter((c) => !c.locked)
+        .map((c) => ["preset:" + c.key, "🎥 " + (c.label || c.key)]));
+    fillSel($(".cine-camera", box), camItems,
+      st.camera, (v) => { st.camera = v; paintBar(); });
+    fillSel($(".cine-light", box), LIGHT.map(([v, k]) => [v, t(`cine.${k}`)]),
+      st.light, (v) => { st.light = v; paintBar(); });
+    fillSel($(".cine-palette", box), PAL.map(([v, k]) => [v, t(`cine.${k}`)]),
+      st.palette, (v) => { st.palette = v; paintBar(); });
+    fillSel($(".cine-dur", box), [5, 6, 8, 10].map((v) => [String(v), `${v}s`]),
+      String(st.dur), (v) => { st.dur = Number(v); paintBar(); });
+    // Свёрнутый вид всё равно обязан отвечать, ЧТО выбрано: иначе «наезд
+    // камерой» живёт только в закрытой панели и всплывает в готовом кадре.
+    const picked = [];
+    const nameOf = (list, v) => {
+      const row = list.find(([val]) => val === v);
+      return row ? t(`cine.${row[1]}`) : "";
+    };
+    if (st.camera) {
+      const cam = (cameraPresetsCache || []).find((c) => "preset:" + c.key === st.camera);
+      picked.push(cam ? (cam.label || cam.key) : nameOf(CAM, st.camera));
+    }
+    if (st.light) picked.push(nameOf(LIGHT, st.light));
+    if (st.palette) picked.push(nameOf(PAL, st.palette));
+    if (st.video) picked.push(`${st.dur}s`);
+    $(".cine-sum", box).textContent = picked.join(" · ");
+    $(".cine-opts", box).classList.toggle("has-picked", picked.length > 0);
+    goEl.textContent = `${t("mk.generate")} · ⚡ ${tNum(st.video ? fullCost : framesCost)}`;
+  };
+  paintBar();
+  // Пресеты каталога грузятся лениво: селект перерисуется, когда приедут.
+  cameraPresets().then(() => paintBar());
+
+  const stEl = $(".cine-status", box);
+  goEl.addEventListener("click", async () => {
+    const text = (promptEl.value || "").trim();
+    if (!text) { mkToast(t("cine.needPrompt")); return; }
+    // Имена героев, упомянутые в тексте, уезжают в characters сцены.
+    const named = (mkChars || []).filter((c) => c.name
+      && text.toLowerCase().includes(c.name.toLowerCase()))
+      .map((c) => c.name);
+    let prompt = text;
+    if (CINE_LIGHT[st.light]) prompt += `, ${CINE_LIGHT[st.light]}`;
+    if (CINE_PALETTE[st.palette]) prompt += `, ${CINE_PALETTE[st.palette]}`;
+    goEl.disabled = true;
+    stEl.textContent = t("status.queued");
+    try {
+      const sc = await api(`/api/tracks/${tr.id}/scenes`, {
+        method: "POST",
+        body: {
+          image_prompt: prompt,
+          motion_prompt: (() => {
+            const cam = (cameraPresetsCache || [])
+              .find((c) => "preset:" + c.key === st.camera);
+            if (cam) return camFillSlots(cam.text, { characters: named.join(",") });
+            return CINE_CAMERA[st.camera] || "";
+          })(),
+          duration_sec: st.dur,
+          characters: named.join(", "),
+          shot_note: text,
+        },
+      });
+      if (st.video) await api(`/api/scenes/${sc.id}/full-circle`, { method: "POST" });
+      else await api(`/api/scenes/${sc.id}/generate-frames`, { method: "POST" });
+      mkToast(t("cine.added"));
+      st.prompt = "";
+      stEl.textContent = "";
+      schedulePoll();
+      await loadProject();
+    } catch (e) { fail(e); stEl.textContent = ""; }
+    goEl.disabled = false;
+  });
+}
+
+/* Свёрнутая инструкция «Как это работает» — над настройкой режима. */
+function msHowto(card, mode) {
+  const setup = $(".mode-setup", card);
+  if (!setup || $(".ms-howto", card)) return;
+  const html = window.lolqHowto
+    ? window.lolqHowto({ clip: "clips", mockup: "marketing", ugc: "ugc",
+                         series: "clips" }[mode.id] || "clips")
+    : "";
+  if (!html) return;
+  const det = document.createElement("div");
+  det.innerHTML = html;
+  if (det.firstElementChild) setup.prepend(det.firstElementChild);
 }
 
 /* Шапка блока: одна строка, по которой видно всё решение целиком — режим,
    каркас, стиль, движок и прогноз расхода. Она и есть ответ на «что я
    вообще собрал», ради которого раньше приходилось листать пять мест. */
 function msSummary(card, tr, mode) {
+  /* Минимализм по прямому решению владельца 28.08: режим, пресет, стиль и
+     движок видно в их собственных местах, а плашка оставляет одно число,
+     которого больше нигде нет, — прогноз расхода. Мелко, muted, без
+     переносов. */
   const box = $(".ms-summary", card);
   if (!box) return;
-  const parts = [];
-  parts.push(`${mode.icon || "🎬"} ${t(`modes.${mode.id}.title`)}`);
-  const pk = mode.id === "clip" ? (tr.clip_preset_key || "") : (tr.format_key || "");
-  if (pk) {
-    const items = mode.id === "clip"
-      ? ((stylesCatalog && stylesCatalog.presets) || []) : modeFormats(mode);
-    const p = items.find((x) => x.key === pk);
-    if (p) parts.push(typeof p.label === "string" ? p.label : ((p.label && (p.label[LANG] || p.label.en)) || pk));
-  }
-  if (tr.style_label) parts.push(tr.style_label);
   const vid = videoEngineById(effVideoEngine(tr));
-  if (vid) parts.push(vid.title);
   const img = imageEngineById(effImageEngine(tr));
   const scenes = tr.scenes_count || (mode.scenes && mode.scenes.typ) || 30;
   const per = (img ? img.frames_cost : 0) + (vid ? vid.video_cost : 0);
-  if (per > 0) parts.push(t("modeSetup.forecast", { scenes, total: tNum(scenes * per) }));
-  box.textContent = parts.join(" · ");
+  box.textContent = per > 0
+    ? t("modeSetup.forecast", { scenes, total: tNum(scenes * per) }) : "";
 }
 
 /* Сборка блока. Зовётся из renderTrack после движков и полей режима: к этому
@@ -4915,11 +6147,32 @@ function mountModeSetup(card, tr, isFirst) {
 }
 
 
+/* Какой трек РАЗВЁРНУТ. Три развёрнутых трека — простыня на 9000px:
+   свёрнутый показывает только строку (обложка, номер, название, кнопки),
+   клик по строке разворачивает его и сворачивает прочие. */
+let expandedTrackId = 0;
+
 function renderTrack(tr) {
   const tpl = $("#track-tpl").content.cloneNode(true);
   const card = tpl.querySelector(".track-card");
   applyI18n(card);   // содержимое <template> обходом документа не задевается
   card.dataset.id = tr.id;
+  {
+    const many = (project.tracks || []).length > 1;
+    if (!expandedTrackId) expandedTrackId = (project.tracks[0] || {}).id || 0;
+    const collapsed = many && tr.id !== expandedTrackId;
+    card.classList.toggle("collapsed", collapsed);
+    const head = $(".track-head", card);
+    if (head && many) {
+      head.classList.add("clickable");
+      head.addEventListener("click", (ev) => {
+        // Клик по полю названия, кнопкам и обложке — их собственная работа.
+        if (ev.target.closest("button, input, label, select")) return;
+        expandedTrackId = tr.id;
+        render();
+      });
+    }
+  }
   // Сколько кадров сняты НЕ нынешним стилем — верстак (nav.js) читает это
   // из атрибута, чтобы предложить перерисовку следующим действием.
   card.dataset.stale = String(tr.scenes_stale || 0);
@@ -4969,7 +6222,12 @@ function renderTrack(tr) {
   card.classList.add("stages-stacked");
   {
     const jump = document.querySelector("#stage-jump");
-    if (jump && jump.dataset.for !== String(tr.id) && !jump.childElementCount) {
+    if (jump && curMode().id !== "mockup" && jump.dataset.kind === "mockup") {
+      jump.dataset.kind = "";
+      jump.innerHTML = "";
+    }
+    if (jump && curMode().id !== "mockup"
+        && jump.dataset.for !== String(tr.id) && !jump.childElementCount) {
       jump.dataset.for = String(tr.id);
       [...STAGES, "clip"].forEach((key, i) => {
         const b = document.createElement("button");
@@ -5008,10 +6266,22 @@ function renderTrack(tr) {
         for (const [k, el] of marks) {
           if (el && el.getBoundingClientRect().top <= 260) best = k;
         }
+        // «СБОРКА» НЕДОСТИЖИМА ОБЫЧНОЙ МЕРКОЙ: это низ карточки, и докрутить
+        // его верх до 260px нельзя — страница кончается раньше. Поэтому у
+        // последнего блока вторая примета: доскроллили до конца. Проверку
+        // включаем, только если документ вообще прокручивается, иначе при
+        // прокрутке внутри контейнера условие было бы верно всегда.
+        const sc = document.scrollingElement || document.documentElement;
+        const room = sc.scrollHeight - sc.clientHeight;
+        if (room > 40 && room - sc.scrollTop <= 40 && $(".clip-dock", cur)) best = "clip";
         $$(".stage-tab", jump).forEach((el) =>
           el.classList.toggle("on", el.dataset.stage === best));
       };
-      window.addEventListener("scroll", spy, { passive: true });
+      // capture на document, а не window.scroll: после переезда на блоки
+      // прокрутка бывает внутри контейнера, и window-событие не приходит —
+      // тумблер залипал на «Настройке» при любом положении страницы.
+      document.addEventListener("scroll", spy, { passive: true, capture: true });
+      spy();
     }
   }
   // Название проекта редактируется в «Настройке». Оригинальный input живёт
@@ -5296,6 +6566,14 @@ function renderTrack(tr) {
   // ролика обходить нечего.
   gate(".t-nostory-wrap", trMode.needs_audio);
   if (!trMode.needs_audio) audioEl.style.display = "none";
+  // Колонки «Материала» существуют только под реальный контент: спрятанные
+  // аудио и текст оставляли ПУСТЫЕ грид-колонки, и остальное уезжало в
+  // узкую правую треть при пустой левой половине экрана.
+  const tBody = $(".track-body", card);
+  if (tBody) {
+    tBody.classList.toggle("no-audio", !trMode.needs_audio);
+    tBody.classList.toggle("no-lyrics", !trMode.needs_lyrics);
+  }
   $(".save-track", card).textContent = objT("save", trMode) || t("track.saveTrack");
   // Раньше подпись искалась как ПРЯМОЙ потомок панели настройки; в едином
   // блоке она лежит в секции «Как выглядит», и у неё есть свой класс.
@@ -5315,13 +6593,21 @@ function renderTrack(tr) {
 
   // ── этап 2: раскадровка
   $(".add-scene", card).addEventListener("click", () => addManualScene(tr.id));
+  // curMode() здесь напрямую: const modeNow объявлен НИЖЕ по функции, и
+  // обращение к нему отсюда роняло весь рендер треков (TDZ) — лента пустела.
+  msCinemaBar(card, tr, curMode());
+  msHowto(card, curMode());
   const allBtn = $(".gen-all-frames", card);
   const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
   // «(готовый кадр» — служебная метка бэкенда в image_prompt (backend/main.py),
   // не текст для человека: переводить её нельзя, иначе фильтр разъедется.
   const framesTodo = (tr.scenes || []).filter((s) => !(s.image_url || s.image_last_url) && s.image_prompt && !s.image_prompt.startsWith("(готовый кадр")).length;
   allBtn.disabled = framesBusy || !framesTodo;
-  allBtn.textContent = framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo });
+  const allImgSpec = imageEngineById(effImageEngine(tr));
+  allBtn.textContent = (framesBusy ? t("track.allFramesBusy") : t("track.allFramesN", { n: framesTodo }))
+    // Пакет рисует ТОЛЬКО первые кадры (дефолт which=first) — цена за один
+    // кадр на сцену, вдвое меньше пары.
+    + (!framesBusy && framesTodo && allImgSpec ? ` · ⚡ ${tNum(framesTodo * Math.ceil(allImgSpec.frames_cost / 2))}` : "");
   allBtn.title = t("track.allFramesTitle");
   $(".all-frames-note", card).textContent = framesBusy ? t("track.allFramesNote") : "";
   allBtn.addEventListener("click", async () => {
@@ -5340,7 +6626,9 @@ function renderTrack(tr) {
     const vidBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.video_status));
     const vidTodo = (tr.scenes || []).filter((s) => s.image_url && !s.video_url).length;
     allVidBtn.disabled = vidBusy || !vidTodo;
-    allVidBtn.textContent = vidBusy ? t("track.allVideosBusy") : t("track.allVideosN", { n: vidTodo });
+    const allVidSpec = videoEngineById(effVideoEngine(tr));
+    allVidBtn.textContent = (vidBusy ? t("track.allVideosBusy") : t("track.allVideosN", { n: vidTodo }))
+      + (!vidBusy && vidTodo && allVidSpec ? ` · ⚡ ${tNum(vidTodo * allVidSpec.scene_cost)}` : "");
     allVidBtn.addEventListener("click", async () => {
       const engSpec = videoEngineById(effVideoEngine(tr));
       const priceLine = engSpec
@@ -5497,6 +6785,23 @@ function renderTrack(tr) {
     img.classList.remove("hidden");
     img.addEventListener("click", () => openSheetModal(tr));
     if (sbEmpty) sbEmpty.classList.add("hidden");
+    // Ориентация листа решает раскладку: альбомный тянется на всю ширину
+    // панели, вертикальный стоит сбоку от сводки, без пустых полей вокруг.
+    const fitSheet = () => {
+      const box = img.closest(".storyboard-box");
+      const side = $(".storyboard-side", card);
+      if (!box || !img.naturalWidth) return;
+      const wide = img.naturalWidth >= img.naturalHeight;
+      box.classList.toggle("sb-wide", wide);
+      if (side) {
+        side.classList.toggle("hidden", wide);
+        const note = $(".sb-grid-note", side);
+        if (note) note.textContent = t("track.sheetGridNote", {
+          n: tr.storyboard_scenes || tr.scenes_count || 0 });
+      }
+    };
+    if (img.complete) fitSheet();
+    img.addEventListener("load", fitSheet, { once: true });
   }
   if (sbOpenBtn) {
     sbOpenBtn.disabled = !tr.storyboard_url;
@@ -5524,6 +6829,46 @@ function renderTrack(tr) {
   sliceBtn.disabled = !tr.storyboard_url || Boolean(tr.storyboard_stale);
   if (tr.storyboard_stale) sliceBtn.title = t("track.sheetStaleTitle");
   sliceBtn.addEventListener("click", () => openCellsModal(tr));
+
+  // ── «Озвучить серию»: реплики всех кадров голосами их персонажей.
+  if (curMode().id === "series") {
+    const bar = $(".board-bar", card);
+    if (bar && !$(".t-voiceover", card)) {
+      const vo = document.createElement("button");
+      vo.type = "button";
+      vo.className = "ghost t-voiceover";
+      vo.textContent = t("track.voiceAll");
+      vo.title = t("track.voiceAllTitle");
+      vo.disabled = !tr.scenes_count;
+      vo.addEventListener("click", async () => {
+        vo.disabled = true;
+        try {
+          const r = await api(`/api/tracks/${tr.id}/voiceover`, { method: "POST" });
+          alert(t("track.voiceAllQueued", { n: r.queued }));
+        } catch (e) { fail(e); } finally { vo.disabled = false; }
+      });
+      const slice = $(".slice-storyboard", card);
+      if (slice && slice.parentElement === bar) bar.insertBefore(vo, slice.nextSibling);
+      else bar.appendChild(vo);
+    }
+  }
+
+  // ── «Нарезать под бит»: границы сцен — к ближайшим сильным долям.
+  const beatBtn = $(".beat-align", card);
+  if (beatBtn) {
+    beatBtn.disabled = !tr.scenes_count || !tr.audio_filename && !tr.audio_duration_sec;
+    beatBtn.addEventListener("click", async () => {
+      beatBtn.disabled = true;
+      try {
+        const r = await api(`/api/tracks/${tr.id}/beat-align`, { method: "POST" });
+        alert(r.moved
+          ? t("track.beatAligned", { n: r.moved, bpm: r.bpm })
+          : t("track.beatAlignedNone", { bpm: r.bpm }));
+        waveCache.delete(tr.id);
+        await loadProject();
+      } catch (e) { fail(e); } finally { beatBtn.disabled = false; }
+    });
+  }
 
   // ── Сцены двумя лентами: «Раскадровка» — кадры, «Анимация» — видео.
   //
@@ -5569,6 +6914,30 @@ function renderTrack(tr) {
   asmBtn.textContent = asmBusy ? t("track.assembleBusy")
     : tr.clip_url ? t("track.reassemble") : t("track.assemble");
   asmBtn.addEventListener("click", () => assembleClip(tr.id));
+
+  /* ─── ВЕДУЩАЯ КНОПКА: дизайн ведёт, текст молчит ───
+     В каждый момент у трека ОДИН очевидный следующий шаг, и он горит огнём
+     с мягким пульсом (.next-step). Состояние читается из tr.*, никакой
+     новой логики: нет аудио → «загрузи трек»; аудио есть, сцен нет →
+     «Сгенерировать сцены»; сцены без кадров → «Кадры всех сцен»; кадры
+     без видео → «Видео всех сцен»; видео есть → «Собрать клип». */
+  {
+    const scenes = tr.scenes || [];
+    const withImg = scenes.filter((x) => x.image_url).length;
+    const withVid = scenes.filter((x) => x.video_url).length;
+    const needsAudio = curMode().needs_audio !== false;
+    let sel = "";
+    if (needsAudio && !tr.audio_filename) sel = ".t-audio-swap";
+    else if (!scenes.length) sel = ".t-gen-scenes, .gen-scenes";
+    else if (!withImg) sel = ".gen-all-frames";
+    else if (!withVid) sel = ".gen-all-videos";
+    else if (tr.approved_count && !["queued", "running"].includes(tr.clip_status)
+             && !tr.clip_url) sel = ".assemble";
+    if (sel) {
+      const btn = sel.split(",").map((q) => $(q.trim(), card)).find(Boolean);
+      if (btn && !btn.disabled) btn.classList.add("next-step");
+    }
+  }
 
   // Автосборка: флаг живёт в localStorage, работу делает autoAssembleTick
   // на общем поллинге. Здесь только галочка и её сообщение.
@@ -5688,6 +7057,9 @@ function sceneRows(tr, mode) {
 }
 
 function fillScenes(box, tr, mode, audioEl, card) {
+  // Позиция ленты переживает ЛЮБУЮ перерисовку — включая точечные, минующие
+  // render(). Иначе каждый чип персонажа отматывал раскадровку к первому кадру.
+  const keepX = box.scrollLeft;
   box.innerHTML = "";
   const view = sceneView(tr.id);
   const rows = sceneRows(tr, mode);
@@ -5729,6 +7101,7 @@ function fillScenes(box, tr, mode, audioEl, card) {
   if (count && mode === "board") {
     count.textContent = t("track.shownOf", { a: shown, b: rows.length });
   }
+  if (keepX > 0) requestAnimationFrame(() => { box.scrollLeft = keepX; });
 }
 
 function bindSceneViews(card, tr, audioEl) {
@@ -5767,6 +7140,11 @@ function renderSceneTile(s, tr, mode, audioEl) {
   }
   if (mode === "anim" && s.video_url) $(".st-play", tile).classList.remove("hidden");
   $(".st-no", tile).textContent = t("scene.pos", { n: s.position });
+  $(".st-badge", tile).textContent = String(s.position);
+  // Название кадра — строчка текста или режиссёрская заметка: без неё лист
+  // нарезки это двадцать одинаковых картинок с номерами.
+  $(".st-title", tile).textContent =
+    (s.lyric_line || s.shot_note || "").trim().slice(0, 70);
   $(".st-time", tile).textContent = fmtTime(s.start_sec);
 
   const status = mode === "anim" ? s.video_status : s.image_status;
@@ -5947,13 +7325,24 @@ function renderScene(s, audioEl, mode = "board") {
   // ОЗВУЧКА — только в режимах с ведущим (UGC, ИИ-блогеры): там реплика
   // кадра и есть звук ролика. В клипах звук — трек, кнопка не нужна.
   const modeId = curMode().id;
-  if (modeId === "ugc" || modeId === "blogger") {
+  if (modeId === "ugc" || modeId === "blogger" || modeId === "series") {
     const vo = document.createElement("button");
     vo.type = "button";
     vo.className = "ghost s-voice board-only";
     vo.textContent = "🎙";
     vo.title = t("voice.btnTitle");
     vo.addEventListener("click", async () => {
+      // Сначала — голос ПЕРСОНАЖА сцены: сервер сам найдёт закреплённый
+      // voice_id по speaker/characters. Ручной выбор — только если у
+      // персонажа голос не закреплён.
+      vo.disabled = true;
+      try {
+        await api(`/api/scenes/${s.id}/voiceover`, { method: "POST", body: {} });
+        vo.textContent = "🎙✓";
+        return;
+      } catch (e) {
+        if (!(e && e.status === 400)) { fail(e); return; }
+      } finally { vo.disabled = false; }
       let vs;
       try { vs = await api("/api/voices"); } catch (e) { fail(e); return; }
       if (!vs.enabled) { alert(t("voice.notReady")); return; }
@@ -6015,6 +7404,10 @@ function renderScene(s, audioEl, mode = "board") {
       });
       chipsBox.appendChild(chip);
     });
+    /* Чипы показываем ВСЕ, но компактно (кегль и паддинг меньше — стиль
+       .s-chars-chips). Сворачивалку «показать всех» убрали 28.08: карточка
+       перерисовывается после каждого клика, и раскрытые чипы прятались
+       обратно — выглядело как «нажал и ничего». */
   } else {
     chipsBox.classList.add("hidden");
   }
@@ -6081,7 +7474,26 @@ function renderScene(s, audioEl, mode = "board") {
   }
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
+  renderCameraRow(card, s);
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
+  {
+    // Меню «⋯»: закрывается кликом мимо и Esc — оставлять его открытым,
+    // пока человек ушёл в другую карточку, значит держать на экране два
+    // пульта сразу.
+    const more = $(".s-more", card);
+    const menu = $(".s-more-menu", card);
+    if (more && menu) {
+      more.addEventListener("click", (e) => {
+        e.stopPropagation();
+        document.querySelectorAll(".s-more-menu").forEach((m) => {
+          if (m !== menu) m.classList.add("hidden");
+        });
+        const open = menu.classList.toggle("hidden") === false;
+        more.setAttribute("aria-expanded", String(open));
+      });
+      menu.addEventListener("click", () => menu.classList.add("hidden"));
+    }
+  }
   $(".s-save", card).addEventListener("click", () => saveScene(s.id, card));
   // ⧉ — копия кадра, ⟶ — ПРОДОЛЖЕНИЕ: следующий кадр начинается там, где
   // этот закончился. Оба удлиняют раскадровку, поэтому оба спрашивают, что
@@ -6195,17 +7607,26 @@ function renderScene(s, audioEl, mode = "board") {
   const framesBtn = $(".s-gen-frames", card);
   const imgBusy = ["queued", "running"].includes(s.image_status);
   framesBtn.disabled = imgBusy;
-  framesBtn.textContent = imgBusy ? t("scene.framesBusy")
-    : s.image_url ? t("scene.regenFrames") : t("scene.genFrames");
-  framesBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
+  const sceneImgSpec = imageEngineById(
+    sceneImgOverride(card) || s.image_engine || effImageEngine(sceneTrack(s.id)));
+  // ДЕФОЛТ — ОДИН КАДР (первый, полцены): пары «первый+последний» часто
+  // расходятся. Пара — отдельной кнопкой «оба», последний — кнопкой «посл.»
+  // (он рисуется с первым кадром референсом).
+  const halfCost = sceneImgSpec ? Math.ceil(sceneImgSpec.frames_cost / 2) : 0;
+  framesBtn.textContent = (imgBusy ? t("scene.framesBusy")
+    : s.image_url ? t("scene.regenFrames") : t("scene.genFrames"))
+    + (!imgBusy && sceneImgSpec ? ` · ⚡ ${tNum(halfCost)}` : "");
+  framesBtn.addEventListener("click", () => genSceneFrames(s.id, "first", sceneImgOverride(card)));
   const firstBtn = $(".s-gen-first", card);
   const lastBtn = $(".s-gen-last", card);
   if (firstBtn) {
     firstBtn.disabled = imgBusy;
-    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "first", sceneImgOverride(card)));
+    if (sceneImgSpec) firstBtn.title = `${t("scene.genBothTitle")} · ⚡ ${tNum(sceneImgSpec.frames_cost)}`;
+    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
   }
   if (lastBtn) {
     lastBtn.disabled = imgBusy;
+    if (sceneImgSpec) lastBtn.title = `${t("scene.genLastTitle")} · ⚡ ${tNum(halfCost)}`;
     lastBtn.addEventListener("click", () => genSceneFrames(s.id, "last", sceneImgOverride(card)));
   }
 
@@ -6271,16 +7692,14 @@ function renderScene(s, audioEl, mode = "board") {
     ? s.midframes_expected
     : Math.max(0, Math.min(4, Math.round(s.duration_sec / 2) - 1));
   const midBusy = midframesBusy(s);
+  // Компактная стрелка: «+·N» вместо «+ промеж. (N)», подробности в title.
   midBtn.textContent = midBusy
-    ? t("scene.midBusy", {
-        a: (s.midframes || []).length,
-        b: (midframesExpect.get(s.id) || { n: midN }).n,
-      })
-    : t("scene.midBtn", { n: midN });
+    ? `${(s.midframes || []).length}/${(midframesExpect.get(s.id) || { n: midN }).n}…`
+    : `+·${midN}`;
   midBtn.disabled = !midN || !s.image_url || midBusy || imgBusy;
   midBtn.title = !midN ? t("scene.midShort")
     : !s.image_url ? t("scene.midNoFrame")
-    : t("scene.midTitle");
+    : t("scene.midTitle") + " — " + t("scene.midBtn", { n: midN });
   midBtn.addEventListener("click", async () => {
     try {
       const r = await api(`/api/scenes/${s.id}/generate-midframes`, { method: "POST" });
@@ -6429,9 +7848,12 @@ function renderScene(s, audioEl, mode = "board") {
   // пока жив последний.
   const anyFrame = Boolean(s.image_url || s.image_last_url);
   vidBtn.disabled = vidBusy || !anyFrame;
-  vidBtn.textContent = vidBusy ? t("scene.videoBusy")
+  const sceneVidSpec = videoEngineById(
+    (provSel && provSel.dataset.engine) || s.video_engine || effVideoEngine(sceneTrack(s.id)));
+  vidBtn.textContent = (vidBusy ? t("scene.videoBusy")
     : !anyFrame ? t("scene.videoNoFrame")
-    : s.video_url ? t("scene.regenVideo") : t("scene.genVideo");
+    : s.video_url ? t("scene.regenVideo") : t("scene.genVideo"))
+    + (!vidBusy && anyFrame && sceneVidSpec ? ` · ⚡ ${tNum(sceneVidSpec.video_cost)}` : "");
   vidBtn.title = !anyFrame ? t("scene.videoTitleNoFrame") : t("scene.videoTitle");
   vidBtn.addEventListener("click", () => genSceneVideo(s.id, provSel.value, provSel.dataset.engine || ""));
   }
@@ -7037,7 +8459,102 @@ async function deleteScene(id) {
   await loadProject();
 }
 
-async function genSceneFrames(id, which = "both", engine = "") {
+/* ── Камера-пресеты в карточке кадра ──
+   6 карточек с CSS-анимацией, имитирующей само движение (маска + сдвиг
+   фона). Клик пишет ПОЛНЫЙ промпт пресета в motion_prompt и camera_move.
+   Кэш общий на сессию: каталог одинаков для всех кадров. */
+let cameraPresetsCache = null;
+
+async function cameraPresets() {
+  if (cameraPresetsCache) return cameraPresetsCache;
+  try {
+    const d = await api("/api/cameras");
+    cameraPresetsCache = d.cameras || [];
+  } catch (e) {
+    cameraPresetsCache = [];
+  }
+  return cameraPresetsCache;
+}
+
+const CAM_FALLBACK_ICO = { slider: "🎞", vehicle: "🚗", drone: "🛸",
+                           truck: "⬅", orbit: "🚁", crane: "🏗" };
+
+function camFillSlots(text, s) {
+  const who = (s.characters || "").split(",").map((x) => x.trim()).filter(Boolean);
+  return String(text || "")
+    .replace(/\{character\}/g, who[0] || "the subject")
+    .replace(/\{location\}/g, "the location of this scene");
+}
+
+function renderCameraRow(card, s) {
+  const box = $(".s-cameras", card);
+  if (!box) return;
+  cameraPresets().then((cams) => {
+    if (!cams.length) return;
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    cams.forEach((cam) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cam-card cam-anim-" + (cam.anim || "none");
+      btn.title = (cam.desc || "") + (cam.locked ? " · PRO" : "");
+      const filled = cam.locked ? "" : camFillSlots(cam.text, s);
+      // Подсветка выбранного: промпт кадра начинается с текста пресета.
+      const cur = (s.motion_prompt || "").trim();
+      if (filled && cur && cur.startsWith(filled.slice(0, 60))) btn.classList.add("on");
+      const th = document.createElement("span");
+      th.className = "cam-thumb";
+      const bg = document.createElement("i");
+      if (cam.preview_url) {
+        bg.style.backgroundImage = `url("${cam.preview_url}")`;
+      } else {
+        bg.className = "cam-noimg";
+        bg.textContent = CAM_FALLBACK_ICO[cam.anim] || "🎥";
+      }
+      th.appendChild(bg);
+      // Несколько референсов на пресет: hover листает их по кругу.
+      const urls = cam.preview_urls || [];
+      if (urls.length > 1) {
+        let idx = 0;
+        let timer = null;
+        btn.addEventListener("mouseenter", () => {
+          timer = setInterval(() => {
+            idx = (idx + 1) % urls.length;
+            bg.style.backgroundImage = `url("${urls[idx]}")`;
+          }, 1400);
+        });
+        btn.addEventListener("mouseleave", () => {
+          clearInterval(timer);
+          idx = 0;
+          bg.style.backgroundImage = `url("${urls[0]}")`;
+        });
+      }
+      btn.appendChild(th);
+      const nm = document.createElement("span");
+      nm.className = "cam-name";
+      nm.textContent = cam.label || cam.key;
+      btn.appendChild(nm);
+      btn.addEventListener("click", async () => {
+        if (cam.locked) { alert(t("promptbase.locked") || "PRO"); return; }
+        const ta = $(".s-motion", card);
+        if (ta) ta.value = filled;
+        Array.from(box.children).forEach((c) => c.classList.toggle("on", c === btn));
+        try {
+          await api(`/api/scenes/${s.id}`, { method: "PATCH", body: {
+            motion_prompt: filled, camera_move: cam.camera || "",
+          }});
+          s.motion_prompt = filled;
+          s.camera_move = cam.camera || "";
+          const cm = $(".s-camera", card);
+          if (cm) cm.value = s.camera_move;
+        } catch (e) { fail(e); }
+      });
+      box.appendChild(btn);
+    });
+  });
+}
+
+async function genSceneFrames(id, which = "first", engine = "") {
   try {
     // engine пустой = «как у объекта»: сервер разрешит цепочку
     // сцена → трек → тариф сам, второй копии этой логики на клиенте нет.
@@ -7072,6 +8589,7 @@ async function approveScene(id, approved) {
 $("#add-track-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = e.target;
+  const btn = form.querySelector('button[type="submit"]');
   const fd = new FormData();
   fd.append("title", form.title.value);
   fd.append("style_keys", form.style_keys.value);
@@ -7079,9 +8597,20 @@ $("#add-track-form").addEventListener("submit", async (e) => {
   fd.append("comment", form.comment.value);
   if (form.format_key && form.format_key.value) fd.append("format_key", form.format_key.value);
   if (form.audio.files[0]) fd.append("audio", form.audio.files[0]);
-  await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
-  form.reset();
-  await loadProject();
+  // Молча падать нельзя: «сингл — второй трек нельзя» и любой другой отказ
+  // человек должен ПРОЧИТАТЬ, а на время долгой загрузки файла — видеть,
+  // что она идёт.
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = t("tracks.uploading"); }
+  try {
+    await api(`/api/tracks?project_id=${activeProjectId}`, { method: "POST", body: fd });
+    form.reset();
+    await loadProject();
+  } catch (err) {
+    fail(err);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
 });
 
 // Визитка персонажа в ленте: моделька, имя, «главный», счётчик атрибутов.
@@ -7142,6 +8671,43 @@ function bindCharacterEditor(card, c) {
   $(".c-name", card).value = c.name;
   $(".c-desc", card).value = c.description;
   $(".c-main", card).checked = c.is_main;
+  // Голос персонажа: список с /api/voices; без ключа ElevenLabs блок скрыт,
+  // а не показан пустым. Превью играет прямо из выпадашки.
+  const voiceBox = $(".char-voice", card);
+  const voiceSel = $(".c-voice", card);
+  const voiceNote = $(".c-voice-note", card);
+  if (voiceBox && voiceSel) {
+    voiceNote.value = c.voice_note || "";
+    api("/api/voices").then((vs) => {
+      if (!vs.enabled || !(vs.voices || []).length) return;
+      voiceBox.classList.remove("hidden");
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = t("character.voiceNone");
+      voiceSel.appendChild(none);
+      vs.voices.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v.id;
+        o.textContent = v.name;
+        o.dataset.preview = v.preview_url || "";
+        voiceSel.appendChild(o);
+      });
+      voiceSel.value = c.voice_id || "";
+      if (voiceSel.value !== (c.voice_id || "")) voiceSel.value = "";
+      const playBtn = $(".c-voice-play", card);
+      let prevAudio = null;
+      if (playBtn) playBtn.addEventListener("click", () => {
+        const opt = voiceSel.selectedOptions[0];
+        const url = opt && opt.dataset.preview;
+        if (!url) return;
+        if (prevAudio) { prevAudio.pause(); prevAudio = null; playBtn.textContent = "▶"; return; }
+        prevAudio = new Audio(url);
+        prevAudio.addEventListener("ended", () => { prevAudio = null; playBtn.textContent = "▶"; });
+        prevAudio.play();
+        playBtn.textContent = "❚❚";
+      });
+    }).catch(() => { /* озвучка не настроена — блок остаётся скрытым */ });
+  }
   // Два ряда: ЗАГРУЖЕННЫЕ фото (они уходят референсом в разворот) и
   // СГЕНЕРИРОВАННЫЕ развороты (последний из них берут кадры сцен). Одна
   // общая куча скрывала главное: какая именно картинка работает.
@@ -7235,11 +8801,19 @@ function bindCharacterEditor(card, c) {
     // Ошибку показываем и модалку НЕ закрываем: иначе правки исчезают вместе
     // с окном, а человек уверен, что сохранил.
     try {
-      await api(`/api/characters/${c.id}`, { method: "PATCH", body: {
+      const patch = {
         name: $(".c-name", card).value,
         description: $(".c-desc", card).value,
         is_main: $(".c-main", card).checked,
-      }});
+      };
+      const vSel = $(".c-voice", card);
+      // Голос шлём только если блок реально показан: иначе скрытая пустая
+      // выпадашка стирала бы закреплённый голос при каждом сохранении.
+      if (vSel && !$(".char-voice", card).classList.contains("hidden")) {
+        patch.voice_id = vSel.value;
+        patch.voice_note = $(".c-voice-note", card).value;
+      }
+      await api(`/api/characters/${c.id}`, { method: "PATCH", body: patch });
     } catch (e) { fail(e); return; }
     closeModal();
     await loadProject();
@@ -7290,6 +8864,15 @@ function renderAttribute(a, onDone = null) {
   name.className = "attr-name";
   name.textContent = a.name;
   name.title = (a.description ? a.description + " — " : "") + t("character.attrEditTitle");
+  if (a.item_track_id) {
+    // Привязка к предмету видна прямо на чипе: иначе «почему в кадре другая
+    // вещь» выясняется только по картинке.
+    const link = document.createElement("span");
+    link.className = "attr-item-mark";
+    link.textContent = "📦";
+    link.title = t("character.attrItemMark");
+    name.appendChild(link);
+  }
   name.addEventListener("click", () => openAttributeModal(null, a, onDone));
   chip.appendChild(name);
 
@@ -7349,6 +8932,188 @@ function renderAttribute(a, onDone = null) {
 // Одна модалка на создание (charId) и редактирование (attr) атрибута.
 // onDone — куда вернуться после сохранения: из досье персонажа это оно само,
 // иначе просто закрытие модалки.
+/* ─────────── ПРЕДМЕТ: досье как у персонажа ───────────
+   Предмет физически остаётся треком мокап-проекта (в нём живут фото, сцены
+   и облёт), но заводится и правится он как персонаж: имя, описание,
+   галерея фото. Форма добавления ТРЕКА со стилями клипа здесь была прямым
+   багом — у предмета нет ни стиля клипа, ни текста песни. */
+let mkItems = null;   // общая база предметов (все проекты владельца)
+
+async function loadItems(force = false) {
+  if (mkItems && !force) return mkItems;
+  try { mkItems = (await api("/api/items/all")).items || []; }
+  catch (e) { mkItems = []; }
+  return mkItems;
+}
+
+async function openItemModal(trackId) {
+  const items = await loadItems(true);
+  const it = items.find((x) => x.track_id === trackId);
+  if (!it) return;
+  openModal(it.title || t("item.title"), (body) => {
+    body.dataset.itemId = String(trackId);
+    body.innerHTML = `
+      <div class="char-edit item-edit">
+        <div class="char-head">
+          <input class="i-name" value="${escHtml(it.title || "")}"
+                 placeholder="${escHtml(t("item.namePh"))}" />
+          <button class="i-del ghost danger" title="${escHtml(t("common.del"))}">✕</button>
+        </div>
+        <label>${escHtml(t("item.descLabel"))}</label>
+        <textarea class="i-desc" rows="3">${escHtml(it.description || "")}</textarea>
+        <div class="char-row-head">
+          <span class="char-row-title">${escHtml(t("item.photosTitle"))}</span>
+          <span class="char-row-hint muted">${escHtml(t("item.photosHint"))}</span>
+        </div>
+        <div class="char-photos i-photos"></div>
+        <div class="row">
+          <button class="i-save primary">${escHtml(t("common.save"))}</button>
+          <label class="c-upload-label">
+            <input type="file" class="i-photo-input hidden" accept="image/*" multiple />
+            <span class="c-upload-btn">${escHtml(t("item.upload"))}</span>
+          </label>
+          <span class="i-msg status"></span>
+        </div>
+      </div>`;
+    const photos = $(".i-photos", body);
+    (it.photos || []).forEach((ph) => {
+      const wrap = document.createElement("div");
+      wrap.className = "char-photo";
+      const img = document.createElement("img");
+      img.src = ph.url + `?t=${ph.id}`;
+      img.loading = "lazy";
+      wrap.appendChild(img);
+      const del = document.createElement("button");
+      del.className = "ghost danger char-photo-del";
+      del.textContent = "✕";
+      del.addEventListener("click", async () => {
+        try { await api(`/api/track-photos/${ph.id}`, { method: "DELETE" }); }
+        catch (e) { fail(e); return; }
+        mkItems = null; mkProducts = null;
+        await loadProject();
+        openItemModal(trackId);
+      });
+      wrap.appendChild(del);
+      photos.appendChild(wrap);
+    });
+    $(".i-photo-input", body).addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      $(".i-msg", body).textContent = t("common.loading");
+      for (const f of files) {
+        const fd = new FormData();
+        fd.append("photo", f);
+        try { await api(`/api/tracks/${trackId}/photos`, { method: "POST", body: fd }); }
+        catch (err) { fail(err); break; }
+      }
+      mkItems = null; mkProducts = null;
+      await loadProject();
+      openItemModal(trackId);
+    });
+    $(".i-save", body).addEventListener("click", async () => {
+      try {
+        await api(`/api/tracks/${trackId}`, { method: "PATCH", body: {
+          title: $(".i-name", body).value.trim(),
+          comment: $(".i-desc", body).value } });
+      } catch (e) { fail(e); return; }
+      mkItems = null; mkProducts = null;
+      closeModal();
+      await loadProject();
+    });
+    $(".i-del", body).addEventListener("click", async () => {
+      if (!confirm(t("item.delConfirm"))) return;
+      try { await api(`/api/tracks/${trackId}`, { method: "DELETE" }); }
+      catch (e) { fail(e); return; }
+      mkItems = null; mkProducts = null;
+      closeModal();
+      await loadProject();
+    });
+  });
+}
+
+/* «Сделать предмет по фото»: живой снимок → чистый предметный рендер на
+   нейтральном фоне, сохранённый как ПРЕДМЕТ. Дальше он работает референсом
+   во всех генерациях (кадры, мокапы, атрибуты персонажей). */
+function itemFromPhotoFlow(cost) {
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/jpeg,image/png,image/webp";
+  inp.addEventListener("change", async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("photo", f);
+    mkToast(t("item.modelQueued"));
+    try {
+      await api(`/api/items/from-photo?project_id=${activeProjectId}`,
+                { method: "POST", body: fd });
+    } catch (e) { fail(e); return; }
+    mkItems = null; mkProducts = null;
+    schedulePoll();
+    await loadProject();
+  });
+  inp.click();
+  return cost;
+}
+
+// Мосты для общих баз из маркетинг-хаба (sections.js): правка сущности
+// живёт в студии, второго редактора не заводим.
+window.qlolOpenItem = (trackId) => {
+  closeModal();
+  openItemModal(trackId);
+};
+window.qlolOpenChar = (charId) => {
+  closeModal();
+  const c = (project.characters || []).find((x) => x.id === charId);
+  if (c) openCharacterModal(c);
+  else mkToast(t("base.otherProject"));
+};
+
+/* «+ добавить предмет»: заводим объект с именем и сразу открываем досье —
+   ровно как у персонажа, без формы трека со стилями клипа. */
+async function addItemFlow() {
+  openModal(t("item.newTitle"), (body) => {
+    body.innerHTML = `
+      <label>${escHtml(t("item.nameLabel"))}</label>
+      <input class="ni-name" placeholder="${escHtml(t("item.namePh"))}" />
+      <div class="row">
+        <button type="button" class="primary ni-save">${escHtml(t("common.create"))}</button>
+        <span class="ni-error error hidden"></span>
+      </div>`;
+    const nameEl = $(".ni-name", body);
+    const errEl = $(".ni-error", body);
+    const btn = $(".ni-save", body);
+    const save = async () => {
+      const name = nameEl.value.trim();
+      if (!name) {
+        errEl.textContent = t("item.nameRequired");
+        errEl.classList.remove("hidden");
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append("title", name);
+        fd.append("style_keys", "");
+        fd.append("lyrics", "");
+        fd.append("comment", "");
+        const tr = await api(`/api/tracks?project_id=${activeProjectId}`,
+                             { method: "POST", body: fd });
+        mkItems = null; mkProducts = null;
+        await loadProject();
+        openItemModal(tr.id);
+      } catch (e) {
+        errEl.textContent = errText(e);
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+      }
+    };
+    btn.addEventListener("click", save);
+    nameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    nameEl.focus();
+  });
+}
+
 function openAttributeModal(charId, attr = null, onDone = null) {
   openModal(t(attr ? "modal.attribute.editTitle" : "modal.attribute.newTitle"), (body) => {
     body.innerHTML = `
@@ -7356,6 +9121,9 @@ function openAttributeModal(charId, attr = null, onDone = null) {
       <input class="at-name" placeholder="${escHtml(t("modal.attribute.namePh"))}" />
       <label>${escHtml(t("modal.attribute.descLabel"))}</label>
       <textarea class="at-desc" rows="2"></textarea>
+      <label>${escHtml(t("modal.attribute.itemLabel"))}</label>
+      <select class="at-item"><option value="0">${escHtml(t("modal.attribute.itemNone"))}</option></select>
+      <p class="muted" style="margin:4px 0 0;font-size:12px">${escHtml(t("modal.attribute.itemHint"))}</p>
       <div class="row">
         <button type="button" class="primary at-save">${escHtml(t(attr ? "common.save" : "common.create"))}</button>
         <span class="at-error error hidden"></span>
@@ -7365,6 +9133,18 @@ function openAttributeModal(charId, attr = null, onDone = null) {
     if (attr) { nameInput.value = attr.name; descInput.value = attr.description || ""; }
     const errEl = $(".at-error", body);
     const saveBtn = $(".at-save", body);
+    // Общая база предметов: вещь заводится один раз и цепляется к любому
+    // герою в любом проекте.
+    const itemSel = $(".at-item", body);
+    loadItems().then((items) => {
+      items.forEach((x) => {
+        const o = document.createElement("option");
+        o.value = String(x.track_id);
+        o.textContent = x.title + (x.photos && x.photos.length ? ` · ${x.photos.length}📷` : "");
+        itemSel.appendChild(o);
+      });
+      if (attr && attr.item_track_id) itemSel.value = String(attr.item_track_id);
+    });
     const save = async () => {
       const name = nameInput.value.trim();
       if (!name) {
@@ -7374,7 +9154,8 @@ function openAttributeModal(charId, attr = null, onDone = null) {
       }
       saveBtn.disabled = true;
       try {
-        const payload = { name, description: descInput.value.trim() };
+        const payload = { name, description: descInput.value.trim(),
+                          item_track_id: Number(itemSel.value || 0) };
         if (attr) await api(`/api/attributes/${attr.id}`, { method: "PATCH", body: payload });
         else await api(`/api/characters/${charId}/attributes`, { method: "POST", body: payload });
         if (onDone) { await onDone(); } else { closeModal(); await loadProject(); }
@@ -7606,7 +9387,13 @@ rebuildAddTrackPicker();
   // Без сессии гость видит главную, а не форму пароля. С живой сессией сразу
   // открывается студия — кроме случая, когда человек пришёл именно на главную
   // (ссылка с ?home или якорь #ld-…): тогда первый экран зовёт в студию.
-  if (me.authed && !ldWantsLanding()) showApp(); else showWelcome();
+  // Исключение — открытый генератор (/generator): это витрина, гость ходит
+  // по ней без сессии, и уводить его на лендинг = отобрать страницу из рук.
+  if (me.authed && !ldWantsLanding()) showApp();
+  // /login — прямая ссылка на вход, её шлют в поддержке и кладут в закладку.
+  // Гость по ней попадал на лендинг и должен был искать кнопку входа сам.
+  else if (location.pathname.replace(/\/+$/, "") === "/login") showLogin();
+  else if (!$("#generator-page")) showWelcome();
   // Экран закрепляется в адресе: раньше логотип оставлял ?home, и КАЖДАЯ
   // перезагрузка снова открывала главную вместо места работы.
   if (me.authed && !ldWantsLanding()
@@ -7715,6 +9502,31 @@ async function openCellsModal(tr) {
       foot.className = "cell-foot";
       foot.appendChild(cb);
       foot.appendChild(sel);
+      // Перегенерация ОДНОГО кадра: лист — черновик, добивка — покадрово.
+      // Кнопка рисует полный кадр по промпту сцены, выбранной в селекте
+      // (which=first), и он встаёт в сцену обычным путём.
+      const regen = document.createElement("button");
+      regen.type = "button";
+      regen.className = "ghost cell-regen";
+      regen.textContent = t("modal.cells.regen");
+      regen.title = t("modal.cells.regenTitle");
+      regen.addEventListener("click", async () => {
+        const sid = Number(sel.value);
+        if (!sid) return;
+        regen.disabled = true;
+        regen.textContent = t("modal.cells.regenQueued");
+        try {
+          await api(`/api/scenes/${sid}/generate-frames?which=first`, { method: "POST" });
+        } catch (e) {
+          regen.disabled = false;
+          regen.textContent = t("modal.cells.regen");
+          fail(e);
+          return;
+        }
+        // Кнопка остаётся выключенной: генерация ушла в очередь, статус
+        // виден на карточке сцены после закрытия модалки.
+      });
+      foot.appendChild(regen);
       box.appendChild(img);
       box.appendChild(foot);
       grid.appendChild(box);
@@ -9132,6 +10944,7 @@ const chatState = {
   // ── параметры правой панели ──
   tab: "chats",        // chats | projects
   aspect: "",          // пусто = дефолт движка
+  camera: "",          // камера-пресет для видео (ключ из /api/cameras)
   resolution: "",
   variants: 1,
   target: { target: "" },   // «куда положить»: пусто = оставить в ленте
@@ -9141,6 +10954,7 @@ const chatState = {
   fromScene: null,          // «Доснять в мастерской»: откуда пришли
   enhanceBackup: "",        // промпт ДО «улучшить» — чтобы вернуть как было
   hint: "",                 // почему «Отправить» сейчас не сработает
+  kit: [],                  // выбранные с каруселей промты: [{key,label,text}]
   error: "",                // последняя ошибка — под полем, не в alert
 };
 
@@ -9148,19 +10962,57 @@ const chatState = {
 function applyTheme(mode) {
   const root = document.documentElement;
   if (mode === "light" || mode === "dark") root.dataset.theme = mode;
-  else { delete root.dataset.theme; mode = "system"; }
+  else if (mode === "system") delete root.dataset.theme;
+  else {
+    // АВТО ПО ВРЕМЕНИ СУТОК — умолчание: после 21:00 и до 8:00 тёмная,
+    // днём светлая. Руками выбранная тема (light/dark/system) это правило
+    // выключает — авто живёт, только пока человек не решил сам.
+    mode = "auto";
+    const h = new Date().getHours();
+    root.dataset.theme = (h >= 21 || h < 8) ? "dark" : "light";
+  }
   localStorage.setItem("rc_theme", mode);
+  paintThemeSwitch(mode);
+  // Внутри Telegram цвет клиента (шапка, фон, нижняя полоса) красится нашим
+  // --bg: без этой строки смена темы перекрашивала приложение, а хром
+  // мини-аппа оставался светлым — те самые белые прогалы вокруг панелей.
+  if (window.TGA && window.TGA.repaint) window.TGA.repaint();
+}
+/* Подсветка выбранной темы. Отдельной функцией, потому что кнопки живут не
+   только в шапке: панель кабинета рисуется заново на каждом открытии, и
+   раньше в ней не подсвечивалась НИ ОДНА тема — до первого клика. */
+function paintThemeSwitch(mode) {
+  const m = mode || localStorage.getItem("rc_theme") || "auto";
   document.querySelectorAll(".theme-switch button").forEach((b) => {
-    b.classList.toggle("on", b.dataset.themeSet === mode);
+    b.classList.toggle("on", b.dataset.themeSet === m);
   });
 }
+window.paintThemeSwitch = paintThemeSwitch;
+window.applyTheme = applyTheme;   // меню профиля (sections.js) листает тему
+// Меню «⋯» карточки кадра гасим кликом мимо и по Esc — один слушатель на
+// документ вместо слушателя в каждой карточке (их на треке тридцать).
+document.addEventListener("click", () => {
+  document.querySelectorAll(".s-more-menu:not(.hidden)")
+    .forEach((m) => m.classList.add("hidden"));
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  document.querySelectorAll(".s-more-menu:not(.hidden)")
+    .forEach((m) => m.classList.add("hidden"));
+});
+
 (function themeBoot() {
   // Класс os-dark дублирует prefers-color-scheme: селекторам тёмной темы
   // нужен якорь в DOM, чтобы работать в связке с data-theme-переключателем.
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   const sync = () => document.documentElement.classList.toggle("os-dark", mq.matches);
   sync(); mq.addEventListener("change", sync);
-  applyTheme(localStorage.getItem("rc_theme") || "system");
+  applyTheme(localStorage.getItem("rc_theme") || "auto");
+  // Авто-тема обязана перещёлкнуться в 21:00 без перезагрузки: раз в
+  // полчаса дёшево, а вкладка у людей живёт вечерами часами.
+  setInterval(() => {
+    if ((localStorage.getItem("rc_theme") || "auto") === "auto") applyTheme("auto");
+  }, 30 * 60 * 1000);
   document.addEventListener("click", (e) => {
     const b = e.target.closest("[data-theme-set]");
     if (b) applyTheme(b.dataset.themeSet);
@@ -9179,7 +11031,7 @@ function chatEl(id) { return document.getElementById(id); }
 const AGENT_RUN = {
   gen_scenes: (a) => api(`/api/tracks/${a.track_id}/generate-scenes`, { method: "POST" }),
   extend_scenes: (a) => api(`/api/tracks/${a.track_id}/scenes/extend`, { method: "POST", body: {} }),
-  gen_frames: (a) => api(`/api/scenes/${a.scene_id}/generate-frames`, { method: "POST", body: { which: "both" } }),
+  gen_frames: (a) => api(`/api/scenes/${a.scene_id}/generate-frames`, { method: "POST", body: { which: "first" } }),
   gen_video: (a) => api(`/api/scenes/${a.scene_id}/generate-video`, { method: "POST" }),
   assemble: (a) => api(`/api/tracks/${a.track_id}/assemble`, { method: "POST" }),
 };
@@ -9208,6 +11060,14 @@ function paAddMsg(cls, text) {
 async function paAsk(text) {
   const feed = paEl("pa-feed");
   if (text) paAddMsg("me", text);
+  // БЕЗ ПРОЕКТА НЕ СТУЧИМСЯ. Ассистент видит проект — это его смысл; на
+  // витрине генератора проекта ещё нет, и запрос уходил с project_id=0,
+  // получая 400 в консоль на каждый вопрос. Честная строка лучше ошибки.
+  if (!activeProjectId) {
+    paAddMsg("bot muted", t("agent.needProject")
+      || "Сначала создай проект — я подсказываю по нему.");
+    return;
+  }
   const wait = paAddMsg("bot muted", t("agent.thinking"));
   let d;
   const call = () => api("/api/chat/agent", {
@@ -9310,8 +11170,15 @@ async function askAgent(text) {
     return;
   }
   reply.textContent = d.reply || "";
+  // Модель любит предлагать одно и то же трижды («Сгенерировать кадры» на
+  // каждый пустой кадр) — одинаковые по смыслу действия схлопываем в одно.
+  const seen = new Set();
   (d.actions || []).forEach((a) => {
     if (a.kind === "none" || !a.title) return;
+    const key = `${a.kind}:${a.scene_id || 0}:${a.track_id || 0}:${a.title}`;
+    if (seen.has(key) || (seen.has(`${a.kind}::`) && !a.scene_id && !a.track_id)) return;
+    seen.add(key);
+    seen.add(`${a.kind}::`);
     const b = document.createElement("button");
     b.type = "button";
     b.className = "cc-agent-act";
@@ -9348,6 +11215,15 @@ function chatScrollBottom() {
 
 function showChat() {
   hideScreens();
+  // Общая шапка остаётся видимой и в Генераторе: раньше отсюда можно было
+  // уйти только через «← Студия» в сайдбаре — то есть выйти из раздела,
+  // чтобы перейти в соседний. Показываем #app в режиме chat-view: из него
+  // виден только .topbar, а сам чат встаёт под ней.
+  const app = $("#app");
+  if (app) {
+    app.classList.remove("hidden");
+    app.classList.add("chat-view");
+  }
   $("#chat").classList.remove("hidden");
   // Поллинг студии гасим: пока человек в мастерской, дёргать проект незачем.
   clearTimeout(pollTimer);
@@ -9640,13 +11516,21 @@ function mkRenderNote() {
   const note = chatEl("cc-note");
   if (box) {
     const err = chatState.error;
-    const hint = chatState.hint;
+    // «Напишите, что нужно сделать» дублирует плейсхолдер поля и съедала
+    // строку в капсуле — такую подсказку не показываем вовсе; остальные
+    // (про тариф, лимиты) живут как жили.
+    const hint = (chatState.hint === t("chat.needText")
+      || chatState.hint === t("make.needText")) ? "" : chatState.hint;
     const text = err || hint;
     box.textContent = text;
     box.classList.toggle("hidden", !text);
     box.classList.toggle("hint", !err && Boolean(hint));
   }
-  if (note) note.textContent = t("chat.payNote");
+  // «Цена видна до отправки… токены возвращаются» — не строка, а (i) у цены:
+  // читают её один раз, а место она занимала всегда.
+  if (note) note.textContent = "";
+  const price = chatEl("cc-price");
+  if (price) price.title = t("chat.payNote");
 }
 
 // Единая точка «не получилось» ВНУТРИ мастерской: строка под полем вместо
@@ -9669,13 +11553,15 @@ function mkRenderTabs() {
   const box = chatEl("mk-tabs");
   if (!box) return;
   box.innerHTML = "";
-  [["chats", "make.tabChats"], ["projects", "make.tabProjects"]].forEach(([id, key]) => {
+  [["chats", "make.tabChats"], ["projects", "make.tabProjects"],
+   ["bank", "make.tabBank"]].forEach(([id, key]) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = chatState.tab === id ? "on" : "";
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", chatState.tab === id ? "true" : "false");
-    b.textContent = t(key);
+    b.textContent = t(key) || (id === "bank"
+      ? (LANG === "ru" ? "Банк" : "Bank") : id);
     b.addEventListener("click", () => {
       chatState.tab = id;
       chatRenderAll();
@@ -9825,6 +11711,80 @@ function mkChatRow(c) {
   row.appendChild(star);
   row.appendChild(del);
   return row;
+}
+
+/* БАНК ГЕНЕРАЦИЙ — третья вкладка сайдбара: кадры, видео и обложки всех
+   проектов одной лентой, новые сверху. Своего хранилища не заводит: файлы
+   уже зарегистрированы в FileOwner, и /api/files отдаёт их метаданные —
+   второй реестр «для банка» разъехался бы с первым на первой же чистке. */
+function mkRenderBank() {
+  const box = chatEl("mk-bank");
+  if (!box) return;
+  const on = chatState.tab === "bank";
+  box.classList.toggle("hidden", !on);
+  if (!on || box.dataset.loaded === "1") return;
+  box.innerHTML = `<p class="chat-list-empty muted">${escHtml(t("common.loading"))}</p>`;
+  const filters = ["all", "image", "video"];
+  let kind = "all";
+  const load = async () => {
+    const q = kind === "video" ? "video,clip" : (kind === "image" ? "frame,cover,image" : "");
+    let res;
+    try {
+      res = await api(`/api/files?limit=60${q ? "&kind=" + encodeURIComponent(q) : ""}`);
+    } catch (e) { box.innerHTML = ""; return; }
+    box.innerHTML = "";
+    const tabs = document.createElement("div");
+    tabs.className = "mk-bank-tabs";
+    filters.forEach((f) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-mini" + (f === kind ? " on" : "");
+      b.textContent = f === "all" ? (LANG === "ru" ? "всё" : "all")
+        : (f === "image" ? t("chat.optImage") : t("chat.optVideo"));
+      b.addEventListener("click", () => { kind = f; load(); });
+      tabs.appendChild(b);
+    });
+    box.appendChild(tabs);
+    const grid = document.createElement("div");
+    grid.className = "mk-bank-grid";
+    (res.files || []).forEach((f) => {
+      const url = f.url || `/api/media/${f.filename}`;
+      const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(f.filename || "");
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "mk-bank-cell";
+      cell.innerHTML = isVideo
+        ? `<video src="${escHtml(url)}" muted playsinline preload="metadata"></video>`
+        : `<img src="${escHtml(f.thumb_url || url)}" alt="" loading="lazy" />`;
+      cell.addEventListener("click", () => {
+        openModal(f.filename || "", (body) => {
+          body.innerHTML = isVideo
+            ? `<video src="${escHtml(url)}" controls autoplay playsinline
+                     style="width:100%;border-radius:16px"></video>`
+            : `<img src="${escHtml(url)}" alt="" style="width:100%;border-radius:16px" />`;
+          const row = document.createElement("div");
+          row.className = "row";
+          const dl = document.createElement("a");
+          dl.className = "btn ghost";
+          dl.href = url;
+          dl.download = f.filename || "";
+          dl.textContent = t("common.download") || (LANG === "ru" ? "Скачать" : "Download");
+          row.appendChild(dl);
+          body.appendChild(row);
+        }, { wide: true });
+      });
+      grid.appendChild(cell);
+    });
+    if (!(res.files || []).length) {
+      const p = document.createElement("p");
+      p.className = "chat-list-empty muted";
+      p.textContent = LANG === "ru" ? "Пока пусто." : "Nothing here yet.";
+      grid.appendChild(p);
+    }
+    box.appendChild(grid);
+  };
+  box.dataset.loaded = "1";
+  load();
 }
 
 // Вкладка «Проекты» — НАСТОЯЩИЕ проекты, сгруппированные по режимам. Клик =
@@ -9983,18 +11943,6 @@ async function chatLoadOlder() {
 
 // ────────── ЦЕНТР: карточка модели ──────────
 
-function mkFactRow(box, key, value) {
-  if (!value) return;
-  const k = document.createElement("div");
-  k.className = "mk-fact-k";
-  k.textContent = t(key);
-  const v = document.createElement("div");
-  v.className = "mk-fact-v";
-  v.textContent = value;
-  box.appendChild(k);
-  box.appendChild(v);
-}
-
 // Описание движка живёт в словаре, а не приезжает с сервера строкой: реестр
 // движков написан по-русски, и англоязычный интерфейс получал бы русский
 // абзац. Нет ключа — берём серверную заметку, чтобы новый движок не остался
@@ -10023,21 +11971,6 @@ function mkCan(model) {
   return out.join(" · ");
 }
 
-function mkCannot(model) {
-  if (model.kind === "video") return t("make.cannotVideo");
-  if (model.kind === "image") return t("make.cannotImage");
-  return t("make.cannotText");
-}
-
-function mkInput(model) {
-  if (model.kind === "video") return t("make.inputVideo");
-  if (model.kind === "image") {
-    return model.max_refs > 1
-      ? t("make.inputImageRefs", { n: model.max_refs })
-      : t("make.inputImage");
-  }
-  return t("make.inputText");
-}
 
 function mkPriceFact(model) {
   if (model.kind === "video") {
@@ -10094,13 +12027,12 @@ function mkRenderCard(feed) {
     card.appendChild(p);
   }
 
-  const facts = document.createElement("div");
-  facts.className = "mk-facts";
-  mkFactRow(facts, "make.factCan", mkCan(model));
-  mkFactRow(facts, "make.factCannot", mkCannot(model));
-  mkFactRow(facts, "make.factInput", mkInput(model));
-  mkFactRow(facts, "make.factPrice", mkPriceFact(model));
-  card.appendChild(facts);
+  // Вместо простыни «умеет / не умеет / вход / цена» — две короткие строки
+  // фактов. Цена обязана жить ДО первого нажатия (разброс тридцатикратный),
+  // формат — чтобы не гадать; остальное читается в карточке движка.
+  const canLine = mkCan(model);
+  if (canLine) mkFactLine(card, canLine);
+  mkFactLine(card, `✦ ${mkPriceFact(model)}`);
 
   // ЧЕТЫРЕ РАЗНЫХ ЧЕСТНЫХ СОСТОЯНИЯ. Закрытое тарифом ведёт к тарифам,
   // неподключённое честно говорит «включим — заработает», не подходящее
@@ -10130,7 +12062,80 @@ function mkRenderCard(feed) {
     warn.textContent = t("make.needFrame");
     card.appendChild(warn);
   }
+
+  // ТРИ СТАРТОВЫЕ КНОПКИ. Пустое поле — стена: человек не знает, с чего
+  // начать, и уходит. Клик кладёт готовый промт в поле — дальше он его
+  // правит под себя. Огня на кнопках нет: главное действие — «сгенерировать».
+  if (model.allowed && model.live) {
+    const starters = mkStarters(model);
+    if (starters.length) {
+      const row = document.createElement("div");
+      row.className = "mk-starters";
+      starters.forEach((s) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "mk-starter";
+        b.textContent = s.label;
+        b.title = s.text;
+        b.addEventListener("click", () => {
+          const ta = chatEl("cc-text");
+          if (!ta) return;
+          ta.value = s.text;
+          ta.dispatchEvent(new Event("input"));
+          ta.focus();
+        });
+        row.appendChild(b);
+      });
+      card.appendChild(row);
+    }
+  }
   feed.appendChild(card);
+}
+
+/* Стартовые промты по виду модели. Инлайн-словарь той же схемой, что
+   карусели (mkGroupShowcase): ключей в i18n у этого блока нет. */
+function mkStarters(model) {
+  const ru = LANG === "ru";
+  if (model.kind === "video") {
+    return [
+      { label: ru ? "Оживи фото" : "Bring a photo to life",
+        text: ru
+          ? "Лёгкое живое движение: дыхание, моргание, волосы шевелит ветер. Камера почти неподвижна, свет не меняется."
+          : "Subtle lifelike motion: breathing, blinking, hair moving in the wind. Camera nearly static, light unchanged." },
+      { label: ru ? "Облёт камеры" : "Camera orbit",
+        text: ru
+          ? "Медленный облёт камеры вокруг героя на 360°, фон в мягком боке, плавный ход без рывков."
+          : "Slow 360° camera orbit around the subject, background in soft bokeh, smooth motion without jerks." },
+      { label: ru ? "Неоновый проезд" : "Neon drive",
+        text: ru
+          ? "Ночная улица в неоне, лёгкий дождь, камера медленно едет вперёд сквозь пар и отражения."
+          : "Neon-lit night street, light rain, camera slowly pushing forward through steam and reflections." },
+    ];
+  }
+  if (model.kind === "image") {
+    return [
+      { label: ru ? "Обложка трека" : "Track cover",
+        text: ru
+          ? "Обложка трека: крупный портрет в контровом свете, зерно плёнки, глубокие тени, место под крупную типографику."
+          : "Track cover art: close portrait in rim light, film grain, deep shadows, room for bold typography." },
+      { label: ru ? "Кадр клипа" : "Clip frame",
+        text: ru
+          ? "Кинематографичный кадр: 35мм, неглубокая резкость, тёплый закатный свет, живая уличная сцена."
+          : "Cinematic frame: 35mm, shallow depth of field, warm sunset light, candid street scene." },
+      { label: ru ? "Предметка" : "Product shot",
+        text: ru
+          ? "Предметная съёмка товара на чистом фоне: мягкие студийные тени, лёгкий отблеск, этикетка читается."
+          : "Product shot on a clean background: soft studio shadows, subtle highlight, label clearly readable." },
+    ];
+  }
+  return [
+    { label: ru ? "Хук на 8 строк" : "8-bar hook",
+      text: ru ? "Напиши хук на 8 строк: дерзко, с внутренними рифмами, без клише." : "Write an 8-bar hook: bold, internal rhymes, no clichés." },
+    { label: ru ? "Идея сцены" : "Scene idea",
+      text: ru ? "Предложи идею сцены для клипа: локация, движение камеры, что делает герой." : "Pitch a clip scene idea: location, camera move, what the hero does." },
+    { label: ru ? "Разбор референса" : "Reference breakdown",
+      text: ru ? "Разбери референс: чем он цепляет и как повторить приём в моём ролике." : "Break down a reference: why it works and how to reuse the trick in my video." },
+  ];
 }
 
 // ────────── ЛЕНТА ──────────
@@ -10160,12 +12165,28 @@ function mkMetaLine(m) {
   return bits.join(" · ");
 }
 
+const mkBusySince = new Map();   // msg.id → первый раз замечен busy
+
 function mkStatusLine(m) {
   const s = document.createElement("div");
   if (m.status === "queued" || m.status === "running") {
-    s.className = "status";
-    s.textContent = t(m.status === "queued" ? "chat.queued" : "chat.running");
-  } else if (m.status === "canceled") {
+    // Воздушная шкала вместо голого спиннера: оценка по стадиям — очередь
+    // 10%, генерация тиками времени до 85%, дальше ждём файл. Числа —
+    // ожидание, не обещание; главное, что полоса ЖИВЁТ.
+    if (!mkBusySince.has(m.id)) mkBusySince.set(m.id, Date.now());
+    const secs = (Date.now() - mkBusySince.get(m.id)) / 1000;
+    const expect = m.kind === "video" ? 150 : 35;
+    const pct = m.status === "queued"
+      ? Math.min(10, 4 + secs)
+      : Math.min(85, 12 + (secs / expect) * 73);
+    s.className = "status mk-progress";
+    s.innerHTML = `<span class="mk-progress-bar"><i style="width:${pct.toFixed(0)}%"></i></span>
+      <em>${pct.toFixed(0)}%</em>
+      <u>${escHtml(t(m.status === "queued" ? "chat.queued" : "chat.running"))}</u>`;
+    return s;
+  }
+  mkBusySince.delete(m.id);
+  if (m.status === "canceled") {
     s.className = "status";
     s.textContent = t("make.canceled");
   } else if (m.status === "error") {
@@ -10506,15 +12527,24 @@ function mkGroupModel(box) {
     mkAfterModelChange();
   });
   let dead = "";
+  /* ТРИ АККОРДЕОНА, А НЕ ПРОСТЫНЯ. Раньше все модели трёх видов лежали
+     подряд одним полотном чипов: чтобы увидеть «Вариантов» и «Куда
+     положить», приходилось пролистать двадцать движков. Открыт тот раздел,
+     в котором стоит выбранная модель, — остальные свёрнуты и показывают
+     выбранное одной строкой. */
   [["text", "chat.optText"], ["image", "chat.optImage"], ["video", "chat.optVideo"]].forEach(([kind, key]) => {
     const items = chatState.models.filter((m) => m.kind === kind);
     if (!items.length) return;
-    const cap = document.createElement("div");
-    cap.className = "mk-group-title";
-    cap.style.marginTop = "6px";
-    cap.textContent = t(key);
-    g.appendChild(cap);
-    const chips = mkChips(g);
+    const det = document.createElement("details");
+    det.className = "mk-acc";
+    det.open = Boolean(model && model.kind === kind);
+    const sum = document.createElement("summary");
+    const picked = model && model.kind === kind ? model.title : "";
+    sum.innerHTML = `<span>${escHtml(t(key))}</span>`
+      + (picked ? `<b>${escHtml(picked)}</b>` : "");
+    det.appendChild(sum);
+    g.appendChild(det);
+    const chips = mkChips(det);
     items.forEach((m) => {
       const on = Boolean(model && m.id === model.id);
       // Закрытое тарифом ВИДНО — с ценой, замком и именем тарифа. Мёртвое по
@@ -10560,6 +12590,37 @@ function mkGroupVersion(box) {
       mkAfterModelChange();
     }, state);
   });
+}
+
+/* Камера-пресеты в Генераторе: только для видео-моделей. Выбранный пресет
+   дописывается к промпту при отправке (см. mkCameraSuffix). */
+function mkGroupCamera(box) {
+  const model = chatCurrentModel();
+  if (!model || model.kind !== "video") return;
+  const cams = (cameraPresetsCache || []).filter((c) => !c.locked);
+  if (!cams.length) {
+    // Каталог ещё не приехал — грузим и перерисуем панель.
+    cameraPresets().then((list) => { if (list.length) mkRenderParams(); });
+    return;
+  }
+  const g = mkGroup(box, "make.grpCamera", Boolean(chatState.camera), () => {
+    chatState.camera = "";
+    mkRenderParams();
+  });
+  const chips = mkChips(g);
+  cams.forEach((c) => {
+    mkChip(chips, c.label || c.key, "", chatState.camera === c.key, () => {
+      chatState.camera = chatState.camera === c.key ? "" : c.key;
+      mkRenderParams();
+    });
+  });
+}
+
+function mkCameraSuffix() {
+  const model = chatCurrentModel();
+  if (!model || model.kind !== "video" || !chatState.camera) return "";
+  const cam = (cameraPresetsCache || []).find((c) => c.key === chatState.camera);
+  return cam ? " " + camFillSlots(cam.solo || cam.text, { characters: "" }) : "";
 }
 
 function mkGroupAspect(box) {
@@ -10747,6 +12808,260 @@ function mkGroupTarget(box) {
   if (cur.target) mkWhy(g, t("make.targetKeeps"));
 }
 
+/* ─── КАРУСЕЛИ ПРАВОЙ ПАНЕЛИ: карточки С ПРЕВЬЮ ───
+   «Промты» (заготовки сцен) и «Камера» — клик кладёт запись в НАБОР
+   генерации (чипы над полем, крестик снимает). «Персонажи» и «Предметы» —
+   миниатюры общей базы, клик подтягивает картинку референсом. */
+let mkShowData = null;
+
+function mkGroupShowcase(box) {
+  const g = mkGroup(box, "make.grpShowcase", false, null);
+  const title = $(".mk-group-title", g);
+  if (title && !t("make.grpShowcase")) title.textContent = LANG === "ru" ? "Заготовки" : "Presets";
+  const wrap = document.createElement("div");
+  wrap.className = "mk-show";
+  wrap.innerHTML = `<div class="skel" style="min-height:70px"></div>`;
+  g.appendChild(wrap);
+  const paint = () => {
+    const d = mkShowData || {};
+    const lane = (cap, items, onPick, tall) => {
+      if (!items || !items.length) return "";
+      return `<div class="mk-lane"><small>${escHtml(cap)}</small>
+        <div class="mk-lane-row ${tall ? "tall" : ""}">${items.map((x, i) => `
+          <button type="button" data-i="${i}" title="${escHtml(x.title || x.label || "")}">
+            ${x.img ? `<img src="${escHtml(x.img)}" alt="" loading="lazy"/>` : `<i>${escHtml((x.label || "?").slice(0, 2))}</i>`}
+            <b>${escHtml(x.label || "")}</b>
+          </button>`).join("")}</div></div>`;
+    };
+    wrap.innerHTML =
+      lane(LANG === "ru" ? "Промты" : "Prompts", d.boards, 0, true)
+      + lane(LANG === "ru" ? "Камера" : "Camera", d.cameras, 0, true)
+      + lane(LANG === "ru" ? "Персонажи" : "Characters", d.chars, 0, false)
+      + lane(LANG === "ru" ? "Предметы" : "Products", d.items, 0, false);
+    const lanes = $$(".mk-lane", wrap);
+    const wire = (laneEl, items, pick) => {
+      if (!laneEl) return;
+      $$("button[data-i]", laneEl).forEach((b) =>
+        b.addEventListener("click", () => pick(items[Number(b.dataset.i)])));
+    };
+    const kitPick = (x) => {
+      chatState.kit = chatState.kit || [];
+      if (!chatState.kit.some((k) => k.key === x.key)) {
+        chatState.kit.push({ key: x.key, label: x.label, text: x.text });
+      }
+      mkRenderKit();
+    };
+    const refPick = async (x) => {
+      try {
+        const r = await fetch(x.img, { credentials: "same-origin" });
+        const blob = await r.blob();
+        const fd = new FormData();
+        fd.append("file", new File([blob], "ref.jpg", { type: blob.type || "image/jpeg" }));
+        const up = await api("/api/chat/upload", { method: "POST", body: fd });
+        up.kind = x.refKind || "vibe";
+        chatState.files.push(up);
+        mkRenderFiles();
+      } catch (e) { mkFail(e); }
+    };
+    let li = 0;
+    if ((d.boards || []).length) wire(lanes[li++], d.boards, kitPick);
+    if ((d.cameras || []).length) wire(lanes[li++], d.cameras, kitPick);
+    if ((d.chars || []).length) wire(lanes[li++], d.chars, refPick);
+    if ((d.items || []).length) wire(lanes[li++], d.items, refPick);
+  };
+  if (mkShowData) { paint(); return; }
+  Promise.allSettled([
+    api(`/api/library?lang=${encodeURIComponent(LANG)}`),
+    api(`/api/cameras?lang=${encodeURIComponent(LANG)}`),
+    api("/api/characters/all"),
+    api("/api/mockup/products"),
+  ]).then(([lib, cams, chars, prods]) => {
+    const L = lib.value || {}; const C = cams.value || {};
+    mkShowData = {
+      // Карточки живут и БЕЗ превью (плашка с инициалами): кадры Тони
+      // догенерируются батчем, и пустая карусель до тех пор — дыра.
+      boards: (L.boards || []).filter((x) => !x.locked)
+        .slice(0, 14).map((x) => ({ key: x.key, label: x.label,
+          img: x.preview_url || (x.preview_urls || [])[0] || "",
+          text: x.solo || x.first || "" })),
+      cameras: (C.cameras || C.presets || [])
+        .slice(0, 14).map((x) => ({ key: x.key, label: x.label,
+          img: x.preview_url || (x.preview_urls || [])[0] || "",
+          text: x.solo || x.text || "" })),
+      chars: ((chars.value || {}).characters || []).filter((x) => x.photo_url)
+        .slice(0, 14).map((x) => ({ key: "c" + x.id, label: x.name || "—",
+          img: x.photo_url, refKind: "vibe" })),
+      items: ((prods.value || {}).products || []).filter((x) => x.url)
+        .slice(0, 14).map((x) => ({ key: "p" + x.track_id, label: x.title || "—",
+          img: x.url, refKind: "copy" })),
+    };
+    paint();
+  });
+}
+
+/* ПРОМТЫ-ШАБЛОНЫ в правой панели: свои сверху, каталог заготовок ниже.
+   Клик подставляет текст в поле — не «открывает витрину, где надо ещё раз
+   выбрать». Свои шаблоны лежат в localStorage браузера: это черновики
+   одного человека на одной машине, и заводить под них таблицу с синком
+   раньше, чем ими начнут пользоваться, — работа вперёд спроса. */
+const MK_TPL_KEY = "lolq_chat_templates";
+
+function mkOwnTemplates() {
+  try { return JSON.parse(localStorage.getItem(MK_TPL_KEY) || "[]"); }
+  catch (e) { return []; }
+}
+function mkSaveTemplates(list) {
+  try { localStorage.setItem(MK_TPL_KEY, JSON.stringify(list.slice(0, 40))); }
+  catch (e) { /* приватный режим — молча живём без своих шаблонов */ }
+}
+
+let mkLibCache = null;
+
+function mkGroupTemplates(box) {
+  const g = mkGroup(box, "make.grpTemplates", false, null);
+  const title = $(".mk-group-title", g);
+  if (title && !t("make.grpTemplates")) {
+    title.textContent = LANG === "ru" ? "Промты-шаблоны" : "Prompt templates";
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "mk-tpl";
+  g.appendChild(wrap);
+
+  const put = (text) => {
+    const field = chatEl("cc-text");
+    if (!field) return;
+    field.value = text;
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+  };
+
+  const paint = (boards) => {
+    wrap.innerHTML = "";
+    const own = mkOwnTemplates();
+    own.forEach((tpl, i) => {
+      const row = document.createElement("div");
+      row.className = "mk-tpl-row own";
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-tpl-btn";
+      b.textContent = tpl.slice(0, 60);
+      b.title = tpl;
+      b.addEventListener("click", () => put(tpl));
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ghost mk-mem-del";
+      del.textContent = "✕";
+      del.addEventListener("click", () => {
+        const list = mkOwnTemplates();
+        list.splice(i, 1);
+        mkSaveTemplates(list);
+        paint(boards);
+      });
+      row.append(b, del);
+      wrap.appendChild(row);
+    });
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "ghost mk-mem-add";
+    save.textContent = LANG === "ru"
+      ? "+ сохранить текущий как шаблон" : "+ save current as template";
+    save.addEventListener("click", () => {
+      const field = chatEl("cc-text");
+      const text = (field && field.value || "").trim();
+      if (!text) return;
+      const list = mkOwnTemplates();
+      if (!list.includes(text)) list.unshift(text);
+      mkSaveTemplates(list);
+      paint(boards);
+    });
+    wrap.appendChild(save);
+
+    if (!boards.length) return;
+    const det = document.createElement("details");
+    det.className = "mk-acc";
+    det.innerHTML = `<summary><span>${escHtml(LANG === "ru"
+      ? "Заготовки каталога" : "Catalogue presets")}</span></summary>`;
+    boards.slice(0, 30).forEach((card) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mk-tpl-btn";
+      b.textContent = card.label;
+      b.title = card.desc || "";
+      b.addEventListener("click", () => put(card.solo || card.first || card.text || ""));
+      det.appendChild(b);
+    });
+    wrap.appendChild(det);
+  };
+
+  paint([]);
+  if (mkLibCache) { paint(mkLibCache); return; }
+  api(`/api/library?lang=${encodeURIComponent(LANG)}`).then((res) => {
+    mkLibCache = (res.boards || []).filter((x) => !x.locked);
+    paint(mkLibCache);
+  }).catch(() => { /* каталог не отдался — свои шаблоны работают и так */ });
+}
+
+/* ПАМЯТЬ АГЕНТА в правой панели. Список фактов, которые он запомнил о
+   человеке, с крестиком у каждого. Память, которую нельзя посмотреть и
+   почистить, — это не память, а подслушивание: человек обязан видеть, что
+   именно о нём записано, и стирать лишнее сам. */
+function mkGroupMemory(box) {
+  const g = mkGroup(box, "make.grpMemory", false, null);
+  const title = $(".mk-group-title", g);
+  if (title && !t("make.grpMemory")) title.textContent = LANG === "ru" ? "Память" : "Memory";
+  const list = document.createElement("div");
+  list.className = "mk-mem";
+  list.textContent = t("common.loading");
+  g.appendChild(list);
+  const paint = (facts) => {
+    list.innerHTML = "";
+    if (!facts.length) {
+      const p = document.createElement("p");
+      p.className = "mk-why";
+      p.textContent = LANG === "ru"
+        ? "Пока ничего не запомнил — расскажи о себе агенту."
+        : "Nothing remembered yet — tell the agent about yourself.";
+      list.appendChild(p);
+    }
+    facts.forEach((f) => {
+      const row = document.createElement("div");
+      row.className = "mk-mem-row";
+      const sp = document.createElement("span");
+      sp.textContent = f.fact;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ghost mk-mem-del";
+      del.textContent = "✕";
+      del.addEventListener("click", async () => {
+        await api(`/api/chat/memory/${f.id}`, { method: "DELETE" });
+        load();
+      });
+      row.append(sp, del);
+      list.appendChild(row);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ghost mk-mem-add";
+    add.textContent = LANG === "ru" ? "+ запомнить факт" : "+ remember a fact";
+    add.addEventListener("click", async () => {
+      const fact = window.prompt(LANG === "ru" ? "Что запомнить?" : "What to remember?");
+      if (!fact) return;
+      await api("/api/chat/memory", { method: "POST", body: { fact } });
+      load();
+    });
+    list.appendChild(add);
+  };
+  const load = async () => {
+    try {
+      const res = await api("/api/chat/memory");
+      paint(res.facts || []);
+    } catch (e) {
+      list.textContent = "";                 // гостю память не положена
+    }
+  };
+  load();
+}
+
 function mkAnyChanged() {
   const model = chatCurrentModel();
   if (!model) return false;
@@ -10788,10 +13103,14 @@ function mkRenderParams() {
   mkGroupModel(box);
   mkGroupVersion(box);
   mkGroupAspect(box);
+  mkGroupCamera(box);
   mkGroupQuality(box);
   mkGroupDuration(box);
   mkGroupVariants(box);
   mkGroupTarget(box);
+  mkGroupShowcase(box);
+  mkGroupTemplates(box);
+  mkGroupMemory(box);
 
   const resetAll = chatEl("mk-reset-all");
   if (resetAll) {
@@ -10814,6 +13133,31 @@ function mkAfterModelChange() {
 }
 
 // ────────── строка ввода ──────────
+
+/* Чипы выбранных с каруселей промтов — над полем ввода, крестик снимает. */
+function mkRenderKit() {
+  let box = chatEl("cc-kit");
+  if (!box) {
+    const field = document.querySelector("#chat .cc-field");
+    if (!field) return;
+    box = document.createElement("div");
+    box.id = "cc-kit";
+    box.className = "cc-kit";
+    field.parentElement.insertBefore(box, field);
+  }
+  box.innerHTML = "";
+  (chatState.kit || []).forEach((k, i) => {
+    const chip = document.createElement("span");
+    chip.className = "cc-kit-chip";
+    chip.innerHTML = `<span>${escHtml(k.label)}</span><button type="button">✕</button>`;
+    chip.querySelector("button").addEventListener("click", () => {
+      chatState.kit.splice(i, 1);
+      mkRenderKit();
+      mkRenderParams();
+    });
+    box.appendChild(chip);
+  });
+}
 
 function mkRenderFiles() {
   const box = chatEl("cc-files");
@@ -10974,6 +13318,7 @@ function mkRenderBar() {
 }
 
 function chatRenderCompose() {
+  mkRenderKit();
   mkRenderFiles();
   mkRenderSource();
   mkRenderCount();
@@ -10981,7 +13326,17 @@ function chatRenderCompose() {
   const meter = chatEl("cc-meter");
   const active = chatState.chats.find((c) => c.id === chatState.activeId);
   const spent = active ? Number(active.spent || 0) : 0;
-  if (meter) meter.textContent = t("chat.meter", { n: tNum(spent), unit: chatUnit(spent) });
+  if (meter) {
+    meter.textContent = t("chat.meter", { n: tNum(spent), unit: chatUnit(spent) });
+    // Расход разговора — служебная строка ШАПКИ, а не второй заголовок над
+    // полем ввода: в капсуле он выглядел как ещё одно поле.
+    const head = document.querySelector("#chat .chat-head");
+    const wrap = meter.closest(".cc-meter") || meter;
+    if (head && wrap.parentElement !== head) {
+      wrap.classList.add("in-head");
+      head.insertBefore(wrap, chatEl("chat-points"));
+    }
+  }
   mkRenderSideFoot();
   const points = chatEl("chat-points");
   if (points && chatState.meta) {
@@ -10999,6 +13354,7 @@ function chatRenderAll() {
   mkRenderTabs();
   chatRenderList();
   mkRenderProjects();
+  mkRenderBank();
   chatRenderFeed();
   chatRenderCompose();
   mkRenderParams();
@@ -11159,8 +13515,13 @@ async function chatSend() {
     }
     const fileKinds = {};
     chatState.files.forEach((f) => { fileKinds[String(f.id)] = f.kind || "vibe"; });
+    // Набор с каруселей уходит ПЕРЕД текстом человека: заготовка задаёт
+    // сцену, его слова уточняют. После отправки набор очищается.
+    const kitText = (chatState.kit || []).map((k) => k.text).filter(Boolean).join(" ");
     const body = {
-      text,
+      // Камера-пресет дописывается к тексту: движку нужен единый промпт,
+      // отдельного поля камеры у видео-моделей нет.
+      text: (kitText ? kitText + "\n\n" : "") + text + mkCameraSuffix(),
       engine: model.id,
       file_ids: chatState.files.map((f) => f.id),
       file_kinds: fileKinds,
@@ -11175,6 +13536,7 @@ async function chatSend() {
     await api(`/api/chats/${chatState.activeId}/messages`, { method: "POST", body });
     ta.value = "";
     chatState.files = [];
+    chatState.kit = [];
     chatState.sourceId = 0;
     chatState.lastId = 0;
     chatState.enhanceBackup = "";

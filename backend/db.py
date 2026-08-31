@@ -13,7 +13,16 @@ from sqlalchemy.orm import DeclarativeBase, backref, relationship, sessionmaker
 DB_PATH = os.environ.get("DB_PATH", "/data/rapclips.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+# ПУЛ. Дефолтные 5+10 соединений выгребались досуха: генерации живут в
+# daemon-тредах и держат сессию всё время работы движка (минуты), а поллер и
+# веб-запросы идут поверх. Итог — «QueuePool limit reached, timeout 30s»,
+# сайт висит целиком, хотя контейнер жив (29.08). Даём запас и не ждём
+# вечность на исчерпании; recycle отдаёт залежавшиеся соединения обратно.
+engine = create_engine(
+    f"sqlite:///{DB_PATH}",
+    connect_args={"check_same_thread": False},
+    pool_size=40, max_overflow=60, pool_timeout=15, pool_recycle=1800,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
@@ -88,6 +97,10 @@ class User(Base):
     yandex_id = Column(String, nullable=False, default="")
     google_id = Column(String, nullable=False, default="")
     email = Column(String, nullable=False, default="")
+    # Email подтверждён кодом из письма. Пустой email + True не бывает.
+    email_verified = Column(Boolean, nullable=False, default=False)
+    # Телефон для входа по SMS-коду, нормализованный: только цифры, "7...".
+    phone = Column(String, nullable=False, default="")
     # Подписка ЮKassa: способ оплаты для автосписания и дата продления.
     pay_method_id = Column(String, nullable=False, default="")
     plan_until = Column(DateTime, nullable=True)
@@ -318,6 +331,10 @@ class Character(Base):
     # проекту: в сериале реплики серии озвучиваются голосом того, кто говорит,
     # а не «общим диктором», иначе герой меняет голос между сериями.
     voice_id = Column(String, nullable=False, default="")
+    # Голосовая манера по умолчанию: эмоция/темп словами («спокойно, с ленцой»,
+    # «агрессивно, быстро»). Из неё выводятся настройки stability/style TTS,
+    # если запрос озвучки не задал эмоцию явно.
+    voice_note = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -382,6 +399,12 @@ class CharacterAttribute(Base):
     position = Column(Integer, nullable=False, default=0)
     name = Column(String, nullable=False, default="")
     description = Column(Text, nullable=False, default="")
+    # ССЫЛКА НА ПРЕДМЕТ (трек мокап-проекта). Атрибут и предмет — одна и та же
+    # вещь с двух сторон: у персонажа она «фирменная вещь», в мокапах —
+    # объект съёмки. Связав их, кадр берёт фото ПРЕДМЕТА (их там ракурсами
+    # больше), а не редкие фото атрибута, и герой с вещью совпадают всегда.
+    # 0 = самостоятельный атрибут, как было раньше.
+    item_track_id = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=now)
     updated_at = Column(DateTime, default=now, onupdate=now)
 
@@ -517,6 +540,13 @@ class Track(Base):
     # массовка или чистый пейзаж.
     random_cast = Column(Boolean, nullable=False, default=False)
 
+    # 3D-облёт товара (режим мокапов): 8 ракурсов по кругу, листаются drag'ом
+    # как вращение модельки. Файлы — JSON-список имён в UPLOAD_DIR; статус —
+    # те же '' | queued | running | done | error, note — живой прогресс «3/8».
+    turnaround_status = Column(String, nullable=False, default="")
+    turnaround_note = Column(Text, nullable=False, default="")
+    turnaround_files = Column(Text, nullable=False, default="")
+
     # «Супергенерация»: конвейер сюжет→сцены→кадры→видео→сборка одним нажатием.
     # note — живой прогресс для строки статуса на карточке трека.
     supergen_status = Column(String, nullable=False, default="")  # '' | queued | running | done | error
@@ -617,10 +647,17 @@ class TrendPreset(Base):
     id = Column(Integer, primary_key=True)
     position = Column(Integer, nullable=False, default=0)
     title = Column(String, nullable=False, default="")
+    # Английский дубль названия для витрины (title — русский, его правит
+    # владелец; en генерится переводом при сохранении, можно поправить руками).
+    title_en = Column(String, nullable=False, default="")
     # Промпт КАДРА: как вписать человека с фото в сцену шаблона.
     image_prompt = Column(Text, nullable=False, default="")
     # Промпт ДВИЖЕНИЯ: что происходит в ролике.
     motion_prompt = Column(Text, nullable=False, default="")
+    # Русские исходники промптов: владелец правит по-русски, в модель уходит
+    # английский перевод (генерится при сохранении).
+    image_prompt_ru = Column(Text, nullable=False, default="")
+    motion_prompt_ru = Column(Text, nullable=False, default="")
     poster_filename = Column(String, nullable=False, default="")   # обложка карточки
     sample_filename = Column(String, nullable=False, default="")   # ролик-пример
     image_engine = Column(String, nullable=False, default="")      # пусто = по тарифу
@@ -773,6 +810,10 @@ class Scene(Base):
     camera_move = Column(String, nullable=False, default="")
     # Акт серии: cold_open | act1 | act2 | act3 | tag (у клипа и UGC пусто).
     act = Column(String, nullable=False, default="")
+    # Диалог кадра (режим «сериалы»): JSON-список [{"who": имя, "line": текст}].
+    # Несколько коротких реплик на кадр; speaker/lyric_line дублируют ПЕРВУЮ
+    # реплику для совместимости со старым кодом (сборка, подписи, озвучка).
+    dialogue_json = Column(Text, nullable=False, default="")
     # Кто говорит в кадре. РЕПЛИКА при этом лежит в lyric_line — второго поля
     # под текст не заводим: у клипа это строка трека, у серии — реплика, и
     # различие ровно в подписи. Слот в 6 секунд держит одну фразу, диалог
@@ -1121,6 +1162,30 @@ class PointEvent(Base):
     track_id = Column(Integer, nullable=False, default=0)
 
 
+class BotEvent(Base):
+    """Очередь уведомлений телеграм-бота о ГОТОВЫХ генерациях.
+
+    Генерации завершаются в тредах API, а сообщение человеку шлёт отдельный
+    контейнер бота — единственный, кто знает рабочий маршрут до api.telegram.org.
+    Прямого пуша между ними нет намеренно (бот — поллер без своего HTTP-порта),
+    поэтому завершение пишет строку сюда, а бот забирает их пачкой через
+    /internal/bot-events. Таблица, а не память процесса: рестарт API между
+    «готово» и опросом бота не должен молча съедать уведомление."""
+    __tablename__ = "bot_events"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    kind = Column(String, nullable=False, default="")    # clip | trend | mockup
+    status = Column(String, nullable=False, default="done")  # done | error
+    track_id = Column(Integer, nullable=False, default=0)
+    job_id = Column(Integer, nullable=False, default=0)
+    scene_id = Column(Integer, nullable=False, default=0)
+    filename = Column(String, nullable=False, default="")
+    title = Column(String, nullable=False, default="")
+    error = Column(String, nullable=False, default="")
+    delivered = Column(Boolean, nullable=False, default=False, index=True)
+
+
 class AdminAction(Base):
     """Что админ сделал руками. Журнал токенов покрывает ТОЛЬКО токены: смена
     тарифа, блокировка и продление в него не ложатся, а знать, кто и когда
@@ -1383,6 +1448,40 @@ class MusicTrack(Base):
     lead_id = Column(Integer, nullable=False, default=0)
 
 
+class DemoSubmission(Base):
+    """Демка, отправленная на лейбл со страницы «Дистрибуция».
+
+    Отличие от MusicLead: лид — это «свяжитесь со мной», а демка — полный
+    пакет (файл трека, обложка, права, раскрытие ИИ, согласие с офертой),
+    прошедший технические проверки ffprobe'ом. Отчёт проверок хранится
+    рядом с заявкой: через месяц никто не вспомнит, каким был файл."""
+    __tablename__ = "demo_submissions"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    artist = Column(String, nullable=False, default="")
+    track_title = Column(String, nullable=False, default="")
+    genre = Column(String, nullable=False, default="")
+    socials = Column(Text, nullable=False, default="")
+    contact = Column(String, nullable=False, default="")
+    isrc = Column(String, nullable=False, default="")
+    comment = Column(Text, nullable=False, default="")
+    # Права: материал оригинальный, ИИ-состав раскрыт, оферта принята.
+    # Без всех трёх заявка не создаётся вовсе — это не галочки «для галочки»,
+    # а то, что лейбл обязан спросить до прослушивания.
+    original_confirm = Column(Boolean, nullable=False, default=False)
+    ai_disclosure = Column(String, nullable=False, default="")  # none|music|vocals|all
+    agree_terms = Column(Boolean, nullable=False, default=False)
+    audio_filename = Column(String, nullable=False, default="")
+    audio_name = Column(String, nullable=False, default="")
+    cover_filename = Column(String, nullable=False, default="")
+    # JSON-отчёт технических проверок на момент приёма (формат, битность,
+    # частота, клиппинг, обложка).
+    checks_json = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="new")  # new | seen | accepted | declined
+    note = Column(Text, nullable=False, default="")
+
+
 class MusicLead(Base):
     """Заявка в лейбл qlolmusic.
 
@@ -1406,6 +1505,165 @@ class MusicLead(Base):
     user_agent = Column(String, nullable=False, default="")
     status = Column(String, nullable=False, default="new")  # new | seen | done
     note = Column(Text, nullable=False, default="")
+
+
+class AuthCode(Base):
+    """Одноразовые коды входа: подтверждение email, сброс пароля, SMS-вход.
+
+    kind: email_verify | email_reset | phone. address — email или телефон
+    (нормализованный). Код живёт 1 час, гасится полем used, а не удалением:
+    строка остаётся следом для rate-limit «5 SMS в день на номер»."""
+    __tablename__ = "auth_codes"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    kind = Column(String, nullable=False, default="")
+    address = Column(String, nullable=False, default="", index=True)
+    code = Column(String, nullable=False, default="")
+    user_id = Column(Integer, nullable=False, default=0)
+    used = Column(Boolean, nullable=False, default=False)
+    # Счётчик неверных попыток: после 5 промахов код сгорает — шестизначный
+    # код нельзя дать перебрать.
+    attempts = Column(Integer, nullable=False, default=0)
+
+
+class ChatMemory(Base):
+    """ПАМЯТЬ АГЕНТА О ЧЕЛОВЕКЕ. Одна строка — один факт («снимает рэп на
+    свои треки», «любит плёночное зерно», «работает под ником lol4»).
+
+    Почему отдельная таблица, а не «саммари последнего диалога»: факт живёт
+    дольше разговора и должен переживать удаление ленты. Почему короткие
+    факты, а не пересказ: их видно человеку списком, и лишний он удаляет
+    одним нажатием — пересказ так не почистишь."""
+    __tablename__ = "chat_memory"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    fact = Column(String, nullable=False, default="")
+    source = Column(String, nullable=False, default="agent")
+
+
+# ─────────────────────────── ШКОЛА: КУРСЫ ───────────────────────────
+# Уроки-маркдауны (learn.py) остаются как были — это SEO-витрина и база
+# знаний. Курсы — другое: их редактируют из интерфейса, у них модули,
+# видео, авторы, кейсы, отзывы и платный доступ, и держать такое файлами
+# в образе значит требовать деплой ради переименования урока.
+
+class Course(Base):
+    __tablename__ = "courses"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    title = Column(String, nullable=False, default="")
+    subtitle = Column(String, nullable=False, default="")
+    cover_filename = Column(String, nullable=False, default="")
+    # draft — виден только админу, live — в витрине, archived — спрятан.
+    status = Column(String, nullable=False, default="draft")
+    # free — читают все; paid — за токены или по тарифу; admin_only — наш.
+    access = Column(String, nullable=False, default="free")
+    price_points = Column(Integer, nullable=False, default=0)
+    # Пустая строка = тариф не требуется. Иначе free|pro|pro_max|studio.
+    min_plan = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    # Ключ сида: чтобы повторный старт не наплодил вторые «Первый клип».
+    seed_key = Column(String, nullable=False, default="", index=True)
+
+
+class CourseModule(Base):
+    __tablename__ = "course_modules"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    course_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    course = relationship("Course", backref=backref(
+        "modules", cascade="all, delete-orphan",
+        order_by="CourseModule.sort_order"))
+
+
+class Lesson(Base):
+    __tablename__ = "course_lessons"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    module_id = Column(Integer, ForeignKey("course_modules.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    summary = Column(String, nullable=False, default="")
+    body_md = Column(Text, nullable=False, default="")
+    # Наше видео (/api/media/<file>) или внешняя ссылка — одно поле,
+    # потому что плееру нужен ровно один адрес.
+    video_url = Column(String, nullable=False, default="")
+    video_filename = Column(String, nullable=False, default="")
+    cover_filename = Column(String, nullable=False, default="")
+    minutes = Column(Integer, nullable=False, default=0)
+    status = Column(String, nullable=False, default="draft")
+    published_at = Column(DateTime, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    module = relationship("CourseModule", backref=backref(
+        "lessons", cascade="all, delete-orphan", order_by="Lesson.sort_order"))
+
+
+class LessonProgress(Base):
+    __tablename__ = "course_lesson_progress"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    lesson_id = Column(Integer, nullable=False, default=0, index=True)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    done_at = Column(DateTime, default=now)
+
+
+class CourseAccess(Base):
+    """Кому открыт платный курс. source: purchase | admin | plan."""
+    __tablename__ = "course_access"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    granted_at = Column(DateTime, default=now)
+    source = Column(String, nullable=False, default="purchase")
+
+
+class CourseAuthor(Base):
+    __tablename__ = "course_authors"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    name = Column(String, nullable=False, default="")
+    role = Column(String, nullable=False, default="")
+    avatar_filename = Column(String, nullable=False, default="")
+    bio = Column(Text, nullable=False, default="")
+
+
+class CourseAuthorLink(Base):
+    """Многие-ко-многим руками, без association table: мягкая миграция
+    ALTER'ом умеет только колонки, и обычная таблица тут проще."""
+    __tablename__ = "course_author_links"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    author_id = Column(Integer, nullable=False, default=0, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class CourseCase(Base):
+    """Кейс курса: работа ученика или наш пример."""
+    __tablename__ = "course_cases"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    title = Column(String, nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    media_filename = Column(String, nullable=False, default="")
+    video_url = Column(String, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class CourseReview(Base):
+    __tablename__ = "course_reviews"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=now)
+    course_id = Column(Integer, nullable=False, default=0, index=True)
+    user_id = Column(Integer, nullable=False, default=0, index=True)
+    author_name = Column(String, nullable=False, default="")
+    rating = Column(Integer, nullable=False, default=5)
+    text = Column(Text, nullable=False, default="")
+    published = Column(Boolean, nullable=False, default=False)
 
 
 def init_db() -> None:

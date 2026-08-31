@@ -63,6 +63,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", os.environ.get("TG_LOGIN_BOT_USERNAME", "")).lstrip("@")
+MINIAPP_NAME = os.environ.get("TG_MINIAPP_NAME", "app").strip().lstrip("/")
 TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
 
 # Выход наружу. Из РФ api.telegram.org напрямую может не открыться, поэтому
@@ -103,6 +104,14 @@ EDIT_GAP = float(os.environ.get("BOT_EDIT_GAP", "6"))
 
 POLL_TIMEOUT = int(os.environ.get("BOT_LONGPOLL_TIMEOUT", "45"))
 WATCH_POLL = float(os.environ.get("BOT_WATCH_POLL", "8"))
+
+# Как долго доверять закешированной паре «tg_id → аккаунт». РАНЬШЕ было 30
+# дней, и это оказалось багом: когда tg_id владельца перевесили на другой
+# аккаунт прямо в базе, бот ещё месяц ходил под старым uid (кука валидна,
+# 401 не приходит) и честно показывал «Клипов пока нет». Единственный
+# источник правды — User.tg_id, поэтому сверяемся с ним через служебный
+# роут не реже, чем раз в этот интервал: это один SELECT по индексу.
+SESSION_RESYNC_S = int(os.environ.get("BOT_SESSION_RESYNC_S", "600"))
 
 # Цена в звёздах. Telegram требует продавать цифровые товары ТОЛЬКО за Stars,
 # внешние платёжные ссылки внутри бота запрещены. Курс покупки звёзд у людей
@@ -429,6 +438,10 @@ class Store:
     def watch_for(self, tg_id: str) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM watch WHERE tg_id=?", (str(tg_id),)).fetchall()
 
+    def watch_has(self, track_id: int) -> bool:
+        return self.db.execute("SELECT 1 FROM watch WHERE track_id=?",
+                               (int(track_id),)).fetchone() is not None
+
     # — кэш file_id: один раз залил, дальше шлём ссылкой —
     def file_id(self, key: str) -> str | None:
         row = self.db.execute("SELECT file_id FROM files WHERE key=?", (key,)).fetchone()
@@ -481,10 +494,13 @@ class Qlol:
         return r.json()
 
     async def session(self, tg_user: dict, ref: str = "", force: bool = False) -> str:
-        """Кука человека. Живёт 30 дней в базе бота, потом перевыписывается."""
+        """Кука человека. Кэш короткий (SESSION_RESYNC_S), потом ПЕРЕСВЕРКА
+        по tg_id: аккаунт могли перепривязать на сайте или руками в базе, а
+        кука со старым uid остаётся формально валидной — 401 не придёт
+        никогда, и без пересверки бот вечно живёт в чужом пустом аккаунте."""
         tg_id = str(tg_user["id"])
         row = self.store.user(tg_id)
-        if row and row["cookie"] and not force and time.time() - (row["cookie_at"] or 0) < 30 * 86400:
+        if row and row["cookie"] and not force and time.time() - (row["cookie_at"] or 0) < SESSION_RESYNC_S:
             return row["cookie"]
         data = await self._internal("/internal/tg-session", {
             "tg_id": tg_id,
@@ -493,8 +509,12 @@ class Qlol:
             "last_name": tg_user.get("last_name") or "",
             "ref": ref,
         })
+        new_uid = int(data["user"]["id"])
+        if row and row["uid"] and int(row["uid"]) != new_uid:
+            log.info("tg %s: аккаунт сменился %s → %s — пересинхронизировал по tg_id",
+                     tg_id, row["uid"], new_uid)
         self.store.upsert_user(tg_id, cookie=data["cookie"], cookie_at=time.time(),
-                               uid=data["user"]["id"], name=data["user"]["name"])
+                               uid=new_uid, name=data["user"]["name"])
         return data["cookie"]
 
     async def req(self, tg_user: dict, method: str, path: str, *, retry_auth: bool = True,
@@ -590,8 +610,33 @@ STR = {
             "🎵 <i>Just send an audio file to begin.</i>"),
         "hello_back": ("Welcome back, {name}.\n<b>{points} points</b> · {plan}\n\n"
                        "Send a track — or pick up where you left off."),
-        "menu_clips": "🎬 My clips", "menu_chars": "👤 Characters",
+        "menu_clips": "🎬 My clips", "menu_chars": "👥 Characters",
         "menu_points": "💎 Points", "menu_settings": "⚙️ Settings",
+        "menu_trends": "🔥 Trends", "menu_mockup": "📦 Mockups",
+        "menu_model3d": "🧊 3D model",
+        "trends_title": "🔥 <b>Trends</b> — pick one, send your photo, get the video.",
+        "trends_empty": "No trends right now — check back later.",
+        "trend_pick": "🔥 <b>{title}</b>\nSend me the photo to star in this trend.",
+        "gen_confirm": "Generate for ⚡{n}?",
+        "yes_go": "✅ Yes", "no_cancel": "✖️ Cancel",
+        "gen_started": ("🚀 Accepted. I'll send the result here when it's ready — "
+                        "you can close the chat."),
+        "trend_ready": "🔥 <b>{title}</b> is ready!",
+        "gen_failed": ("⚠️ <b>{title}</b> didn't work out: {why}\n"
+                       "The points went back to your balance."),
+        "evt_clip_done": "🎉 <b>{title}</b> is ready — sending it over.",
+        "evt_clip_fail": ("⚠️ <b>{title}</b> stopped: {why}\n"
+                          "Everything already generated is paid for — "
+                          "restarting won't charge for it again."),
+        "mockup_title": ("📦 <b>Mockups</b> — a product shot from one photo.\n"
+                         "Frame price: <b>⚡{n}</b>."),
+        "mockup_pick": "📦 <b>{title}</b>\nSend me a photo of your product.",
+        "mockup_ready": "📦 <b>{title}</b> — the shot is ready.",
+        "model3d_ask": ("🧊 Send a photo of your hero — I'll draw a model sheet: "
+                        "the same face from every angle."),
+        "char_name_ask": "What's the hero's name? One or two words.",
+        "open_app": "📱 Open the app",
+        "no_photo": "The photo got lost — start over, please.",
         "how_it_works": "▶️ How it works", "lang_btn": "🌐 EN / RU",
         "help": (
             "<b>How it works</b>\n\n"
@@ -801,8 +846,33 @@ STR = {
             "🎵 <i>Просто отправь аудиофайл — и поехали.</i>"),
         "hello_back": ("С возвращением, {name}.\n<b>{points} токенов</b> · {plan}\n\n"
                        "Пришли трек — или продолжи начатое."),
-        "menu_clips": "🎬 Мои клипы", "menu_chars": "👤 Персонажи",
+        "menu_clips": "🎬 Мои клипы", "menu_chars": "👥 Персонажи",
         "menu_points": "💎 Токены", "menu_settings": "⚙️ Настройки",
+        "menu_trends": "🔥 Тренды", "menu_mockup": "📦 Мокап",
+        "menu_model3d": "🧊 3D-моделька",
+        "trends_title": "🔥 <b>Тренды</b> — выбери, пришли своё фото, получи ролик.",
+        "trends_empty": "Трендов сейчас нет — загляни позже.",
+        "trend_pick": "🔥 <b>{title}</b>\nПришли фото — вставлю тебя в этот тренд.",
+        "gen_confirm": "Сгенерить за ⚡{n}?",
+        "yes_go": "✅ Да", "no_cancel": "✖️ Отмена",
+        "gen_started": ("🚀 Принял. Пришлю результат сюда, как будет готов — "
+                        "чат можно закрыть."),
+        "trend_ready": "🔥 <b>{title}</b> готов!",
+        "gen_failed": ("⚠️ <b>{title}</b> не получился: {why}\n"
+                       "Токены вернулись на баланс."),
+        "evt_clip_done": "🎉 <b>{title}</b> готов — отправляю.",
+        "evt_clip_fail": ("⚠️ <b>{title}</b> остановился: {why}\n"
+                          "Всё уже сгенерированное оплачено — повторный запуск "
+                          "второй раз за это не спишет."),
+        "mockup_title": ("📦 <b>Мокапы</b> — продуктовый кадр из одного фото.\n"
+                         "Цена кадра: <b>⚡{n}</b>."),
+        "mockup_pick": "📦 <b>{title}</b>\nПришли фото товара.",
+        "mockup_ready": "📦 <b>{title}</b> — кадр готов.",
+        "model3d_ask": ("🧊 Пришли фото героя — нарисую модельку: одно и то же "
+                        "лицо со всех ракурсов."),
+        "char_name_ask": "Как зовут героя? Одно-два слова.",
+        "open_app": "📱 Открыть приложение",
+        "no_photo": "Фото потерялось — начни заново, пожалуйста.",
         "how_it_works": "▶️ Как это работает", "lang_btn": "🌐 EN / RU",
         "help": (
             "<b>Как это работает</b>\n\n"
@@ -1138,8 +1208,10 @@ class Bot:
     def main_kb(self, lang: str) -> dict:
         return {
             "keyboard": [
-                [{"text": t(lang, "menu_clips")}, {"text": t(lang, "menu_chars")}],
-                [{"text": t(lang, "menu_points")}, {"text": t(lang, "menu_settings")}],
+                [{"text": t(lang, "menu_clips")}, {"text": t(lang, "menu_chars")},
+                 {"text": t(lang, "menu_trends")}],
+                [{"text": t(lang, "menu_mockup")}, {"text": t(lang, "menu_model3d")},
+                 {"text": t(lang, "menu_points")}, {"text": t(lang, "menu_settings")}],
             ],
             "resize_keyboard": True,
         }
@@ -1693,6 +1765,9 @@ class Bot:
                             await self.tick_watch(w, cache)
                         except Exception as e:  # noqa: BLE001
                             log.warning("наблюдение за треком %s: %s", w["track_id"], e)
+                # Тем же тактом — события «генерация готова» из API: они
+                # покрывают запуски с сайта и из мини-аппа, не только из бота.
+                await self.poll_events()
             except Exception as e:  # noqa: BLE001
                 log.exception("сбой цикла наблюдения: %s", e)
             await asyncio.sleep(WATCH_POLL)
@@ -1765,6 +1840,11 @@ class Bot:
         await self.send(chat_id, t(lang, "done_title", title=esc(track.get("title")),
                                    n=len(track.get("scenes") or []),
                                    dur=mmss(track.get("audio_duration_sec"))), lang)
+        # Отметка «этот клип уже отдан»: событие из /internal/bot-events о том
+        # же треке не должно прислать его второй раз.
+        if track.get("clip_url"):
+            self.store.set_kv(f"clip_sent:{track['id']}",
+                              track["clip_url"].rsplit("/", 1)[-1])
         # Отдача клипа = транскод + загрузка, это минуты. Отдельной задачей,
         # иначе цикл наблюдения замирает и чужие генерации теряют прогресс.
         self.spawn(self.send_clip(tg_user, chat_id, lang, track["id"], track=track),
@@ -2230,7 +2310,7 @@ class Bot:
         chars = project.get("characters", [])
         if not chars:
             await self.send(chat_id, t(lang, "chars_empty"), lang,
-                            reply_markup=kb([[btn(t(lang, "char_add"), "ch:text")]]))
+                            reply_markup=kb([[btn(t(lang, "char_add"), "ch:new")]]))
             return
         await self.send(chat_id, t(lang, "chars_title"), lang)
         for c in chars[:10]:
@@ -2251,7 +2331,268 @@ class Bot:
             else:
                 await self.send(chat_id, text, lang, reply_markup=kb(rows))
         await self.send(chat_id, "—", lang,
-                        reply_markup=kb([[btn(t(lang, "char_add"), "ch:text")]]))
+                        reply_markup=kb([[btn(t(lang, "char_add"), "ch:new")]]))
+
+    # ═══════════════ тренды, мокапы, 3D-моделька ═══════════════
+
+    async def load_trends(self) -> list[dict]:
+        """Витрина трендов — публичный /api/trends, каждый раз свежий: цена
+        в кнопке обязана совпасть со списанием, кэшировать её нельзя."""
+        try:
+            r = await self.api.http.get("/api/trends")
+            return (r.json() or {}).get("presets") or []
+        except Exception as e:  # noqa: BLE001
+            log.warning("не забрал тренды: %s", e)
+            return []
+
+    async def send_witness_album(self, chat_id: int, items: list[tuple[str, str]]) -> None:
+        """Альбом витринных картинок (постеры трендов, превью шаблонов) через
+        служебный роут: у витрины нет владельца, публичные роуты её прячут."""
+        files, media, tmp = {}, [], []
+        try:
+            for n, (fname, cap) in enumerate(items[:ALBUM_LIMIT]):
+                if not fname:
+                    continue
+                local = os.path.join(TMP_DIR, f"wt_{abs(hash(fname)) % 10**8}.jpg")
+                r = await self.api.http.get(f"/internal/witness-media/{fname}",
+                                            params={"thumb": 1},
+                                            headers={"X-Internal-Key": INTERNAL_KEY})
+                if r.status_code >= 400:
+                    continue
+                with open(local, "wb") as fh:
+                    fh.write(r.content)
+                tmp.append(local)
+                key = f"p{n}"
+                files[key] = (f"{key}.jpg", open(local, "rb").read(), "image/jpeg")
+                media.append({"type": "photo", "media": f"attach://{key}", "caption": cap})
+            if media:
+                await self.tg.call("sendMediaGroup", chat_id=chat_id, media=media,
+                                   files=files, timeout=600.0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("витринный альбом не ушёл: %s", e)
+        finally:
+            for p in tmp:
+                with contextlib.suppress(OSError):
+                    os.remove(p)
+
+    async def show_trends(self, tg_user: dict, chat_id: int, lang: str) -> None:
+        presets = await self.load_trends()
+        if not presets:
+            await self.send(chat_id, t(lang, "trends_empty"), lang)
+            return
+        top = presets[:6]
+        album = [(p["poster_url"].rsplit("/", 1)[-1] if p.get("poster_url") else "",
+                  f"{i}. {p['title']}") for i, p in enumerate(top, 1)]
+        await self.send_witness_album(chat_id, [x for x in album if x[0]])
+        rows = [[btn(f"{i}. {p['title']} — ⚡{p.get('cost_points', 0)}"[:60],
+                     f"tf:{p['id']}")] for i, p in enumerate(top, 1)]
+        await self.send(chat_id, t(lang, "trends_title"), lang, reply_markup=kb(rows))
+
+    async def pick_trend(self, tg_user: dict, chat_id: int, lang: str, preset_id: int) -> None:
+        presets = await self.load_trends()
+        p = next((x for x in presets if int(x["id"]) == int(preset_id)), None)
+        if not p:
+            await self.send(chat_id, t(lang, "trends_empty"), lang)
+            return
+        self.store.set_state(str(tg_user["id"]), {
+            "await": "trend_photo", "trend": int(p["id"]),
+            "cost": int(p.get("cost_points") or 0), "gtitle": p["title"]})
+        await self.send(chat_id, t(lang, "trend_pick", title=esc(p["title"])), lang)
+
+    async def run_trend(self, tg_user: dict, chat_id: int, lang: str) -> None:
+        st = self.store.state(str(tg_user["id"]))
+        path, preset = st.get("photo_path"), st.get("trend")
+        self.store.set_state(str(tg_user["id"]), None)
+        if not preset or not path or not os.path.exists(path):
+            await self.send(chat_id, t(lang, "no_photo"), lang)
+            return
+        try:
+            with open(path, "rb") as fh:
+                await self.api.req(tg_user, "POST", f"/api/trends/{int(preset)}/make",
+                                   files={"photo": ("photo.jpg", fh.read(), "image/jpeg")})
+        except Exception as e:  # noqa: BLE001
+            await self.report_api_error(chat_id, lang, e)
+            return
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        await self.send(chat_id, t(lang, "gen_started"), lang)
+
+    async def show_mockups(self, tg_user: dict, chat_id: int, lang: str) -> None:
+        try:
+            data = await self.api.req(tg_user, "GET", "/api/mockup/templates")
+        except Exception as e:  # noqa: BLE001
+            await self.report_api_error(chat_id, lang, e)
+            return
+        tpls = data.get("templates") or []
+        cost = int(data.get("cost_points") or 1)
+        # Витрина из шести: сперва showcase с превью, потом остальные с превью.
+        ordered = ([x for x in tpls if x.get("showcase") and x.get("preview_url")]
+                   + [x for x in tpls if not x.get("showcase") and x.get("preview_url")]
+                   + [x for x in tpls if not x.get("preview_url")])
+        top = ordered[:6]
+        lkey = "en" if lang == "en" else "ru"
+        album = [(x["preview_url"].rsplit("/", 1)[-1] if x.get("preview_url") else "",
+                  f"{i}. {x.get(lkey) or x['id']}") for i, x in enumerate(top, 1)]
+        await self.send_witness_album(chat_id, [a for a in album if a[0]])
+        rows = [[btn(f"{i}. {x.get('emoji', '')} {x.get(lkey) or x['id']} — ⚡{cost}"[:60],
+                     f"mk:{x['id']}")] for i, x in enumerate(top, 1)]
+        await self.send(chat_id, t(lang, "mockup_title", n=cost), lang,
+                        reply_markup=kb(rows))
+
+    async def pick_mockup(self, tg_user: dict, chat_id: int, lang: str, tpl_id: str) -> None:
+        try:
+            data = await self.api.req(tg_user, "GET", "/api/mockup/templates")
+        except Exception as e:  # noqa: BLE001
+            await self.report_api_error(chat_id, lang, e)
+            return
+        tpl = next((x for x in data.get("templates") or [] if x["id"] == tpl_id), None)
+        if not tpl:
+            return
+        lkey = "en" if lang == "en" else "ru"
+        self.store.set_state(str(tg_user["id"]), {
+            "await": "mockup_photo", "tpl": tpl_id,
+            "cost": int(data.get("cost_points") or 1),
+            "gtitle": tpl.get(lkey) or tpl_id})
+        await self.send(chat_id, t(lang, "mockup_pick",
+                                   title=esc(tpl.get(lkey) or tpl_id)), lang)
+
+    async def run_mockup(self, tg_user: dict, chat_id: int, lang: str) -> None:
+        st = self.store.state(str(tg_user["id"]))
+        path, tpl = st.get("photo_path"), st.get("tpl")
+        title = st.get("gtitle") or "Товар"
+        self.store.set_state(str(tg_user["id"]), None)
+        if not tpl or not path or not os.path.exists(path):
+            await self.send(chat_id, t(lang, "no_photo"), lang)
+            return
+        try:
+            # Товары бота живут в одном проекте вида «мокап» — как на сайте.
+            projects = await self.api.req(tg_user, "GET", "/api/projects")
+            pid = next((p["id"] for p in projects
+                        if p.get("mode") == "mockup" or p.get("kind") == "mockup"), 0)
+            if not pid:
+                pr = await self.api.req(tg_user, "POST", "/api/projects",
+                                        json={"kind": "mockup", "name": "Мокапы"})
+                pid = pr["id"]
+            track = await self.api.req(tg_user, "POST", f"/api/tracks?project_id={pid}",
+                                       data={"title": str(title)[:120]})
+            with open(path, "rb") as fh:
+                await self.api.req(tg_user, "POST", f"/api/tracks/{track['id']}/photos",
+                                   files={"photo": ("item.jpg", fh.read(), "image/jpeg")})
+            await self.api.req(tg_user, "POST",
+                               f"/api/tracks/{track['id']}/mockup-from-template",
+                               json={"template_id": tpl})
+        except Exception as e:  # noqa: BLE001
+            await self.report_api_error(chat_id, lang, e)
+            return
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        await self.send(chat_id, t(lang, "gen_started"), lang)
+
+    async def start_model3d(self, tg_user: dict, chat_id: int, lang: str) -> None:
+        try:
+            info = await self.api.req(tg_user, "GET", "/api/model-sheet")
+        except Exception as e:  # noqa: BLE001
+            await self.report_api_error(chat_id, lang, e)
+            return
+        self.store.set_state(str(tg_user["id"]), {
+            "await": "model3d_photo", "cost": int(info.get("cost") or 0)})
+        await self.send(chat_id, t(lang, "model3d_ask"), lang)
+
+    async def run_model3d(self, tg_user: dict, chat_id: int, lang: str) -> None:
+        st = self.store.state(str(tg_user["id"]))
+        path = st.get("photo_path")
+        self.store.set_state(str(tg_user["id"]), None)
+        if not path or not os.path.exists(path):
+            await self.send(chat_id, t(lang, "no_photo"), lang)
+            return
+        try:
+            name = (tg_user.get("first_name") or "Hero").strip()[:60] or "Hero"
+            ch = await self.api.req(tg_user, "POST", "/api/characters",
+                                    json={"name": name, "description": "",
+                                          "is_main": False})
+            with open(path, "rb") as fh:
+                await self.api.req(tg_user, "POST", f"/api/characters/{ch['id']}/photos",
+                                   files={"photo": ("hero.jpg", fh.read(), "image/jpeg")})
+        except Exception as e:  # noqa: BLE001
+            await self.report_api_error(chat_id, lang, e)
+            return
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        await self.make_model(tg_user, chat_id, lang, ch["id"])
+
+    # ═══════════ уведомления о генерациях, запущенных где угодно ═══════════
+
+    async def poll_events(self) -> None:
+        """Забрать у API события «генерация готова» и разослать результаты.
+
+        Ловит и то, что человек запустил НА САЙТЕ: клип, тренд, мокап-кадр.
+        Доставка at-most-once — сервер помечает строки при выдаче."""
+        # capabilities(), а не кэш напрямую: на старте бот мог подняться
+        # раньше API (docker перезапускает оба разом), и пустой кэш без
+        # повторного запроса выключал бы уведомления навсегда.
+        caps = await self.api.capabilities()
+        if not caps.get("bot_events"):
+            return
+        try:
+            data = await self.api._internal("/internal/bot-events", {"limit": 20})
+        except Exception as e:  # noqa: BLE001
+            log.warning("события бота не забрались: %s", str(e)[:120])
+            return
+        for ev in data.get("events") or []:
+            self.spawn(self.deliver_event(ev), "event")
+
+    async def deliver_event(self, ev: dict) -> None:
+        tg_id = str(ev.get("tg_id") or "")
+        row = self.store.user(tg_id)
+        chat_id = row["chat_id"] if row else None
+        if not chat_id:
+            return  # человек боту не писал — писать ему некуда
+        lang = (row["lang"] or "en")
+        tg_user = {"id": int(tg_id)}
+        kind, ok = str(ev.get("kind") or ""), ev.get("status") == "done"
+        title = esc(ev.get("title") or "")
+        why = esc(clip_text(str(ev.get("error") or ""), 200))
+        if kind == "clip":
+            track_id = int(ev.get("track_id") or 0)
+            if self.store.watch_has(track_id):
+                return  # запущено из бота — доставит цикл наблюдения
+            if ok:
+                # Один клип — одно сообщение, даже если событий два (сборка
+                # руками после супергенерации и т.п.).
+                key = f"clip_sent:{track_id}"
+                if self.store.get_kv(key) == (ev.get("filename") or ""):
+                    return
+                self.store.set_kv(key, ev.get("filename") or "")
+                await self.send(chat_id, t(lang, "evt_clip_done", title=title), lang)
+                await self.send_clip(tg_user, chat_id, lang, track_id)
+            else:
+                rows = [[btn(t(lang, "retry"), f"go:{track_id}")]]
+                await self.send(chat_id, t(lang, "evt_clip_fail", title=title, why=why),
+                                lang, reply_markup=kb(rows))
+        elif kind == "trend":
+            if ok and ev.get("filename"):
+                rows = [[btn(t(lang, "menu_trends"), "menu:trends")]]
+                await self.upload_video(tg_user, chat_id, lang,
+                                        f"/api/media/{ev['filename']}",
+                                        f"tv:{ev['filename']}",
+                                        t(lang, "trend_ready", title=title),
+                                        rows, {"audio_duration_sec": 0})
+            elif not ok:
+                await self.send(chat_id, t(lang, "gen_failed",
+                                           title=title or "Trend", why=why), lang)
+        elif kind == "mockup":
+            if ok and ev.get("filename"):
+                rows = [[btn(t(lang, "menu_mockup"), "menu:mockup")],
+                        [url_btn("🌐 " + ("web studio" if lang == "en" else "веб-студия"),
+                                 f"{PUBLIC_BASE_URL}/")]]
+                await self.send_photo(tg_user, chat_id, f"/api/media/{ev['filename']}",
+                                      t(lang, "mockup_ready", title=title), rows)
+            elif not ok:
+                await self.send(chat_id, t(lang, "gen_failed",
+                                           title=title or "Mockup", why=why), lang)
 
     # ═══════════════════════ ручной режим ═══════════════════════
 
@@ -2529,6 +2870,9 @@ class Bot:
             [btn(t(lang, "set_site"), "set:site")],
             [btn(t(lang, "set_unlink"), "set:unlink")],
         ]
+        if BOT_USERNAME:
+            rows.insert(2, [url_btn(t(lang, "open_app"),
+                                    f"https://t.me/{BOT_USERNAME}/{MINIAPP_NAME}")])
         if edit_msg:
             await self.edit(chat_id, edit_msg, t(lang, "settings_title"), reply_markup=kb(rows))
         else:
@@ -2584,10 +2928,14 @@ class Bot:
             await self.handle_photo(msg, tg_user, lang)
             return
 
-        # Кнопки нижней клавиатуры приходят обычным текстом.
+        # Кнопки нижней клавиатуры приходят обычным текстом. Сверяем ОБА
+        # языка: у человека в чате может висеть клавиатура, отправленная до
+        # смены языка, и её кнопки не должны превращаться в «пришли аудио».
         for key, fn in (("menu_clips", self.show_clips), ("menu_chars", self.show_characters),
+                        ("menu_trends", self.show_trends), ("menu_mockup", self.show_mockups),
+                        ("menu_model3d", self.start_model3d),
                         ("menu_points", self.show_points), ("menu_settings", self.show_settings)):
-            if text and text == t(lang, key):
+            if text and any(text == t(lg, key) for lg in ("en", "ru")):
                 await fn(tg_user, chat_id, lang)
                 return
 
@@ -2744,6 +3092,20 @@ class Bot:
                 self.store.set_state(tg_id, None)
                 await self.send(chat_id, t(lang, "saved"), lang)
                 await self.show_scene(tg_user, chat_id, lang, st["scene"])
+            elif waiting == "char_name":
+                # Имя героя из потока «Персонажи → Добавить»: фото уже лежат,
+                # осталось назвать и предложить модельку с честной ценой.
+                char_id = st.get("char")
+                await self.api.req(tg_user, "PATCH", f"/api/characters/{char_id}",
+                                   json={"name": text[:60].strip() or "Hero"})
+                self.store.set_state(tg_id, None)
+                rows = []
+                with contextlib.suppress(Exception):
+                    info = await self.api.req(tg_user, "GET", "/api/model-sheet")
+                    rows = [[btn(t(lang, "model_btn") + f" — ⚡{int(info.get('cost') or 0)}",
+                                 f"ch:model:{char_id}")]]
+                await self.send(chat_id, t(lang, "char_added", name=esc(text[:60])), lang,
+                                reply_markup=kb(rows) if rows else None)
             elif waiting == "char_desc":
                 await self.api.req(tg_user, "PATCH", f"/api/characters/{st['char']}",
                                    json={"description": text[:1500]})
@@ -2776,6 +3138,21 @@ class Bot:
         local = os.path.join(TMP_DIR, f"up_{tg_id}_{int(time.time() * 1000)}.jpg")
         try:
             await self.tg.download(photo["file_id"], local)
+            if waiting in ("trend_photo", "mockup_photo", "model3d_photo"):
+                # Файл живёт до подтверждения цены: платное действие не
+                # запускается без явного «Да» с цифрой в кнопке.
+                keep = os.path.join(TMP_DIR, f"keep_{tg_id}_{int(time.time() * 1000)}.jpg")
+                os.replace(local, keep)
+                nxt = {"trend_photo": ("trend_go", "tgo"),
+                       "mockup_photo": ("mockup_go", "mgo"),
+                       "model3d_photo": ("model3d_go", "m3go")}[waiting]
+                st.update({"await": nxt[0], "photo_path": keep})
+                self.store.set_state(tg_id, st)
+                rows = [[btn(t(lang, "yes_go"), nxt[1]),
+                         btn(t(lang, "no_cancel"), "gcancel")]]
+                await self.send(chat_id, t(lang, "gen_confirm", n=st.get("cost", 0)),
+                                lang, reply_markup=kb(rows))
+                return
             data = open(local, "rb").read()
             if waiting == "scene_ref":
                 await self.api.req(tg_user, "POST", f"/api/scenes/{st['scene']}/refs",
@@ -2921,6 +3298,35 @@ class Bot:
                 await self.answer_cb(cb["id"])
                 await self.send(chat_id, t(lang, "payout_ask"), lang,
                                 reply_markup={"force_reply": True})
+            elif data.startswith("tf:"):
+                await self.answer_cb(cb["id"])
+                await self.pick_trend(tg_user, chat_id, lang, int(data[3:]))
+            elif data.startswith("mk:"):
+                await self.answer_cb(cb["id"])
+                await self.pick_mockup(tg_user, chat_id, lang, data[3:])
+            elif data == "tgo":
+                await self.answer_cb(cb["id"])
+                await self.run_trend(tg_user, chat_id, lang)
+            elif data == "mgo":
+                await self.answer_cb(cb["id"])
+                await self.run_mockup(tg_user, chat_id, lang)
+            elif data == "m3go":
+                await self.answer_cb(cb["id"])
+                await self.run_model3d(tg_user, chat_id, lang)
+            elif data == "gcancel":
+                st = self.store.state(tg_id)
+                if st.get("photo_path"):
+                    with contextlib.suppress(OSError):
+                        os.remove(st["photo_path"])
+                self.store.set_state(tg_id, None)
+                await self.answer_cb(cb["id"])
+                await self.send(chat_id, t(lang, "cancelled"), lang)
+            elif data == "menu:trends":
+                await self.answer_cb(cb["id"])
+                await self.show_trends(tg_user, chat_id, lang)
+            elif data == "menu:mockup":
+                await self.answer_cb(cb["id"])
+                await self.show_mockups(tg_user, chat_id, lang)
             elif data.startswith("set:"):
                 await self.on_settings_cb(cb, tg_user, lang, data[4:], msg_id)
             else:
@@ -2947,12 +3353,22 @@ class Bot:
             self.store.set_state(tg_id, {**st, "await": "char_text"})
             await self.send(chat_id, t(lang, "who_ask"), lang,
                             reply_markup={"force_reply": True})
+        elif action == "new":
+            # «Персонажи → Добавить»: фото → имя → (по желанию) моделька.
+            self.store.set_state(tg_id, {"await": "char_photo", "flow": "cast"})
+            await self.send(chat_id, t(lang, "who_photo_ask"), lang)
         elif action == "photo":
             self.store.set_state(tg_id, {**st, "await": "char_photo"})
             await self.send(chat_id, t(lang, "who_photo_ask"), lang)
         elif action == "photodone":
-            self.store.set_state(tg_id, {**st, "await": None})
             char_id = st.get("char")
+            if st.get("flow") == "cast":
+                # Поток из «Персонажей»: дальше имя, а не подтверждение клипа.
+                self.store.set_state(tg_id, {"await": "char_name", "char": char_id})
+                await self.send(chat_id, t(lang, "char_name_ask"), lang,
+                                reply_markup={"force_reply": True})
+                return
+            self.store.set_state(tg_id, {**st, "await": None})
             rows = []
             if char_id:
                 rows = [[btn(t(lang, "model_btn"), f"ch:model:{char_id}")]]
@@ -2963,11 +3379,12 @@ class Bot:
             await self.show_confirm(tg_user, chat_id, lang)
         elif action.startswith("model:"):
             char_id = int(action.split(":")[1])
-            # Моделька рисуется ПО ОПИСАНИЮ (фото идут референсом), и без него
-            # эндпоинт вернёт 400. Спрашиваем заранее, а не показываем отказ.
+            # Модельке хватает ОДНОГО из двух: описания или фото (ровно как
+            # проверяет сервер). Просим описание, только когда нет ни того,
+            # ни другого, — а не показываем отказ.
             project = await self.api.req(tg_user, "GET", "/api/project")
             ch = next((c for c in project.get("characters", []) if c["id"] == char_id), {})
-            if not (ch.get("description") or "").strip():
+            if not (ch.get("description") or "").strip() and not (ch.get("photos") or []):
                 self.store.set_state(tg_id, {**st, "await": "char_desc", "char": char_id})
                 await self.send(chat_id, t(lang, "model_need_desc"), lang,
                                 reply_markup={"force_reply": True})
@@ -2990,8 +3407,12 @@ class Bot:
         не показываем молчание на минуту."""
         await self.send(chat_id, t(lang, "model_wait"), lang)
         try:
+            # Синхронный роут ждёт движок картинок — стандартных 120 секунд
+            # клиента может не хватить, а падать по таймауту на оплаченной
+            # генерации нельзя.
             res = await self.api.req(tg_user, "POST",
-                                     f"/api/characters/{char_id}/generate-model", json={})
+                                     f"/api/characters/{char_id}/generate-model",
+                                     json={}, timeout=600.0)
         except Exception as e:  # noqa: BLE001
             await self.report_api_error(chat_id, lang, e)
             return

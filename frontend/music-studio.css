@@ -199,8 +199,10 @@
 /* Лента капсул — четыре раздела карточки. Прокручивается пальцем. */
 .mus-tabs {
   display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch; max-width: 100%; min-width: 0;
   padding: 2px; margin: 14px 0 12px;
 }
+.mus-tabs .mus-tab { flex: none; }
 .mus-tabs::-webkit-scrollbar { display: none; }
 .mus-tab {
   flex: none; padding: 6px 12px; border-radius: 999px;
@@ -231,7 +233,7 @@
 .mus-num b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
 .mus-num s { text-decoration: none; font-size: 11px; color: var(--ink-muted); margin-left: 3px; }
 .mus-player { width: 100%; margin-top: 12px; }
-.mus-sections { display: flex; gap: 4px; margin-top: 10px; height: 10px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(45, 33, 26, .16); }
+.mus-secbar { display: flex; gap: 4px; margin-top: 10px; height: 10px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(45, 33, 26, .16); }
 .mus-sec { height: 100%; }
 .mus-sec-quiet { background: rgba(45, 33, 26, .12); }
 .mus-sec-steady { background: rgba(255, 181, 69, .45); }
@@ -363,3 +365,10 @@
   .mus-head .mus-title-in { grid-area: 2 / 1 / 3 / -1; min-width: 0; }
   .mus-head .mus-artist-in { grid-area: 3 / 1 / 4 / -1; min-width: 0; }
 }
+
+/* ── разделы верхнего уровня (Анализ/Мастеринг/Дорожки/Генерация/Дистрибуция) ── */
+.mus-sections { margin: 4px 0 14px; }
+.mus-status.warn .mus-dot { background: var(--gold, #d9a441); }
+.mus-status.warn { color: var(--gold-ink, #8a5a2b); }
+#mus-dist .mus-agreement { background: rgba(45, 33, 26, .04); border-radius: 10px; padding: 12px; }
+#mus-dist .mus-match { display: flex; margin-top: 8px; }

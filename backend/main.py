@@ -26,13 +26,14 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 import claude
 import formats
 import gate
 import learn
 import mediagen
+import mockup_catalog
 import voice
 import music
 import audio_analysis
@@ -41,10 +42,10 @@ import prompts_library
 import stripe_pay
 import textgen
 from db import (
-    AppSetting, ChangeLog, EarnClick, EarnSale, TeamProject, TeamTask, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
+    AppSetting, BotEvent, ChangeLog, EarnClick, EarnSale, TeamProject, TeamTask, StudioOrder, TrendJob, TrendPreset, AttributePhoto, Character, CharacterAttribute, CharacterPhoto, Doc, FileOwner,
     FrameCache, Payout, PointEvent, ProcessedPayment, Project, RefEvent, Scene,
     SceneRef, SceneVersion, SessionLocal, StyleAsset, StyleOverride, Track,
-    TrackPhoto, User, init_db, now,
+    AuthCode, TrackPhoto, User, init_db, now,
 )
 
 log = logging.getLogger("rapclips")
@@ -354,6 +355,21 @@ def _reset_orphan_jobs() -> None:
         # готов — забираем его. Иначе каждый деплой сжигал токены за работу,
         # которая была сделана.
         rescued = _rescue_paid_jobs(db)
+
+        # ВОЗОБНОВЛЯЕМ КАДРЫ, А НЕ ХОРОНИМ. Деплой или падение убивали тред, и
+        # десятки оплаченных сцен превращались в «прервано перезапуском —
+        # запусти заново»: человек видел стену ошибок и кликал руками. Деньги
+        # за них уже списаны при постановке, поэтому просто поднимаем работу
+        # заново — по одной, чтобы не завалить движки на старте.
+        resumed = 0
+        for sc in db.query(Scene).filter(
+                Scene.image_status.in_(("queued", "running"))).order_by(Scene.id).all():
+            which = "both" if (sc.image_filename and sc.image_last_filename) else "first"
+            threading.Thread(target=_run_scene_frames, args=(sc.id, which, ""), daemon=True).start()
+            resumed += 1
+        if resumed:
+            log.info("возобновлено кадров после перезапуска: %s", resumed)
+
         note = "прервано перезапуском сервиса — запусти заново"
         n = 0
         for model, pairs in (
@@ -362,8 +378,9 @@ def _reset_orphan_jobs() -> None:
                      ("clip_status", "clip_error"),
                      ("restyle_status", "restyle_note"),
                      ("supergen_status", "supergen_note"))),
-            (Scene, (("image_status", "image_error"),
-                     ("video_status", "video_error"))),
+            # image_status здесь больше НЕТ: кадры возобновляются выше,
+            # помечать их ошибкой значило бы стереть только что поднятую работу.
+            (Scene, (("video_status", "video_error"),)),
             (Project, (("story_status", "story_error"),)),
         ):
             for col, err in pairs:
@@ -385,7 +402,14 @@ def _reset_orphan_jobs() -> None:
         db.close()
 
 
-_reset_orphan_jobs()
+# ЗОВЁТСЯ В КОНЦЕ МОДУЛЯ, а не здесь. Раньше вызов стоял прямо тут — на 405-й
+# строке, — а _run_scene_frames определяется на 8000-й: к моменту вызова имени
+# ещё нет, и функция падала на NameError в первой же строке цикла. Ловил её
+# общий except, поэтому в логе была одна мягкая строка «не смог сбросить
+# зависшие задачи», а последствия — тяжёлые: НИ ОДНА зависшая задача не
+# сбрасывалась вообще. На проде висело 12 вечных «running»-сцен, у людей
+# кнопки навсегда оставались в «рисую…», а каждый деплой десять минут ждал
+# тишины, которой уже не могло наступить.
 
 
 
@@ -1015,6 +1039,33 @@ def _spawn_gen(user: "User", fn, *args, kind: str = "gen") -> None:
     gate.spawn(user.id, _parallel_limit(user), fn, args, kind=kind)
 
 
+def _bot_event(user_id, kind: str, status: str = "done", *, track_id: int = 0,
+               job_id: int = 0, scene_id: int = 0, filename: str = "",
+               title: str = "", error: str = "") -> None:
+    """Уведомление телеграм-боту: «у этого человека готова генерация».
+
+    СВОЯ сессия, а не сессия воркера: хуки зовутся и из успешных веток, и из
+    except после rollback — подсаживаться в чужую транзакцию в таком месте
+    значит однажды утащить за собой основной commit. Ошибка записи глотается
+    с логом: уведомление — вторичный продукт, генерацию оно не стоит.
+    Доставляет строку контейнер бота через /internal/bot-events (см. bot_api)."""
+    if not user_id:
+        return
+    try:
+        s = SessionLocal()
+        try:
+            s.add(BotEvent(user_id=int(user_id), kind=kind, status=status,
+                           track_id=int(track_id or 0), job_id=int(job_id or 0),
+                           scene_id=int(scene_id or 0),
+                           filename=os.path.basename(filename or ""),
+                           title=(title or "")[:200], error=(error or "")[:300]))
+            s.commit()
+        finally:
+            s.close()
+    except Exception as e:  # noqa: BLE001
+        log.warning("bot-событие %s для user %s не записалось: %s", kind, user_id, e)
+
+
 def _plan_image_engine(user: "User | None", want: str = "") -> str:
     """Движок КАДРОВ этого человека: дефолт тарифа, опущенный до реально
     живого. Нет KIE_API_KEY — тихо работаем на шлюзе (сцена не должна падать
@@ -1106,12 +1157,15 @@ def _model_sheet_engine(user: "User") -> str:
 
 
 def _frames_cost(user: "User", scene: "Scene | None" = None,
-                 engine: str = "") -> int:
-    """Цена пары кадров сцены. Если кадры уже нарисованы — по ТОМУ движку,
-    которым их реально нарисовали: иначе смена тарифа между кадрами и видео
-    ломала бы добор до цены сцены."""
+                 engine: str = "", which: str = "both") -> int:
+    """Цена кадров сцены. По умолчанию — пара; which="first"/"last" — ОДИН
+    кадр за половину цены пары (вверх): дефолт генерации теперь один кадр,
+    и брать за него как за два было бы обманом. Если кадры уже нарисованы —
+    по ТОМУ движку, которым их реально нарисовали: иначе смена тарифа между
+    кадрами и видео ломала бы добор до цены сцены."""
     eng = engine or (scene.image_engine if scene else "") or _plan_image_engine(user)
-    return FRAME_COST.get(eng, FRAMES_COST)
+    pair = FRAME_COST.get(eng, FRAMES_COST)
+    return pair if which == "both" else -(-int(pair) // 2)
 
 
 def _scene_cost(user: "User", provider: str, scene: "Scene | None" = None,
@@ -1891,8 +1945,8 @@ def _trend_dict(t: TrendPreset, user: "User | None" = None) -> dict:
             + _points_of_usd(mediagen.video_engine_usd(v_eng, t.duration_sec or 6)))
     return {
         "id": t.id, "title": t.title, "duration_sec": t.duration_sec,
-        "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
-        "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
+        "poster_url": _pub_media_url(t.poster_filename),
+        "sample_url": _pub_media_url(t.sample_filename),
         "cost_points": cost,
     }
 
@@ -2300,6 +2354,8 @@ def _run_trend_job(job_id: int) -> None:
         job.status = "done"
         db.commit()
         log.info("тренд %s: ролик готов для user %s", job.preset_id, job.user_id)
+        _bot_event(job.user_id, "trend", job_id=job.id,
+                   filename=job.video_filename, title=(t.title if t else ""))
     except Exception as e:  # noqa: BLE001 — вернуть токены и сказать правду
         db.rollback()
         job = db.get(TrendJob, job_id)
@@ -2310,6 +2366,8 @@ def _run_trend_job(job_id: int) -> None:
             if owner and job.charged_points:
                 _refund(db, owner, job.charged_points, f"тренд не получился ({job.id})")
             db.commit()
+            _bot_event(job.user_id, "trend", "error", job_id=job.id,
+                       error=job.error)
         log.warning("тренд-задача %s упала: %s", job_id, e)
     finally:
         db.close()
@@ -2324,6 +2382,12 @@ def _user_dict(user: User) -> dict:
             # Ава из Telegram (photo_url в initData/виджете) — для кнопки
             # «Профиль» в шапке; у почтовых аккаунтов пустая строка.
             "avatar_url": user.avatar_url or "",
+            # Привязка Telegram: кабинету нужно знать, показывать ли кнопку
+            # «привязать» и что показывать привязанным.
+            "tg_linked": bool(user.tg_id), "tg_username": user.tg_username or "",
+            # Привязка телефона: кабинет показывает «✓ +7 962 •••• 55» или
+            # кнопку «привязать»; сам номер целиком наружу не уходит.
+            "phone_linked": bool(user.phone), "phone_masked": _mask_phone(user.phone),
             "is_admin": user.is_admin, "gen_points": user.gen_points,
             # Из чего сложен остаток: бонусные заработаны приглашениями и
             # тратятся первыми, платные — то, что человек купил сам.
@@ -2380,6 +2444,10 @@ async def login(request: Request, db: Session = Depends(db_session)):
     password = str(body.get("password") or "")
     if login_name:
         user = db.query(User).filter(User.login == login_name).first()
+        # Человек, зарегистрированный по email, логично вводит email —
+        # даже если поле называется «логин».
+        if not user and "@" in login_name:
+            user = db.query(User).filter(User.email == login_name.lower()).first()
         if not user or not user.password_hash or not _verify_password(password, user.password_hash):
             raise HTTPException(401, "неверный логин или пароль")
         return _session_response(user)
@@ -2465,9 +2533,35 @@ def auth_config():
     return {
         "telegram": bool(TG_BOT_TOKEN and TG_BOT_USERNAME),
         "telegram_bot": TG_BOT_USERNAME,
+        # Домен, на который у бота настроен Login Widget (/setdomain в
+        # BotFather). Пока env пуст — виджет НЕ показывается нигде: на чужом
+        # домене Telegram рисует сырую «Bot domain invalid» прямо в форму,
+        # и скрыть её из iframe нельзя никак.
+        "telegram_login_domain": os.environ.get("TG_LOGIN_DOMAIN", ""),
         "yandex": bool(YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET),
         "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+        "email": bool(UNISENDER_API_KEY and AUTH_MAIL_FROM),
+        "phone": bool(SMS_GATEWAY_URL and SMS_GATEWAY_TOKEN),
     }
+
+
+def _relink_allowed(db: Session, holder: User) -> bool:
+    """Можно ли забрать телеграм у аккаунта holder.
+
+    Только у «пустышки»: без логина, почты и телефона, без единой сцены и без
+    купленных токенов. Такие аккаунты плодит сам мини-апп при первом открытии,
+    и держать на них привязку — значит навсегда развести человека с его работой.
+    """
+    if holder.login or holder.email or holder.phone:
+        return False
+    # 150 — стартовый баланс нового аккаунта (db.User.gen_points): больше него
+    # значит человек покупал токены, и такой аккаунт «пустышкой» не считается.
+    if int(holder.gen_points or 0) > 150:
+        return False
+    scenes = (db.query(Scene).join(Track, Scene.track_id == Track.id)
+              .join(Project, Track.project_id == Project.id)
+              .filter(Project.owner_id == holder.id).count())
+    return scenes == 0
 
 
 @app.post("/api/auth/telegram")
@@ -2502,8 +2596,10 @@ async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(d
             guest = None
     name = " ".join(x for x in [data.get("first_name"), data.get("last_name")] if x) or "гость"
     if not user:
-        # Гость без внешних привязок просто «становится» этим аккаунтом.
-        if guest and not guest.login and not guest.tg_id and not guest.yandex_id:
+        # Залогиненный аккаунт БЕЗ телеграма — это ПРИВЯЗКА, а не новый юзер:
+        # человек жмёт «привязать Telegram» из кабинета и должен остаться на
+        # своём аккаунте с проектами, есть у него логин/почта или нет.
+        if guest and not guest.tg_id:
             user = guest
         else:
             user = User(name=name)
@@ -2514,6 +2610,27 @@ async def auth_telegram(request: Request, ref: str = "", db: Session = Depends(d
         user.avatar_url = str(data.get("photo_url") or "")
         db.commit()
         db.refresh(user)
+    elif guest and guest.id != user.id and _relink_allowed(db, user):
+        # ПЕРЕПРИВЯЗКА. Телеграм часто «застревает» на пустом аккаунте, который
+        # завёлся сам при первом открытии мини-аппа: человек потом работает под
+        # своим настоящим и получает «этот телеграм уже привязан к другому».
+        # Если тот аккаунт пустой (без логина/почты/телефона и без работы), он
+        # уступает привязку текущему — с записью в журнал изменений.
+        _log_change(db, "user", user.id, "tg_relink",
+                    old_value=f"user {user.id}", new_value=f"user {guest.id}")
+        user.tg_id = None
+        user.tg_username = None
+        db.flush()
+        guest.tg_id = tg_id
+        guest.tg_username = str(data.get("username") or "")
+        if not guest.avatar_url:
+            guest.avatar_url = str(data.get("photo_url") or "")
+        db.commit()
+        user = guest
+    elif guest and guest.id != user.id and (guest.login or guest.email or guest.phone):
+        # Настоящий аккаунт с наработками телеграм не отбирает молча.
+        raise HTTPException(409, "этот Telegram уже привязан к другому аккаунту "
+                                 "с проектами — войди под ним или отвяжи там")
     else:
         user = _adopt_guest(db, guest, user)
     # Ава обновляется и у существующего аккаунта: photo_url приходит с каждым
@@ -2702,6 +2819,296 @@ async def auth_yandex_callback(code: str = "", state: str = "", request: Request
     return _oauth_finish(user, state)
 
 
+# ─────────────── вход по email (код в письме) и телефону (SMS) ───────────────
+# Письма — Unisender Go (транзакционный API организма), SMS — шлюз SMS.RU.
+# Ключи в infra/.env; пока пусты — /api/auth/config отдаёт false и вкладок
+# на экране входа просто нет.
+UNISENDER_API_KEY = os.environ.get("UNISENDER_API_KEY", "").strip()
+UNISENDER_API_URL = os.environ.get(
+    "UNISENDER_API_URL", "https://go2.unisender.ru/ru/transactional/api/v1").rstrip("/")
+# lolq.ai у Unisender не подтверждён — шлём с подтверждённого bioura.io,
+# пока владелец не заведёт домен (см. чек-лист в docs).
+AUTH_MAIL_FROM = os.environ.get("AUTH_MAIL_FROM", "noreply@bioura.io").strip()
+AUTH_MAIL_FROM_NAME = os.environ.get("AUTH_MAIL_FROM_NAME", "lolq.ai").strip()
+SMS_GATEWAY_URL = os.environ.get("SMS_GATEWAY_URL", "").strip()
+SMS_GATEWAY_TOKEN = os.environ.get("SMS_GATEWAY_TOKEN", "").strip()
+SMS_SENDER = os.environ.get("SMS_SENDER", "").strip()
+
+CODE_TTL_S = 3600          # код живёт час
+CODE_MAX_ATTEMPTS = 5      # после пяти промахов код сгорает
+SMS_PER_DAY = 5            # SMS на номер в сутки
+SMS_MIN_INTERVAL_S = 60    # не чаще раза в минуту
+
+
+def _norm_email(raw: str) -> str:
+    e = str(raw or "").strip().lower()
+    if not e or "@" not in e or " " in e or len(e) > 254:
+        return ""
+    return e
+
+
+def _norm_phone(raw: str) -> str:
+    """Только цифры, российская нормализация 8→7, итог 11–15 цифр."""
+    digits = "".join(c for c in str(raw or "") if c.isdigit())
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    if len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+    return digits if 11 <= len(digits) <= 15 else ""
+
+
+def _mask_phone(phone: str) -> str:
+    """«+79623446955» → «+7 962 •••• 55»: середина скрыта, узнать свой можно."""
+    p = str(phone or "")
+    if len(p) < 7:
+        return f"+{p}" if p else ""
+    return f"+{p[0]} {p[1:4]} •••• {p[-2:]}"
+
+
+def _issue_code(db: Session, kind: str, address: str, user_id: int = 0) -> str:
+    """Новый код гасит прежние живые того же вида: действителен последний."""
+    db.query(AuthCode).filter(AuthCode.kind == kind, AuthCode.address == address,
+                              AuthCode.used == False).update({"used": True})  # noqa: E712
+    code = f"{secrets.randbelow(900000) + 100000}"
+    db.add(AuthCode(kind=kind, address=address, code=code, user_id=user_id))
+    db.commit()
+    return code
+
+
+def _check_code(db: Session, kind: str, address: str, code: str) -> "AuthCode":
+    """Проверить код; кидает HTTPException словами, почему не подошёл."""
+    row = (db.query(AuthCode)
+           .filter(AuthCode.kind == kind, AuthCode.address == address,
+                   AuthCode.used == False)  # noqa: E712
+           .order_by(AuthCode.id.desc()).first())
+    if not row:
+        raise HTTPException(400, "код не запрашивался или уже использован")
+    created = row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None \
+        else row.created_at
+    if (now() - created).total_seconds() > CODE_TTL_S:
+        row.used = True
+        db.commit()
+        raise HTTPException(400, "код устарел — запроси новый")
+    if not code or not hmac.compare_digest(row.code, str(code).strip()):
+        row.attempts += 1
+        if row.attempts >= CODE_MAX_ATTEMPTS:
+            row.used = True
+        db.commit()
+        raise HTTPException(400, "неверный код")
+    row.used = True
+    db.commit()
+    return row
+
+
+async def _send_auth_email(to: str, subject: str, text: str) -> None:
+    """Unisender Go /email/send.json. Ошибка транспорта — честный 502."""
+    if not (UNISENDER_API_KEY and AUTH_MAIL_FROM):
+        raise HTTPException(400, "почтовый вход не настроен")
+    import httpx as _httpx
+    payload = {"message": {
+        "recipients": [{"email": to}],
+        "subject": subject,
+        "body": {"plaintext": text},
+        "from_email": AUTH_MAIL_FROM,
+        "from_name": AUTH_MAIL_FROM_NAME,
+    }}
+    async with _httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{UNISENDER_API_URL}/email/send.json",
+                              headers={"X-API-KEY": UNISENDER_API_KEY}, json=payload)
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    if r.status_code != 200 or data.get("status") != "success":
+        log.warning("auth email fail: %s %s", r.status_code, str(data)[:300])
+        raise HTTPException(502, "письмо не ушло — попробуй позже")
+
+
+async def _send_auth_sms(phone: str, text: str) -> None:
+    """SMS.RU /sms/send тем же протоколом, что bioura.io."""
+    if not (SMS_GATEWAY_URL and SMS_GATEWAY_TOKEN):
+        raise HTTPException(400, "вход по телефону не настроен")
+    import httpx as _httpx
+    data = {"api_id": SMS_GATEWAY_TOKEN, "to": phone, "msg": text, "json": 1}
+    if SMS_SENDER:
+        data["from"] = SMS_SENDER
+    async with _httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(SMS_GATEWAY_URL, data=data)
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    st = (body.get("sms") or {}).get(phone, {}) or {}
+    if body.get("status") != "OK" or st.get("status") != "OK":
+        log.warning("auth sms fail: %s %s", r.status_code, str(body)[:300])
+        raise HTTPException(502, "SMS не ушла — попробуй позже")
+
+
+def _guest_of(request: Request, db: Session) -> "User | None":
+    token = request.cookies.get(QV_COOKIE)
+    if not token:
+        return None
+    try:
+        return db.get(User, int(signer.loads(token, max_age=QV_MAX_AGE).get("uid") or 0))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.post("/api/auth/register-email")
+async def auth_register_email(request: Request, ref: str = "",
+                              db: Session = Depends(db_session)):
+    """Регистрация по email: аккаунт с паролем сразу, кодом подтверждается
+    адрес. Гость с проектами «повышается» до аккаунта, ничего не теряя."""
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    password = str(body.get("password") or "")
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    if len(password) < 6:
+        raise HTTPException(400, "пароль от 6 символов")
+    existing = db.query(User).filter(User.email == email).first()
+    if existing and existing.password_hash:
+        raise HTTPException(400, "этот email уже зарегистрирован — войди или сбрось пароль")
+    guest = _guest_of(request, db)
+    user = existing
+    if not user:
+        fresh_guest = guest and not guest.login and not guest.tg_id \
+            and not guest.yandex_id and not guest.google_id and not guest.email
+        user = guest if fresh_guest else User(name=email.split("@")[0])
+        if not fresh_guest:
+            db.add(user)
+    user.email = email
+    user.email_verified = False
+    user.password_hash = _hash_password(password)
+    if not user.login and not db.query(User).filter(User.login == email).first():
+        user.login = email
+    if not user.name:
+        user.name = email.split("@")[0]
+    db.commit()
+    db.refresh(user)
+    _attach_ref(db, user, ref)
+    code = _issue_code(db, "email_verify", email, user.id)
+    await _send_auth_email(
+        email, "Код подтверждения lolq.ai",
+        f"Твой код подтверждения: {code}\n\nКод действует 1 час. "
+        "Если это не ты — просто удали письмо.")
+    return {"ok": True, "sent": True}
+
+
+@app.post("/api/auth/verify-email")
+async def auth_verify_email(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    row = _check_code(db, "email_verify", email, body.get("code"))
+    user = db.get(User, row.user_id) or db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(400, "аккаунт не найден — зарегистрируйся заново")
+    user.email_verified = True
+    db.commit()
+    return _auth_response(user)
+
+
+@app.post("/api/auth/forgot")
+async def auth_forgot(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    user = db.query(User).filter(User.email == email).first()
+    # Не раскрываем, есть ли такой аккаунт: ответ одинаковый в обе стороны.
+    if user:
+        code = _issue_code(db, "email_reset", email, user.id)
+        await _send_auth_email(
+            email, "Сброс пароля lolq.ai",
+            f"Код для сброса пароля: {code}\n\nКод действует 1 час. "
+            "Если ты не просил сброс — не отвечай на письмо, пароль не изменится.")
+    return {"ok": True, "sent": True}
+
+
+@app.post("/api/auth/reset")
+async def auth_reset(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    email = _norm_email(body.get("email"))
+    password = str(body.get("password") or "")
+    if not email:
+        raise HTTPException(400, "введи корректный email")
+    if len(password) < 6:
+        raise HTTPException(400, "пароль от 6 символов")
+    row = _check_code(db, "email_reset", email, body.get("code"))
+    user = db.get(User, row.user_id)
+    if not user:
+        raise HTTPException(400, "аккаунт не найден")
+    user.password_hash = _hash_password(password)
+    user.email_verified = True  # код из письма и есть подтверждение адреса
+    db.commit()
+    return _auth_response(user)
+
+
+@app.post("/api/auth/phone/start")
+async def auth_phone_start(request: Request, db: Session = Depends(db_session)):
+    body = await request.json()
+    phone = _norm_phone(body.get("phone"))
+    if not phone:
+        raise HTTPException(400, "введи телефон в формате +7...")
+    day_ago = now() - timedelta(days=1)
+    recent = (db.query(AuthCode)
+              .filter(AuthCode.kind == "phone", AuthCode.address == phone,
+                      AuthCode.created_at > day_ago)
+              .order_by(AuthCode.id.desc()).all())
+    if len(recent) >= SMS_PER_DAY:
+        raise HTTPException(429, "лимит SMS на сегодня исчерпан — попробуй завтра")
+    if recent:
+        last = recent[0].created_at
+        last = last.replace(tzinfo=timezone.utc) if last.tzinfo is None else last
+        if (now() - last).total_seconds() < SMS_MIN_INTERVAL_S:
+            raise HTTPException(429, "код уже отправлен — подожди минуту")
+    code = _issue_code(db, "phone", phone)
+    await _send_auth_sms(phone, f"Код входа lolq.ai: {code}")
+    return {"ok": True, "sent": True}
+
+
+@app.post("/api/auth/phone/verify")
+async def auth_phone_verify(request: Request, ref: str = "",
+                            db: Session = Depends(db_session)):
+    body = await request.json()
+    phone = _norm_phone(body.get("phone"))
+    if not phone:
+        raise HTTPException(400, "введи телефон в формате +7...")
+    _check_code(db, "phone", phone, body.get("code"))
+    user = db.query(User).filter(User.phone == phone).first()
+    # РЕЖИМ ПРИВЯЗКИ: запрос из кабинета (body.link) с живой сессией цепляет
+    # номер к ТЕКУЩЕМУ аккаунту, а не логинит в другой. Иначе «привязать
+    # телефон» молча пересаживало бы человека на чужой пустой аккаунт.
+    if body.get("link"):
+        me_user = _resolve_user(request, db)
+        if not me_user:
+            raise HTTPException(401, "сессия не найдена — войди и попробуй снова")
+        if user and user.id != me_user.id:
+            raise HTTPException(409, "этот номер уже привязан к другому аккаунту")
+        me_user.phone = phone
+        db.commit()
+        return {"ok": True, "linked": True, "phone_masked": _mask_phone(phone)}
+    guest = _guest_of(request, db)
+    if not user:
+        fresh_guest = guest and not guest.login and not guest.tg_id \
+            and not guest.yandex_id and not guest.google_id and not guest.email \
+            and not guest.phone
+        user = guest if fresh_guest else User(name=f"+{phone}")
+        if not fresh_guest:
+            db.add(user)
+        user.phone = phone
+        if not user.name:
+            user.name = f"+{phone}"
+        db.commit()
+        db.refresh(user)
+    else:
+        _adopt_guest(db, guest, user)
+    _attach_ref(db, user, ref)
+    return _auth_response(user)
+
+
 @app.post("/api/logout")
 async def logout():
     response = JSONResponse({"ok": True})
@@ -2723,6 +3130,10 @@ async def me(request: Request, db: Session = Depends(db_session)):
 def attribute_dict(a: CharacterAttribute) -> dict:
     return {
         "id": a.id, "name": a.name, "description": a.description,
+        # Привязка к ПРЕДМЕТУ (треку мокап-проекта): если она есть, фото
+        # предмета показываются в атрибуте и уходят в кадр — заводить вещи
+        # дважды не нужно.
+        "item_track_id": int(getattr(a, "item_track_id", 0) or 0),
         "photos": [
             {"id": ph.id, "url": f"/api/media/{ph.filename}"} for ph in a.photos
         ],
@@ -2747,6 +3158,9 @@ def character_dict(c: Character) -> dict:
     return {
         "id": c.id, "position": c.position, "name": c.name,
         "description": c.description, "is_main": c.is_main,
+        # Голос ElevenLabs, закреплённый за персонажем, и его манера речи.
+        "voice_id": c.voice_id or "",
+        "voice_note": getattr(c, "voice_note", "") or "",
         # photos — весь список целиком (легаси-контракт фронта и библиотеки),
         # но с kind у каждой позиции.
         "photos": [_char_photo_dict(ph) for ph in photos],
@@ -2774,6 +3188,15 @@ def characters_payload(project: Project) -> list[dict]:
     ]
 
 
+def _scene_dialogue(s: Scene) -> list[dict]:
+    """dialogue_json → список реплик; битый JSON = пусто."""
+    try:
+        data = json.loads(getattr(s, "dialogue_json", "") or "[]")
+        return data if isinstance(data, list) else []
+    except ValueError:
+        return []
+
+
 def _midframes(s: Scene) -> list[dict]:
     """midframes_json → список; битый/пустой JSON = пустой список."""
     try:
@@ -2785,8 +3208,10 @@ def _midframes(s: Scene) -> list[dict]:
 
 def _midframe_count(duration_sec: int) -> int:
     """Сколько промежуточных кадров положено сцене: примерно раз в 2 секунды
-    между первым и последним, но не больше 4 (экономия токенов и времени)."""
-    return max(0, min(4, round((duration_sec or 0) / 2) - 1))
+    между первым и последним, но не больше 5 (экономия токенов и времени).
+    Длинной сцене (12-30с) опор нужно больше: видео едет отрезками ~6с
+    между соседними кадрами цепочки."""
+    return max(0, min(5, round((duration_sec or 0) / 2) - 1))
 
 
 def _frames_state(s: Scene) -> str:
@@ -2861,6 +3286,7 @@ def scene_dict(s: Scene) -> dict:
         "video_stale": bool(s.video_stale and s.video_filename),
         # Режимы «сериалы» и «UGC»: акт серии и кто говорит в кадре.
         "act": s.act or "", "speaker": s.speaker or "",
+        "dialogue": _scene_dialogue(s),
     }
 
 
@@ -2893,6 +3319,34 @@ def _track_style_keys(t: Track) -> list[str]:
     if keys:
         return keys
     return prompts_catalog.keys_from_prompt(t.style or "")
+
+
+
+# ─────────────── 3D-облёт товара (режим мокапов) ───────────────
+# Восемь ракурсов по кругу: 0°, 45°, … 315°. Листаются drag'ом на карточке
+# трека и выглядят как вращение 3D-модельки — без единого полигона.
+TURNAROUND_YAWS = (0, 45, 90, 135, 180, 225, 270, 315)
+
+
+def _turnaround_files(t: Track) -> list[str]:
+    try:
+        v = json.loads(t.turnaround_files or "[]")
+        return [str(x) for x in v] if isinstance(v, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _turnaround_cost(t: Track) -> int:
+    """Цена облёта = 8 кадров тем же прайсом, что у кадров сцен (FRAME_COST —
+    цена ПАРЫ, поэтому восемь кадров = четыре пары)."""
+    try:
+        sess = object_session(t)
+        owner = (sess.get(User, t.project.owner_id)
+                 if (sess and t.project.owner_id) else None)
+        eng = _resolve_image_engine(owner, t)
+        return _frames_cost(owner, None, eng) * (len(TURNAROUND_YAWS) // 2)
+    except Exception:  # noqa: BLE001
+        return FRAMES_COST * (len(TURNAROUND_YAWS) // 2)
 
 
 def track_dict(t: Track, with_scenes: bool = False) -> dict:
@@ -2967,6 +3421,11 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         # ролика и серии это вертикаль, у мокапа квадрат.
         "aspect": t.aspect or "", "eff_aspect": _track_aspect(t),
         "image_resolution": t.image_resolution or "",
+        # 3D-облёт товара: 8 ракурсов по кругу + цена кнопки.
+        "turnaround_status": t.turnaround_status or "",
+        "turnaround_note": t.turnaround_note or "",
+        "turnaround_urls": [f"/api/media/{f}" for f in _turnaround_files(t)],
+        "turnaround_cost": _turnaround_cost(t),
         # Фото товара (режим мокапов): референс, по которому упаковка обязана
         # совпасть до последней буквы на этикетке.
         "photos": [{"id": ph.id, "position": ph.position, "kind": ph.kind or "photo",
@@ -3309,6 +3768,8 @@ def project_status(project_id: int | None = None, user: User = Depends(current_u
             "supergen_note": t.supergen_note or "",
             "restyle_status": t.restyle_status or "",
             "restyle_note": t.restyle_note or "",
+            "turnaround_status": t.turnaround_status or "",
+            "turnaround_note": t.turnaround_note or "",
             "scenes_count": len(t.scenes),
             "coverage": _scenes_coverage(t),
             "approved_count": sum(1 for s in t.scenes if s.approved),
@@ -3843,6 +4304,10 @@ async def create_episodes(project_id: int, request: Request,
             key = t.format_key
             break
     pos = max((t.position for t in project.tracks), default=0)
+    # ЕДИНЫЙ СТИЛЬ СЕЗОНА: новая серия жёстко наследует стиль первой серии
+    # со стилем — сериал не имеет права менять картинку между сериями.
+    donor = next((t for t in sorted(project.tracks, key=lambda x: x.position)
+                  if (t.style or "").strip() or (t.style_keys or "").strip()), None)
     made = 0
     for i, r in enumerate(rows, 1):
         no = int(r.get("no") or i)
@@ -3860,6 +4325,11 @@ async def create_episodes(project_id: int, request: Request,
             title=str(r.get("title") or f"Серия {no}"),
             comment=comment, format_key=key,
             season_no=season, episode_no=no,
+            style=donor.style if donor else "",
+            style_keys=donor.style_keys if donor else "",
+            style_extra=donor.style_extra if donor else "",
+            image_engine=donor.image_engine if donor else "",
+            video_engine=donor.video_engine if donor else "",
         ))
         made += 1
     db.commit()
@@ -4223,6 +4693,70 @@ def reload_style_overlay(db: Session | None = None) -> int:
             db.close()
 
 
+#: Ключи app_settings, в которых лежат наложения каталогов. Именованные
+#: константы, а не строки по коду: опечатка в ключе выглядит как «админка не
+#: сохраняет», и искать её пришлось бы в двух файлах.
+PROMPTS_OVERLAY_KEY = "prompts_overlay"
+MOCKUP_OVERLAY_KEY = "mockup_overlay"
+
+
+def _overlay_setting(db: Session, key: str) -> dict:
+    row = db.get(AppSetting, key)
+    if not row or not (row.value or "").strip():
+        return {}
+    try:
+        data = json.loads(row.value)
+    except Exception:  # noqa: BLE001
+        log.warning("наложение %s не разбирается как JSON", key)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _overlay_setting_save(db: Session, key: str, data: dict) -> None:
+    blob = json.dumps(data, ensure_ascii=False)
+    row = db.get(AppSetting, key)
+    if row:
+        row.value = blob
+    else:
+        db.add(AppSetting(key=key, value=blob))
+    db.commit()
+
+
+def reload_prompts_overlay(db: Session | None = None) -> int:
+    """Перечитать правки слоёв промтов (сценарии/сцены/движение/свет).
+
+    Та же дисциплина, что у стилей: наложение живёт в базе, файл остаётся
+    источником, инвалидация — на старте и после каждого сохранения."""
+    own = db is None
+    db = db or SessionLocal()
+    try:
+        data = _overlay_setting(db, PROMPTS_OVERLAY_KEY)
+        prompts_library.set_library_overlay(data)
+        return sum(len(v) for v in data.values() if isinstance(v, dict))
+    except Exception as e:  # noqa: BLE001
+        log.warning("наложение промтов не загрузилось: %s", str(e)[:200])
+        return 0
+    finally:
+        if own:
+            db.close()
+
+
+def reload_mockup_overlay(db: Session | None = None) -> int:
+    """Перечитать правки шаблонов мокапов."""
+    own = db is None
+    db = db or SessionLocal()
+    try:
+        data = _overlay_setting(db, MOCKUP_OVERLAY_KEY)
+        mockup_catalog.set_overlay(data)
+        return len(data)
+    except Exception as e:  # noqa: BLE001
+        log.warning("наложение мокапов не загрузилось: %s", str(e)[:200])
+        return 0
+    finally:
+        if own:
+            db.close()
+
+
 def _is_pro(user: "User | None") -> bool:
     """Открыт ли человеку разбор приёма. PRO+ — то есть любой платный тариф."""
     return bool(user and (user.is_admin or _plan_of(user) != "free"))
@@ -4518,12 +5052,14 @@ def api_library(request: Request, lang: str = "", db: Session = Depends(db_sessi
         "groups": {
             "boards": _groups(prompts_library.BOARD_GROUPS, lg),
             "motions": _groups(prompts_library.MOTION_GROUPS, lg),
+            "cameras": _groups(prompts_library.CAMERA_GROUPS, lg),
             "lights": _groups(prompts_library.LIGHT_GROUPS, lg),
             "shots": _groups(prompts_library.CATEGORIES, lg),
         },
         "scripts": prompts_library.public_scripts(**kw),
         "boards": prompts_library.public_boards(**kw),
-        "motions": prompts_library.public_motions(**kw),
+        "motions": _decorate_layer(prompts_library.public_motions(**kw), "motions"),
+        "cameras": _decorate_cameras(prompts_library.public_cameras(**kw)),
         "lights": prompts_library.public_lights(**kw),
         # Приёмы и наборы — прежние слои. Они остаются в том же каталоге
         # отдельными группами: набор применяется на весь трек, приём на одну
@@ -4582,8 +5118,8 @@ def api_motions(request: Request, lang: str = "", group: str = "",
     lg, plan, adm = _lib_who(request, db, lang)
     return {"lang": lg,
             "groups": _groups(prompts_library.MOTION_GROUPS, lg),
-            "motions": prompts_library.public_motions(
-                lang=lg, group=group, plan_id=plan, is_admin=adm)}
+            "motions": _decorate_layer(prompts_library.public_motions(
+                lang=lg, group=group, plan_id=plan, is_admin=adm), "motions")}
 
 
 @app.get("/api/motions/{key}")
@@ -4594,6 +5130,531 @@ def api_motion(key: str, request: Request, lang: str = "",
     if not card:
         raise ApiError(404, "unknown_motion", f"Unknown motion: {key!r}")
     return card
+
+
+# ─────────────── превью карточек слоёв (камера и будущие пачки) ───────────────
+# Общий магазин превью для ЛЮБОГО слоя каталога: ключ "layer:key" → имя файла.
+# Отдельный от мокапов: у тех превью живут на id шаблона, здесь — на слой,
+# чтобы будущие пачки («ракурсы», «свет», «стили») подключались без правок.
+
+LAYER_PREVIEWS_FILE = os.path.join(UPLOAD_DIR, "layer_previews.json")
+
+
+def _layer_previews() -> dict:
+    try:
+        with open(LAYER_PREVIEWS_FILE, encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _layer_previews_save(m: dict) -> None:
+    tmp = LAYER_PREVIEWS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False)
+    os.replace(tmp, LAYER_PREVIEWS_FILE)
+
+
+def _preview_entry(v) -> tuple[str, list[str]]:
+    """Запись превью: строка (одна картинка) или {"main":…, "all":[…]}."""
+    if isinstance(v, dict):
+        main = str(v.get("main") or "")
+        gallery = [str(x) for x in (v.get("all") or []) if x]
+        if main and main not in gallery:
+            gallery.insert(0, main)
+        return main, gallery
+    return (str(v or ""), [str(v)] if v else [])
+
+
+def _decorate_layer(cards: list[dict], layer: str) -> list[dict]:
+    """Приклеить превью к карточкам ЛЮБОГО слоя каталога."""
+    previews = _layer_previews()
+    for c in cards:
+        main, gallery = _preview_entry(previews.get(f"{layer}:{c['key']}"))
+        # Превью каталога — витрина: /api/media отдаёт их только владельцу
+        # (админу), и у обычного человека карточки слоёв были пустыми.
+        c["preview_url"] = _pub_media_url(main)
+        # Несколько кадров Тони на карточку: первый — главный, остальные
+        # крутятся hover-сменой.
+        c["preview_urls"] = [_pub_media_url(f) for f in gallery]
+        # Движение и камера ОБЯЗАНЫ двигаться: карточка обещает приём — пусть
+        # показывает его, а не стоп-кадр. Анимация лежит в той же записи.
+        _raw = previews.get(f"{layer}:{c['key']}")
+        c["anim_url"] = _pub_media_url(
+            _raw.get("anim") if isinstance(_raw, dict) else "")
+    return cards
+
+
+def _decorate_cameras(cards: list[dict]) -> list[dict]:
+    return _decorate_layer(cards, "cameras")
+
+
+@app.get("/api/cameras")
+def api_cameras(request: Request, lang: str = "", group: str = "",
+                db: Session = Depends(db_session)):
+    """Камера-пресеты: законченные проезды. Пишутся в motion_prompt целиком."""
+    lg, plan, adm = _lib_who(request, db, lang)
+    return {"lang": lg,
+            "groups": _groups(prompts_library.CAMERA_GROUPS, lg),
+            "cameras": _decorate_cameras(prompts_library.public_cameras(
+                lang=lg, group=group, plan_id=plan, is_admin=adm))}
+
+
+@app.get("/api/cameras/{key}")
+def api_camera(key: str, request: Request, lang: str = "",
+               db: Session = Depends(db_session)):
+    lg, plan, adm = _lib_who(request, db, lang)
+    card = prompts_library.public_camera(key, lang=lg, plan_id=plan, is_admin=adm)
+    if not card:
+        raise ApiError(404, "unknown_camera", f"Unknown camera: {key!r}")
+    return _decorate_cameras([card])[0]
+
+
+# Нейтральные сцены превью камера-пресетов: дорога/каньон/город, без брендов.
+CAMERA_PREVIEW_SCENES = {
+    "slider_arc": "an empty coastal road at golden hour, a lone figure by the roadside, "
+                  "layered foreground rocks and distant cliffs, strong depth",
+    "vehicle_tracking": "a plain matte-grey car driving fast on a desert canyon road, "
+                        "dust and motion blur along the asphalt",
+    "drone_push_in": "a low aerial rush over a rocky canyon toward a lone figure standing "
+                     "on a cliff edge, dramatic evening sky",
+    "truck_left": "a city street at dusk, a figure walking past layered storefronts and "
+                  "lampposts, deep parallax between planes",
+    "helicopter_orbit": "a distant telephoto aerial view of a lone figure on a highrise "
+                        "rooftop at dawn, compressed city skyline behind",
+    "crane_down": "a steep top-down view of a lone figure in an empty stone plaza with "
+                  "long morning shadows",
+}
+
+
+def generate_camera_previews(ids: list[str] | None = None,
+                             engine: str = "chatgpt") -> dict:
+    """Превью камера-пресетов бесплатным шлюзом — та же механика, что у
+    превью мокапов: нейтральные сцены, без брендов и без токенов клиента."""
+    db = SessionLocal()
+    done, failed = [], []
+    try:
+        previews = _layer_previews()
+        import asyncio
+        for cam in prompts_library.CAMERAS:
+            key = cam["key"]
+            if previews.get(f"cameras:{key}"):
+                continue
+            if ids and "*" not in ids and key not in ids:
+                continue
+            scene = CAMERA_PREVIEW_SCENES.get(
+                key, "an empty scenic road through a canyon at sunset")
+            prompt = (f"Cinematic film still, vertical 3:4 composition: {scene}. "
+                      f"Natural light, realistic photography, no logos, no brands, "
+                      f"no text, no watermark.")
+            try:
+                mediagen.reset_task()
+                res = asyncio.run(mediagen.generate_image_ex(
+                    prompt, None, engine=engine, aspect="3:4"))
+                fname = _save_image(res["data"], res["mime"], upscale=False)
+                _reg_file(db, fname, None, kind="layer_preview")
+                db.commit()
+                previews = _layer_previews()
+                previews[f"cameras:{key}"] = fname
+                _layer_previews_save(previews)
+                done.append(key)
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{key}: {_err_text(e, 120)}")
+                log.warning("превью камеры %s не вышло: %s", key, e)
+        return {"done": done, "failed": failed}
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/cameras/previews")
+def admin_camera_previews(all: int = 0,  # noqa: A002
+                          user: User = Depends(current_user)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    return generate_camera_previews(["*"] if all else None)
+
+
+# Раскладка референсов Тони по пресетам: кластеры времени в именах
+# hf_20260827_HHMMSS_*.png (гипотеза координатора; владелец поправит кликом
+# в админке — главная картинка меняется загрузкой или выбором из галереи).
+CAMERA_REFS_DIR = os.path.join(UPLOAD_DIR, "camera_refs")
+CAMERA_REF_CLUSTERS = (
+    ("crane_down",       135300, 135399),
+    ("vehicle_tracking", 140200, 140599),
+    ("drone_push_in",    141220, 141699),
+    ("truck_left",       142200, 142699),
+    ("slider_arc",       143100, 143399),
+    ("helicopter_orbit", 143500, 143599),
+)
+
+
+# Смысловое соответствие «движение → кластер кадров Тони»: наезд ← пролёт
+# дрона, кран/тилт ← спуск по секвойям, вбок ← проезд, облёт/зум ← вертолёт.
+MOTION_REF_MAP = {
+    "m_push_settle": "drone_push_in",
+    "m_steadi_follow": "drone_push_in",
+    "m_pull_open": "slider_arc",
+    "m_rack_focus": "slider_arc",
+    "m_truck_side": "truck_left",
+    "m_pan_link": "truck_left",
+    "m_pedestal_down": "crane_down",
+    "m_crane_rise": "crane_down",
+    "m_tilt_up": "crane_down",
+    "m_arc_quarter": "helicopter_orbit",
+    "m_handheld_drift": "helicopter_orbit",
+    "m_dolly_zoom": "helicopter_orbit",
+}
+
+
+def _layer_preview_prompt(layer: str, card: dict) -> str:
+    """Промпт превью карточки слоя — по СОБСТВЕННОМУ тексту записи."""
+    if layer == "cameras" and card.get("key") in CAMERA_PREVIEW_SCENES:
+        scene = CAMERA_PREVIEW_SCENES[card["key"]]
+        return (f"Cinematic film still, vertical 3:4 composition: {scene}. "
+                f"Natural light, realistic photography, no logos, no brands, "
+                f"no text, no watermark.")
+    bits = []
+    cam = str(card.get("camera") or "").strip()
+    if cam:
+        bits.append(f"camera: {cam}")
+    body = " ".join(str(card.get("text") or card.get("solo")
+                        or card.get("add") or "").split())[:400]
+    body = body.replace("{character}", "a lone person").replace(
+        "{location}", "a quiet city street")
+    if body:
+        bits.append(body)
+    return ("Cinematic film still, vertical 3:4, a neutral demonstration of "
+            "this camera or motion technique: " + "; ".join(bits) +
+            ". One ordinary person in a neutral urban or nature scene, natural "
+            "light, no logos, no brands, no text, no watermark.")
+
+
+def _generate_layer_preview(db: Session, layer: str, card: dict,
+                            engine: str = "chatgpt") -> str:
+    """Один кадр превью бесплатным шлюзом; возвращает имя файла."""
+    import asyncio
+    mediagen.reset_task()
+    res = asyncio.run(mediagen.generate_image_ex(
+        _layer_preview_prompt(layer, card), None, engine=engine, aspect="3:4"))
+    fname = _save_image(res["data"], res["mime"], upscale=False)
+    _reg_file(db, fname, None, kind="layer_preview")
+    db.commit()
+    return fname
+
+
+def generate_layer_previews(db: Session, layer: str, count: int = 1) -> dict:
+    """Догенерить превью карточкам слоя (бесплатный шлюз). count — сколько
+    ПРИМЕРОВ должно накопиться у карточки: страницы промтов показывают
+    галерею, и одного кадра там мало. Зовётся из админ-роута и из CLI:
+      docker exec … python3 -c "import main;print(main.generate_layer_previews(main.SessionLocal(),'motions',count=2))"
+    """
+    done, failed = [], []
+    count = max(1, min(4, int(count or 1)))
+    for card in prompts_library.layer_rows(layer):
+        key = card["key"]
+        have = _preview_entry(_layer_previews().get(f"{layer}:{key}"))[1]
+        for _ in range(count - len(have)):
+            try:
+                fname = _generate_layer_preview(db, layer, card)
+                previews = _layer_previews()
+                main_f, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+                gallery = gallery + [fname]
+                previews[f"{layer}:{key}"] = {"main": main_f or fname, "all": gallery}
+                _layer_previews_save(previews)
+                done.append(key)
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{key}: {_err_text(e, 120)}")
+                log.warning("превью %s/%s не вышло: %s", layer, key, e)
+                break
+    return {"done": done, "failed": failed}
+
+
+# ─────────────── СТРАНИЦА ПРОМТА: /p/{layer}/{key} ───────────────
+# Одна карточка каталога — своя страница: заголовок, галерея примеров,
+# промпт и кнопка «Использовать». Слои: trend | mockup | boards | motions |
+# cameras | lights | styles. Примеры-«extras» у трендов и мокапов живут в
+# ОБЩЕМ механизме превью слоёв (layer_previews, ключи trend:{id} /
+# mockup:{id}) — тот же {"main","all"}, что у карточек Тони.
+
+def _prompt_page_extras(layer: str, key: str) -> list[str]:
+    _m, gallery = _preview_entry(_layer_previews().get(f"{layer}:{key}"))
+    return [_pub_media_url(f) for f in gallery]
+
+
+@app.get("/api/p/{layer}/{key}")
+def prompt_page(layer: str, key: str, request: Request, lang: str = "",
+                db: Session = Depends(db_session)):
+    user = _resolve_user(request, db)
+    is_adm = bool(user and user.is_admin)
+    lg = _lang_of(request, lang)
+    out = {"layer": layer, "key": key, "is_admin": is_adm, "examples": [],
+           "title": "", "desc": "", "prompt": "", "prompt_ru": "", "use": ""}
+    if layer == "trend":
+        t = db.get(TrendPreset, int(key) if str(key).isdigit() else 0)
+        if not t:
+            raise HTTPException(404, "нет такого тренда")
+        out.update({
+            "title": (t.title if lg == "ru" else (getattr(t, "title_en", "") or t.title)),
+            "prompt": f"{t.image_prompt}\n\n{t.motion_prompt}".strip(),
+            "prompt_ru": f"{getattr(t, 'image_prompt_ru', '') or ''}\n\n"
+                         f"{getattr(t, 'motion_prompt_ru', '') or ''}".strip(),
+            "use": "trends",
+        })
+        if t.sample_filename:
+            out["examples"].append({"url": _pub_media_url(t.sample_filename), "kind": "video"})
+        if t.poster_filename:
+            out["examples"].append({"url": _pub_media_url(t.poster_filename), "kind": "image"})
+        out["examples"] += [{"url": u, "kind": "image"}
+                            for u in _prompt_page_extras("trend", key)]
+    elif layer == "mockup":
+        tpl = next((x for x in mockup_catalog.TEMPLATES if x["id"] == key), None)
+        if not tpl:
+            raise HTTPException(404, "нет такого шаблона")
+        prev = _mockup_previews().get(key) or ""
+        out.update({
+            "title": tpl["ru"] if lg == "ru" else tpl["en"],
+            "desc": tpl.get("category") or "",
+            "prompt": tpl.get("prompt") or "",
+            "use": "mockup",
+        })
+        if prev:
+            out["examples"].append({"url": _pub_media_url(prev), "kind": "image"})
+        out["examples"] += [{"url": u, "kind": "image"}
+                            for u in _prompt_page_extras("mockup", key)]
+    elif layer in prompts_library.LAYERS:
+        card = next((r for r in prompts_library.layer_rows(layer)
+                     if r["key"] == key), None)
+        if not card:
+            raise HTTPException(404, "нет такой карточки")
+        label = card.get("label") or key
+        if isinstance(label, dict):
+            label = label.get(lg) or label.get("en") or key
+        desc = card.get("desc") or card.get("note") or ""
+        if isinstance(desc, dict):
+            desc = desc.get(lg) or desc.get("en") or ""
+        prompt = card.get("text") or card.get("first") or card.get("add") or ""
+        out.update({"title": str(label), "desc": str(desc),
+                    "prompt": str(prompt), "use": "studio"})
+        out["examples"] = [{"url": u, "kind": "image"}
+                           for u in _prompt_page_extras(layer, key)]
+    elif layer == "styles":
+        raise HTTPException(404, "у стилей своя карточка в каталоге промтов")
+    else:
+        raise HTTPException(404, "нет такого слоя")
+    # Пользователю промпт не отдаём сырым у фирменных слоёв? Тренды и мокапы
+    # открыты; закрытые тексты (styles) сюда не попадают вовсе.
+    if not is_adm:
+        out["prompt_ru"] = ""
+    return out
+
+
+@app.post("/api/admin/p/{layer}/{key}/example-generate")
+def prompt_page_example(layer: str, key: str, user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    """+1 пример на страницу промпта (бесплатный шлюз). Тренды и мокапы
+    копят примеры в общем layer_previews; слои Тони — своим роутом."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer == "trend":
+        t = db.get(TrendPreset, int(key) if str(key).isdigit() else 0)
+        if not t or not (t.image_prompt or "").strip():
+            raise HTTPException(404, "тренд не найден или пуст")
+        prompt = re.sub(r"the person from the reference photo",
+                        "a stylish young person", t.image_prompt, flags=re.I)
+        prompt += " No text, no watermark."
+        aspect = t.aspect or "9:16"
+    elif layer == "mockup":
+        tpl = next((x for x in mockup_catalog.TEMPLATES if x["id"] == key), None)
+        if not tpl:
+            raise HTTPException(404, "нет такого шаблона")
+        prompt = mockup_catalog.preview_prompt(tpl)
+        aspect = "3:4"
+    else:
+        raise HTTPException(400, "для слоёв Тони — preview-generate")
+    try:
+        import asyncio  # noqa: PLC0415 — локально, как в соседних роутах
+        mediagen.reset_task()
+        res = asyncio.run(mediagen.generate_image_ex(prompt, None,
+                                                     engine="chatgpt", aspect=aspect))
+        fname = _save_image(res["data"], res["mime"], upscale=False)
+        _reg_file(db, fname, None, kind="prompt_example")
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"пример не вышел: {_err_text(e, 200)}")
+    previews = _layer_previews()
+    main_f, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    previews[f"{layer}:{key}"] = {"main": main_f or fname, "all": gallery + [fname]}
+    _layer_previews_save(previews)
+    return {"ok": True, "url": f"/api/media/{fname}"}
+
+
+@app.post("/api/admin/prompts/{layer}/previews")
+def admin_layer_previews_batch(layer: str, user: User = Depends(current_user),
+                               db: Session = Depends(db_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    return generate_layer_previews(db, layer)
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview-generate")
+def admin_layer_preview_generate(layer: str, key: str,
+                                 user: User = Depends(current_user),
+                                 db: Session = Depends(db_session)):
+    """Сгенерировать превью ОДНОЙ карточки по её собственному промпту (⚡0)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    card = next((r for r in prompts_library.layer_rows(layer)
+                 if r["key"] == key), None)
+    if not card:
+        raise HTTPException(404, "нет такой карточки")
+    try:
+        fname = _generate_layer_preview(db, layer, card)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"превью не вышло: {_err_text(e, 200)}")
+    previews = _layer_previews()
+    _m, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    gallery = [fname] + gallery
+    previews[f"{layer}:{key}"] = {"main": fname, "all": gallery}
+    _layer_previews_save(previews)
+    return {"ok": True, "preview_url": f"/api/media/{fname}"}
+
+
+def seed_camera_refs(db: Session) -> dict:
+    """Разложить кадры Тони из camera_refs/ по пресетам как превью-галереи.
+
+    Файлы КОПИРУЮТСЯ в корень хранилища (подпапки /api/media не отдаёт) и
+    регистрируются; исходники в camera_refs/ остаются нетронутыми. Повторный
+    запуск идемпотентен: уже назначенный пресет не трогаем. Зовётся из
+    админ-роута и из CLI (docker exec … python3 -c)."""
+    if not os.path.isdir(CAMERA_REFS_DIR):
+        raise RuntimeError(f"нет папки {CAMERA_REFS_DIR}")
+    previews = _layer_previews()
+    out, unmatched = {}, []
+    files = sorted(os.listdir(CAMERA_REFS_DIR))
+    for name in files:
+        if not name.lower().endswith(".png"):
+            continue
+        m = re.match(r"hf_\d{8}_(\d{6})", name)
+        if not m:
+            unmatched.append(name)
+            continue
+        stamp = int(m.group(1))
+        preset = next((k for k, lo, hi in CAMERA_REF_CLUSTERS
+                       if lo <= stamp <= hi), "")
+        if not preset:
+            unmatched.append(name)
+            continue
+        out.setdefault(preset, []).append(name)
+    seeded = {}
+    for preset, names in out.items():
+        entry_main, gallery = _preview_entry(previews.get(f"cameras:{preset}"))
+        if gallery:
+            seeded[preset] = f"уже назначено ({len(gallery)})"
+            continue
+        copied = []
+        for name in names:
+            fname = f"lprev_{uuid.uuid4().hex}.png"
+            shutil.copyfile(os.path.join(CAMERA_REFS_DIR, name),
+                            os.path.join(UPLOAD_DIR, fname))
+            _reg_file(db, fname, None, kind="layer_preview")
+            copied.append(fname)
+        db.commit()
+        previews[f"cameras:{preset}"] = {"main": copied[0], "all": copied}
+        seeded[preset] = len(copied)
+    # Движения слоя «Движение» — те же кадры Тони по смысловому соответствию
+    # (наезд ← дрон-пролёт, кран ← спуск по секвойям и т.д.). Файлы
+    # ПЕРЕИСПОЛЬЗУЮТСЯ: один файл может быть превью нескольких карточек.
+    for mkey, donor in MOTION_REF_MAP.items():
+        m_main, m_gal = _preview_entry(previews.get(f"motions:{mkey}"))
+        if m_gal:
+            continue
+        _dm, d_gal = _preview_entry(previews.get(f"cameras:{donor}"))
+        if not d_gal:
+            continue
+        # Раздаём разные кадры донора разным движениям, по кругу.
+        offset = sum(1 for k2, d2 in MOTION_REF_MAP.items()
+                     if d2 == donor and k2 < mkey)
+        pick = d_gal[offset % len(d_gal)]
+        previews[f"motions:{mkey}"] = {"main": pick, "all": [pick]}
+        seeded[f"motions:{mkey}"] = 1
+    _layer_previews_save(previews)
+    return {"ok": True, "seeded": seeded, "unmatched": unmatched}
+
+
+@app.post("/api/admin/cameras/seed-refs")
+def admin_camera_seed_refs(user: User = Depends(current_user),
+                           db: Session = Depends(db_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    try:
+        return seed_camera_refs(db)
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview-main")
+async def admin_layer_preview_main(layer: str, key: str, request: Request,
+                                   user: User = Depends(current_user)):
+    """Назначить ГЛАВНОЙ одну из картинок галереи пресета (клик в админке)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    body = await request.json()
+    fname = os.path.basename(str(body.get("filename") or ""))
+    previews = _layer_previews()
+    main, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    if fname not in gallery:
+        raise HTTPException(404, "такой картинки нет в галерее пресета")
+    previews[f"{layer}:{key}"] = {
+        "main": fname, "all": [fname] + [g for g in gallery if g != fname]}
+    _layer_previews_save(previews)
+    return {"ok": True, "preview_url": f"/api/media/{fname}"}
+
+
+@app.post("/api/admin/prompts/{layer}/{key}/preview")
+async def admin_layer_preview_upload(layer: str, key: str,
+                                     file: UploadFile | None = None,
+                                     user: User = Depends(current_user),
+                                     db: Session = Depends(db_session)):
+    """Своя картинка-превью на карточку ЛЮБОГО слоя каталога.
+
+    Тони перезальёт референсы руками — из чата файлы не достать. Старый файл
+    подчищается, ключ хранится как "layer:key" (см. _layer_previews)."""
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя")
+    key = re.sub(r"[^a-z0-9_]", "", (key or "").strip().lower())[:60]
+    if not key:
+        raise HTTPException(400, "плохой ключ")
+    if file is None or not (file.filename or "").strip():
+        raise HTTPException(400, "нет файла")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, f"не похоже на картинку: {ext or '?'}")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(413, "картинка больше 15 МБ")
+    if len(data) < 500:
+        raise HTTPException(400, "файл пустой")
+    fname = f"lprev_{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as fh:
+        fh.write(data)
+    _reg_file(db, fname, None, kind="layer_preview")
+    db.commit()
+    previews = _layer_previews()
+    main, gallery = _preview_entry(previews.get(f"{layer}:{key}"))
+    # Загруженная картинка становится ГЛАВНОЙ; прежние остаются в галерее —
+    # референсы Тони не затираются заменой главной.
+    gallery = [fname] + [g for g in gallery if g != fname]
+    previews[f"{layer}:{key}"] = {"main": fname, "all": gallery}
+    _layer_previews_save(previews)
+    return {"ok": True, "preview_url": f"/api/media/{fname}",
+            "preview_urls": [f"/api/media/{g}" for g in gallery]}
 
 
 @app.get("/api/lights")
@@ -5276,12 +6337,16 @@ def _scenes_for_series(db: Session, track: Track, engine: str = "") -> dict:
                   .filter(Doc.track_id == track.id, Doc.kind == "script").first())
     if not script_doc or not (script_doc.body or "").strip():
         raise RuntimeError("у серии нет сценария — сгенерируй его на шаге «Серия»")
+    # Стиль серии: свой, иначе — стиль первой серии проекта (единый сезон).
+    style = (track.style or "").strip() or next(
+        (t.style for t in sorted(project.tracks, key=lambda x: x.position)
+         if (t.style or "").strip()), "")
     return asyncio.run(claude.generate_series_scenes(
         engine=engine,
         script=script_doc.body,
         character_bible=project.character_bible,
         episode_beats=formats.beats_block(catalog, key, "episode_beats"),
-        style=track.style,
+        style=style,
         duration_sec=_track_duration(track),
         rules=formats.rules(catalog),
         characters=characters_payload(project),
@@ -5351,6 +6416,178 @@ def _scenes_for_mockup(db: Session, track: Track, engine: str = "") -> dict:
     ))
 
 
+def _cast_plan_text(characters: list[dict], n_scenes: int) -> str:
+    """Случайная равномерная расстановка персонажей по кадрам — ДЛЯ ПРОМПТА.
+
+    Модель, получив только словесные квоты, всё равно тащит главного во все
+    кадры. Числа против слов: сервер генерит случайное назначение (главный
+    ≤50% кадров, каждый — минимум своя квота, один состав подряд ≤2 кадров)
+    и передаёт его как рекомендацию."""
+    names = [str(c.get("name") or "").strip() for c in characters]
+    names = [x for x in names if x]
+    if len(names) < 3 or n_scenes < 4:
+        return ""
+    rnd = random.Random(secrets.randbits(32))
+    main = next((str(c["name"]).strip() for c in characters if c.get("is_main")),
+                names[0])
+    others = [x for x in names if x != main]
+    quota = max(1, -(-n_scenes // len(names)) - 1)
+    main_cap = max(quota, n_scenes // 2)
+    counts = {x: 0 for x in names}
+    plans: list[list[str]] = []
+    deck: list[str] = []
+    prev, prev_run = None, 0
+    for i in range(n_scenes):
+        size = _pick_cast_size(rnd, len(names))
+        cast: list[str] = []
+        if size > 0:
+            if counts[main] < main_cap and rnd.random() < 0.5:
+                cast.append(main)
+            guard = 0
+            while len(cast) < size and guard < 20:
+                guard += 1
+                if not deck:
+                    deck = others[:]
+                    rnd.shuffle(deck)
+                pick = deck.pop()
+                if pick not in cast:
+                    cast.append(pick)
+        key = tuple(sorted(cast))
+        if key == prev and prev_run >= 2:
+            least = min(names, key=lambda x: counts[x])
+            cast = [least] if least not in cast else [main, least]
+            key = tuple(sorted(cast))
+        prev_run = prev_run + 1 if key == prev else 1
+        prev = key
+        for x in cast:
+            counts[x] += 1
+        plans.append(cast)
+    # Добор квоты: недопредставленные встают вместо самых частых в одиночных
+    # кадрах середины (первый и последний кадры — режиссёрские, не трогаем).
+    for name in names:
+        tries = 0
+        while counts[name] < quota and tries < n_scenes:
+            tries += 1
+            i = rnd.randrange(1, n_scenes - 1)
+            cast = plans[i]
+            if name in cast or len(cast) != 1:
+                continue
+            old = cast[0]
+            if counts[old] <= quota:
+                continue
+            counts[old] -= 1
+            counts[name] += 1
+            plans[i] = [name]
+    lines = [f"кадр {i + 1}: " + (" + ".join(c) if c else "(без людей)")
+             for i, c in enumerate(plans)]
+    return "\n".join(lines)
+
+
+def _rebalance_cast(scenes: list[dict], characters: list[dict]) -> None:
+    """Страховка ПОСЛЕ генерации: модель, несмотря на квоты в промпте, тащит
+    одного героя через раскадровку.
+
+    Два прохода, оба без обращения к модели:
+      1. персонаж, занявший БОЛЬШЕ 55% кадров, ЗАМЕНЯЕТСЯ недопредставленными
+         в лишних одиночных кадрах (первый, последний и кадры-взаимодействия
+         с 2+ героями не трогаются): имя меняется в characters и в текстах,
+         внешность нового дописывается из карточки, в shot_note — пометка;
+      2. ни разу не использованные персонажи вписываются в кадры с
+         доминирующим составом (старое поведение)."""
+    names = [str(c.get("name") or "").strip() for c in characters]
+    names = [n for n in names if n]
+    if len(names) < 2 or len(scenes) < 4:
+        return
+    by_name = {str(c.get("name") or "").strip(): c for c in characters}
+
+    def cast_of(sc: dict) -> list[str]:
+        return [str(n).strip() for n in (sc.get("characters") or []) if str(n).strip()]
+
+    def desc_of(name: str) -> str:
+        return " ".join(str((by_name.get(name) or {}).get("description") or "").split())[:220]
+
+    def swap_in_scene(sc: dict, old: str, new: str) -> None:
+        sc["characters"] = [new if x == old else x for x in cast_of(sc)]
+        pat = re.compile(rf"(?<![\w]){re.escape(old)}(?![\w])")
+        for field in ("image_prompt", "image_prompt_last", "motion_prompt"):
+            text = str(sc.get(field) or "")
+            if text:
+                sc[field] = pat.sub(new, text)
+        # Внешность в тексте могла остаться от прежнего героя — дописываем
+        # новую из карточки: рендер слушает конкретное описание.
+        d = desc_of(new)
+        base = str(sc.get("image_prompt") or "").rstrip()
+        if base and d and d[:60] not in base:
+            sc["image_prompt"] = f"{base} In this shot {new} looks like this: {d}."
+        note = str(sc.get("shot_note") or "").rstrip()
+        sc["shot_note"] = (note + " · состав перераспределён").strip(" ·")
+
+    # ── проход 1: перекос на одного персонажа (>55% кадров) ──
+    counts = {n: 0 for n in names}
+    for sc in scenes:
+        for n in set(cast_of(sc)):
+            if n in counts:
+                counts[n] += 1
+    cap = max(2, int(0.55 * len(scenes)))
+    replaced = 0
+    for heavy in sorted(counts, key=lambda x: -counts[x]):
+        if counts[heavy] <= cap:
+            break
+        # Кандидаты на замену: одиночные кадры с этим героем, кроме краёв.
+        spots = [i for i in range(1, len(scenes) - 1)
+                 if cast_of(scenes[i]) == [heavy]]
+        under = sorted((n for n in names if n != heavy), key=lambda x: counts[x])
+        for i in spots:
+            if counts[heavy] <= cap or not under:
+                break
+            new = under[0]
+            swap_in_scene(scenes[i], heavy, new)
+            counts[heavy] -= 1
+            counts[new] += 1
+            replaced += 1
+            under.sort(key=lambda x: counts[x])
+    # ── проход 2: ни разу не использованные — вписать в доминирующий состав ──
+    unused = [n for n in names if counts[n] == 0]
+    injected = 0
+    if unused:
+        tallies: dict = {}
+        for sc in scenes:
+            key = tuple(sorted(cast_of(sc)))
+            tallies[key] = tallies.get(key, 0) + 1
+        dominant = max(tallies, key=lambda k: tallies[k]) if tallies else ()
+        slots = [i for i in range(1, len(scenes) - 1)
+                 if tuple(sorted(cast_of(scenes[i]))) == dominant]
+        taken: set = set()
+        for k, name in enumerate(unused):
+            d = desc_of(name)
+            for j in range(2):
+                idx = (len(slots) * (2 * k + j + 1)) // (2 * len(unused) + 1) \
+                    if slots else -1
+                if idx < 0:
+                    break
+                i = slots[min(idx, len(slots) - 1)]
+                if i in taken:
+                    i = next((x for x in slots if x not in taken), None)
+                    if i is None:
+                        break
+                taken.add(i)
+                sc = scenes[i]
+                cast = cast_of(sc)
+                if name not in cast:
+                    cast.append(name)
+                sc["characters"] = cast
+                extra = (f" Also present in the frame: {name}"
+                         + (f" — {d}" if d else "") + ".")
+                for field in ("image_prompt", "image_prompt_last"):
+                    text = str(sc.get(field) or "").rstrip()
+                    if text and name not in text:
+                        sc[field] = text + extra
+                injected += 1
+    if replaced or injected:
+        log.info("страховка состава: замен %s, вписано забытых %s (кадров %s)",
+                 replaced, injected, len(scenes))
+
+
 def _run_scene_generation(track_id: int) -> None:
     db = SessionLocal()
     engine = "gateway"
@@ -5378,19 +6615,30 @@ def _run_scene_generation(track_id: int) -> None:
         elif catalog == "mockup":
             result = _scenes_for_mockup(db, track, engine)
         else:
+            chars_payload = characters_payload(project)
+            dur = track.audio_duration_sec or 180
+            # Случайная равномерная расстановка — сервером, числами: модель
+            # получает готовое назначение «кадр → имена» и держится его.
+            plan = _cast_plan_text(chars_payload,
+                                   max(6, min(60, round(dur / 6))))
             result = asyncio.run(claude.generate_scenes(
                 story="" if track.no_story else project.story,
                 character_bible=project.character_bible,
                 track_note=track_note, title=track.title, lyrics=track.lyrics,
                 comment=clean_comment, style=track.style,
-                duration_sec=track.audio_duration_sec or 180,
-                characters=characters_payload(project),
+                duration_sec=dur,
+                characters=chars_payload,
                 audio_profile=track.audio_profile,
                 # Как стиль влияет на драматургию (админка стилей).
                 story_base=prompts_catalog.story_base(_track_style_keys(track)),
                 engine=engine,
                 random_cast=bool(getattr(track, "random_cast", False)),
+                cast_plan=plan,
             ))
+            # Страховка состава: если модель провела один состав через >70%
+            # кадров — вписываем забытых персонажей сервером, без второго
+            # прохода по модели.
+            _rebalance_cast(result.get("scenes") or [], characters_payload(project))
         for s in list(track.scenes):
             _remove_media(s.image_filename)
             _remove_media(s.video_filename)
@@ -5407,9 +6655,24 @@ def _run_scene_generation(track_id: int) -> None:
             # поле под текст завело бы три способа сказать одно и то же.
             speaker = str(sc.get("speaker") or "")
             line = str(sc.get("line") or sc.get("lyric_line") or "")
+            # Диалог кадра (сериалы): несколько реплик; speaker/line дублируют
+            # первую, авторы реплик обязаны попасть в characters.
+            dialogue = [
+                {"who": str(d.get("who") or "").strip(),
+                 "line": str(d.get("line") or "").strip()}
+                for d in (sc.get("dialogue") or [])
+                if isinstance(d, dict) and str(d.get("line") or "").strip()
+            ]
+            if dialogue and not speaker:
+                speaker = dialogue[0]["who"]
+            if dialogue and not line:
+                line = dialogue[0]["line"]
             chars = [str(n) for n in (sc.get("characters") or []) if str(n).strip()]
             if speaker and speaker not in chars:
                 chars.append(speaker)
+            for d in dialogue:
+                if d["who"] and d["who"] not in chars:
+                    chars.append(d["who"])
             # Имена от модели сводим к реальным персонажам проекта: выдуманная
             # роль («Гонщик» вместо «лол4к») не находится и молча откатывает
             # кадр на главного героя — весь клип выходит с одним человеком.
@@ -5419,6 +6682,7 @@ def _run_scene_generation(track_id: int) -> None:
                 lyric_line=line,
                 characters=names,
                 act=str(sc.get("act") or ""),
+                dialogue_json=json.dumps(dialogue, ensure_ascii=False) if dialogue else "",
                 speaker=speaker,
                 shot_size=str(sc.get("shot_size") or ""),
                 camera_move=str(sc.get("camera_move") or ""),
@@ -5522,7 +6786,10 @@ async def update_scene(scene_id: int, request: Request, user: User = Depends(cur
     for field in ("duration_sec", "lyric_line", "characters", "shot_size", "camera_move",
                   "image_prompt", "motion_prompt", "shot_note", "image_prompt_last"):
         if field in body:
-            setattr(scene, field, str(body[field]) if field != "duration_sec" else body[field])
+            # Длительность — в границах [SCENE_MIN_SEC, SCENE_MAX_SEC]: раньше
+            # поле писалось как пришло, и «300» ломало тайминги всего трека.
+            setattr(scene, field, str(body[field]) if field != "duration_sec"
+                    else _clamp_dur(body[field]))
     if "image_prompt" in body:
         scene.prompt_stale = False
     if "characters" in body:
@@ -5768,11 +7035,21 @@ def _run_storyboard(track_id: int) -> None:
             # Модель сама выбирала раскладку («аккуратной сеткой»), и лист
             # выходил то 4x2, то 3x3 — нарезка резала мимо. Диктуем жёстко.
             _c, _r = sheet_grid(len(track.scenes))
-            prompt = (f"{prompt}\n\nGRID (mandatory): exactly {_c} columns by {_r} rows, "
-                      f"{_c * _r} equal rectangular panels of identical size, "
-                      f"filling the whole image edge to edge. No outer margin, no gaps "
-                      f"between panels, no rounded corners, no page background visible. "
-                      f"Panels are numbered left to right, top to bottom.")
+            # ЖЁСТКАЯ СЕТКА. Нарезка режет лист чистой математикой
+            # (ширина/колонки, высота/строки), поэтому промпт диктует
+            # геометрию буквально: равные прямоугольные ячейки по фиксированным
+            # координатам и тонкие белые разделители ровно на границах — их
+            # съедает внутренний отступ нарезки.
+            prompt = (f"{prompt}\n\nGRID (mandatory, exact geometry): a strict uniform grid of "
+                      f"exactly {_c} columns by {_r} rows = {_c * _r} panels. Every panel is a "
+                      f"perfect rectangle of IDENTICAL size: width = image width / {_c}, "
+                      f"height = image height / {_r}. Panel boundaries sit at exact fractions "
+                      f"of the image ({'/'.join(str(i) + '/' + str(_c) for i in range(1, _c))} of the width; "
+                      f"same logic for rows). Separate panels ONLY with thin straight white "
+                      f"divider lines (2-3 px) exactly on those boundaries. Zero outer margin, "
+                      f"zero padding, no rounded corners, no page background, no frames of "
+                      f"varying size, no panel may cross a divider. Panels are numbered left "
+                      f"to right, top to bottom.")
         if not prompt:
             raise RuntimeError("Claude не вернул промпт листа раскадровки")
         # Лист: референсом идёт КОЛЛАЖ моделек всех героев трека (до 3) — так
@@ -5875,6 +7152,20 @@ def _guard_sheet_fresh(track: Track) -> None:
                        scenes=len(track.scenes))
 
 
+# ДОЛЯ ВНУТРЕННЕГО ОТСТУПА ЯЧЕЙКИ. Нарезка идёт чистой математикой
+# (ширина/колонки), а не «детектом» панелей; крохотный отступ внутрь ячейки
+# срезает белые разделители сетки и миллиметровые неточности рисовальщика.
+CELL_INSET = 0.012
+
+
+def _cell_crop(cols: int, rows: int, cx: int, cy: int) -> str:
+    """ffmpeg-фильтр ячейки (cx, cy): математический крой с отступом внутрь."""
+    return (f"crop=iw/{cols}*{1 - 2 * CELL_INSET:.4f}"
+            f":ih/{rows}*{1 - 2 * CELL_INSET:.4f}"
+            f":({cx}+{CELL_INSET:.4f})*iw/{cols}"
+            f":({cy}+{CELL_INSET:.4f})*ih/{rows}")
+
+
 @app.post("/api/tracks/{track_id}/storyboard-cells")
 def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Session = Depends(db_session)):
     """Режет лист на ячейки и отдаёт их превью — БЕЗ записи в сцены.
@@ -5895,15 +7186,14 @@ def storyboard_cells(track_id: int, user: User = Depends(current_user), db: Sess
         fname = f"cell_{uuid.uuid4().hex}.png"
         dst = os.path.join(UPLOAD_DIR, fname)
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", src, "-vf",
-             f"crop=iw/{cols}:ih/{rows}:{cx}*iw/{cols}:{cy}*ih/{rows}", dst],
+            ["ffmpeg", "-y", "-i", src, "-vf", _cell_crop(cols, rows, cx, cy), dst],
             capture_output=True, timeout=120,
         )
         if r.returncode != 0 or not os.path.exists(dst):
             continue
         _reg_file(db, fname, track.project.owner_id, kind="frame",
                   project_id=track.project_id, track_id=track.id)
-        cells.append({"index": i + 1, "filename": fname,
+        cells.append({"index": i + 1, "filename": fname, "scene_hint": i,
                       "url": f"/api/media/{fname}", "thumb_url": f"/api/thumb/{fname}"})
     db.commit()
     return {"ok": True, "grid": f"{cols}x{rows}", "cells": cells}
@@ -5980,9 +7270,7 @@ def slice_storyboard(track_id: int, user: User = Depends(current_user), db: Sess
         fname = f"slice_{uuid.uuid4().hex}.png"
         dst = os.path.join(UPLOAD_DIR, fname)
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", src, "-vf",
-             f"crop=iw/{cols}:ih/{rows}:{cx}*iw/{cols}:{cy}*ih/{rows}",
-             dst],
+            ["ffmpeg", "-y", "-i", src, "-vf", _cell_crop(cols, rows, cx, cy), dst],
             capture_output=True, timeout=120,
         )
         if r.returncode != 0 or not os.path.exists(dst):
@@ -6072,7 +7360,9 @@ def _shuffle_track_cast(track: Track, project: Project, seed: "int | None" = Non
         else:
             # Герой в кадре с вероятностью 60% — при одном персонаже в проекте
             # это просто он сам.
-            cast = [hero] if (not others or rnd.randint(1, 100) <= 60) else []
+            # ≤50%: главный не должен вылезать за половину кадров (квота
+            # владельца), при одном персонаже в проекте это просто он сам.
+            cast = [hero] if (not others or rnd.randint(1, 100) <= 50) else []
             while len(cast) < size and others:
                 if not deck:
                     deck = others[:]
@@ -6159,6 +7449,21 @@ def _scene_selected_attributes(scene: Scene, chars: list[Character]) -> list[Cha
     return [a for c in chars for a in c.attributes if a.id in ids]
 
 
+def _attr_item_photo(a: CharacterAttribute) -> str | None:
+    """Фото ПРЕДМЕТА, привязанного к атрибуту (см. CharacterAttribute
+    .item_track_id). Сессию берём у самого атрибута: функция зовётся из
+    цепочки референсов, куда db не протаскивается."""
+    tid = int(getattr(a, "item_track_id", 0) or 0)
+    if not tid:
+        return None
+    sess = object_session(a)
+    tr = sess.get(Track, tid) if sess else None
+    if not tr:
+        return None
+    paths = _track_photo_paths(tr, 1)
+    return paths[0] if paths else None
+
+
 def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
     """Референс-АТРИБУТ: если текст сцены упоминает фирменную вещь персонажа
     (шляпу, квадрик, тачку) — кадр строится вокруг предмета, и референсом
@@ -6166,6 +7471,11 @@ def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
     ЭТОЙ сцены; совпадение — регистронезависимое вхождение имени атрибута."""
     # Явно выбранные вещи имеют приоритет над поиском имени в тексте.
     for a in _scene_selected_attributes(scene, chars):
+        # Атрибут привязан к ПРЕДМЕТУ — берём фото предмета: там ракурсов
+        # больше, и вещь в кадре совпадает с той, что снята в мокапах.
+        item = _attr_item_photo(a)
+        if item:
+            return item
         for ph in a.photos:
             path = os.path.join(UPLOAD_DIR, ph.filename)
             if os.path.exists(path):
@@ -6181,6 +7491,9 @@ def _scene_attribute_photo(scene: Scene, chars: list[Character]) -> str | None:
             name = a.name.strip().lower()
             if not name or name not in haystack:
                 continue
+            item = _attr_item_photo(a)
+            if item:
+                return item
             # Первое фото атрибута — каноническая моделька предмета.
             for ph in a.photos:
                 path = os.path.join(UPLOAD_DIR, ph.filename)
@@ -6332,11 +7645,16 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
         if item:
             return item[0]
         return scene_refs[0] if scene_refs else None
+    # Референсы стиля (StyleAsset, in_generation=1) доезжают и до шлюзов:
+    # последним слотом коллажа, персонажи всегда важнее по местам.
+    style_tail = _style_ref_paths(scene.track)[:1]
     if scene_refs:
-        models = _character_model_paths(
-            chars or [c for c in project.characters if c.is_main], 4, prefer_photo=True)
-        # Реф первым: первая картинка коллажа для генератора — главная.
-        return _ref_collage(db, [scene_refs[0], *models], project.owner_id) or scene_refs[0]
+        # КОЛЛАЖА ЗДЕСЬ БОЛЬШЕ НЕТ. Шлюз берёт одну картинку, и склейка
+        # «реф + модельки» сама была сеткой — ChatGPT честно перерисовывал
+        # именно её: вместо сцены выходил второй character sheet (29.08,
+        # владелец: «почему всё генерируется тупо модельками»). Отдаём ОДИН
+        # снимок; узнаваемость держит текст промпта и легенда персонажей.
+        return scene_refs[0]
 
     attr_path = _scene_attribute_photo(scene, chars)
     if attr_path:
@@ -6346,10 +7664,12 @@ def _scene_reference_photo(db: Session, scene: Scene, project: Project) -> str |
     # Лимит по движку: Nano Banana 2 берёт 14 картинок, Pro — 8, шлюз — 1.
     paths = _character_model_paths(chars, 6, prefer_photo=True)
     if not paths:
-        return None
-    # Несколько героев в кадре — референсом идёт сборный лист: модельки бок о
-    # бок, иначе генератор видит только первого и рисует остальных от балды.
-    return _ref_collage(db, paths, project.owner_id) or paths[0]
+        return style_tail[0] if style_tail else None
+    # Тоже без склейки: сетка из лиц бок о бок — прямая инструкция «нарисуй
+    # сетку». Один герой = одно фото. Многогеройные кадры на шлюзе теряют
+    # часть лиц, зато остаются КАДРАМИ; для точной идентичности всех героев
+    # есть движки с мультиреференсом (Nano Banana берёт до 14 картинок).
+    return paths[0]
 
 
 def _reference_legend(scene: Scene, project: Project) -> str:
@@ -6434,11 +7754,17 @@ def _scene_reference_paths(db: Session, scene: Scene, project: Project) -> list[
     # одну болезнь и вернёт вторую — «персонажи не похожи», которую только
     # что чинили.
     style_refs = _style_ref_paths(scene.track)
+    # До ШЕСТИ случайных референсов стиля (по свободным слотам): чем больше
+    # ракурсов эстетики видит Nano Banana, тем меньше он её выдумывает.
+    # Случайные, а не первые — чтобы кадры трека не липли к одной картинке.
+    if len(style_refs) > 6:
+        import random as _rnd
+        style_refs = _rnd.sample(style_refs, 6)
     # Дедуп с сохранением порядка + потолок по самому скупому Nano Banana (8).
     seen: set[str] = set()
     uniq = [p for p in out if not (p in seen or seen.add(p))]
     room = max(0, 8 - len(uniq))
-    for p in style_refs[:2]:
+    for p in style_refs[:6]:
         if room <= 0:
             break
         if p not in seen:
@@ -6492,6 +7818,14 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "Reference images define composition, framing energy and character identity ONLY — "
         "do not copy their color grade, lighting or background.",
     ]
+    # СЕРИАЛ: консистентность между сериями — тот же визуальный мир, гардероб
+    # и лица, что и в предыдущих сериях сезона.
+    if _catalog_of(project) == "series":
+        parts.append(
+            "Series continuity (mandatory): same visual style, wardrobe and "
+            "character appearance as established in previous episodes of this "
+            "series — identical faces, hair, outfits and overall look; no "
+            "redesigns between episodes.")
     # Персонажи кадра: их канонические описания обязаны попасть в промпт
     # (внешность НЕ переизобретается, меняется только стилистика подачи).
     # Легенда «какая картинка чей герой» — ДО описаний персонажей, чтобы
@@ -6553,6 +7887,10 @@ def _frame_prompt(scene: Scene, track: Track, which: str) -> str:
         "no contact sheets, no turnarounds, no character sheets, no collage, no white or grey "
         "studio cyclorama, no repeated figures of the same character within the frame."
     )
+    # Тот же запрет ПЕРВОЙ строкой промпта: длинные инструкции модель читает
+    # с начала, и хвостовые правила теряются на фоне описания сцены.
+    parts.insert(0, "OUTPUT: one single cinematic photograph of a scene. NOT a character sheet, "
+                    "NOT a turnaround, NOT a grid or collage of poses.")
     # 4c. Идентичность важнее красоты: генераторы склонны «улучшать» лицо и
     # подменять человека похожим типажом — для сквозного героя альбома это
     # разрушает всю затею.
@@ -6908,15 +8246,18 @@ def _run_scene_frames(scene_id: int, which: str = "both", engine: str = "",
 
 
 @app.post("/api/scenes/{scene_id}/generate-frames")
-def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
+def generate_scene_frames(scene_id: int, which: str = "first", engine: str = "",
                           user: User = Depends(current_user),
                           db: Session = Depends(db_session)):
+    """Дефолт — ТОЛЬКО первый кадр (which=first): пары «первый+последний»
+    часто расходятся, а видео умеет ехать от одного кадра. «Последний» —
+    отдельной кнопкой, и тогда он рисуется С РЕФЕРЕНСОМ первого."""
     _guard_disk()
     scene = _own_scene(db, user, scene_id)
     if not scene.image_prompt.strip():
         raise HTTPException(400, "у сцены пуст промпт первого кадра")
     if which not in ("both", "first", "last"):
-        which = "both"
+        which = "first"
     # Движок разрешаем ДО списания: цена кадров зависит именно от него, а сам
     # он берётся по цепочке «явный выбор → движок объекта → тариф». Раньше
     # выбор из карточки кадра доезжал сюда и молча затирался внутри
@@ -6928,7 +8269,7 @@ def generate_scene_frames(scene_id: int, which: str = "both", engine: str = "",
     # референсы. Совпало всё — картинка будет та же самая.
     if _apply_frame_cache(db, user, scene, which, engine):
         return {"ok": True, "cached": True, "charged": 0}
-    _scene_charge(db, user, scene, _frames_cost(user, scene, engine),
+    _scene_charge(db, user, scene, _frames_cost(user, scene, engine, which),
                   f"кадры сцены {scene.id} ({which})", kind="frames", engine=engine)
     scene.image_status = "queued"
     db.commit()
@@ -7030,7 +8371,11 @@ def _run_midframes(scene_id: int) -> None:
         done: list[dict] = []
         for n in range(1, total + 1):
             prompt = (f"Frame {n} of {total} between these two moments: "
-                      f"{first} → {last}, style unchanged")
+                      f"{first} → {last}, style unchanged. Same single "
+                      f"continuous shot with the same camera move in progress: "
+                      f"identical location, light, wardrobe and identity, only "
+                      f"the action has advanced proportionally. No morphing, "
+                      f"no extra limbs.")
             # ТЕМ ЖЕ ДВИЖКОМ, ЧТО И ПАРА КАДРОВ. Иначе середина сцены
             # выпадает из стиля её краёв — и, что важнее, платим мы за один
             # движок, а рисуем другим: цена в /generate-midframes считается
@@ -7126,7 +8471,11 @@ def _run_extra_midframe(scene_id: int) -> None:
         track = scene.track
         ref = os.path.join(UPLOAD_DIR, scene.image_filename)
         mids = _midframes(scene)
-        prompt = (scene.image_prompt or "").strip()
+        prompt = ((scene.image_prompt or "").strip()
+                  + ". Same single continuous shot as the reference frame, the "
+                    "same camera move in progress: identical location, light, "
+                    "wardrobe and identity, only the action has advanced. "
+                    "No morphing, no extra limbs.")
         data, mime = asyncio.run(mediagen.generate_image(
             prompt, reference_path=ref, engine=scene.image_engine or "",
             resolution=(track.image_resolution or ""), aspect=_track_aspect(track)))
@@ -7278,6 +8627,18 @@ def _run_scene_video(scene_id: int) -> None:
             if base:
                 bits.append(" ".join(base.split())[:220])
             motion = "; ".join(bits) or "subtle natural motion, slow camera drift, alive frame"
+        # БЕСШОВНОСТЬ: движку говорим прямо, что это живая операторская
+        # съёмка, а не нейро-морфинг. Дублей не плодим — клаузу добавляем,
+        # только если её ещё нет в промпте.
+        if "continuous real cinematography" not in motion:
+            motion = (f"{motion}; footage must look like continuous real "
+                      f"cinematography, invisible cuts; no morphing, no warping, "
+                      f"no extra limbs, consistent identity and wardrobe")
+        # Темп трека — в промпт движения: движение героя и камеры в темпе
+        # дорожки читается как «попал в бит» даже до нарезки по битам.
+        bpm = _track_bpm(track)
+        if bpm and "BPM" not in motion.upper():
+            motion = f"{motion}; movement paced to the music at {bpm:g} BPM"
         # Кадров может быть больше двух: тогда сцена рисуется отрезками
         # кадр→кадр и склеивается. Один кадр — тоже норма: движок оживит его
         # без конечной точки.
@@ -7408,6 +8769,48 @@ async def generate_scene_video(scene_id: int, request: Request, user: User = Dep
     return {"ok": True}
 
 
+def _run_scene_full(scene_id: int) -> None:
+    """Полный круг ОДНОЙ сцены: кадры → видео, последовательно в одном треде
+    (та же логика, что у супергенерации, только для свежего кадра из
+    cinema-бара). Видео не стартует, если кадры упали."""
+    _run_scene_frames(scene_id)
+    db = SessionLocal()
+    try:
+        scene = db.get(Scene, scene_id)
+        ok = bool(scene and scene.image_filename and scene.image_status != "error")
+        if ok:
+            scene.video_status = "queued"
+            db.commit()
+    finally:
+        db.close()
+    if ok:
+        _run_scene_video(scene_id)
+
+
+@app.post("/api/scenes/{scene_id}/full-circle")
+def scene_full_circle(scene_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Кадры + видео сцены одной кнопкой (режим Video в cinema-баре)."""
+    _guard_disk()
+    scene = _own_scene(db, user, scene_id)
+    if not scene.image_prompt.strip():
+        raise HTTPException(400, "у сцены пуст промпт")
+    if scene.image_status in ("queued", "running") or scene.video_status in ("queued", "running"):
+        raise HTTPException(409, "сцена уже генерируется")
+    provider = _allowed_provider(user, scene.video_provider or "seedance")
+    vid_engine = _resolve_video_engine(user, scene.track, provider)
+    cost = _scene_cost(user, provider, scene, vid_engine)
+    _scene_charge(db, user, scene, cost,
+                  f"полный круг сцены {scene.id} ({vid_engine})",
+                  kind="video", engine=vid_engine)
+    scene.video_provider = provider
+    scene.video_engine = vid_engine
+    scene.image_status = "queued"
+    db.commit()
+    _spawn_gen(user, _run_scene_full, scene_id, kind="video")
+    return {"ok": True, "charged": cost}
+
+
 @app.post("/api/scenes/{scene_id}/trim")
 async def trim_scene_video(scene_id: int, request: Request,
                            user: User = Depends(current_user),
@@ -7467,6 +8870,128 @@ async def trim_scene_video(scene_id: int, request: Request,
 # ─────────────────────────── аудио-студия (дополнения) ───────────────────
 # Генерация, мастеринг и анализ живут в music_api.py — здесь только то, чего
 # там нет: стемы, тональность и отгрузка на лейбл.
+
+# ─────────────────────── нарезка под бит ───────────────────────
+# Сетка долей считается классическим MIR-набором (audio_analysis.py) за
+# секунды CPU и без ключей. Кэш в памяти: разбор одного трека не меняется,
+# пока не сменился файл дорожки.
+
+_BEATS_CACHE: dict = {}
+_BEATS_LOCK = threading.Lock()
+
+
+def _track_beats(track: Track) -> dict:
+    """Темп и сетка долей трека; пусто, если считать нечем или нечего."""
+    import audio_analysis
+    if not track.audio_filename or not audio_analysis.available():
+        return {}
+    key = (track.id, track.audio_filename)
+    with _BEATS_LOCK:
+        hit = _BEATS_CACHE.get(key)
+    if hit is not None:
+        return hit
+    path = os.path.join(UPLOAD_DIR, track.audio_filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        a = audio_analysis.analyze(path)
+        data = {"bpm": a.get("bpm") or 0,
+                "bpm_confidence": a.get("bpm_confidence") or 0,
+                "beats": a.get("beats") or [],
+                "downbeats": a.get("downbeats") or [],
+                "duration_sec": a.get("duration_sec") or 0}
+    except Exception as e:  # noqa: BLE001
+        log.warning("разбор долей трека %s не вышел: %s", track.id, e)
+        data = {}
+    with _BEATS_LOCK:
+        _BEATS_CACHE[key] = data
+        while len(_BEATS_CACHE) > 64:
+            _BEATS_CACHE.pop(next(iter(_BEATS_CACHE)))
+    return data
+
+
+def _track_bpm(track: Track) -> float:
+    """BPM для промптов движения — только из уже посчитанного кэша или из
+    текстового профиля: гонять полный разбор ради одной строчки нельзя."""
+    with _BEATS_LOCK:
+        hit = _BEATS_CACHE.get((track.id, track.audio_filename))
+    if hit:
+        return float(hit.get("bpm") or 0)
+    m = re.search(r"темп\s+([\d.]+)\s*BPM", track.audio_profile or "")
+    return float(m.group(1)) if m else 0.0
+
+
+@app.get("/api/tracks/{track_id}/beats")
+def track_beats(track_id: int, user: User = Depends(current_user),
+                db: Session = Depends(db_session)):
+    """Сетка долей для волновой дорожки: метки пиков/долей и BPM."""
+    track = _own_track(db, user, track_id)
+    if not track.audio_filename:
+        raise HTTPException(400, "сначала загрузи дорожку")
+    data = _track_beats(track)
+    if not data:
+        raise HTTPException(422, "сетка долей не посчиталась (нет numpy или файл не читается)")
+    return data
+
+
+@app.post("/api/tracks/{track_id}/beat-align")
+def beat_align(track_id: int, user: User = Depends(current_user),
+               db: Session = Depends(db_session)):
+    """Подвинуть границы сцен к ближайшим сильным долям трека.
+
+    Правила: граница едет к ближайшему началу такта (downbeat, запас ±2 c),
+    сцена не короче 2 секунд, сумма длительностей остаётся равной дорожке.
+    Секундное разрешение честно ограничено схемой (duration_sec — целые
+    секунды): граница попадает в ближайшую к такту целую секунду."""
+    track = _own_track(db, user, track_id)
+    scenes = sorted(track.scenes, key=lambda s: s.position)
+    if len(scenes) < 2:
+        raise HTTPException(400, "нарезать нечего — в раскадровке меньше двух кадров")
+    data = _track_beats(track)
+    if not data:
+        raise HTTPException(422, "сетка долей не посчиталась — нарезка по битам недоступна")
+    if float(data.get("bpm_confidence") or 0) < 0.2:
+        raise HTTPException(422, "у трека нет выраженной доли (речь/эмбиент?) — "
+                                 "честнее оставить нарезку по времени")
+    duration = int(track.audio_duration_sec or round(data.get("duration_sec") or 0))
+    grid = [float(t) for t in (data.get("downbeats") or [])]
+    if len(grid) < 4:
+        grid = [float(t) for t in (data.get("beats") or [])]
+    if not grid:
+        raise HTTPException(422, "долей не нашлось")
+
+    # Границы: старые кумулятивные точки тянем к ближайшему такту.
+    bounds = [0]
+    cur = 0
+    moved = 0
+    for i, s in enumerate(scenes[:-1]):
+        target = cur + max(2, int(s.duration_sec or 2))
+        lo = bounds[-1] + 2
+        hi = duration - 2 * (len(scenes) - 1 - i)
+        cand = [g for g in grid if lo <= g <= hi and abs(g - target) <= 2.0]
+        snapped = min(cand, key=lambda g: abs(g - target)) if cand else target
+        b = int(round(max(lo, min(hi, snapped))))
+        if b <= bounds[-1] + 1:
+            b = bounds[-1] + 2
+        bounds.append(b)
+        cur = b
+    bounds.append(max(duration, bounds[-1] + 2))
+
+    for i, s in enumerate(scenes):
+        new_dur = max(2, bounds[i + 1] - bounds[i])
+        if new_dur != int(s.duration_sec or 0):
+            moved += 1
+            # Уже снятое видео не совпадает с новым слотом — говорим вслух,
+            # но не удаляем: это оплаченные токены (см. video_stale в db.py).
+            if s.video_filename:
+                s.video_stale = True
+        s.duration_sec = new_dur
+        s.start_sec = bounds[i]
+    db.commit()
+    return {"ok": True, "moved": moved, "bpm": data.get("bpm"),
+            "scenes": [{"id": s.id, "start_sec": s.start_sec,
+                        "duration_sec": s.duration_sec} for s in scenes]}
+
 
 @app.post("/api/tracks/{track_id}/music/key")
 def music_key(track_id: int, user: User = Depends(current_user),
@@ -7545,6 +9070,103 @@ def voices_list(user: User = Depends(current_user)):
     return {"enabled": True, "voices": asyncio.run(voice.list_voices())}
 
 
+def _char_voice(project: Project, name: str) -> tuple[str, str]:
+    """(voice_id, voice_note) персонажа по имени; пусто — голос не закреплён."""
+    for c in project.characters:
+        if c.name.strip().lower() == (name or "").strip().lower():
+            return (c.voice_id or "").strip(), getattr(c, "voice_note", "") or ""
+    return "", ""
+
+
+def _scene_voice_fallback(scene: Scene) -> tuple[str, str]:
+    """Голос кадра, когда автор реплики не указан: speaker → персонажи кадра."""
+    project = scene.track.project
+    wanted = ([scene.speaker] if scene.speaker else [])         + [x.strip() for x in (scene.characters or "").split(",") if x.strip()]
+    for name in wanted:
+        vid, note = _char_voice(project, name)
+        if vid:
+            return vid, note
+    return "", ""
+
+
+async def _voice_scene_audio(scene: Scene, *, text: str = "",
+                             voice_id: str = "", emotion: str = "") -> str:
+    """Озвучка кадра → имя mp3. Диалог из нескольких реплик склеивается
+    по порядку с паузами 0.35с; каждая реплика — голосом СВОЕГО персонажа.
+    Явные text/voice_id из запроса главнее диалога (ручной режим)."""
+    project = scene.track.project
+    segments: list[tuple[str, str, str]] = []  # (text, voice_id, voice_note)
+    if text or voice_id:
+        line = (text or scene.lyric_line or scene.shot_note or "").strip()
+        vid, note = (voice_id or ""), ""
+        if not vid:
+            vid, note = _scene_voice_fallback(scene)
+        if not line:
+            raise RuntimeError("у кадра нет реплики — напиши текст")
+        if not vid:
+            raise RuntimeError("выбери голос — или закрепи голос за персонажем в его досье")
+        segments.append((line, vid, note))
+    else:
+        dialogue = _scene_dialogue(scene)
+        if dialogue:
+            for d in dialogue:
+                line = str(d.get("line") or "").strip()
+                if not line:
+                    continue
+                vid, note = _char_voice(project, str(d.get("who") or ""))
+                if not vid:
+                    vid, note = _scene_voice_fallback(scene)
+                if not vid:
+                    raise RuntimeError(
+                        f"у персонажа «{d.get('who') or '?'}» не закреплён голос — "
+                        f"выбери его в досье персонажа")
+                segments.append((line, vid, note))
+        else:
+            line = (scene.lyric_line or "").strip()
+            vid, note = _scene_voice_fallback(scene)
+            if not line:
+                raise RuntimeError("у кадра нет реплики")
+            if not vid:
+                raise RuntimeError("закрепи голос за персонажем в его досье")
+            segments.append((line, vid, note))
+    if not segments:
+        raise RuntimeError("озвучивать нечего")
+    files = []
+    try:
+        for line, vid, note in segments:
+            files.append(await voice.tts(
+                line, vid, UPLOAD_DIR,
+                voice.settings_for(note, emotion)))
+        if len(files) == 1:
+            return files.pop()
+        # Склейка реплик с паузами: apad на всех, кроме последней.
+        out = f"voice_{uuid.uuid4().hex}.mp3"
+        args = ["ffmpeg", "-y"]
+        for f in files:
+            args += ["-i", os.path.join(UPLOAD_DIR, f)]
+        flt = "".join(
+            f"[{i}:a]apad=pad_dur=0.35[a{i}];" if i < len(files) - 1
+            else f"[{i}:a]anull[a{i}];"
+            for i in range(len(files)))
+        flt += "".join(f"[a{i}]" for i in range(len(files)))
+        flt += f"concat=n={len(files)}:v=0:a=1[out]"
+        args += ["-filter_complex", flt, "-map", "[out]",
+                 os.path.join(UPLOAD_DIR, out)]
+        r = subprocess.run(args, capture_output=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"склейка реплик не вышла: {r.stderr.decode()[-150:]}")
+        result, files_to_drop = out, files
+        for f in files_to_drop:
+            _remove_media(f)
+        files = []
+        return result
+    finally:
+        # Сюда с непустым files попадает только незаконченная работа
+        # (успех либо pop'ает единственный файл, либо чистит список сам).
+        for f in files:
+            _remove_media(f)
+
+
 @app.post("/api/scenes/{scene_id}/voiceover")
 async def scene_voiceover(scene_id: int, request: Request,
                           user: User = Depends(current_user),
@@ -7553,22 +9175,24 @@ async def scene_voiceover(scene_id: int, request: Request,
 
     Звук ложится в audio_filename сцены — то же поле, куда клип кладёт
     отрезок трека, поэтому сборка подхватывает голос без единой правки.
-    Текст по умолчанию — реплика кадра (lyric_line), можно прислать свой.
+    Текст по умолчанию — реплика кадра (dialogue из body или lyric_line),
+    голос по умолчанию — ГОЛОС ПЕРСОНАЖА СЦЕНЫ: сначала speaker, потом
+    первый персонаж из characters с закреплённым voice_id. Эмоция:
+    body.emotion главнее voice_note персонажа (см. voice.settings_for).
     """
     if not voice.available():
         raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
-    text = str(body.get("text") or scene.lyric_line or scene.shot_note or "").strip()
-    if not text:
-        raise HTTPException(400, "у кадра нет реплики — напиши текст")
-    voice_id = str(body.get("voice_id") or "").strip()
-    if not voice_id:
-        raise HTTPException(400, "выбери голос")
     try:
-        fname = await voice.tts(text, voice_id, UPLOAD_DIR)
+        fname = await _voice_scene_audio(
+            scene,
+            text=str(body.get("text") or "").strip(),
+            voice_id=str(body.get("voice_id") or "").strip(),
+            emotion=str(body.get("emotion") or ""))
     except RuntimeError as e:
-        raise HTTPException(502, str(e))
+        code = 400 if ("голос" in str(e) or "реплик" in str(e)) else 502
+        raise HTTPException(code, str(e))
     old = scene.audio_filename
     scene.audio_filename = fname
     _reg_file(db, fname, scene.track.project.owner_id, kind="audio",
@@ -7579,6 +9203,56 @@ async def scene_voiceover(scene_id: int, request: Request,
         _remove_media(old, db)
         db.commit()
     return {"ok": True, "audio_url": f"/api/media/{fname}"}
+
+
+def _run_track_voiceover(track_id: int) -> None:
+    """Озвучить серию пакетом: кадр за кадром, ошибки не роняют пакет."""
+    import asyncio
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        done, skipped = 0, 0
+        for scene in sorted(track.scenes, key=lambda x: x.position):
+            has_lines = bool(_scene_dialogue(scene)) or bool(
+                (scene.lyric_line or "").strip() and scene.speaker)
+            if not has_lines:
+                continue
+            try:
+                fname = asyncio.run(_voice_scene_audio(scene))
+            except Exception as e:  # noqa: BLE001
+                skipped += 1
+                log.info("озвучка кадра %s пропущена: %s", scene.id, e)
+                continue
+            old = scene.audio_filename
+            scene.audio_filename = fname
+            _reg_file(db, fname, track.project.owner_id, kind="audio",
+                      project_id=track.project_id, track_id=track.id,
+                      scene_id=scene.id)
+            db.commit()
+            if old and old != fname:
+                _remove_media(old, db)
+                db.commit()
+            done += 1
+        log.info("озвучка серии %s: %s кадров, пропущено %s", track_id, done, skipped)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/voiceover")
+def track_voiceover(track_id: int, user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """«Озвучить серию»: все кадры с репликами — голосами их персонажей."""
+    if not voice.available():
+        raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
+    track = _own_track(db, user, track_id)
+    todo = [s for s in track.scenes
+            if _scene_dialogue(s) or ((s.lyric_line or "").strip() and s.speaker)]
+    if not todo:
+        raise HTTPException(400, "в кадрах нет реплик — сначала сгенерируй раскадровку серии")
+    _spawn_gen(user, _run_track_voiceover, track_id, kind="voice")
+    return {"ok": True, "queued": len(todo)}
 
 
 @app.post("/api/scenes/{scene_id}/approve")
@@ -7633,6 +9307,11 @@ def _run_assemble(track_id: int) -> None:
         _remove_media(old, db)
         db.commit()
         log.info("клип трека %s собран из %s сцен", track_id, len(videos))
+        # Уведомление боту — только у САМОСТОЯТЕЛЬНОЙ сборки: внутри
+        # супергенерации статус running, и финальное событие пришлёт она сама.
+        if track.supergen_status != "running":
+            _bot_event(track.project.owner_id, "clip", track_id=track_id,
+                       filename=track.clip_filename or "", title=track.title or "")
     except Exception as e:  # noqa: BLE001
         db.rollback()
         track = db.get(Track, track_id)
@@ -7652,6 +9331,9 @@ def _run_assemble(track_id: int) -> None:
                         fresh.commit()
                 finally:
                     fresh.close()
+        if track and track.supergen_status != "running":
+            _bot_event(track.project.owner_id, "clip", "error", track_id=track_id,
+                       title=track.title or "", error=_err_text(e, 300))
         log.warning("сборка клипа трека %s упала: %s", track_id, e)
     finally:
         db.close()
@@ -7761,6 +9443,13 @@ def _run_supergen(track_id: int, per_scene: int = 0, prepaid: int = 0) -> None:
             t.supergen_status = status
             t.supergen_note = txt
             db.commit()
+            # Финал конвейера — повод для уведомления в Telegram. Именно
+            # здесь, а не в _run_assemble: во время супергенерации сборка —
+            # промежуточный шаг, и событие с неё было бы дублем этого.
+            if status in ("done", "error"):
+                _bot_event(t.project.owner_id, "clip", status,
+                           track_id=track_id, filename=t.clip_filename or "",
+                           title=t.title or "", error=txt if status == "error" else "")
 
     try:
         track = db.get(Track, track_id)
@@ -8069,6 +9758,44 @@ def export_frame(filename: str, res: str = "4k", aspect: str = "",
 STYLE_ASSETS_DIR = os.environ.get("STYLE_ASSETS_DIR", "/data/styles")
 os.makedirs(STYLE_ASSETS_DIR, exist_ok=True)
 
+# ─────────── ВИТРИНА КАТАЛОГОВ: постеры публичны, как и их тексты ───────────
+# Постер тренда, пример его ролика, превью шаблона мокапа и кадр карточки
+# промта — ВИТРИНА сервиса, ровно такой же публичный объект, как её описание.
+# Рождаются они в приватном UPLOAD_DIR, и ссылка вела на /api/media, который
+# требует и сессию, и владельца: анонимный гость на /trends получал 401 на
+# КАЖДУЮ картинку, а вошедший не-админ — 404 (файлы записаны на админа).
+# Витрина выглядела упавшей, хотя все файлы лежали на диске.
+# Чинится не ослаблением /api/media (там живут чужие кадры, клипы и аудио),
+# а переносом витринного файла в каталог, который УЖЕ публичен по замыслу:
+# жёсткая ссылка в STYLE_ASSETS_DIR (тот же том — ноль лишних байт) и раздача
+# существующим /style-assets/{filename}. Приватный путь не трогаем вовсе.
+_published: "set[str]" = set()
+
+
+def _pub_media_url(filename: str) -> str:
+    """Публичная ссылка на витринный файл каталога. Пустое имя — пустая
+    строка; если опубликовать не вышло, честно отдаём приватный /api/media,
+    чтобы админка продолжала видеть превью."""
+    fname = os.path.basename(str(filename or ""))
+    if not fname:
+        return ""
+    dst = os.path.join(STYLE_ASSETS_DIR, fname)
+    if fname not in _published:
+        try:
+            if not os.path.exists(dst):
+                src = os.path.join(UPLOAD_DIR, fname)
+                if not os.path.exists(src):
+                    return f"/api/media/{fname}"
+                try:
+                    os.link(src, dst)          # один и тот же том — без копии
+                except OSError:
+                    shutil.copy2(src, dst)     # разные тома — придётся копией
+            _published.add(fname)
+        except Exception:  # noqa: BLE001 — витрина не стоит отказа страницы
+            log.warning("витрина: %s не опубликовался", fname, exc_info=True)
+            return f"/api/media/{fname}"
+    return f"/style-assets/{fname}"
+
 
 def _remove_style_asset(filename: str) -> None:
     """Стереть файл стиля с диска. Отдельно от _remove_media: медиа людей
@@ -8366,6 +10093,10 @@ async def update_character(char_id: int, request: Request, user: User = Depends(
         ch.name = str(body["name"])
     if "description" in body:
         ch.description = str(body["description"])
+    if "voice_id" in body:
+        ch.voice_id = str(body["voice_id"] or "").strip()[:80]
+    if "voice_note" in body:
+        ch.voice_note = str(body["voice_note"] or "").strip()[:500]
     if "is_main" in body:
         ch.is_main = bool(body["is_main"])
         if ch.is_main:  # главный герой один
@@ -8441,6 +10172,100 @@ async def add_track_photo(track_id: int, photo: UploadFile,
     return track_dict(track)
 
 
+def _run_item_from_photo(track_id: int, src_path: str, engine: str, cost: int) -> None:
+    """Чистая моделька предмета по живому фото: один кадр, нейтральный фон.
+    Результат ложится ФОТО предмета (kind="model") — дальше он работает
+    референсом во всех генерациях, как разворот у персонажа."""
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        prompt = (
+            "the exact product from the reference photo, isolated on a clean "
+            "neutral light-grey background, studio product photography, soft "
+            "even lighting, subtle contact shadow, no props, no text overlays, "
+            "the whole product in frame, every label letter and proportion "
+            "identical to the reference, square frame")
+        import asyncio
+        mediagen.reset_task()
+        res = asyncio.run(mediagen.generate_image_ex(
+            prompt, src_path, engine=engine,
+            resolution=(track.image_resolution or "").strip(), aspect="1:1"))
+        fname = _save_image(res["data"], res["mime"])
+        _reg_file(db, fname, track.project.owner_id, kind="model",
+                  project_id=track.project_id, track_id=track.id)
+        max_pos = max((p.position for p in track.photos), default=0)
+        db.add(TrackPhoto(track_id=track.id, position=max_pos + 1,
+                          filename=fname, kind="model"))
+        track.turnaround_status = ""
+        track.turnaround_note = ""
+        db.commit()
+        log.info("моделька предмета %s готова", track_id)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        track = db.get(Track, track_id)
+        if track:
+            track.turnaround_status = "error"
+            track.turnaround_note = _err_text(e, 200)
+            owner = (db.get(User, track.project.owner_id)
+                     if track.project.owner_id else None)
+            db.commit()
+            if owner and cost > 0:
+                _refund(db, owner, cost, f"моделька предмета {track_id}: не вышло",
+                        ref_type="track", ref_id=track_id,
+                        track_id=track_id, project_id=track.project_id)
+        log.warning("моделька предмета %s упала: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/items/from-photo")
+async def item_from_photo(photo: UploadFile, project_id: int,
+                          title: str = "", user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    """«Сделать предмет по фото»: живой снимок → чистый предметный рендер,
+    сохранённый как ПРЕДМЕТ. Цена — один кадр."""
+    _guard_disk()
+    project = db.get(Project, int(project_id))
+    if not project or not _owned(user, project):
+        raise HTTPException(404, "проект не найден")
+    ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(400, "поддерживаются jpg/png/webp")
+    fname = f"item_{uuid.uuid4().hex}{ext}"
+    src_path = os.path.join(UPLOAD_DIR, fname)
+    with open(src_path, "wb") as f:
+        f.write(await photo.read())
+
+    track = Track(
+        project_id=project.id,
+        position=(db.query(func.coalesce(func.max(Track.position), 0))
+                  .filter(Track.project_id == project.id).scalar() or 0) + 1,
+        title=(title or "").strip() or "Предмет",
+        lyrics="", comment="", style="", style_keys="",
+    )
+    db.add(track)
+    db.flush()
+    _reg_file(db, fname, project.owner_id, kind="photo",
+              project_id=project.id, track_id=track.id)
+    db.add(TrackPhoto(track_id=track.id, position=1, filename=fname, kind="photo"))
+
+    engine = _resolve_image_engine(user, track)
+    cost = _mockup_frame_cost(user, engine)
+    _charge(db, user, cost, f"моделька предмета «{track.title}»",
+            kind="frames", engine=engine,
+            cost_cents=_cost_cents("image", engine),
+            ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=project.id)
+    track.turnaround_status = "running"
+    track.turnaround_note = "моделька…"
+    db.commit()
+    _spawn_gen(user, _run_item_from_photo, track.id, src_path, engine, cost,
+               kind="frames")
+    return {"ok": True, "charged": cost, "track_id": track.id}
+
+
 @app.delete("/api/track-photos/{photo_id}")
 def del_track_photo(photo_id: int, user: User = Depends(current_user),
                     db: Session = Depends(db_session)):
@@ -8455,6 +10280,476 @@ def del_track_photo(photo_id: int, user: User = Depends(current_user),
     db.commit()
     db.refresh(track)
     return track_dict(track)
+
+
+# ─────────────── 3D-ОБЛЁТ ТОВАРА: 8 ракурсов по кругу ───────────────
+# Тот же конвейер, что у кадров сцен: референс-фото товара + промпт ракурса →
+# mediagen.generate_image_ex цепочкой «запрос → трек → тариф». Списание — как
+# 8 кадров (4 пары по прайсу FRAME_COST), возврат — за ненарисованное.
+
+
+def _turnaround_ref_path(track: Track) -> str:
+    """Референс товара: последний kind="model", если он есть, иначе первое
+    фото — то же правило, что у кадров сцен мокапа."""
+    photos = sorted(track.photos, key=lambda p: (p.position, p.id))
+    if not photos:
+        return ""
+    model = [p for p in photos if (p.kind or "") == "model"]
+    ph = model[-1] if model else photos[0]
+    path = os.path.join(UPLOAD_DIR, ph.filename)
+    return path if os.path.exists(path) else ""
+
+
+def _run_turnaround(track_id: int, engine: str, cost: int) -> None:
+    db = SessionLocal()
+    files: list[str] = []
+    total = len(TURNAROUND_YAWS)
+    try:
+        track = db.get(Track, track_id)
+        if not track:
+            return
+        track.turnaround_status = "running"
+        track.turnaround_note = f"0/{total}"
+        db.commit()
+        ref_path = _turnaround_ref_path(track)
+        if not ref_path:
+            raise RuntimeError("нет фото товара")
+        old = _turnaround_files(track)
+        img_res = (track.image_resolution or "").strip()
+        import asyncio
+        mediagen.reset_task()
+        for i, yaw in enumerate(TURNAROUND_YAWS, start=1):
+            prompt = (
+                "same exact product as in the reference photo, studio product "
+                "photography, clean seamless light background, the camera is "
+                "orbiting the product on a turntable, view from "
+                f"{yaw} degrees yaw around the product, identical soft studio "
+                "lighting in every shot, the product perfectly centered, same "
+                "distance and framing, every label letter identical to the "
+                "reference, square frame")
+            res = asyncio.run(mediagen.generate_image_ex(
+                prompt, ref_path, engine=engine,
+                resolution=img_res, aspect="1:1"))
+            fname = _save_image(res["data"], res["mime"])
+            _reg_file(db, fname, track.project.owner_id, kind="turnaround",
+                      project_id=track.project_id, track_id=track.id)
+            files.append(fname)
+            track.turnaround_note = f"{i}/{total}"
+            db.commit()
+        track.turnaround_files = json.dumps(files)
+        track.turnaround_status = "done"
+        track.turnaround_note = ""
+        db.commit()
+        # Старый облёт уезжает только ПОСЛЕ успешного нового: упавшая
+        # перегенерация не должна оставить трек вовсе без вьюера.
+        for f in old:
+            _remove_media(f, db)
+        db.commit()
+        log.info("3D-облёт трека %s готов (%s ракурсов)", track_id, total)
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        track = db.get(Track, track_id)
+        if track:
+            track.turnaround_status = "error"
+            track.turnaround_note = _err_text(e, 300)
+            db.commit()
+            # Возврат за ненарисованные ракурсы — с точностью до кадра.
+            owner = (db.get(User, track.project.owner_id)
+                     if track.project.owner_id else None)
+            left = cost * (total - len(files)) // total
+            if owner and left > 0:
+                _refund(db, owner, left, f"3D-облёт товара {track_id}: не вышло",
+                        ref_type="track", ref_id=track_id,
+                        track_id=track_id, project_id=track.project_id)
+        log.warning("3D-облёт трека %s упал: %s", track_id, e)
+    finally:
+        db.close()
+
+
+@app.post("/api/tracks/{track_id}/turnaround")
+def generate_turnaround(track_id: int, engine: str = "",
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    _guard_disk()
+    track = _own_track(db, user, track_id)
+    if not track.photos:
+        raise HTTPException(400, "сначала добавь фото товара")
+    if track.turnaround_status in ("queued", "running"):
+        raise HTTPException(409, "облёт уже генерируется")
+    engine = _resolve_image_engine(user, track, engine)
+    pairs = len(TURNAROUND_YAWS) // 2
+    cost = _frames_cost(user, None, engine) * pairs
+    _charge(db, user, cost, f"3D-облёт товара «{track.title or track.id}»",
+            kind="frames", engine=engine,
+            cost_cents=_cost_cents("frames", engine, count=pairs,
+                                   resolution=(track.image_resolution or "").strip()),
+            ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id)
+    track.turnaround_status = "queued"
+    track.turnaround_note = ""
+    db.commit()
+    _spawn_gen(user, _run_turnaround, track.id, engine, cost, kind="frames")
+    return {"ok": True, "charged": cost}
+
+
+# ─────────────── Маркетинг-студия: шаблоны мокапов ───────────────
+# Каталог готовых предметных сцен (mockup_catalog.py): человек выбирает
+# шаблон или пишет свой промпт, референсами едут фото товара и/или моделька
+# персонажа, результат ложится ОБЫЧНОЙ сценой трека — дальше его можно
+# оживить и собрать в клип штатным конвейером.
+
+MOCKUP_PREVIEWS_FILE = os.path.join(UPLOAD_DIR, "mockup_previews.json")
+MARKETING_CAMERAS = {
+    "closeup": "Extreme close-up framing, the product fills most of the frame, macro detail.",
+    "medium": "Medium shot framing, the product prominent with some scene context around it.",
+    "wide": "Wide shot framing, the full scene visible, the product a clear focal point.",
+    "": "",
+}
+MARKETING_ASPECTS = ("9:16", "3:4", "1:1")
+
+
+def _mockup_previews() -> dict:
+    try:
+        with open(MOCKUP_PREVIEWS_FILE, encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _mockup_previews_save(m: dict) -> None:
+    tmp = MOCKUP_PREVIEWS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False)
+    os.replace(tmp, MOCKUP_PREVIEWS_FILE)
+
+
+def _mockup_frame_cost(user: User, engine: str) -> int:
+    """Цена ОДНОГО кадра. FRAME_COST — прайс пары (см. _frames_cost),
+    поэтому одиночный кадр = половина, но не меньше 1."""
+    return max(1, _frames_cost(user, None, engine) // 2)
+
+
+@app.get("/api/mockup/templates")
+def mockup_templates(user: User = Depends(current_user)):
+    # Каталог одинаков для всех, но ЦЕНА кадра — тарифная: боту и витрине
+    # нужна честная цифра до нажатия, а не сюрприз в списании.
+    previews = _mockup_previews()
+    engine = _plan_image_engine(user)
+    cost = _mockup_frame_cost(user, engine)
+    out = []
+    for tpl in mockup_catalog.TEMPLATES:
+        fname = previews.get(tpl["id"]) or ""
+        out.append({
+            "id": tpl["id"], "ru": tpl["ru"], "en": tpl["en"],
+            "category": tpl["category"], "tara": tpl["tara"],
+            "emoji": tpl["emoji"], "motion": bool(tpl.get("motion")),
+            "showcase": bool(tpl.get("showcase")),
+            "prompt": mockup_catalog.scene_prompt(tpl),
+            # Витрина каталога, а не медиа человека: через /api/media превью
+            # видел только админ-владелец файла, остальные получали 404.
+            "preview_url": _pub_media_url(fname),
+        })
+    return {"templates": out, "categories": list(mockup_catalog.CATEGORIES),
+            "cost_points": cost}
+
+
+def _run_marketing_frame(track_id: int, scene_id: int, prompt: str,
+                         ref_paths: list[str], engine: str, aspect: str,
+                         cost: int) -> None:
+    db = SessionLocal()
+    try:
+        track = db.get(Track, track_id)
+        scene = db.get(Scene, scene_id)
+        if not track or not scene:
+            return
+        scene.image_status = "running"
+        db.commit()
+        img_res = (track.image_resolution or "").strip()
+        # Шлюзы берут одну картинку — несколько референсов склеиваем в
+        # коллаж (как _scene_reference_photo); Nano Banana получит список.
+        single = ref_paths[0] if ref_paths else None
+        if len(ref_paths) > 1:
+            single = _ref_collage(db, ref_paths[:4],
+                                  track.project.owner_id) or ref_paths[0]
+        import asyncio
+        mediagen.reset_task()
+        res = asyncio.run(mediagen.generate_image_ex(
+            prompt, single, reference_paths=ref_paths,
+            engine=engine, resolution=img_res, aspect=aspect))
+        fname = _save_image(res["data"], res["mime"])
+        _reg_file(db, fname, track.project.owner_id, kind="frame",
+                  project_id=track.project_id, track_id=track.id,
+                  scene_id=scene.id)
+        scene.image_filename = fname
+        scene.image_engine = res.get("engine") or engine
+        scene.image_status = ""
+        scene.image_error = ""
+        scene.style_keys = track.style_keys or ""
+        db.commit()
+        log.info("маркетинг-кадр сцены %s трека %s готов", scene_id, track_id)
+        _bot_event(track.project.owner_id, "mockup", track_id=track_id,
+                   scene_id=scene_id, filename=fname,
+                   title=scene.shot_note or track.title or "")
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        scene = db.get(Scene, scene_id)
+        if scene:
+            scene.image_status = "error"
+            scene.image_error = _err_text(e, 300)
+            db.commit()
+            tr0 = db.get(Track, track_id)
+            if tr0:
+                _bot_event(tr0.project.owner_id, "mockup", "error",
+                           track_id=track_id, scene_id=scene_id,
+                           error=scene.image_error)
+        track = db.get(Track, track_id)
+        if track:
+            owner = (db.get(User, track.project.owner_id)
+                     if track.project.owner_id else None)
+            if owner and cost > 0:
+                _refund(db, owner, cost, f"маркетинг-кадр трека {track_id}: не вышло",
+                        ref_type="scene", ref_id=scene_id,
+                        track_id=track_id, project_id=track.project_id)
+        log.warning("маркетинг-кадр сцены %s упал: %s", scene_id, e)
+    finally:
+        db.close()
+
+
+def _marketing_generate(db: Session, user: User, track: Track, *,
+                        template_id: str = "", prompt: str = "",
+                        camera: str = "", aspect: str = "",
+                        character_id: int = 0, use_product: bool = True,
+                        product_track_id: int = 0) -> dict:
+    """Общая механика POST marketing-gen / mockup-from-template."""
+    _guard_disk()
+    tpl = mockup_catalog.get(template_id) if template_id else None
+    if template_id and not tpl:
+        raise HTTPException(404, "нет такого шаблона")
+    base = mockup_catalog.scene_prompt(tpl) if tpl else (prompt or "").strip()
+    if not base:
+        raise HTTPException(400, "нужен шаблон или свой промпт")
+    if prompt and tpl:
+        base = base + " " + prompt.strip()
+    cam = MARKETING_CAMERAS.get((camera or "").strip(), "")
+    if cam:
+        base = base + " " + cam
+    aspect = (aspect or "").strip() or "1:1"
+    if aspect not in MARKETING_ASPECTS:
+        aspect = "1:1"
+
+    refs: list[str] = []
+    if use_product:
+        # Товар можно взять из ЛЮБОГО своего проекта: база предметов общая.
+        src = track
+        if product_track_id and int(product_track_id) != track.id:
+            src = db.get(Track, int(product_track_id))
+            if not src or src.project.owner_id != user.id:
+                raise HTTPException(404, "нет такого товара")
+        refs += _track_photo_paths(src, 4)
+        if not refs:
+            raise HTTPException(400, "сначала добавь фото товара")
+        base = mockup_catalog.PRODUCT_CLAUSE + base \
+            if not tpl else base  # у шаблона охрана этикетки уже вшита
+    char = None
+    if character_id:
+        # База героев ОБЩАЯ: персонаж может жить в любом проекте владельца.
+        char = db.get(Character, int(character_id))
+        char_proj = db.get(Project, char.project_id) if char else None
+        if not char or not char_proj or char_proj.owner_id != user.id:
+            raise HTTPException(404, "нет такого персонажа")
+        cpaths = _character_model_paths([char], 3, prefer_photo=True)
+        if not cpaths:
+            raise HTTPException(400, "у персонажа нет фото")
+        refs += cpaths
+        base += (f" The person in the scene is '{char.name}' — match the face "
+                 "and look of that person exactly as in the reference photos.")
+    if not refs:
+        raise HTTPException(400, "нужен хотя бы один референс: товар или персонаж")
+    seen: set[str] = set()
+    refs = [p for p in refs if not (p in seen or seen.add(p))][:8]
+
+    engine = _resolve_image_engine(user, track)
+    cost = _mockup_frame_cost(user, engine)
+    what = (f"кадр по шаблону «{tpl['ru']}»" if tpl else "маркетинг-кадр") \
+        + f" — «{track.title or track.id}»"
+    _charge(db, user, cost, what, kind="frames", engine=engine,
+            cost_cents=_cost_cents("image", engine,
+                                   resolution=(track.image_resolution or "").strip()),
+            ref_type="track", ref_id=track.id,
+            track_id=track.id, project_id=track.project_id)
+
+    scene = Scene(
+        track_id=track.id,
+        position=(max((s.position for s in track.scenes), default=0) + 1),
+        duration_sec=6,
+        image_prompt=base,
+        shot_note=(f"готовый кадр по шаблону «{tpl['ru']}»" if tpl
+                   else "маркетинг-кадр по своему промпту"),
+        image_status="queued",
+        image_engine=engine,
+        charged_points=cost,
+        characters=(char.name if char else ""),
+    )
+    db.add(scene)
+    db.commit()
+    _spawn_gen(user, _run_marketing_frame, track.id, scene.id, base,
+               refs, engine, aspect, cost, kind="frames")
+    return {"ok": True, "charged": cost, "scene_id": scene.id}
+
+
+@app.post("/api/tracks/{track_id}/marketing-gen")
+async def marketing_gen(track_id: int, request: Request,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(db_session)):
+    body = await request.json()
+    track = _own_track(db, user, track_id)
+    return _marketing_generate(
+        db, user, track,
+        template_id=str(body.get("template_id") or ""),
+        prompt=str(body.get("prompt") or ""),
+        camera=str(body.get("camera") or ""),
+        aspect=str(body.get("aspect") or ""),
+        character_id=int(body.get("character_id") or 0),
+        use_product=bool(body.get("use_product", True)),
+        product_track_id=int(body.get("product_track_id") or 0),
+    )
+
+
+@app.post("/api/tracks/{track_id}/mockup-from-template")
+async def mockup_from_template(track_id: int, request: Request,
+                               user: User = Depends(current_user),
+                               db: Session = Depends(db_session)):
+    body = await request.json()
+    track = _own_track(db, user, track_id)
+    return _marketing_generate(
+        db, user, track,
+        template_id=str(body.get("template_id") or ""),
+        use_product=True,
+    )
+
+
+def generate_mockup_previews(ids: list[str] | None = None,
+                             engine: str = "chatgpt") -> dict:
+    """Превью каталога нейтральной бутылкой через бесплатный шлюз.
+
+    Зовётся из админ-эндпоинта и из CLI (docker exec … python3 -c). Без ids
+    генерит витринные (showcase) шаблоны без превью; ids=["*"] — все."""
+    db = SessionLocal()
+    done, failed = [], []
+    try:
+        previews = _mockup_previews()
+        todo = []
+        for tpl in mockup_catalog.TEMPLATES:
+            if previews.get(tpl["id"]):
+                continue
+            if ids and "*" not in ids and tpl["id"] not in ids:
+                continue
+            if not ids and not tpl.get("showcase"):
+                continue
+            todo.append(tpl)
+        import asyncio
+        for tpl in todo:
+            try:
+                mediagen.reset_task()
+                res = asyncio.run(mediagen.generate_image_ex(
+                    mockup_catalog.preview_prompt(tpl), None,
+                    engine=engine, aspect="3:4"))
+                fname = _save_image(res["data"], res["mime"], upscale=False)
+                _reg_file(db, fname, None, kind="mockup_preview")
+                db.commit()
+                previews = _mockup_previews()
+                previews[tpl["id"]] = fname
+                _mockup_previews_save(previews)
+                done.append(tpl["id"])
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{tpl['id']}: {_err_text(e, 120)}")
+                log.warning("превью шаблона %s не вышло: %s", tpl["id"], e)
+        return {"done": done, "failed": failed}
+    finally:
+        db.close()
+
+
+def _own_item_id(db: Session, user: User, raw) -> int:
+    """Проверка «предмет мой»: id трека владельца или 0. Чужой id молча в
+    ноль не превращаем — это была бы тихая потеря привязки."""
+    tid = int(raw or 0)
+    if not tid:
+        return 0
+    tr = db.get(Track, tid)
+    if not tr or tr.project.owner_id != user.id:
+        raise HTTPException(404, "нет такого предмета")
+    return tid
+
+
+def _item_dict(tr: Track) -> dict:
+    photos = sorted(tr.photos, key=lambda x: (x.position, x.id))
+    return {
+        "id": tr.id, "track_id": tr.id, "project_id": tr.project_id,
+        "title": tr.title or f"#{tr.id}",
+        "name": tr.title or f"#{tr.id}",
+        "description": tr.comment or "",
+        "photos": [{"id": p.id, "url": f"/api/media/{p.filename}",
+                    "kind": p.kind or "photo"} for p in photos],
+        "url": f"/api/media/{photos[0].filename}" if photos else "",
+        "turnaround_urls": [f"/api/media/{f}" for f in _turnaround_files(tr)],
+    }
+
+
+@app.get("/api/items/all")
+def items_all(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    """ОБЩАЯ БАЗА ПРЕДМЕТОВ: все треки мокап-проектов владельца. Предмет
+    заводится один раз и виден отовсюду — из маркетинг-бара, из атрибутов
+    персонажа, из другого проекта."""
+    rows = (db.query(Track).join(Project, Project.id == Track.project_id)
+            .filter(Project.owner_id == user.id).order_by(Track.id.desc()).all())
+    out = [_item_dict(tr) for tr in rows
+           if formats.mode_of_kind(tr.project.kind)["id"] == "mockup"]
+    return {"items": out}
+
+
+@app.get("/api/characters/all")
+def characters_all(user: User = Depends(current_user),
+                   db: Session = Depends(db_session)):
+    """Общая база героев: персонажи ВСЕХ проектов владельца — для слотов
+    маркетинг-бара и @-автокомплита, а не только текущего проекта."""
+    rows = (db.query(Character).join(Project, Project.id == Character.project_id)
+            .filter(Project.owner_id == user.id).order_by(Character.id).all())
+    out = []
+    for c in rows:
+        photo = ""
+        for ph in sorted(c.photos, key=lambda x: (x.position, x.id)):
+            if os.path.exists(os.path.join(UPLOAD_DIR, ph.filename)):
+                photo = f"/api/media/{ph.filename}"
+                break
+        out.append({"id": c.id, "name": c.name, "project_id": c.project_id,
+                    "photo_url": photo})
+    return {"characters": out}
+
+
+@app.get("/api/mockup/products")
+def mockup_products(user: User = Depends(current_user),
+                    db: Session = Depends(db_session)):
+    """Общая база товаров: по одному фото с каждого трека владельца, где
+    загружены фото продукта, — слот «продукт» выбирает из любого проекта."""
+    rows = (db.query(Track).join(Project, Project.id == Track.project_id)
+            .filter(Project.owner_id == user.id).order_by(Track.id).all())
+    out = []
+    for tr in rows:
+        paths = _track_photo_paths(tr, 1)
+        if not paths:
+            continue
+        out.append({"track_id": tr.id, "title": tr.title or f"#{tr.id}",
+                    "url": f"/api/media/{os.path.basename(paths[0])}"})
+    return {"products": out}
+
+
+@app.post("/api/admin/mockup/previews")
+def admin_mockup_previews(all: int = 0,  # noqa: A002
+                          user: User = Depends(current_user)):
+    if not user.is_admin:
+        raise HTTPException(403, "только для админа")
+    return generate_mockup_previews(["*"] if all else None)
 
 
 # Как человек подписал ракурс своего фото. Классификатора ракурса у нас нет и
@@ -8524,7 +10819,29 @@ MODEL_SHEET_VIEWS = {
         "Even neutral grey studio background, sharp focus on the face, "
         "no text, no labels, no captions, no grid lines, no watermark."
     ),
+    # Шесть и восемь ракурсов — под «вертушку» в генераторе: равные шаги
+    # поворота, чтобы нарезанные кадры листались как вращение.
+    "six": (
+        "Six views left to right, the character rotating in equal 60-degree steps: "
+        "front, front three-quarter, side profile, back three-quarter, back, "
+        "and the opposite side profile. Relaxed A-pose, arms slightly away from "
+        "the body, hands EMPTY, full body head to toe, identical outfit, hair and "
+        "proportions in every view, all six figures the same height on one baseline. "
+        "Even neutral grey studio background, no props, no text, no labels, "
+        "no grid lines, no watermark."
+    ),
+    "eight": (
+        "Eight views left to right, the character rotating in equal 45-degree steps "
+        "through a full turn starting from the front. Relaxed A-pose, arms slightly "
+        "away from the body, hands EMPTY, full body head to toe, identical outfit, "
+        "hair and proportions in every view, all eight figures the same height on "
+        "one baseline. Even neutral grey studio background, no props, no text, "
+        "no labels, no grid lines, no watermark."
+    ),
 }
+
+#: Сколько фигур в листе каждого вида — фронт режет лист на кадры вертушки.
+MODEL_SHEET_VIEW_N = {"full": 4, "closeup": 4, "six": 6, "eight": 8}
 
 # Фото главнее текста по ВНЕШНОСТИ, текст главнее фото по ОДЕЖДЕ и стилю.
 # Без этой строки описание конкурирует с фотографией за лицо и обычно
@@ -8569,7 +10886,8 @@ def _model_sheet_photos(ch: Character, limit: int) -> list:
     return [live[0]] + live[-(limit - 1):]
 
 
-def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list) -> str:
+def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list,
+                        layout: str = "row") -> str:
     """Четыре блока в жёстком порядке: стиль листа → идентичность → описание
     → рамки листа. Порядок не косметика: начало промпта весит больше."""
     base = MODEL_SHEET_STYLES.get(kind) or MODEL_SHEET_STYLES["3d"]
@@ -8589,6 +10907,9 @@ def _model_sheet_prompt(kind: str, views: str, desc: str, photos: list) -> str:
     if desc:
         parts.append(f"CHARACTER (clothing, accessories, character and mood): {desc}")
     parts.append(rules)
+    if layout == "grid":
+        parts.append("Arrange the views in a GRID of two equal rows instead of "
+                     "one row; keep every figure the same size.")
     return "\n\n".join(parts)
 
 
@@ -8704,6 +11025,28 @@ async def generate_attribute_model(attr_id: int, request: Request,
     return {"ok": True, "url": f"/api/media/{fname}", "charged": cost}
 
 
+@app.get("/api/model-sheet")
+def model_sheet_info(user: User = Depends(current_user),
+                     db: Session = Depends(db_session)):
+    """Витрине 3D-моделек: честная цена по движку пользователя, доступные
+    виды листа и история его разворотов (kind=model) миниатюрами."""
+    engine = _model_sheet_engine(user)
+    spec = mediagen.IMAGE_ENGINES.get(engine, {})
+    resolution = "4K" if "4K" in (spec.get("resolutions") or ()) else ""
+    rows = (db.query(CharacterPhoto)
+            .join(Character, CharacterPhoto.character_id == Character.id)
+            .join(Project, Character.project_id == Project.id)
+            .filter(Project.owner_id == user.id, CharacterPhoto.kind == "model")
+            .order_by(CharacterPhoto.id.desc()).limit(18).all())
+    return {
+        "engine": engine, "engine_title": spec.get("title") or engine,
+        "cost": _image_cost(user, engine, resolution),
+        "views": [{"id": "full", "n": 4}, {"id": "six", "n": 6}, {"id": "eight", "n": 8}],
+        "history": [{"id": p.id, "char_id": p.character_id,
+                     "url": f"/api/media/{p.filename}"} for p in rows],
+    }
+
+
 @app.post("/api/characters/{char_id}/generate-model")
 async def generate_character_model(char_id: int, request: Request,
                                    user: User = Depends(current_user),
@@ -8734,6 +11077,9 @@ async def generate_character_model(char_id: int, request: Request,
     views = str(body.get("views") or "full")
     if views not in MODEL_SHEET_VIEWS:
         views = "full"
+    # Раскладка листа: лента (по умолчанию) или сетка в два ряда. Живёт
+    # ДОПИСКОЙ к правилам вида — сами тексты видов остаются лентой.
+    layout = str(body.get("layout") or "row")
 
     engine = _model_sheet_engine(user)
     spec = mediagen.IMAGE_ENGINES.get(engine, {})
@@ -8778,7 +11124,7 @@ async def generate_character_model(char_id: int, request: Request,
             # должен оставить лист вообще БЕЗ референса, то есть без лица.
             reference = paths[0]
 
-    prompt = _model_sheet_prompt(kind, views, desc, photos)
+    prompt = _model_sheet_prompt(kind, views, desc, photos, layout=layout)
     try:
         data, mime = await mediagen.generate_image(
             prompt, reference,
@@ -8786,7 +11132,8 @@ async def generate_character_model(char_id: int, request: Request,
             engine=engine, resolution=resolution,
             # Разворот — ГОРИЗОНТАЛЬНЫЙ лист. Именно этот параметр, а не слово
             # "horizontal" в промпте, решает, что получится на выходе.
-            aspect="16:9")
+            # Сетке в два ряда вытянутый лист не нужен — там квадрат честнее.
+            aspect="1:1" if layout == "grid" else "16:9")
     except Exception as e:  # noqa: BLE001
         # Не сделали — не берём денег: возврат ровно того, что списали.
         _refund(db, user, cost, f"разворот персонажа {ch.id}")
@@ -8835,6 +11182,7 @@ async def create_attribute(char_id: int, request: Request, user: User = Depends(
         character_id=ch.id, position=max_pos + 1,
         name=str(body.get("name") or "Без имени"),
         description=str(body.get("description") or ""),
+        item_track_id=_own_item_id(db, user, body.get("item_track_id")),
     )
     db.add(attr)
     db.commit()
@@ -8850,6 +11198,8 @@ async def update_attribute(attr_id: int, request: Request, user: User = Depends(
         attr.name = str(body["name"])
     if "description" in body:
         attr.description = str(body["description"])
+    if "item_track_id" in body:
+        attr.item_track_id = _own_item_id(db, user, body["item_track_id"])
     db.commit()
     return attribute_dict(attr)
 
@@ -8935,6 +11285,48 @@ async def reorder_scenes(track_id: int, request: Request,
     threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
     return {"ok": True, "order": [s.id for s in
                                   sorted(track.scenes, key=lambda x: x.position)]}
+
+
+@app.post("/api/tracks/{track_id}/scenes/retime")
+async def retime_scene(track_id: int, request: Request,
+                       user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """Сдвинуть ГРАНИЦУ между двумя кадрами (метку на дорожке).
+
+    Двигается не «длительность кадра», а стык: предыдущий кадр растёт ровно
+    на столько, на сколько укорачивается следующий. Иначе перетаскивание
+    метки уводило бы весь хвост клипа, и одна поправка на полсекунды
+    рассинхронизировала бы тридцать сцен.
+
+    Минимум секунда на кадр: кадр в ноль секунд — это не кадр, а дырка в
+    таймлайне, которую нечем показать.
+    """
+    track = _own_track(db, user, track_id)
+    body = await request.json()
+    scene_id = int(body.get("scene_id") or 0)
+    want = int(round(float(body.get("start_sec") or 0)))
+    ordered = sorted(track.scenes, key=lambda x: (x.position, x.id))
+    idx = next((i for i, s in enumerate(ordered) if s.id == scene_id), -1)
+    if idx <= 0:
+        raise HTTPException(400, "первую границу двигать некуда")
+    prev, cur = ordered[idx - 1], ordered[idx]
+    lo = int(prev.start_sec or 0) + 1
+    hi = int(cur.start_sec or 0) + int(cur.duration_sec or 0) - 1
+    if hi < lo:
+        raise HTTPException(400, "кадры слишком короткие для сдвига")
+    want = max(lo, min(hi, want))
+    end = int(cur.start_sec or 0) + int(cur.duration_sec or 0)
+    prev.duration_sec = want - int(prev.start_sec or 0)
+    cur.start_sec = want
+    cur.duration_sec = end - want
+    _renumber_scenes(track)
+    db.commit()
+    # Куски дорожки под сценами уехали — режем заново, как после reorder.
+    threading.Thread(target=_resync_scene_audio, args=(track.id,), daemon=True).start()
+    return {"ok": True, "scenes": [{"id": s.id, "start_sec": s.start_sec,
+                                    "duration_sec": s.duration_sec}
+                                   for s in sorted(track.scenes,
+                                                   key=lambda x: x.position)]}
 
 
 def _resync_scene_audio(track_id: int) -> None:
@@ -9155,7 +11547,11 @@ async def add_scene(track_id: int, request: Request, user: User = Depends(curren
 # ═════════════════════════════════════════════════════════════════════════════
 
 #: Границы длительности кадра — общие с движками видео (2–12 секунд).
-SCENE_MIN_SEC, SCENE_MAX_SEC = 2, 12
+# Максимум подняли до 30: длинная сцена строится ЦЕПОЧКОЙ промежуточных
+# кадров (_scene_frame_chain) — видео едет отрезками кадр→кадр по ~6 секунд,
+# так что 30-секундный план физически снимается. Раскадровщик по-прежнему
+# просит 2-10 секунд: длинные планы — осознанное ручное решение.
+SCENE_MIN_SEC, SCENE_MAX_SEC = 2, 30
 #: Как поступить с таймлайном при вставке кадра.
 RETIME_POLICIES = ("squeeze", "spread", "tail")
 
@@ -9890,7 +12286,8 @@ def _frames_todo(track: Track, force: bool = False, scope: str = "") -> list:
 
 
 def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
-                    keep_version: bool = False, scene_ids: list | None = None) -> None:
+                    keep_version: bool = False, scene_ids: list | None = None,
+                    which: str = "both") -> None:
     """Пакетная генерация: кадры сцен трека подряд, одна за другой.
 
     Последовательно, а не парал­лельно: шлюзы картинок обслуживают один
@@ -9915,14 +12312,16 @@ def _run_all_frames(track_id: int, engine: str = "", force: bool = False,
              " (перерисовка)" if force else "")
     for sid in ids:
         try:
-            _run_scene_frames(sid, engine=engine, keep_version=keep_version)
+            _run_scene_frames(sid, which=which, engine=engine,
+                              keep_version=keep_version)
         except Exception as e:  # noqa: BLE001 — одна упавшая сцена не роняет пакет
             log.warning("кадры сцены %s в пакете упали: %s", sid, _err_text(e))
 
 
 @app.post("/api/tracks/{track_id}/generate-all-frames")
 def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
-                        scope: str = "", user: User = Depends(current_user),
+                        scope: str = "", which: str = "first",
+                        user: User = Depends(current_user),
                         db: Session = Depends(db_session)):
     """scope: todo (по умолчанию) | dirty | all. force=1 — легаси-синоним
     dirty: та же кнопка «перерисовать кадры», но теперь она платит только за
@@ -9941,8 +12340,12 @@ def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
     # Движок выбираем ДО списания: цена кадров зависит именно от него, а сам
     # выбор берётся с ТРЕКА, а не молча падает в дефолт тарифа, как раньше.
     eng = _resolve_image_engine(user, track, engine)
-    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng),
-                   f"кадры сцен трека {track.id} ({eng}, {scope})",
+    # Пакет по умолчанию рисует ТОЛЬКО первые кадры (см. generate_scene_frames)
+    # — и стоит вдвое дешевле пары.
+    if which not in ("both", "first"):
+        which = "first"
+    _scenes_charge(db, user, todo, lambda sc: _frames_cost(user, sc, eng, which),
+                   f"кадры сцен трека {track.id} ({eng}, {scope}, {which})",
                    kind="frames", engine=eng, track_id=track.id,
                    project_id=track.project_id)
     for s in todo:
@@ -9950,7 +12353,7 @@ def generate_all_frames(track_id: int, engine: str = "", force: int = 0,
     db.commit()
     redraw = scope in ("dirty", "all")
     _spawn_gen(user, _run_all_frames, track_id, eng, redraw, redraw,
-               [s.id for s in todo], kind="frames")
+               [s.id for s in todo], which, kind="frames")
     return {"ok": True, "queued": len(todo), "engine": eng, "scope": scope,
             "force": redraw}
 
@@ -9964,8 +12367,10 @@ def frames_quote(track_id: int, engine: str = "",
     Считается ТЕМИ ЖЕ функциями, что и списание: второй кассы в сервисе нет."""
     track = _own_track(db, user, track_id)
     eng = _resolve_image_engine(user, track, engine)
-    per = _frames_cost(user, None, eng)
-    out = {"engine": eng, "per_scene": per, "balance": int(user.gen_points or 0),
+    # Пакет по умолчанию рисует только первые кадры — и цена считается за них.
+    per = _frames_cost(user, None, eng, "first")
+    out = {"engine": eng, "per_scene": per, "per_pair": _frames_cost(user, None, eng),
+           "balance": int(user.gen_points or 0),
            "scopes": []}
     for sc in FRAMES_SCOPES:
         n = len(_frames_todo(track, scope=sc))
@@ -12072,6 +14477,8 @@ def account(user: User = Depends(current_user), db: Session = Depends(db_session
                                             max(_plan_engines(plan).values())),
         "linked": {"telegram": bool(user.tg_id), "yandex": bool(user.yandex_id),
                    "google": bool(user.google_id), "password": bool(user.login)},
+        "tg_linked": bool(user.tg_id), "tg_username": user.tg_username or "",
+        "phone_linked": bool(user.phone), "phone_masked": _mask_phone(user.phone),
         "ambassador": {
             "is_ambassador": bool(user.is_ambassador),
             "ref_code": user.ref_code or "",
@@ -13347,6 +15754,14 @@ import music_api  # noqa: E402
 music_api.mount(app)
 
 
+# ─────────────────────────── раздел «Школа»: курсы ───────────────────────────
+# Витрина курсов, доступ (тариф или токены), авторы, кейсы, отзывы. Как и
+# музыка, подключается ДО mount("/") и не заводит своей авторизации и кассы.
+import school  # noqa: E402
+
+school.mount(app)
+
+
 # ─────────────────────────── ВХОД В АДМИНКУ ───────────────────────────
 # Отдельная страница /admin, а не вкладки внутри модалки кабинета. Владелец
 # просил дословно: «дай ссылку на админку где у меня срм система и другие
@@ -13399,13 +15814,20 @@ def admin_page(request: Request, rest: str = "",
 # Правки стилей из базы — до первого запроса, иначе первая же витрина
 # отдаст заводской каталог и человек решит, что админка не сохраняет.
 reload_style_overlay()
+reload_prompts_overlay()
+reload_mockup_overlay()
+
+# Зависшие задачи — только ЗДЕСЬ: уборке нужен _run_scene_frames, а он живёт
+# на восьмитысячной строке. См. комментарий у самой функции.
+_reset_orphan_jobs()
 
 # ЧЕЛОВЕЧЕСКИЕ АДРЕСА РАЗДЕЛОВ. Приложение — SPA, и до сих пор разделы жили
 # в якорях (#/make, ?home#ld-learn): такие ссылки стыдно слать и невозможно
 # рекламировать. Каждый путь отдаёт тот же index.html, а какой раздел
 # открыть — решает фронт по location.pathname.
 SPA_ROUTES = ("home", "studio", "make", "generator", "trends", "academy",
-              "prompts", "pricing", "music", "login")
+              "prompts", "pricing", "music", "login", "marketing", "earn",
+              "school")
 
 
 @app.get("/team", include_in_schema=False)
@@ -13424,6 +15846,24 @@ def _spa_index():
 for _route in SPA_ROUTES:
     app.add_api_route(f"/{_route}", _spa_index, methods=["GET"],
                       include_in_schema=False)
+
+# Страница курса: /school/course/{id}. Отдельным роутом, а не catch-all'ом —
+# по той же причине, по какой разделы регистрируются по одному.
+def _spa_course(course_id: int):  # noqa: ARG001 — путь читает фронт
+    return _spa_index()
+
+
+app.add_api_route("/school/course/{course_id}", _spa_course, methods=["GET"],
+                  include_in_schema=False)
+
+
+def _spa_prompt(layer: str, key: str):  # noqa: ARG001 — путь читает фронт
+    return _spa_index()
+
+
+# Страница промта: /p/{layer}/{key} — тренд, шаблон мокапа, слой каталога.
+app.add_api_route("/p/{layer}/{key}", _spa_prompt, methods=["GET"],
+                  include_in_schema=False)
 
 
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/static")

@@ -9,12 +9,15 @@
    ═══════════════════════════ РЕЖИМ МИНИМАЛИЗМА ═══════════════════════════
    Требование владельца, и оно про экономию внимания, а не про вкус:
 
-     1. ОГНЯ В НАВИГАЦИИ НЕТ. --fire-ink живёт на главном действии экрана
-        (снять, оплатить, применить) — ровно одном. Подсветить огнём ещё и
-        активную вкладку значит уравнять «где я» с «что сделать», и главная
-        кнопка перестаёт находиться взглядом.
-     2. АКТИВНОЕ СОСТОЯНИЕ — РАМКА И ВЕС ТЕКСТА, НЕ ЗАЛИВКА. Заливка на
-        светлой бумаге тянет на себя всё внимание строки.
+     1. ОГОНЬ В НАВИГАЦИИ — ОДИН И ТОЛЬКО ПОД АКТИВНЫМ ПУНКТОМ. Правка
+        27.08.2026 по прямому решению владельца: разделы стали единым
+        сегмент-тумблером, и активный пункт залит огнём. Прежнее правило
+        («огня в навигации нет») отменено ИМЕННО для этой подложки —
+        одна ездящая пилюля на всю ленту, а не заливка на каждой кнопке.
+        Везде остальное в шапке огня по-прежнему нет.
+     2. ПЕРЕКЛЮЧЕНИЕ ВИДНО ДВИЖЕНИЕМ. Подложка едет под новый пункт
+        (transform + transition), а не гаснет в одном месте и вспыхивает в
+        другом: мигание глаз не связывает в одно событие.
      3. ТОНКИЕ ОБВОДКИ. У студии обводка 2–2.5px и «подушка» снизу — это язык
         рабочих карточек, объектов, которые двигают. Навигация ничего не
         двигает, ей хватает 1px.
@@ -83,15 +86,15 @@
   border-color: rgba(45, 33, 26, .55);
   background: transparent;
 }
-.topbar.has-sections .tb-sec[data-sec="trends"] { text-transform: lowercase; }
+/* «Тренды» писались строчными — единственный пункт с чужим регистром. */
 .topbar.has-sections .tb-sec:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 1px;
 }
 
-/* Шапка с лентой: три группы в одну строку — марка, разделы, личное.
-   Проектная строка и тумблер режимов уезжают во ВТОРОЙ ряд: это второй ярус
-   навигации («чем снимаю»), и стоять в одной строке с первым он не должен. */
+/* Шапка с лентой: одна полоса — марка, разделы, режим и проект, личное.
+   Второй ряд убран 27.08.2026: он занимал высоту ради двух контролов, а
+   свободного места в строке на широком экране хватает с запасом. */
 .topbar.has-sections {
   flex-wrap: wrap;
   row-gap: 8px;
@@ -102,29 +105,327 @@
 /* Без margin-left:auto: автоотступ съедает ВСЁ свободное место, и лента
    разделов, честно объявленная гибкой, схлопывается до 29 пикселей. Правый
    край и так за ней — ленты достаточно, чтобы прижать личный блок. */
-.topbar.has-sections > .tb-user { order: 3; }
-.topbar.has-sections > .tb-modeline { order: 4; flex: 1 1 100%; }
+.topbar.has-sections > .tb-user { order: 4; }
+/* Режим и проект — В ТОЙ ЖЕ строке меню (второй этаж добит 28.08: базовый
+   flex 1 1 100% и был тем «условием», на котором вторая строка выживала
+   между 701 и 900px). */
+.topbar.has-sections > .tb-modeline { order: 3; flex: 0 1 auto; min-width: 0; }
 
-/* Разделитель между разделами и личным блоком — волосяная линия, не рамка. */
-.topbar.has-sections > .tb-user::before {
-  content: "";
+/* Разделитель-линию перед личным блоком УБРАЛИ: рядом со стеклянными
+   капсулами она читалась не как разделитель, а как обрезок чужой рамки —
+   те самые «линии-артефакты» со скрина владельца. Капсулы разделяют себя
+   сами. Туда же — рамка второго ряда у .tb-project (style.css оставляет ей
+   border-top + padding-top от старой двухэтажной шапки). */
+.topbar.has-sections > .tb-user::before { content: none; }
+.topbar.has-sections .tb-project {
+  border-top: none; padding-top: 0; margin: 0;
+}
+.topbar.has-sections > .tb-modeline { padding: 0; margin: 0; border: none; }
+
+
+/* ─────── СЕГМЕНТ-ТУМБЛЕР РАЗДЕЛОВ: капсула с ездящей подложкой ─────── */
+/* Капсула — ЖИДКОЕ СТЕКЛО, а не белая плашка: непрозрачная заливка поверх
+   стеклянной шапки читается как чужая наклейка. Полупрозрачный фон, blur и
+   светлая кромка сверху (внутренний блик) дают ту самую выпуклость. */
+.topbar.has-sections .tb-sections {
+  position: relative;
   align-self: center;
-  width: 1px;
-  height: 18px;
-  margin-right: 4px;
-  background: rgba(45, 33, 26, .16);
+  height: var(--cap-h);
+  padding: 4px;
+  gap: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-solid) 42%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55),
+              0 2px 10px rgba(var(--ink-rgb), .07);
+}
+:root[data-theme="dark"] .topbar.has-sections .tb-sections,
+:root:not([data-theme="light"]).os-dark .topbar.has-sections .tb-sections {
+  background: color-mix(in srgb, var(--card-solid) 55%, transparent);
+  border-color: rgba(255, 255, 255, .10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06),
+              0 2px 12px rgba(0, 0, 0, .35);
 }
 
-@media (max-width: 900px) {
-  /* Телефон: шапка ОДНОЙ строкой. Лента прокручивается пальцем, личный блок
-     ужимается до бейджа токенов и языка — кнопки «Кабинет» и «Мастерская»
-     уже стоят в ленте, и дублировать их справа незачем. */
-  .topbar.has-sections { row-gap: 6px; }
-  .topbar.has-sections .tb-sec { padding: 0 9px; font-size: 12.5px; }
-  .topbar.has-sections > .tb-user::before { display: none; }
-  .topbar.has-sections > .tb-user { gap: 6px; }
-  .topbar.has-sections > .tb-modeline { flex-basis: 100%; }
+/* ─────── ПРАВЫЙ КРАЙ ШАПКИ: ОДИН РОСТ, ОДНО СТЕКЛО ───────
+   На тёмной теме он расползался: капсулы разной высоты, EN/RU в толстой
+   белой обводке (border: 1px solid var(--ink) — а --ink в ночи светлый),
+   бейдж токенов своей заливки, шестерёнка отдельной кнопкой. Приводим всё
+   к одному: высота 34, стеклянный фон, волосяная рамка, один радиус. */
+.topbar.has-sections .tb-user { gap: 8px; align-items: center; flex-wrap: nowrap; }
+/* ЕДИНЫЙ РОСТ ВСЕЙ СТРОКИ. Все капсулы — 40px, как пилюля навигации:
+   строка из блоков трёх разных высот читалась лесенкой (скрин владельца
+   27.08). Ось задаёт align-items: center на самой шапке. */
+.topbar.has-sections { --cap-h: 40px; align-items: center; }
+.topbar.has-sections .tb-user > .theme-switch,
+.topbar.has-sections .tb-user > .lang-switch,
+.topbar.has-sections .tb-user > .points-badge,
+.topbar.has-sections .tb-user > .account-btn,
+.topbar.has-sections .tb-modeline .mode-badge,
+.topbar.has-sections .tb-modeline .project-select,
+.topbar.has-sections .tb-modeline .tb-new,
+.topbar.has-sections .tb-modeline .tb-copy {
+  height: var(--cap-h); min-height: var(--cap-h); padding: 0 12px;
+  margin: 0; align-self: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; corner-shape: squircle;
+  border: 1px solid rgba(var(--ink-rgb), .12);
+  background: color-mix(in srgb, var(--card-solid) 52%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
 }
+.topbar.has-sections .tb-user > .theme-switch,
+.topbar.has-sections .tb-user > .lang-switch { padding: 0 3px; gap: 1px; }
+.topbar.has-sections .tb-user .theme-switch button,
+.topbar.has-sections .tb-user .lang-switch button {
+  height: calc(var(--cap-h) - 10px); border: none; box-shadow: none; background: transparent;
+  border-radius: 999px; color: var(--ink-muted);
+}
+/* Активный язык и тема — мягкая подложка, а НЕ чёрная/белая обводка. */
+.topbar.has-sections .tb-user .theme-switch button.on,
+.topbar.has-sections .tb-user .lang-switch button.on,
+.topbar.has-sections .tb-user .lang-switch button.on:hover:not(:disabled) {
+  background: rgba(var(--ink-rgb), .12); color: var(--text);
+  border: none; box-shadow: none;
+}
+.topbar.has-sections .tb-user > .points-badge { padding-left: 30px; }
+/* ⧉ и ＋ — круглые иконки одного размера. Прямоугольные капсулы без gap
+   слипались в комок и наезжали на тему (скрин владельца 28.08). */
+.topbar.has-sections .tb-modeline .tb-new,
+.topbar.has-sections .tb-modeline .tb-copy {
+  width: var(--cap-h); min-width: var(--cap-h); padding: 0; flex: none;
+  /* font-size: 0 гасит ТЕКСТ «+ проект» из data-i18n — рисуется только знак
+     из ::after; 15px здесь возвращали подпись, и рядом со знаком выходила
+     каша «проект+» (скрин владельца). */
+  border-radius: 50%; font-size: 0;
+}
+.topbar.has-sections .tb-modeline .tb-copy { font-size: 15px; }
+.topbar.has-sections .tb-modeline .tb-new::after {
+  content: "+"; font-size: 17px; font-weight: 800; line-height: 1;
+}
+.topbar.has-sections .tb-modeline .tb-project { gap: 8px; }
+.topbar.has-sections .tb-modeline { gap: 8px; }
+
+/* Меню профиля: «выйти» и «админка» ушли с правого края шапки сюда. */
+.tb-user { position: relative; }
+.tb-pmenu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 120;
+  min-width: 190px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  border-radius: 18px; corner-shape: squircle;
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25),
+              0 14px 34px rgba(var(--ink-rgb), .20);
+  overflow: hidden; resize: none;
+}
+.tb-phead {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px 8px;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-muted); border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.tb-pava {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 12px; font-weight: 800;
+  color: var(--ink-muted); background: var(--inset) center / cover no-repeat;
+  border: 1px solid var(--border); text-transform: none;
+}
+/* Пункт — ИМЕННО пункт меню: без рамок, без теней, без вида инпута и без
+   resize-уголка (наследованный appearance у кнопок в тёмной теме давал
+   «белое поле с плейсхолдером»). */
+.tb-pmenu .tb-pitem {
+  appearance: none; -webkit-appearance: none; resize: none; width: 100%;
+  text-align: left; padding: 9px 12px; font-size: 13px; font-weight: 600;
+  color: var(--ink); background: transparent; border: none; box-shadow: none;
+  border-radius: 11px; corner-shape: squircle; cursor: pointer; min-height: 0;
+}
+.tb-pmenu .tb-pitem:hover { background: var(--inset); transform: none; }
+.tb-pmenu .tb-pitem.danger { color: var(--danger-ink); }
+/* Кнопка выхода и «сохранить аккаунт» живут в меню, а не в строке. */
+.topbar.has-sections #logout-btn,
+.topbar.has-sections #save-account-btn,
+.topbar.has-sections #admin-btn,
+/* Тема живёт ТОЛЬКО в меню профиля — из шапки убрана и на десктопе:
+   капсула наезжала на EN/RU, а щёлкают её раз в неделю. */
+.topbar.has-sections .theme-switch,
+/* «Призрак-надпись» под капсулами — легаси-бейдж вида проекта. */
+.topbar.has-sections #project-kind { display: none !important; }
+/* Подложку двигает sections.js (moveIndicator). Она под кнопками, поэтому
+   z-index у неё 0, а у кнопок — 1: без этого огонь накрыл бы подпись. */
+.tb-seg-ind {
+  position: absolute; left: 0; top: 0; z-index: 0;
+  width: 0; height: 0; border-radius: 999px; corner-shape: squircle;
+  background: var(--fire-ink);
+  box-shadow: 0 1px 8px rgba(200, 96, 20, .28);
+  opacity: 0; pointer-events: none;
+  transition: transform .26s cubic-bezier(.22, .9, .28, 1),
+              width .26s cubic-bezier(.22, .9, .28, 1), opacity .16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tb-seg-ind { transition: opacity .16s ease; }
+}
+.topbar.has-sections .tb-sec {
+  position: relative; z-index: 1;
+  height: calc(var(--tb-h) - 4px); min-height: 0;
+  padding: 0 14px; font-size: 13.5px;
+  border-radius: 999px;
+}
+.topbar.has-sections .tb-sec.on {
+  color: var(--on-fire);
+  border-color: transparent;
+  background: transparent;
+}
+.topbar.has-sections .tb-sec:hover:not(:disabled):not(.on) {
+  border-color: transparent;
+  background: rgba(var(--ink-rgb), .05);
+}
+/* «Студия» — главный вход, и он читается первым: чуть жирнее соседей. */
+.topbar.has-sections .tb-sec[data-sec="studio"] { font-weight: 800; }
+
+/* Режим и проект переехали в общую полосу: компактно и без своей плашки. */
+.topbar.has-sections > .tb-modeline {
+  order: 3; flex: 0 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.topbar.has-sections .tb-project { gap: 6px; min-width: 0; }
+.topbar.has-sections .tb-project .project-cover { display: none; }
+.topbar.has-sections .project-select { max-width: 170px; }
+/* «Новый проект» и «копия» — иконки: слово в общей полосе съедает место,
+   которое нужнее разделам, а действие опознаётся значком. */
+.topbar.has-sections .tb-new {
+  font-size: 0; width: 30px; padding: 0; justify-content: center;
+}
+.topbar.has-sections .tb-new::after { content: "+"; font-size: 17px; font-weight: 800; }
+.topbar.has-sections > .tb-user { order: 5; margin-left: auto; }
+
+/* ОДНА СТРОКА НА ДЕСКТОПЕ, БЕЗ ВТОРОГО ЭТАЖА. Перенос был разрешён
+   (flex-wrap: wrap) — и личный блок уезжал под капсулу режима, ровно тот
+   второй ярус, который убирали. Теперь строка не переносится: сжимается
+   лента разделов (она умеет прокручиваться), а не ломается раскладка. */
+@media (min-width: 701px) {
+  .topbar.has-sections { flex-wrap: nowrap; }
+  /* Разделы НЕ сжимаются первыми: это главная навигация, и обрезанная лента
+     («Студия · Генератор ›») — худшее, чем можно заплатить за место.
+     Сжимается середина: селект проекта. */
+  .topbar.has-sections > .tb-sections { flex: 0 0 auto; }
+  .topbar.has-sections > .tb-modeline { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+  .topbar.has-sections > .tb-user { flex: 0 0 auto; margin-left: 0; }
+}
+/* Средние ширины: жмём личный блок, а не разделы — «выйти» есть в кабинете,
+   а тема и язык переключаются значками. */
+@media (max-width: 1500px) {
+  .topbar.has-sections .theme-switch { transform: scale(.9); transform-origin: right center; }
+  .topbar.has-sections .lang-switch button { padding: 0 6px; }
+  .topbar.has-sections .profile-btn .profile-cap { display: none; }
+  /* Капсула режима — значок и короткая подпись: полное «🎬 RAP CLIPS ▾»
+     на средней ширине выталкивает личный блок за правый край. */
+  .topbar.has-sections .mode-badge {
+    max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .topbar.has-sections .project-select { max-width: 120px; }
+}
+/* Лента режимов — третий ярус; в одной полосе для неё места нет, а режим уже
+   назван капсулой рядом с проектом. */
+.topbar.has-sections .mode-seg { display: none; }
+
+/* Узкий десктоп: разделы сжимаются в значок с подписью, но полоса одна. */
+@media (max-width: 1400px) {
+  .topbar.has-sections .tb-sec { padding: 0 9px; font-size: 12.5px; gap: 5px; }
+  .topbar.has-sections .tb-sec[data-ico]::before {
+    content: attr(data-ico); font-size: 13px; margin-right: 5px;
+  }
+  .topbar.has-sections .project-select { max-width: 130px; }
+}
+@media (max-width: 1150px) {
+  /* Ещё уже — только значки: подпись раздела здесь уже нечитаемый огрызок. */
+  .topbar.has-sections .tb-sec { font-size: 0; padding: 0 10px; }
+  .topbar.has-sections .tb-sec[data-ico]::before { font-size: 15px; margin: 0; }
+}
+
+/* ═══════ ТЕЛЕФОН: ГЛАВНАЯ НАВИГАЦИЯ — НИЖНИЙ ДОК ═══════
+   Разделы уходят из шапки в закреплённую капсулу у нижнего края: так их
+   достаёт большой палец, и так устроено любое мобильное приложение. Внизу
+   был тумблер этапов — он меняется с ними местами и возвращается наверх
+   липким степпером под шапкой (см. style.css, .stage-jump ≤700px): этапы
+   принадлежат одному треку, а разделы — всему сервису, и постоянное место
+   у экрана заслуживает второе, а не первое. */
+@media (max-width: 700px) {
+  /* БЕЗ backdrop-filter У ШАПКИ. Любой backdrop-filter у предка делает его
+     containing block для position:fixed — с ним нижний док прилипал бы к
+     низу ШАПКИ, а не экрана (на этом уже попался тумблер этапов). На
+     телефоне шапка и так плотная, стекло ей ничего не добавляет. */
+  .topbar.has-sections {
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    background: var(--card-solid);
+  }
+  .topbar.has-sections > .tb-sections {
+    position: fixed; left: 50%; right: auto; top: auto;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    width: max-content; max-width: calc(100vw - 24px);
+    z-index: 60; order: 0; flex: none; height: auto;
+    justify-content: center; gap: 0; padding: 5px 6px;
+    border-radius: 22px; corner-shape: squircle;
+    background: color-mix(in srgb, var(--card-solid) 82%, transparent);
+    backdrop-filter: blur(22px) saturate(1.2);
+    -webkit-backdrop-filter: blur(22px) saturate(1.2);
+    border: 1px solid rgba(var(--ink-rgb), .12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35),
+                0 8px 24px rgba(var(--ink-rgb), .14);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .topbar.has-sections > .tb-sections::-webkit-scrollbar { display: none; }
+  .topbar.has-sections .tb-sec {
+    flex-direction: column; gap: 2px; height: auto; padding: 5px 9px;
+    font-size: 9px; font-weight: 700; line-height: 1.1;
+  }
+  .topbar.has-sections .tb-sec[data-ico]::before {
+    content: attr(data-ico); font-size: 17px; margin: 0;
+  }
+  /* Подложка ездит и здесь — она считается по offsetLeft/Top кнопки. */
+  #app { padding-bottom: 86px; }
+  /* Шапка на телефоне — ОДНА строка: [лого][режим][проект][+] … [тема][ава].
+     Вторая строка исчезает: между логотипом и правым блоком было пусто,
+     а режим и проект жили этажом ниже. Копия проекта (⧉) на мобилке
+     скрыта совсем — редкое действие не заслуживает места в строке. */
+  .topbar.has-sections { flex-wrap: nowrap; --cap-h: 36px; gap: 6px; }
+  .topbar.has-sections > .tb-modeline {
+    order: 2; flex: 1 1 auto; min-width: 0; margin: 0;
+    display: flex; justify-content: flex-start;
+  }
+  .topbar.has-sections .tb-project { gap: 6px; min-width: 0; }
+  /* Специфичность не ниже, чем у общего правила капсул (.tb-modeline
+     .tb-copy) — иначе display:inline-flex оттуда молча возвращает кнопку. */
+  .topbar.has-sections .tb-modeline .tb-copy { display: none; }
+  .topbar.has-sections .tb-modeline .mode-badge { max-width: 64px; padding: 0 8px; }
+  .topbar.has-sections .project-select {
+    max-width: 34vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Токены остаются у авы: ⚡N (текст ужимает renderUserBar), клик — кабинет. */
+  .topbar.has-sections .tb-user > .points-badge {
+    padding: 0 9px !important; font-size: 11px; letter-spacing: 0;
+    background-image: none !important;   /* монетка-фон наезжала бы на ⚡N */
+  }
+  .topbar.has-sections .tb-user > .theme-switch { display: none; }
+  .topbar.has-sections > .tb-user { order: 3; margin-left: auto; flex: none; }
+  .topbar.has-sections #admin-btn { display: none; }
+  .topbar.has-sections .profile-btn .profile-cap { display: none; }
+  .topbar.has-sections .profile-btn {
+    width: 34px; height: 34px; padding: 0; border-radius: 50%;
+    justify-content: center; overflow: hidden;
+  }
+  .tb-pmenu { right: 0; left: auto; min-width: 190px; }
+}
+
+/* Мобильная раскладка шапки и нижний док живут ВЫШЕ, в одном блоке 700px.
+   Прежний дубль-блок (три строки, лента в шапке) удалён: он стоял ПОЗЖЕ по
+   файлу и молча перебивал доку flex и кегль. */
 @media (max-width: 560px) {
   /* Совсем узкий экран: марка сжимается до знака, чтобы разделам осталось
      место. Слово «lolq.ai» на 360px съедает треть строки и не сообщает
@@ -207,13 +508,42 @@
 .trends-page .trend-card > video, .trends-page .trend-card > img, .trends-page .trend-card > .trend-ph {
   position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; aspect-ratio: auto; object-fit: cover;
 }
+/* ИМЯ ТРЕНДА ВИДНО ВСЕГДА. Раньше оно пряталось по ховеру, а кнопка по
+   ховеру появлялась: на тач-устройстве, где ховера нет вовсе, карточка
+   оставалась немой картинкой без названия и без действия. Теперь имя —
+   постоянная плашка на градиенте по нижней кромке. */
 .trend-card-name {
-  position: absolute; z-index: 4; left: 14px; right: 14px; bottom: 14px; color: white;
-  font: 900 clamp(15px,1.6vw,23px)/1 var(--font-head); letter-spacing: -.025em;
-  text-shadow: 0 2px 18px rgba(0,0,0,.75); text-transform: lowercase;
-  transition: opacity .18s ease, transform .18s ease;
+  /* Выше оверлея действия (z-index 6): иначе на ховере имя уходило под
+     затемняющую плёнку и всё равно пропадало — ровно то, от чего ушли.
+     Кликам не мешает: pointer-events отключены. */
+  position: absolute; z-index: 7; left: 0; right: 0; bottom: 0;
+  padding: 30px 14px 12px; color: #fff;
+  font: 900 clamp(15px,1.6vw,23px)/1.05 var(--font-head); letter-spacing: -.025em;
+  text-shadow: 0 2px 14px rgba(0,0,0,.6); text-transform: lowercase;
+  background: linear-gradient(transparent, rgba(14, 8, 4, .8));
+  pointer-events: none;
 }
-.trend-card:hover .trend-card-name, .trend-card:focus-visible .trend-card-name { transform: translateY(-2px); }
+.trend-card-action {
+  position: absolute; z-index: 6; inset: 0; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: #fff; background: rgba(20,10,5,.28); opacity: 0;
+  backdrop-filter: blur(2px); transition: opacity .18s ease;
+}
+.trend-card-action span {
+  padding: 11px 20px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
+  /* Фирменный огонь вместо чёрной пилюли: это главное действие витрины,
+     а оно выглядело как служебная подпись. */
+  background: var(--fire-ink); color: var(--on-fire);
+  box-shadow: 0 6px 20px rgba(20, 10, 5, .35);
+  font: 800 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .04em;
+}
+.trend-card:hover .trend-card-action, .trend-card:focus-within .trend-card-action { opacity: 1; }
+/* ТАЧ: ховера нет — кнопка просто видна. Затемняющую подложку при этом
+   убираем, иначе каждая карточка каталога уедет под серую плёнку. */
+@media (hover: none) {
+  .trend-card-action { opacity: 1; background: transparent; backdrop-filter: none; }
+  .trend-card-action span { padding: 9px 15px; font-size: 11px; }
+}
+.trends-page .trend-state { position: absolute; z-index: 8; inset: 0; padding: 14px; background: var(--card-solid); overflow: auto; }
 
 /* До загрузки настоящего ролика карточка не пустая: это самостоятельная
    процедурная заставка, собранная из CSS-слоёв. Цвет и геометрия вычисляются
@@ -232,10 +562,37 @@
 .trend-visual[data-visual="5"] i { width: 78%; left: 11%; border-radius: 50%; }
 .trend-visual[data-visual="6"] { filter: saturate(.25) contrast(1.35); }
 .trend-visual[data-visual="7"]::before { background: linear-gradient(90deg, transparent 48%, rgba(255,255,255,.35) 49% 51%, transparent 52%); animation: tv-scan 2.8s ease-in-out infinite; }
-.trends-page .trend-card[class*="trend-tile-"] .trend-visual::before,
+/* ЗАГЛУШКА ВМЕСТО ЧЁРНОГО ПРЯМОУГОЛЬНИКА. Пресет без готового превью
+   заливался сплошным #070707: ряд чёрных плиток читается как упавшая
+   витрина, а не как «превью ещё рисуется». Теперь это тёплая стеклянная
+   карточка — оттенок считается из названия, поэтому каталог живой и
+   неповторяющийся, а имя тренда и его метка видны сразу. Анимацию на
+   странице каталога по-прежнему не крутим: полсотни плиток разом. */
 .trends-page .trend-card[class*="trend-tile-"] .trend-visual::after,
 .trends-page .trend-card[class*="trend-tile-"] .trend-visual i { display: none; animation: none; }
-.trends-page .trend-card .trend-visual { background: #070707; }
+.trends-page .trend-card[class*="trend-tile-"] .trend-visual::before {
+  display: block; inset: -20%; opacity: .5; animation: none;
+  background: repeating-conic-gradient(from 20deg, transparent 0 14deg,
+              hsla(var(--th2), 100%, 88%, .14) 15deg 17deg);
+}
+.trends-page .trend-card .trend-visual {
+  /* Нижний слой НЕПРОЗРАЧНЫЙ и тёплый: под полупрозрачными слоями светился
+     чёрный фон карточки, и «стекло» выходило почти угольным. */
+  background:
+    radial-gradient(120% 90% at 20% 12%, hsla(var(--th), 68%, 66%, .40), transparent 64%),
+    radial-gradient(100% 80% at 85% 88%, hsla(var(--th2), 72%, 60%, .34), transparent 62%),
+    linear-gradient(165deg, #4a3a2c 0%, #2e2319 55%, #241b13 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+/* Метка заглушки: длительность и цена — то немногое, что о пресете уже
+   известно без картинки. */
+.trend-ph-meta {
+  position: absolute; left: 12px; top: 12px; z-index: 5;
+  padding: 4px 9px; border-radius: 999px; font-style: normal;
+  background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .22);
+  color: rgba(255, 255, 255, .94); font: 800 10px/1 var(--font-mono);
+  letter-spacing: .06em; text-transform: uppercase; backdrop-filter: blur(6px);
+}
 .trends-page .trend-card .trend-card-name { color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,.75); }
 
 /* Страница одного тренда: короткое объяснение, три примера и одно ясное
@@ -712,36 +1069,15 @@
 .topbar.has-sections .tb-sections #admin-btn::before,
 .topbar.has-sections .tb-sections .tb-sec::before { content: none; }
 
-@media (max-width: 900px) {
-  /* ТЕЛЕФОН: У ЛЕНТЫ СВОЙ РЯД, И ЭТО НЕ ОТСТУПЛЕНИЕ ОТ «ОДНОЙ СТРОКИ».
-     Требование «шапка в одну строку» — про саму ленту: она обязана быть одной
-     прокручиваемой строкой, а не переноситься кубиками. Делить же ряд с
-     личным блоком на 375px нельзя физически: остаток токенов, «сохранить
-     аккаунт» и выход занимают около 290px из 375, ленте достаётся 25 — и она
-     не читается вообще, а сжатый .tb-user своей крайней кнопкой наезжает на
-     неё слева (у .tb-user стоит min-width:min-content, ниже содержимого он
-     не сжимается и переливается поверх соседа).
+/* Прежний трёхрядный блок 900px удалён 28.08: он стоял ПОЗЖЕ однорядного
+   и молча перебивал порядок строк (личное прыгало влево от режима),
+   а копию проекта возвращал на экран. Однорядная мобильная шапка и нижний
+   док заданы одним блоком 700px выше. */
 
-     Поэтому ряда три, и у каждого своя роль: кто я (марка и личное),
-     куда иду (разделы), над чем работаю (проект и режим). */
-  .topbar.has-sections > #brand { order: 1; }
-  .topbar.has-sections > .tb-user { order: 2; margin-left: auto; flex-wrap: nowrap; }
-  .topbar.has-sections > .tb-sections { order: 3; flex: 1 1 100%; min-width: 0; }
-  .topbar.has-sections > .tb-project { order: 4; flex: 1 1 100%; }
-  .topbar.has-sections .tb-sections #chat-btn,
-  .topbar.has-sections .tb-sections #music-btn,
-  .topbar.has-sections .tb-sections #account-btn,
-  .topbar.has-sections .tb-sections #admin-btn,
-  .topbar.has-sections .tb-sections .tb-sec { font-size: 12.5px; padding: 0 9px; }
-}
-
-@media (max-width: 480px) {
-  /* «Админка» на телефоне возвращается: её убирали потому, что переполненная
-     строка выдавливала соседей влево поверх «+ проект». В прокручиваемой
-     ленте выдавливать нечего. Класс .hidden (у него !important) по-прежнему
-     сильнее — не-администратор её не увидит. */
-  .topbar.has-sections #admin-btn { display: inline-flex; }
-}
+/* «Админка» больше НЕ кнопка в строке — ни на телефоне, ни на десктопе:
+   она пункт меню профиля (см. profileMenu в sections.js). Отдельная
+   шестерёнка ела место в правом краю ради входа, которым пользуются раз в
+   день, и ломала общий ряд капсул. */
 
 /* ═══════════ БАЗА ПРОМТОВ: сценарии · сцены · движение · свет ═══════════
    Четыре вкладки, поиск, группы, карточки и полоса сборки внизу листа.
@@ -1069,3 +1405,265 @@
 }
 .pb-else-go:hover:not(:disabled) { background: #fff; }
 .pb-else-go:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* ─────────────────────────── маркетинг: хаб ─────────────────────────── */
+/* Три стеклянные карточки в ряд; на телефоне — колонкой. Огня нет: карточки
+   — навигация, а не главное действие экрана. */
+.mk-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  width: min(1080px, 94vw); margin: 0 auto; padding: 0 4px;
+}
+.mk-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 16px 16px 14px; text-align: left; cursor: pointer;
+  background: var(--card); border: 1px solid rgba(var(--ink-rgb), .10);
+  border-radius: 28px; box-shadow: none; color: var(--text);
+  transition: transform .16s ease, border-color .16s ease;
+}
+.mk-card:hover { transform: translateY(-2px); border-color: rgba(var(--ink-rgb), .22); }
+/* Иконки карточек — моно-SVG маской в цвет марки, не эмодзи. */
+.mk-ico {
+  width: 26px; height: 26px; display: inline-block;
+  background: var(--accent-ink);
+  -webkit-mask: var(--mkico) center / contain no-repeat;
+  mask: var(--mkico) center / contain no-repeat;
+}
+.mk-ico-mockups { --mkico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8l9-4 9 4-9 4-9-4z'/><path d='M3 8v8l9 4 9-4V8'/><path d='M12 12v8'/></svg>"); }
+.mk-ico-ugc { --mkico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><rect x='7' y='2.5' width='10' height='19' rx='2.5'/><circle cx='12' cy='9' r='2.4'/><path d='M8.5 16c.8-1.6 2-2.4 3.5-2.4s2.7.8 3.5 2.4'/></svg>"); }
+.mk-ico-earn { --mkico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8.5'/><path d='M12 7v10M15 9.2c-.6-1-1.7-1.5-3-1.5-1.6 0-2.9.9-2.9 2.2 0 2.9 6 1.5 6 4.3 0 1.3-1.3 2.2-3.1 2.2-1.4 0-2.6-.6-3.2-1.6'/></svg>"); }
+.mk-ico-items { --mkico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M9 3h6v3.5l1.8 2A3 3 0 0 1 17.5 10v9a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-9a3 3 0 0 1 .7-1.5L9 6.5V3z'/><path d='M6.5 13h11'/></svg>"); }
+.mk-ico-chars { --mkico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='9' cy='8.5' r='3.2'/><path d='M3.5 20c.9-3 3-4.7 5.5-4.7s4.6 1.7 5.5 4.7'/><circle cx='16.8' cy='9.5' r='2.6'/><path d='M15.5 15.6c2.3.2 4.1 1.7 4.9 4.4'/></svg>"); }
+
+/* Живые галереи-примеры в карточках. */
+.mk-card-gallery { display: flex; gap: 5px; width: 100%; min-height: 74px; }
+.mk-card-gallery:empty { display: none; }
+.mk-card-gallery img {
+  flex: 1; min-width: 0; height: 88px; object-fit: cover;
+  border-radius: 12px; corner-shape: squircle; border: 1px solid var(--border);
+}
+.mk-card b {
+  font-family: var(--font-head); font-size: clamp(16px, 1.6vw, 19px);
+  line-height: 1.06; letter-spacing: -.035em; text-transform: lowercase;
+}
+.mk-note { color: var(--ink-muted); font-size: 12.5px; line-height: 1.4; }
+@media (max-width: 700px) {
+  .mk-grid { grid-template-columns: 1fr; }
+}
+
+/* ─────────── Шапка v131: профиль в правом углу, огонь на активном ─────────── */
+/* Активный раздел — заливка пастельным огнём (как .stage-tab.on), а не рамка. */
+.topbar.has-sections .tb-sec.on {
+  background: var(--fire-ink);
+  color: var(--on-fire);
+  border-color: rgba(45, 33, 26, .12);
+}
+/* «Профиль» — капсула на стекле в правом углу, ава покрупнее. */
+.topbar #account-btn.profile-btn {
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 3px 12px 3px 4px;
+  box-shadow: none;
+}
+.topbar .profile-ava { width: 28px; height: 28px; font-size: 12px; }
+/* «Админка» — компактная шестерёнка рядом с профилем. */
+.topbar #admin-btn.admin-gear {
+  font-size: 15px; line-height: 1; padding: 0 9px;
+  border-radius: 999px;
+}
+
+@media (max-width: 700px) {
+  /* Строка 1: лого · тема · токены · ава-профиль. Язык, выход и «сохранить
+     аккаунт» уезжают в кабинет — в шапке им тесно и делать нечего. */
+  .topbar .lang-switch,
+  .topbar #logout-btn,
+  .topbar #save-account-btn { display: none !important; }
+  .topbar .theme-switch { transform: scale(.92); transform-origin: right center; }
+  /* Ава вместо «👤»-заглушки из style.css: у профиля есть настоящее лицо. */
+  .topbar #account-btn::before { content: none !important; }
+  .topbar #account-btn.profile-btn { padding: 2px; }
+  .topbar #account-btn .profile-ava { width: 30px; height: 30px; }
+  .topbar #account-btn .profile-ava-ini { font-size: 12px; }
+  .topbar #account-btn .profile-cap { display: none; }
+
+  /* Строка 2: навигация — сегмент-капсула со скроллом, значок + мелкая
+     подпись. content: attr(data-ico) отменяет "content: none" выше по файлу —
+     каскад по порядку в файле, специфичность одинаковая. */
+  .topbar.has-sections > .tb-sections {
+    background: var(--inset);
+    border: 1px solid rgba(45, 33, 26, .12);
+    border-radius: 16px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .topbar.has-sections .tb-sections .tb-sec {
+    flex-direction: column;
+    gap: 1px;
+    height: auto;
+    min-height: 40px;
+    padding: 3px 10px;
+    font-size: 9.5px;
+    border-radius: 12px;
+  }
+  .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
+    content: attr(data-ico);
+    font-size: 14px;
+    line-height: 1.15;
+  }
+  /* Перенесённые кнопки (Генератор/Музыка): вернуть подпись поверх
+     font-size:0 из style.css и убрать их старые эмодзи-псевдоэлементы. */
+  .topbar.has-sections .tb-sections #chat-btn,
+  .topbar.has-sections .tb-sections #music-btn { font-size: 9.5px; padding: 3px 10px; }
+}
+
+/* ─────────── «Заработок»: товарные карточки, а не masonry-плитки ─────────── */
+.earn-grid {
+  display: grid; gap: 12px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+.earn-card {
+  position: relative; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 22px; background: var(--card);
+  box-shadow: 0 4px 16px rgba(var(--ink-rgb), .08);
+}
+.earn-shot {
+  position: relative; height: 200px; flex: none; background: var(--surface-2);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.earn-shot img, .earn-shot video { width: 100%; height: 100%; object-fit: cover; }
+.earn-ph { font-size: 2.4rem; opacity: .5; }
+.earn-reward {
+  position: absolute; left: 10px; top: 10px; z-index: 2;
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800;
+  color: var(--on-fire); background: var(--fire-ink);
+}
+.earn-body { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 14px; }
+.earn-name { font-size: 15px; line-height: 1.2; }
+.earn-meta { font-size: 12px; }
+.earn-style {
+  width: 100%; padding: 7px 11px; font: inherit; font-size: 13px;
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 12px;
+  background: var(--inset); color: var(--text);
+}
+.earn-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.earn-acts .earn-go {
+  flex: 1 1 auto; justify-content: center; cursor: pointer; text-align: center;
+  padding: 9px 12px; border-radius: 12px; font-size: 12.5px; font-weight: 700;
+  color: var(--on-fire); background: var(--fire-ink);
+  border: 1px solid rgba(var(--ink-rgb), .12);
+}
+.earn-acts .earn-link { flex: 0 0 auto; font-size: 12px; padding: 8px 12px; }
+@media (max-width: 560px) {
+  .earn-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .earn-shot { height: 150px; }
+}
+
+/* ─────────── Общие базы (предметы / персонажи) из маркетинга ─────────── */
+.base-search {
+  width: 100%; margin-bottom: 12px; padding: 9px 13px; font: inherit;
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 14px;
+  background: var(--inset); color: var(--text);
+}
+.base-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+.base-card {
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 18px; background: var(--card);
+  cursor: pointer; text-align: left;
+}
+.base-card img, .base-card .base-ph {
+  width: 100%; height: 120px; object-fit: cover; display: block;
+}
+.base-card .base-ph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem; background: var(--surface-2);
+}
+.base-cap { padding: 8px 10px; font-size: 12.5px; font-weight: 700; }
+
+/* ═══════════ ИКОНКИ РАЗДЕЛОВ — СВОИ SVG, НЕ ЭМОДЗИ ═══════════
+   Эмодзи в навигации отдавали чат-мессенджером и красились платформой, а не
+   темой. Моно-иконки тонкой линией (1.7px) рисуются маской и берут
+   currentColor — активный пункт на огне сам становится тёмным по --on-fire.
+   Правила стоят В КОНЦЕ файла: каскад по порядку добивает все прежние
+   content: attr(data-ico). */
+.topbar.has-sections .tb-sec[data-ico]::before,
+.topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
+  content: "" !important;
+  display: inline-block; width: 18px; height: 18px; flex: none;
+  background: currentColor;
+  -webkit-mask: var(--secico) center / contain no-repeat;
+  mask: var(--secico) center / contain no-repeat;
+}
+.tb-sec[data-sec="studio"] { --secico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='9' width='18' height='11' rx='2'/><path d='M3 9l2-4h16l-2 4'/><path d='M8 5l2 4'/><path d='M13 5l2 4'/></svg>"); }
+.tb-sec[data-sec="make"] { --secico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><path d='M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z'/></svg>"); }
+.tb-sec[data-sec="trends"] { --secico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3c.8 2.6-.5 4.2-2 5.8C8.5 10.4 7 12.2 7 14.4a5 5 0 0 0 10 0c0-2.2-1.1-3.7-2.1-5.1-.4 1-1 1.7-1.9 2.2.5-2.4.2-5.6-1-8.5z'/></svg>"); }
+.tb-sec[data-sec="marketing"] { --secico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8l9-4 9 4-9 4-9-4z'/><path d='M3 8v8l9 4 9-4V8'/><path d='M12 12v8'/></svg>"); }
+.tb-sec[data-sec="academy"] { --secico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M2 9l10-4 10 4-10 4L2 9z'/><path d='M6 11.5V15c0 1.4 2.7 2.8 6 2.8s6-1.4 6-2.8v-3.5'/><path d='M22 9v5'/></svg>"); }
+.tb-sec[data-sec="music"] { --secico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='7' cy='18' r='2.6'/><circle cx='17' cy='15' r='2.6'/><path d='M9.6 18V6.5l10-2.2V15'/></svg>"); }
+
+/* Нижний док: компактная стеклянная капсула 54px, всё влезает без скролла. */
+@media (max-width: 700px) {
+  .topbar.has-sections > .tb-sections {
+    height: 54px; padding: 4px 5px; gap: 0;
+    /* ЛЕНТА ПРОКРУЧИВАЕТСЯ ПАЛЬЦЕМ. Здесь стояло overflow: visible — оно
+       перебивало overflow-x: auto базового правила, и лента, упёршись в
+       max-width: calc(100vw - 24px), просто ОБРЕЗАЛАСЬ краем экрана:
+       последний раздел («Музыка») с телефона был недостижим вообще.
+       justify-content: space-between при max-content-ширине всё равно
+       ничего не раздвигал, а при переполнении мешает докрутить до начала. */
+    justify-content: flex-start;
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    background: color-mix(in srgb, var(--card-solid) 78%, transparent);
+    border: 1px solid rgba(var(--ink-rgb), .10);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4),
+                0 8px 24px rgba(var(--ink-rgb), .16);
+  }
+  .topbar.has-sections > .tb-sections::-webkit-scrollbar { display: none; }
+  .topbar.has-sections .tb-sec { min-height: 0; padding: 4px 7px; gap: 2px; flex: none; }
+  .topbar.has-sections .tb-sec[data-ico]::before,
+  .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
+    width: 19px; height: 19px;
+  }
+}
+
+
+/* Тренды: бейдж «новое» — отдельная пилюля, а не хвост слова; кнопка
+   «Сгенерить» — палец должен попадать (было 22px). Пустое превью — тёплая
+   заглушка вместо сломанной картинки. */
+.trend-new {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  font-style: normal; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; border-radius: 999px;
+  color: var(--gold-ink); background: var(--gold-wash);
+}
+.trend-card-action { min-height: 32px; display: inline-flex; align-items: center; }
+.trend-card img[src=""] { visibility: hidden; }
+.trend-card img[src=""]::after { content: none; }
+.trend-card { background: var(--surface-2); }
+
+/* Селект проекта — пилюля, как соседние капсулы (у select свой UA-вид). */
+.topbar.has-sections .project-select {
+  appearance: none; -webkit-appearance: none;
+  border-radius: 999px !important; padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+
+
+/* ⓘ на карточке тренда — вход на страницу промта. */
+.trend-info {
+  /* Выше .trend-card-action (z-index 6): оверлей «сгенерить» растянут на всю
+     карточку и перехватывал клик по ⓘ — кнопка выглядела сломанной. */
+  position: absolute; right: 8px; top: 8px; z-index: 8;
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%;
+  background: rgba(20, 12, 6, .55); color: #fff; font-size: 13px;
+  box-shadow: none; cursor: pointer;
+}
+.trend-card { position: relative; }

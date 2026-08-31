@@ -247,6 +247,7 @@
       ? rows.map((r) => r.html).join("")
       : `<p class="muted">${esc(T("library.empty", "Ничего не нашлось."))}</p>${elsewhere()}`;
     bind(list);
+    bindVideos(list);
     $$(".pb-else-go", list).forEach((b) => b.addEventListener("click", () => {
       // Поиск НЕ сбрасываем: человек переходит именно за тем, что искал.
       tab = b.dataset.tab;
@@ -372,9 +373,63 @@
     </article>`;
   }
 
+  // Тип CSS-анимации превью по движению камеры: наезд дышит масштабом,
+  // проезд едет вбок, кран — по вертикали, облёт — с наклоном.
+  function motionAnim(cam) {
+    const c = String(cam || "").toLowerCase();
+    if (/push|dolly in|zoom in/.test(c)) return "drone";
+    if (/pull|zoom out/.test(c)) return "slider";
+    if (/truck|pan|whip/.test(c)) return "truck";
+    if (/crane|pedestal|tilt/.test(c)) return "crane";
+    if (/arc|orbit|handheld|drift/.test(c)) return "orbit";
+    if (/follow|track/.test(c)) return "vehicle";
+    return "";
+  }
+
+  function motionThumb(c) {
+    if (!c.preview_url && !c.anim_url) return "";
+    const anim = motionAnim(c.camera);
+    // КАРТОЧКА ПРИЁМА ДОЛЖНА ДВИГАТЬСЯ. Движение и камера обещают именно
+    // движение, а показывали стоп-кадр с процедурной CSS-подделкой. Если у
+    // записи есть своя анимация — ставим её роликом: превью крутится с
+    // наведения на десктопе и само, когда доехало до экрана, на телефоне.
+    if (c.anim_url) {
+      return `<span class="pb-thumb pb-thumb-live">
+        <video class="pb-vid" src="${esc(c.anim_url)}" muted loop playsinline
+          preload="none"${c.preview_url ? ` poster="${esc(c.preview_url)}"` : ""}></video>
+      </span>`;
+    }
+    return `<span class="pb-thumb${anim ? " cam-anim-" + anim : ""}">
+      <span class="cam-thumb"><i style="background-image:url('${esc(c.preview_url)}')"></i></span>
+    </span>`;
+  }
+
+  /* Ролики в ленте: играет только то, что человек видит. Пятьдесят
+     одновременных <video autoplay> кладут телефон, а preload="none" плюс
+     наблюдатель за видимостью — нет. */
+  let vidWatch = null;
+  function bindVideos(list) {
+    const vids = $$(".pb-vid", list);
+    if (!vids.length) return;
+    vids.forEach((v) => {
+      v.addEventListener("mouseenter", () => v.play().catch(() => {}));
+      v.addEventListener("mouseleave", () => { v.pause(); });
+    });
+    if (!window.IntersectionObserver) return;
+    if (vidWatch) vidWatch.disconnect();
+    vidWatch = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (en.isIntersecting) en.target.play().catch(() => {});
+        else en.target.pause();
+      });
+    }, { rootMargin: "80px" });
+    vids.forEach((v) => vidWatch.observe(v));
+  }
+
   function motionCard(c) {
     return `<article class="pb-card lb-card" data-kind="motion" data-key="${esc(c.key)}">
       ${head(c, "motion")}
+      ${motionThumb(c)}
       <p class="lb-desc">${esc(c.desc)}</p>
       <p class="pb-meta">${esc(c.camera || T("promptbase.noCamera", "камера не меняется"))}${
         c.bracket ? " · MiniMax " + esc(c.bracket) : ""}</p>

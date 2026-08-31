@@ -44,7 +44,44 @@ async def list_voices() -> list[dict]:
             for v in (data.get("voices") or [])]
 
 
-async def tts(text: str, voice_id: str, upload_dir: str) -> str:
+# Словесная манера → настройки ElevenLabs. Точных «эмоций» у API нет:
+# эмоцией управляют stability (ниже = экспрессивнее и менее предсказуемо)
+# и style (выше = сильнее актёрская подача). Ключевые слова ловим и в
+# русской заметке персонажа, и в английской.
+_EMOTION_PRESETS = [
+    (("спокой", "мягк", "медлен", "ласков", "calm", "soft", "slow", "gentle"),
+     {"stability": 0.7, "style": 0.15}),
+    (("агресс", "злоб", "ярост", "кричит", "angry", "aggressive", "rage", "shout"),
+     {"stability": 0.25, "style": 0.85}),
+    (("энерг", "быстр", "задор", "весел", "радост", "energetic", "fast", "happy", "excited"),
+     {"stability": 0.35, "style": 0.6}),
+    (("груст", "печал", "устал", "sad", "tired", "melancholy"),
+     {"stability": 0.6, "style": 0.35}),
+    (("шепч", "шёпот", "шепот", "вкрадчив", "whisper", "quiet"),
+     {"stability": 0.65, "style": 0.5}),
+]
+
+
+def settings_for(voice_note: str = "", emotion: str = "") -> dict:
+    """Настройки голоса из словесной манеры персонажа и эмоции сцены.
+
+    Эмоция сцены главнее манеры по умолчанию: заметка описывает персонажа
+    вообще, а эмоция — конкретную реплику."""
+    out = {"stability": 0.45, "similarity_boost": 0.8, "style": 0.4,
+           "use_speaker_boost": True}
+    for source in (voice_note or "", emotion or ""):
+        low = source.lower()
+        if not low.strip():
+            continue
+        for keys, patch in _EMOTION_PRESETS:
+            if any(k in low for k in keys):
+                out.update(patch)
+                break
+    return out
+
+
+async def tts(text: str, voice_id: str, upload_dir: str,
+              settings: dict | None = None) -> str:
     """Текст → mp3 в хранилище. Возвращает имя файла."""
     if not ELEVEN_KEY:
         raise RuntimeError("озвучка не настроена: нет ключа ElevenLabs")
@@ -56,7 +93,7 @@ async def tts(text: str, voice_id: str, upload_dir: str) -> str:
             f"{ELEVEN_API}/v1/text-to-speech/{voice_id}",
             headers={"xi-api-key": ELEVEN_KEY, "Content-Type": "application/json"},
             json={"text": text[:4000], "model_id": ELEVEN_MODEL,
-                  "voice_settings": {"stability": 0.45, "similarity_boost": 0.8}})
+                  "voice_settings": settings or settings_for()})
     if r.status_code != 200:
         raise RuntimeError(f"elevenlabs {r.status_code}: {r.text[:200]}")
     if len(r.content) < 1000:

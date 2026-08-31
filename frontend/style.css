@@ -120,18 +120,38 @@ body {
    Теперь селектор сужен до сабмита, а геометрия та же, что у любой другой
    `button.primary` в студии (8/14, радиус 12, офсет 4): у входа не должно
    быть собственной, третьей по счёту, формы кнопки. */
-.login-box > button[type="submit"] {
+.login-box button[type="submit"] {
   padding: 10px 14px; border-radius: 20px; border: 1px solid rgba(var(--ink-rgb),.12);
   cursor: pointer; font-weight: 800; font-size: 13.5px;
   color: var(--on-fire); background: var(--fire-ink);
   box-shadow: 0 2px 10px rgba(200, 96, 20, .30);
 }
-.login-box > button[type="submit"]:hover:not(:disabled) {
+.login-box button[type="submit"]:hover:not(:disabled) {
   background: var(--fire-ink);
   filter: brightness(1.06);
 }
-.login-box > button[type="submit"]:active {
+.login-box button[type="submit"]:active {
   transform: translateY(1px); box-shadow: none;
+}
+/* Формы способов входа: та же колонка с тем же ритмом, что и коробка. */
+.auth-pane { display: flex; flex-direction: column; gap: 14px; }
+.auth-pane.hidden { display: none; }
+.auth-pane input:disabled { opacity: .55; }
+.auth-links { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+/* Вкладки «Пароль / Email / Телефон» — картонный сегмент-контрол на инсете. */
+.auth-tabs {
+  display: flex; gap: 4px; padding: 4px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--inset);
+}
+.auth-tabs.hidden { display: none; }
+.auth-tabs button {
+  flex: 1; padding: 7px 8px; border: none; border-radius: 10px; cursor: pointer;
+  background: transparent; color: var(--ink-muted); font-size: 12.5px; font-weight: 600;
+}
+.auth-tabs button.hidden { display: none; }
+.auth-tabs button.on {
+  background: var(--panel, var(--bg)); color: var(--text);
+  box-shadow: 0 1px 4px rgba(var(--ink-rgb), .10);
 }
 .error { color: var(--danger-ink); font-size: 13px; }
 
@@ -219,7 +239,11 @@ body {
 .guide-shot img { display: block; width: auto; max-width: 100%; max-height: 400px; height: auto; margin: 0 auto; }
 
 /* ────────── каркас ────────── */
-.app { max-width: 1440px; margin: 0 auto; padding: 12px 20px 64px; }
+/* СЕРВИС НА ВСЮ ШИРИНУ ОКНА (правка владельца 28.08): кап 1440px оставлял
+   пустые поля и сжимал шапку до наездов. Паддинги по краям + мягкий кап
+   1720px только на очень широких, чтобы строки текста не разъезжались. */
+.app { max-width: 1720px; margin: 0 auto; padding: 12px 28px 64px; }
+@media (max-width: 1500px) { .app { padding: 12px 24px 64px; } }
 
 /* ────────── плавающее меню: стекло поверх картона ──────────
    Стекло достаётся тому, что ПАРИТ над контентом; всё, что лежит
@@ -359,8 +383,78 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-head .stage-tabs::-webkit-scrollbar { display: none; }
 .track-head .stage-tab { flex: none; }
 .order-btns { display: flex; gap: 2px; }
-.track-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+/* ФОРМА ТРЕКА (пересборка 28.08 по скрину владельца: прежний двухколонник
+   давал высоченный «Текст песни» слева и узкий столбец справа).
+   ГОРИЗОНТАЛЬНО: секции полной ширины друг под другом; внутри «Материала»
+   на десктопе ТРИ колонки одного ряда — [Дорожка] [Текст песни]
+   [Комментарий+Библия]. track-left разворачивается display:contents, и его
+   дети раскладываются по колонкам сетки сами; высоты полей ограничены. */
+.track-body { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.track-body .track-left, .track-body .track-right { min-width: 0; }
+.track-body textarea { resize: vertical; }
+@media (min-width: 1100px) {
+  .track-body {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+    grid-auto-rows: min-content;
+    gap: 6px 22px; align-items: start;
+  }
+  .track-body > .track-left { display: contents; }
+  /* Всё аудио-хозяйство — колонка 1, по строкам подряд. */
+  .track-body > .track-left > * { grid-column: 1; min-width: 0; }
+  /* Текст песни — колонка 2, шапкой и телом. */
+  .track-body > .track-left > .t-lyrics-label { grid-column: 2; grid-row: 1; }
+  .track-body > .track-left > .t-lyrics {
+    grid-column: 2; grid-row: 2 / span 8;
+    height: 220px; max-height: 260px; overflow-y: auto; min-height: 0;
+  }
+  /* Комментарий и библия — колонка 3 одной ячейкой на все строки. */
+  .track-body > .track-right { grid-column: 3; grid-row: 1 / span 9; }
+  .track-body .t-comment { max-height: 120px; overflow-y: auto; }
+  .track-body .ms-bible-text { max-height: 110px; overflow-y: auto; }
+
+  /* КОЛОНКИ — ТОЛЬКО ПОД РЕАЛЬНЫЙ КОНТЕНТ (классы ставит renderTrack).
+     Скрытые аудио и текст оставляли ПУСТЫЕ грид-колонки: остальное уезжало
+     в узкую правую треть, а левая половина экрана стояла пустой. */
+  .track-body.no-lyrics {                       /* [дорожка][комментарий] */
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+  .track-body.no-lyrics > .track-right { grid-column: 2; }
+  .track-body.no-audio:not(.no-lyrics) {        /* [текст][комментарий] */
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+  .track-body.no-audio:not(.no-lyrics) > .track-left > .t-lyrics-label,
+  .track-body.no-audio:not(.no-lyrics) > .track-left > .t-lyrics { grid-column: 1; }
+  .track-body.no-audio:not(.no-lyrics) > .track-right { grid-column: 2; }
+  .track-body.no-audio.no-lyrics {              /* только комментарий — во всю ширину */
+    grid-template-columns: 1fr;
+  }
+  .track-body.no-audio.no-lyrics > .track-right { grid-column: 1; grid-row: auto; }
+}
+@media (max-width: 1099px) {
+  /* Поля не выше 40vh: «Текст песни» на телефоне не должен быть простынёй. */
+  .track-body textarea { max-height: 40vh; }
+}
 @media (max-width: 700px) { .track-body { grid-template-columns: 1fr; } }
+
+/* «Что снимаем» на десктопе: сюжет полем на ~2/3, чекбоксы и перетасовка —
+   колонкой справа от него. Модели-чипы и так строкой во всю ширину. */
+@media (min-width: 1100px) {
+  .ms-sec[data-sec="what"] {
+    display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+    gap: 6px 22px; align-items: start;
+  }
+  .ms-sec[data-sec="what"] > .ms-h,
+  .ms-sec[data-sec="what"] > .ms-hint,
+  .ms-sec[data-sec="what"] > .ms-presets,
+  .ms-sec[data-sec="what"] > .ms-text-models,
+  .ms-sec[data-sec="what"] > .t-mode-fields { grid-column: 1 / -1; }
+  .ms-sec[data-sec="what"] > .ms-story { grid-column: 1; grid-row: span 3; }
+  .ms-sec[data-sec="what"] > .grain-check,
+  .ms-sec[data-sec="what"] > .t-shuffle-cast { grid-column: 2; justify-self: start; }
+  .ms-sec[data-sec="what"] .ms-story-text {
+    max-height: 160px; overflow-y: auto;
+  }
+}
 .t-audio { width: 100%; }
 .t-duration { font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted); }
 
@@ -438,27 +532,51 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 .track-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 
 /* ────────── лист раскадровки / клип ────────── */
-.storyboard-block, .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
 .storyboard-box, .media-box {
-  background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.4); border-radius: 20px;
+  background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.18); border-radius: 20px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 /* Лист — контрольный отпечаток фиксированной высоты, а не полотно во всю
    страницу: картинка вписывается целиком, разглядывают её кликом в модалке. */
-.storyboard-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+/* Правая колонка раскадровки: лист сверху, сводка ПОД ним. */
+.storyboard-row { display: flex; flex-direction: column; gap: 8px; }
+.storyboard-side { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* Двухколонник раскадровки: слева управление, справа вертикальный лист. */
+.board-cols {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px; align-items: start; margin-bottom: 14px;
+}
+.board-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.board-right { margin: 0; padding: 0; border: none; }
+@media (max-width: 900px) {
+  .board-cols { grid-template-columns: 1fr; gap: 12px; }
+}
+/* Плейсхолдер свободной сцены больше не режется второй строкой. */
+.cine-prompt { min-height: 58px; }
 .storyboard-acts { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; align-items: center; }
 .storyboard-box {
-  /* Лист — широкий прямоугольник во всю ширину блока: сетка панелей 3x2 или
-     4x2 в узкой колонке нечитаема, а именно по ней сверяют клип целиком.
-     Высота ограничена, чтобы лист не занимал экран; крупно — по клику. */
-  flex: 1 1 100%; width: 100%; min-width: 0; max-width: 100%;
+  /* Лист обязан занимать РОВНО столько места, сколько занимает картинка:
+     раньше вертикальный лист плавал столбиком посреди пустого блока на всю
+     ширину. Ширина коробки = ширина картинки (fit-content); широкий
+     (альбомный) лист получает класс .sb-wide и растягивается на всю панель. */
+  flex: 0 1 auto; width: fit-content; min-width: 0; max-width: 100%;
   height: auto; max-height: 420px; padding: 6px;
 }
+.storyboard-box.sb-wide { flex: 1 1 100%; width: 100%; max-height: 560px; }
 .storyboard-box img {
-  width: 100%; height: auto; max-width: 100%; max-height: 408px;
+  width: auto; height: auto; max-width: 100%; max-height: 408px;
   object-fit: contain; display: block; cursor: zoom-in; border-radius: 8px;
 }
+.storyboard-box.sb-wide img { width: 100%; max-height: 548px; }
+/* Вертикальный лист стоит СБОКУ, а не по центру пустыни: остальная строка
+   (подпись сетки, предупреждение «лист устарел») живёт рядом с ним. */
+.storyboard-side { flex: 1 1 220px; min-width: 180px; display: flex;
+  flex-direction: column; gap: 6px; align-self: stretch; justify-content: flex-start; }
+.storyboard-side .sb-meta { font-family: var(--font-mono); font-size: 11px;
+  color: var(--ink-muted); }
 .sb-empty { font-size: 11px; }
 .storyboard-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .media-box { aspect-ratio: 9/16; max-height: 270px; }
@@ -497,6 +615,10 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   box-shadow: 0 1px 2px rgba(var(--ink-rgb),.14);
 }
 .strip-arrow:active:not(:disabled) { transform: translateY(calc(-50% + 3px)); box-shadow: 0 0 0 var(--ink); }
+/* СТРЕЛКИ ГАСНУТ, КОГДА ЛИСТАТЬ НЕЧЕГО. Они были активны всегда и на пустой
+   ленте висели поверх текста «сцен пока нет», предлагая листать пустоту. */
+.strip-arrow:disabled { opacity: .28; cursor: default; box-shadow: none; }
+.strip-wrap.strip-still .strip-arrow { display: none; }
 .strip-prev { left: -8px; }
 .strip-next { right: -8px; }
 .scene-card {
@@ -546,10 +668,11 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; line-height: 1; color: rgba(var(--ink-rgb), .5);
   cursor: pointer; font-family: var(--font-mono);
-  /* Пустой слот — не кадр: узкая планка во всю высоту ряда, а не плитка
-     размером с картинку. */
-  aspect-ratio: auto; width: 30px; max-height: none;
-  align-self: stretch; min-height: 88px;
+  /* Пустой слот — ТАКАЯ ЖЕ плитка кадра, только пунктиром: планка 30×88
+     в ряду картинок читалась как разделитель, а не как «добавить кадр».
+     Уже настоящего превью — чтобы ширину по-прежнему забирали картинки. */
+  aspect-ratio: 9/16; width: 104px; max-height: 270px;
+  border-style: dashed; font-size: 22px;
 }
 .s-thumb-add:hover { color: var(--accent-ink); border-color: var(--accent); }
 /* Верхняя строка кадра: слева референсы и «+ реф», справа — движок видео и
@@ -601,7 +724,9 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
 /* персонажи сцены — чипы поверх скрытого input.s-chars */
 .s-chars-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .s-chars-chips:empty { display: none; }
-.char-chip { padding: 3px 9px; font-size: 10.5px; border-radius: 999px; box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12); }
+/* Сворачивалка чипов удалена — все чипы видны, компактно. */
+.char-chip { padding: 2px 7px; font-size: 10px; border-radius: 999px; box-shadow: none; }
+.s-chars-chips { gap: 3px; }
 .char-chip.on,
 .char-chip.on:hover:not(:disabled) {
   color: var(--on-fire); background: var(--fire-ink);
@@ -637,6 +762,19 @@ button:disabled { opacity: .45; cursor: default; box-shadow: none; }
   font-family: var(--font-mono); font-weight: 800; font-size: 13px;
   color: var(--accent-2-ink); white-space: nowrap; flex: none;
 }
+/* Меню «⋯» карточки кадра. */
+.s-more-wrap { position: relative; margin-left: auto; flex: none; }
+.s-more { padding: 2px 7px; font-size: 15px; line-height: 1; box-shadow: none; }
+.s-more-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+  display: flex; gap: 2px; padding: 4px;
+  border-radius: 14px; corner-shape: squircle;
+  background: var(--card-solid); border: 1px solid var(--border);
+  box-shadow: 0 10px 26px rgba(var(--ink-rgb), .18);
+}
+.s-more-menu.hidden { display: none; }
+.s-more-menu button { padding: 4px 7px; box-shadow: none; }
+
 .s-time {
   font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
   flex: 1 1 auto; min-width: 0; white-space: nowrap;
@@ -1542,7 +1680,7 @@ button.primary:hover:not(:disabled) {
   /* Три колонки: история — работа — параметры. Средняя гибкая, крайние
      фиксированы: панель параметров, которая едет по ширине, каждый раз
      переставляет чипы под пальцем. */
-  grid-template-columns: 264px minmax(0, 1fr) 300px;
+  grid-template-columns: 280px minmax(0, 1fr) 300px;
   gap: 16px;
   max-width: 1600px;
   margin: 0 auto;
@@ -1550,7 +1688,7 @@ button.primary:hover:not(:disabled) {
   height: 100vh;
 }
 /* Панель спрятана — центр забирает её место, а не оставляет дыру. */
-.chat.mk-narrow { grid-template-columns: 264px minmax(0, 1fr); }
+.chat.mk-narrow { grid-template-columns: 280px minmax(0, 1fr); }
 .chat-side {
   display: flex; flex-direction: column; gap: 10px; min-height: 0;
   background: var(--panel); backdrop-filter: blur(16px);
@@ -1607,7 +1745,12 @@ button.primary:hover:not(:disabled) {
 .chat-side-toggle { display: none; font-size: 16px; box-shadow: none; }
 .chat-back, .chat-row-del, .chat-msg-bar button,
 .cc-file button, .char-photo-use { box-shadow: none; }
-.chat-feed { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+/* Лента и капсула ввода — ОДНА колонка max 880px по центру: карточка
+   генерации, сообщения и поле обязаны стоять на одной оси одной ширины,
+   иначе экран читается как три случайных блока. */
+.chat-feed { flex: 1; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 12px; }
+.chat-feed > * { width: 100%; max-width: 880px; margin-left: auto; margin-right: auto; }
+.chat-compose { width: calc(100% - 48px); max-width: 880px; margin-left: auto; margin-right: auto; }
 .chat-more { align-self: center; font-size: 12px; box-shadow: none; }
 .chat-hello { margin: auto; text-align: center; max-width: 460px; }
 .chat-hello h2 {
@@ -1668,7 +1811,109 @@ button.primary:hover:not(:disabled) {
 /* Не хватает очков — говорим об этом ДО нажатия, а не 402-й ошибкой после. */
 .cc-price.short { color: var(--danger-ink); }
 .cc-send { margin-left: auto; }
+/* Реплика агента («смотрю твой проект…») — системная строка над капсулой:
+   мелко, muted, без рамки. Вторым полем ввода она читаться не должна. */
+.cc-agent { margin: 0 0 6px; }
+.cc-agent-reply {
+  margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-muted);
+  background: transparent; border: none; padding: 0 4px;
+}
+.cc-meter.in-head {
+  margin: 0 10px 0 auto; font-size: 10px; white-space: nowrap; flex: none;
+}
+/* Ряд капсулы не переносится на десктопе: [＋][модель][📚][✨][⚙][цена][→] */
+@media (min-width: 901px) {
+  .cc-bar { flex-wrap: nowrap; }
+  .cc-bar .cc-model { flex: 0 1 auto; min-width: 120px; }
+}
 .cc-note { font-size: 11px; margin: 8px 0 0; line-height: 1.4; }
+
+/* ─────── ОКНО ВВОДА — ГЛАВНЫЙ ГЕРОЙ ЭКРАНА ───────
+   Поле и его контролы живут в ОДНОЙ стеклянной капсуле, а не тремя ярусами
+   плоских блоков: в Генераторе всё начинается отсюда, и глаз обязан
+   находить это место первым. Ряд контролов — внутри капсулы, компактный:
+   вложение, модель с ценой, промты, улучшить, справа огненная «Отправить». */
+.chat-compose {
+  border-top: none; padding: 12px 16px 14px;
+}
+.chat-compose .cc-field,
+.chat-compose .cc-bar { position: relative; z-index: 1; }
+.chat-compose > .cc-field {
+  border-radius: 24px 24px 0 0;
+}
+.chat-compose .cc-field + .mk-error + .mk-enhanced + .cc-bar,
+.chat-compose .cc-bar { margin-top: 0; }
+.chat-compose {
+  /* Капсула: стекло + внутренний блик сверху. */
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--card-solid) 62%, transparent),
+    color-mix(in srgb, var(--card-warm) 48%, transparent));
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  border-radius: 26px; corner-shape: squircle;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5),
+              0 8px 26px rgba(var(--ink-rgb), .10);
+  margin-bottom: 12px;
+}
+#cc-text {
+  margin-top: 0; padding: 12px 14px; font-size: 15px; min-height: 56px;
+  background: transparent; border: none; box-shadow: none; resize: none;
+}
+#cc-text:focus { outline: none; }
+.cc-bar { padding: 0 8px 6px; gap: 6px; }
+.cc-bar .mk-mini { font-size: 12px; padding: 5px 10px; }
+.cc-send { border-radius: 16px; corner-shape: squircle; }
+
+/* Правая панель: аккордеоны вместо простыни движков. */
+.mk-acc { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px; }
+.mk-acc > summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-muted); list-style: none;
+}
+.mk-acc > summary::-webkit-details-marker { display: none; }
+.mk-acc > summary b {
+  margin-left: auto; text-transform: none; letter-spacing: 0;
+  font-size: 12px; color: var(--accent-ink);
+}
+
+/* Память агента. */
+.mk-mem { display: flex; flex-direction: column; gap: 4px; }
+.mk-mem-row {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px;
+  line-height: 1.35; padding: 6px 8px; border-radius: 12px; corner-shape: squircle;
+  background: var(--inset);
+}
+.mk-mem-row span { flex: 1; min-width: 0; }
+.mk-mem-del { padding: 0 4px; font-size: 12px; box-shadow: none; color: var(--ink-muted); }
+.mk-mem-add { align-self: flex-start; font-size: 12px; box-shadow: none; }
+
+/* Промты-шаблоны. */
+.mk-tpl { display: flex; flex-direction: column; gap: 4px; }
+.mk-tpl-row { display: flex; align-items: center; gap: 4px; }
+.mk-tpl-btn {
+  flex: 1; min-width: 0; text-align: left; font-size: 12.5px; padding: 6px 9px;
+  border-radius: 12px; corner-shape: squircle; background: var(--inset);
+  border: 1px solid var(--border); box-shadow: none; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mk-tpl-btn:hover { border-color: var(--border-bright); }
+.mk-tpl .mk-acc { display: flex; flex-direction: column; gap: 4px; }
+
+/* Банк генераций: третья вкладка сайдбара Генератора. */
+.mk-bank { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.mk-bank-tabs { display: flex; gap: 4px; }
+.mk-bank-tabs .mk-mini.on { color: var(--on-fire); background: var(--fire-ink); }
+.mk-bank-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.mk-bank-cell {
+  padding: 0; border: 1px solid var(--border); border-radius: 12px;
+  corner-shape: squircle; overflow: hidden; aspect-ratio: 9/16;
+  background: var(--inset); box-shadow: none; cursor: pointer;
+}
+.mk-bank-cell img, .mk-bank-cell video {
+  width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none;
+}
 
 /* ══════════════════ МАСТЕРСКАЯ: три колонки ══════════════════
    Основное окно генерации. Всё, что ниже, — надстройка над разметкой чата:
@@ -1730,23 +1975,34 @@ button.primary:hover:not(:disabled) {
 .mk-side-foot { display: flex; flex-direction: column; gap: 3px; }
 
 /* ── ЦЕНТР: карточка модели ──
-   Не витрина, а производственный паспорт: умеет / не умеет / вход / цена.
-   Все данные для неё уже лежали в реестрах и не показывались нигде. */
+   Не паспорт-простыня, а старт: заметка, две строки фактов (формат и цена —
+   её человек обязан видеть ДО нажатия) и три стартовых промта кнопками. */
 .mk-card {
   margin: auto auto 0; width: 100%; max-width: 560px;
-  border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 28px; padding: 14px 16px;
-  background: var(--card); box-shadow: 0 5px 0 #e8d8c4, 0 5px 0 2.5px var(--ink);
+  border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 28px; corner-shape: squircle;
+  padding: 14px 16px;
+  background: var(--card);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 6px 22px rgba(var(--ink-rgb), .08);
 }
 .mk-card.off { opacity: .6; }
 .mk-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mk-card-title { font-size: 17px; font-weight: 800; flex: 1; min-width: 0; }
 .mk-card-note { font-size: 13px; line-height: 1.5; margin: 8px 0 0; color: var(--ink-muted); }
-.mk-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin-top: 12px; }
-.mk-fact-k {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .09em;
-  text-transform: uppercase; color: var(--ink-muted); padding-top: 3px;
+.mk-card .mk-fact-line { margin: 10px 0 0; }
+/* Три стартовые кнопки: клик кладёт готовый промт в поле. Огня нет —
+   главное действие экрана «сгенерировать», стартеры лишь снимают пустой лист. */
+.mk-starters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.mk-starter {
+  padding: 9px 14px; font-size: 12.5px; font-weight: 700;
+  border: 1px solid var(--border); border-radius: 999px; corner-shape: squircle;
+  background: var(--inset); color: var(--ink); box-shadow: none;
 }
-.mk-fact-v { font-size: 13px; line-height: 1.45; }
+.mk-starter:hover:not(:disabled) { background: var(--inset); border-color: var(--border-bright); transform: none; }
+/* В ночи у карточки канонная кромка стекла, а не дневной блик. */
+:root[data-theme="dark"] .mk-card,
+:root.os-dark:not([data-theme="light"]) .mk-card {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 10px 30px rgba(0,0,0,.38);
+}
 /* Плашка «почему нельзя» — золото, а не красное: это не ошибка человека, а
    состояние сервиса или тарифа. Красное в системе значит только ошибку. */
 .mk-warn {
@@ -1832,7 +2088,18 @@ button.primary:hover:not(:disabled) {
   border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 26px; padding: 12px;
   box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
 }
-.mk-groups { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
+.mk-groups { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 16px; }
+/* Заголовки секций панели — ОДИН стиль: 10px, разрядка, muted. Раньше
+   «Промты-шаблоны», «ЗАГОТОВКИ КАТАЛОГА» и «Память» были тремя разными
+   шрифтами и наезжали друг на друга. */
+.mk-group-title, .mk-acc > summary {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
+}
+.mk-group { gap: 8px; }
+.mk-group-head { display: flex; align-items: center; justify-content: space-between; min-height: 18px; }
+.mk-acc { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.mk-tpl .mk-acc { margin-top: 8px; }
 .mk-group-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .mk-group-title {
   flex: 1; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
@@ -1871,7 +2138,7 @@ button.primary:hover:not(:disabled) {
 
 /* Планшет: панель параметров уезжает в шторку по ⚙, левая остаётся. */
 @media (max-width: 1200px) {
-  .chat { grid-template-columns: 264px minmax(0, 1fr); }
+  .chat { grid-template-columns: 280px minmax(0, 1fr); }
   .mk-panel {
     position: fixed; z-index: 41; right: 10px; top: 10px; bottom: 10px;
     width: 320px; max-width: calc(100vw - 20px); display: none;
@@ -1881,6 +2148,9 @@ button.primary:hover:not(:disabled) {
 
 @media (max-width: 900px) {
   .chat, .chat.mk-narrow { grid-template-columns: minmax(0, 1fr); padding: 8px 10px 10px; height: 100dvh; }
+  /* Нижний док разделов закреплён над нижним краем — капсуле ввода нужен
+     воздух под ним, иначе док ложится на «Отправить» и подсказку цены. */
+  #app.chat-view ~ #chat { padding-bottom: 84px; }
   .mk-panel { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 76vh; }
   .mk-card { max-width: none; }
   .mk-variant { width: 132px; }
@@ -1894,6 +2164,84 @@ button.primary:hover:not(:disabled) {
   .chat-media { width: 100%; }
   .cc-model { max-width: none; }
   .char-photo-model { width: 140px; }
+}
+
+/* ─── ТЕЛЕФОН: строка трека в ОДНУ строку ───
+   [обложка][#1][название][⚡Супергенерация]. Стрелки, копия и удаление —
+   только на десктопе: на 375px они превращали шапку трека в три этажа. */
+@media (max-width: 700px) {
+  #tracks .track-card > .track-head { flex-wrap: nowrap; gap: 6px; padding: 6px 8px; }
+  .track-head .order-btns { display: none; }
+  .track-head .cover-slot { width: 30px; height: 30px; flex: none; }
+  .track-head .pos { min-width: 0; font-size: 12px; }
+  .track-head .t-title { flex: 1 1 0; min-width: 0; font-size: 13px; padding: 6px 8px; }
+  .track-head .s-supergen { flex: none; font-size: 11px; padding: 6px 9px; }
+  /* Панели студии — одно стекло, одна сетка отступов. */
+  .panel { padding: 12px; border-radius: 20px; margin-bottom: 12px; }
+  .theme-switch { display: none; }
+}
+
+/* ─── ТЕЛЕФОН: Генератор в ширину экрана, ввод одной строкой ───
+   На 375px капсула ввода разваливалась этажами с гигантскими зазорами,
+   «Отправить» накрывал плавающий пузырь агента, а нижний док ложился на
+   подсказку цены. Порядок: строка [＋][модель][Отправить] не переносится,
+   «Промты/✨/⚙» — компактные иконки во второй строке, пузырь агента на
+   экране чата спрятан (сам чат-агент и так открыт), цена — в кнопке. */
+@media (max-width: 700px) {
+  .chat, .chat.mk-narrow { padding: 6px 6px 88px; gap: 8px; }
+  .chat-compose { margin: 0 2px 6px; padding: 8px 10px 10px; border-radius: 20px; }
+  #cc-text { min-height: 44px; padding: 10px 12px; font-size: 14px; }
+  .chat-compose .cc-meter { margin-bottom: 2px; }
+  .cc-agent { margin-bottom: 4px; }
+  .cc-agent-reply { font-size: 12.5px; margin: 0; }
+  .cc-bar { flex-wrap: wrap; gap: 6px; padding: 0 2px 2px; }
+  .cc-attach span { width: 34px; height: 34px; }
+  /* Селект модели делит строку с «+» и «Отправить» и не выпихивает их. */
+  .cc-bar .cc-model { flex: 1 1 120px; min-width: 96px; max-width: none; height: 34px; font-size: 12.5px; }
+  .cc-send { order: 3; height: 34px; padding: 0 14px; font-size: 13px; margin-left: 0; }
+  .cc-attach { order: 1; }
+  .cc-bar .cc-model { order: 2; }
+  /* Вторая строка: сервисные иконки + цена. */
+  .cc-bar .mk-mini { order: 4; height: 30px; min-width: 30px; padding: 0 8px; font-size: 11.5px; }
+  .cc-bar .cc-price { order: 5; font-size: 11px; margin-left: auto; }
+  /* «Цена видна до отправки…» — объяснялка: на телефоне её не читают,
+     а строку она занимает. Цена и так стоит на кнопке. */
+  .cc-note { display: none; }
+  .chat-retention { display: none; }
+  /* «Напишите, что нужно сделать» — подсказка-объяснялка: плейсхолдер поля
+     говорит то же самое, а строку она съедала. */
+  .mk-error.hint { display: none; }
+  /* «Промты» — иконкой-книжкой: слово в строке контролов ело треть ширины. */
+  #mk-lib { font-size: 0; padding: 0 8px; }
+  #mk-lib::before {
+    content: ""; display: inline-block; width: 17px; height: 17px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5v-15z'/><path d='M4 20.5A2.5 2.5 0 0 1 6.5 18H20'/></svg>") center / contain no-repeat;
+    mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5v-15z'/><path d='M4 20.5A2.5 2.5 0 0 1 6.5 18H20'/></svg>") center / contain no-repeat;
+  }
+  /* Пузырь агента на экране Генератора не нужен: это и есть агент. */
+  body:has(#chat:not(.hidden)) .pa-bubble,
+  body:has(#chat:not(.hidden)) .pa-panel { display: none !important; }
+  /* Карточка модели и лента — в ширину экрана, без лишних полей. */
+  .chat-feed { padding: 10px 8px; gap: 10px; }
+  .chat-main { border-radius: 20px; }
+  .chat-head { padding: 8px 10px; }
+  /* Строка действий под результатом — компактные кнопки, без разброса. */
+  .chat-msg-bar { gap: 3px; }
+  .chat-msg-bar button, .chat-msg-bar .mk-dl { font-size: 11px; padding: 3px 7px; }
+}
+
+/* Галерея мокапов: плейсхолдер до ответа сервера + ретрай на ошибке. */
+.mkp-pending { outline: 1px dashed var(--border-bright); }
+.mkp-spin { display: inline-block; animation: mkp-spin 1.4s linear infinite; }
+@keyframes mkp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mkp-spin { animation: none; } }
+.mkp-item { position: relative; }
+.mkp-del {
+  position: absolute; top: 4px; right: 4px; z-index: 2;
+  width: 20px; height: 20px; display: grid; place-items: center;
+  border-radius: 50%; font-size: 11px; color: var(--danger-ink);
+  background: var(--card-solid); border: 1px solid var(--border);
 }
 
 /* ════════════ ОНБОРДИНГ FREE: чеклист «первый клип» ════════════
@@ -2123,8 +2471,12 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
    сингл, где второй трек создать нельзя в принципе. */
 .add-track-panel { margin-top: 4px; }
 .add-track-panel .add-track {
-  border: 1px solid rgba(var(--ink-rgb), .3); border-radius: 20px;
-  padding: 12px 14px; background: rgba(255, 255, 255, .5);
+  border: 1px solid rgba(var(--ink-rgb), .18); border-radius: 20px;
+  corner-shape: squircle; padding: 12px 14px;
+  /* Было rgba(255,255,255,.5) — в ночи это молочная плита во всю ширину
+     студии. Токен вместо константы: белый есть только в светлой теме. */
+  background: color-mix(in srgb, var(--card-solid) 55%, transparent);
+  backdrop-filter: blur(10px);
 }
 .add-track-panel .add-track > summary {
   cursor: pointer; list-style: none; font-weight: 800; font-size: 13.5px;
@@ -2377,6 +2729,22 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-muted);
 }
 .st-no { font-weight: 700; color: var(--text); }
+/* Номер на кадре и название под ним: лист нарезки должен читаться, пока по
+   нему таскают кадры, а не после того, как всё встало. */
+.st-badge {
+  position: absolute; left: 6px; top: 6px; z-index: 2;
+  min-width: 22px; height: 22px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; corner-shape: squircle;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 800;
+  color: #fff; background: rgba(var(--ink-rgb), .68);
+  backdrop-filter: blur(6px);
+}
+.st-title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; padding: 6px 8px 0; text-align: left;
+  font-size: 12.5px; font-weight: 700; line-height: 1.25; color: var(--text);
+}
 .st-time { margin-left: auto; }
 .st-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; background: transparent; }
 .st-dot.busy { background: var(--gold); animation: st-pulse 1.1s infinite; }
@@ -2569,6 +2937,17 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 /* Кнопки листа неактивны, пока листа нет: серая кнопка честнее, чем кнопка,
    которая молча ничего не делает. */
 .board-bar button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+/* ЕДИНАЯ ВЫСОТА. Кнопки в этих строках приходят из разных мест (.primary,
+   .ghost, a.clip-download) со своим padding и своим кеглем — в одной строке
+   они стояли лесенкой. Высоту задаём строке, а не каждой кнопке. */
+.board-bar > button, .board-bar > a.ghost, .board-bar > a.primary,
+.row > button, .row > a.ghost, .row > a.primary, .row > a.clip-download {
+  min-height: 34px; padding-block: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+@media (max-width: 700px) {
+  .board-bar > button, .row > button { min-height: 32px; }
+}
 
 @media (max-width: 700px) {
   .board-bar { gap: 6px; }
@@ -2746,6 +3125,8 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
    решения человека и цена; 3 и 5 схлопнуты, потому что это уточнения. */
 .mode-setup { display: flex; flex-direction: column; gap: 12px; }
 .ms-summary {
+  font-size: 11.5px; color: var(--ink-muted); white-space: nowrap;
+  font-family: var(--font-mono);
   font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
   padding: 8px 12px; border-radius: 20px;
   border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset);
@@ -2770,6 +3151,13 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-row > label { margin: 0; min-width: 120px; flex: none; }
 .ms-frame-note:empty { display: none; }
 .ms-foot { margin: 0; }
+/* «Сохранить трек» — маленькая вторичная: поля и так сохраняются по уходу
+   фокуса, кнопка — страховка. Главное действие экрана — «Супергенерация»
+   в строке трека, и второй крупной кнопке рядом с ней делать нечего. */
+.ms-foot .save-track {
+  background: transparent; border: 1px solid var(--border); box-shadow: none;
+  color: var(--ink-muted); font-size: 12.5px; padding: 6px 12px;
+}
 
 /* ТЕКСТОВАЯ МОДЕЛЬ — в первом блоке сценария, тем же примитивом чипов, что
    и движки картинок: это тоже «чем и почём», просто про текст. Своей формы
@@ -2935,6 +3323,20 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-photos { display: flex; flex-direction: column; gap: 6px; }
 .ms-photos-hint { margin: 0; font-size: 11.5px; line-height: 1.45; }
 .ms-photos-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+/* 3D-облёт товара: квадратный вьюер, drag по горизонтали листает ракурсы. */
+.ms-turnaround { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.ms-ta-viewer {
+  position: relative; width: min(320px, 100%); aspect-ratio: 1; overflow: hidden;
+  flex-basis: 100%; border-radius: 20px; background: var(--card-solid);
+  border: 1px solid rgba(var(--ink-rgb), .10);
+  cursor: ew-resize; touch-action: pan-y; user-select: none;
+}
+.ms-ta-viewer img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.ms-ta-hint {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+  padding: 3px 10px; border-radius: 999px; background: rgba(0,0,0,.42);
+  color: #fff; font-size: 11px; pointer-events: none; white-space: nowrap;
+}
 .ms-photo {
   position: relative; width: 78px; height: 78px; border-radius: 20px;
   overflow: hidden; border: 1px solid rgba(var(--ink-rgb),.12); background: var(--card);
@@ -3332,7 +3734,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .wp-play { min-width: 38px; }
 .wp-clock { font-family: var(--font-mono); font-size: 11px; }
 .wp-wave {
-  width: 100%; height: 96px; display: block; cursor: crosshair;
+  width: 100%; height: 96px; display: block; cursor: crosshair; touch-action: none;
   border: 1px solid rgba(var(--ink-rgb),.12); border-radius: 20px; background: var(--inset);
   touch-action: none;   /* протяжка выделяет кусок, а не листает страницу */
 }
@@ -3465,6 +3867,12 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
   border: 1px solid rgba(var(--ink-rgb),.12); box-shadow: 0 1px 3px rgba(var(--ink-rgb),.16); cursor: pointer;
 }
 .pa-bubble:active { transform: translateY(1px); box-shadow: none; }
+/* Телефон: пузырь агента поднимается НАД нижним доком разделов — иначе он
+   накрывает «Школу» и «Музыку», то есть закрывает навигацию собой. */
+@media (max-width: 700px) {
+  .pa-bubble { bottom: 86px; right: 12px; width: 46px; height: 46px; font-size: 18px; }
+  .pa-panel { bottom: 140px; right: 10px; }
+}
 .pa-panel {
   position: fixed; right: 18px; bottom: 82px; z-index: 60;
   width: min(380px, calc(100vw - 36px)); height: min(520px, calc(100vh - 120px));
@@ -3548,11 +3956,79 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   --card: rgba(43, 35, 28, .92);
   --inset: rgba(255, 255, 255, .05);
   --text: #f0e7dc;
-  --ink-muted: #b5a696;
+  --ink-muted: #c2b3a2;
   --gold-ink: #f2c069;
   --gold-wash: rgba(242, 192, 105, .14);
   --panel: rgba(38, 31, 25, .80);
+  /* ЭТИ ТОКЕНЫ РАНЬШЕ НЕ ПЕРЕОПРЕДЕЛЯЛИСЬ — и тянулись из светлой темы.
+     --surface-2 (#f6f1e9) в ночи давал молочные полки под сегмент-контролами
+     и селектами, --accent-ink (#b04d12) на тёмном читается 2.4:1, то есть
+     подписи марки тонули. Отсюда «плоские тёмно-коричневые панели» на скрине
+     владельца: половина поверхностей была из чужой палитры. */
+  --surface: #2b231c;
+  --surface-2: #362c23;
+  --muted: #7c6c5d;
+  --border: rgba(255, 255, 255, .10);
+  --border-bright: rgba(255, 168, 90, .48);
+  --accent-ink: #ffa465;
+  --accent-2-ink: #ff9a6a;
+  --ok-ink: #4fd6a0;
+  --danger-ink: #ff8a86;
+  --accent-wash: rgba(255, 122, 41, .12);
+  --ok-wash: rgba(20, 160, 107, .18);
+  --danger-wash: rgba(229, 72, 77, .18);
   color-scheme: dark;
+}
+
+/* ВЫПУКЛОЕ СТЕКЛО В НОЧИ. Панель без верхнего блика и без внешней тени —
+   это просто тёмный прямоугольник; выпуклость делают ровно две вещи:
+   светлая кромка сверху внутри и мягкая тень снаружи. Здесь они добавлены
+   тем поверхностям, которые в светлой теме уже стеклянные, а в тёмной
+   оставались плоскими. */
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .mk-bar,
+:root[data-theme="dark"] .cine-card,
+:root[data-theme="dark"] .sch-card,
+:root[data-theme="dark"] .sch-mod,
+:root[data-theme="dark"] .sch-block,
+:root[data-theme="dark"] .sch-side,
+:root[data-theme="dark"] .chat-side,
+:root[data-theme="dark"] .chat-main,
+:root[data-theme="dark"] .tb-pmenu,
+:root.os-dark:not([data-theme="light"]) .panel,
+:root.os-dark:not([data-theme="light"]) .mk-bar,
+:root.os-dark:not([data-theme="light"]) .cine-card,
+:root.os-dark:not([data-theme="light"]) .sch-card,
+:root.os-dark:not([data-theme="light"]) .sch-mod,
+:root.os-dark:not([data-theme="light"]) .sch-block,
+:root.os-dark:not([data-theme="light"]) .sch-side,
+:root.os-dark:not([data-theme="light"]) .chat-side,
+:root.os-dark:not([data-theme="light"]) .chat-main,
+:root.os-dark:not([data-theme="light"]) .tb-pmenu {
+  background: linear-gradient(180deg, rgba(52, 43, 34, .74), rgba(38, 31, 25, .66));
+  border: 1px solid rgba(255, 255, 255, .09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07),
+              0 10px 30px rgba(0, 0, 0, .38);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+}
+/* Поля ввода в ночи: чуть светлее подложки, кромка волосяная. Инпут темнее
+   панели читается как дырка, а не как место, куда пишут. */
+:root[data-theme="dark"] input:not([type="range"]),
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] select,
+:root.os-dark:not([data-theme="light"]) input:not([type="range"]),
+:root.os-dark:not([data-theme="light"]) textarea,
+:root.os-dark:not([data-theme="light"]) select {
+  background: rgba(255, 255, 255, .055);
+  border-color: rgba(255, 255, 255, .12);
+  color: var(--text);
+}
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder,
+:root.os-dark:not([data-theme="light"]) input::placeholder,
+:root.os-dark:not([data-theme="light"]) textarea::placeholder {
+  color: rgba(var(--ink-rgb), .42);
 }
 :root[data-theme="dark"] .topbar,
 :root[data-theme="dark"] .track-card,
@@ -3616,16 +4092,80 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
    «Перегенерировать кадры» — главное действие раскадровки, занимает всю
    первую позицию. Вторичные (перв./посл./промежуточные) — компактные
    пилюли одной строкой: они нужны изредка и не должны весить как главные. */
-.scene-card .row:has(.s-gen-frames) { display: grid; grid-template-columns: 1fr; gap: 6px; }
-.scene-card .s-gen-frames { font-size: 12.5px; padding: 9px 12px; }
+/* Одна строка: главная кнопка тянется, три стрелки компактные справа. */
+.scene-card .row:has(.s-gen-frames) {
+  display: flex; flex-wrap: nowrap; gap: 5px; align-items: stretch;
+}
+.scene-card .s-gen-frames { flex: 1 1 auto; min-width: 0; font-size: 12.5px; padding: 9px 10px; }
+.scene-card .s-gen-ico {
+  flex: none; padding: 0 9px; font-size: 12px; font-weight: 800;
+  font-family: var(--font-mono); border-radius: 12px; corner-shape: squircle;
+}
 .scene-card .s-gen-first, .scene-card .s-gen-last, .scene-card .s-gen-mid {
-  font-size: 10.5px; padding: 5px 8px; box-shadow: none;
+  box-shadow: none;
   border: 1px solid rgba(var(--ink-rgb), .18); background: var(--inset);
 }
-/* Три вторичные — в один ряд под главной. */
-.scene-card .row:has(.s-gen-frames) { grid-template-columns: repeat(3, 1fr); }
-.scene-card .s-gen-frames { grid-column: 1 / -1; }
+
 .scene-card .s-gen-video { font-size: 13px; padding: 10px 12px; }
+
+/* Свёрнутый трек: только строка. Три развёрнутых трека — простыня 9000px. */
+#tracks .track-card.collapsed > :not(.track-head) { display: none !important; }
+#tracks .track-card.collapsed { margin-bottom: 10px; }
+.track-head.clickable { cursor: pointer; }
+.track-head.clickable:hover { border-color: var(--border-bright); }
+
+/* ─── СТЕКЛЯННЫЙ СКЕЛЕТОН — общий класс загрузки вместо «загружаю…» ─── */
+.skel {
+  border-radius: 16px; corner-shape: squircle; min-height: 72px;
+  background: linear-gradient(100deg,
+    var(--inset) 40%, rgba(var(--ink-rgb), .08) 50%, var(--inset) 60%);
+  background-size: 200% 100%;
+  animation: skel-slide 1.3s ease-in-out infinite;
+}
+@keyframes skel-slide { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+/* ─── ВЕДУЩАЯ КНОПКА (.next-step): дизайн ведёт, текст молчит ───
+   Один очевидный следующий шаг на трек: огонь + мягкое дыхание тени.
+   Пульс тенью, а не размером — прыгающая кнопка сдвигала бы соседей. */
+.next-step {
+  color: var(--on-fire) !important;
+  background: var(--fire-ink) !important;
+  border-color: transparent !important;
+  animation: next-breath 2.2s ease-in-out infinite;
+}
+@keyframes next-breath {
+  0%, 100% { box-shadow: 0 2px 12px rgba(221, 106, 80, .30); }
+  50%      { box-shadow: 0 2px 22px rgba(221, 106, 80, .58); }
+}
+@media (prefers-reduced-motion: reduce) { .next-step { animation: none; } }
+
+/* ─── «КАК ЧАСЫ»: микро-анимации карточки кадра ───
+   Кнопки отвечают на палец (hover приподнимает, active прижимает), картинки
+   и статусы меняются растворением, а не скачком. Всё на transition — без
+   keyframes и без JS, чтобы перерисовка ленты не запускала анимацию заново
+   на каждом узле. prefers-reduced-motion гасит движение целиком. */
+.scene-card button {
+  transition: transform .15s ease, box-shadow .15s ease,
+              background-color .15s ease, border-color .15s ease,
+              opacity .15s ease;
+}
+.scene-card button:hover:not(:disabled) { transform: translateY(-1px); }
+.scene-card button:active:not(:disabled) { transform: translateY(1px); }
+.scene-card img, .scene-card video, .s-thumbs img {
+  transition: opacity .2s ease;
+}
+.scene-card .status, .scene-card .s-light {
+  transition: opacity .18s ease, background-color .18s ease;
+}
+.scene-card .style-chip, .scene-card .char-chip {
+  transition: background-color .15s ease, color .15s ease,
+              border-color .15s ease, transform .12s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-card button, .scene-card img, .scene-card video,
+  .scene-card .status, .scene-card .style-chip { transition: none; }
+}
 
 /* Светофор состояния кадров в шапке карточки сцены */
 .s-light { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
@@ -3633,6 +4173,33 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .s-light-green  { background: #2e9e44; box-shadow: 0 0 6px rgba(46,158,68,.55); }
 .s-light-yellow { background: #e5a50a; box-shadow: 0 0 6px rgba(229,165,10,.5); }
 .s-light-red    { background: #d64545; box-shadow: 0 0 6px rgba(214,69,69,.5); }
+
+/* ОБЁРТКИ ТРЕКОВ СНЯТЫ (правка владельца 27.08). Панель «Треки» и рамка
+   .track-card заворачивали строку трека и все четыре этапа в одну плиту —
+   этапы, честно сделанные отдельными стеклянными блоками, внутри неё
+   читались как отсеки одного ящика. Теперь: заголовок + лёгкая строка трека
+   на фоне страницы, а «Настройка/Раскадровка/Анимация/Сборка» стоят сами.
+   Несколько треков — последовательность таких групп; навигацию по ним уже
+   делает тумблер этапов, нового механизма нет. */
+#tracks-panel.panel {
+  background: transparent; border: none; box-shadow: none;
+  padding: 0; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+#tracks-panel > h2 { margin: 0 0 10px 4px; }
+#tracks .track-card {
+  background: transparent; border: none; box-shadow: none;
+  padding: 0; margin-bottom: 34px;
+}
+/* Строка трека: обложка, номер, название, Супергенерация, стрелки — лёгкой
+   строкой в тонком стекле, а не крышкой ящика. */
+#tracks .track-card > .track-head {
+  padding: 8px 12px; margin-bottom: 0;
+  background: color-mix(in srgb, var(--card-solid) 45%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--ink-rgb), .08);
+  border-radius: 20px; corner-shape: squircle;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
+}
 
 /* Этапы — ОТДЕЛЬНЫЕ стеклянные блоки: Настройки → Раскадровка → Анимация →
    Сборка. Воздух между панелями, жидкое стекло, подпись у каждого блока. */
@@ -3711,3 +4278,502 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .scene-card.mode-anim .s-video-box { max-height: none; }
 .scene-card.mode-anim video { width: 240px; aspect-ratio: 9/16; object-fit: cover;
   border-radius: 16px; display: block; }
+
+/* ─────────── Мобилка: шапка компактная, ничего не вылезает вбок ─────────── */
+@media (max-width: 700px) {
+  html, body { overflow-x: clip; }
+  .topbar { padding: 8px 10px; gap: 6px; }
+  /* Навигация и режимная панель — одна строка с горизонтальной прокруткой,
+     а не лестница на пол-экрана и не вылет за правый край. */
+  .topbar nav, .tb-modeline, .tb-project {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .topbar nav::-webkit-scrollbar, .tb-modeline::-webkit-scrollbar,
+  .tb-project::-webkit-scrollbar { display: none; }
+  .tb-project > *, .stage-jump, .stage-jump .stage-tab { flex: none; }
+  .tb-modeline { padding: 4px 2px; }
+  .project-select { max-width: 38vw; }
+  .stage-jump .stage-tab { padding: 6px 9px; font-size: 11.5px; }
+  /* Служебная строка (тема, токены, сохранить) — компактнее */
+  .theme-switch { transform: scale(.92); transform-origin: left center; }
+  /* Карточка сцены — почти во всю ширину, превью читаемые */
+  .scene-card { flex-basis: min(88vw, 340px) !important; }
+  .s-thumb { width: min(40vw, 152px); }
+  /* Блоки этапов — меньше отступов, больше воздуха контенту */
+  .stages-stacked .stage-pane { padding: 12px 10px 14px; border-radius: 20px; }
+  .clip-dock-body { flex-direction: column; }
+  /* Модалки на весь экран */
+  .modal { width: 96vw; max-width: 96vw; max-height: 92vh; }
+}
+
+/* Мобилка: шапка липнет; тумблер этапов — та же нижняя капсула, что на
+   десктопе (единственная ветка ниже), только поднят над доком разделов. */
+@media (max-width: 700px) {
+  .topbar { position: sticky; top: 0; z-index: 40; }
+  /* Воздух под нижним доком разделов, чтобы последние кнопки не прятались. */
+  #app { padding-bottom: 132px; }
+}
+
+/* ─────── Генератор под общей шапкой ───────
+   Мастерская была экраном без навигации: уйти в соседний раздел можно было
+   только «← Студия», то есть выйдя из раздела. Теперь #app остаётся видимым
+   в режиме .chat-view — из него показана ОДНА шапка, а чат встаёт под ней.
+   Высоту шапки пишет sections.js в --tbh: на телефоне она в три строки, и
+   вычесть фиксированные 64px значило бы срезать низ ленты сообщений. */
+#app.chat-view { padding-bottom: 0; padding-right: 0; min-height: 0; }
+#app.chat-view > :not(.topbar) { display: none !important; }
+#app.chat-view .topbar { position: sticky; top: 0; z-index: 40; }
+#app.chat-view ~ #chat { height: calc(100vh - var(--tbh, 64px)); padding-top: 8px; }
+@media (max-width: 700px) {
+  /* Мобильный тумблер этапов закреплён внизу и на чат-экране не нужен —
+     этапов там нет, а место под пальцем занято строкой ввода. */
+  #app.chat-view ~ #chat { height: calc(100dvh - var(--tbh, 64px)); }
+}
+
+/* ─────── Тумблер этапов: горизонтальная капсула ВНИЗУ по центру ───────
+   Вертикальную панель слева владелец забраковал («сбоку место занимает»).
+   На всех ширинах >700px — как мобильный низ, но с подписями целиком:
+   закреплённая стеклянная капсула по центру нижнего края, scroll-spy тот
+   же. Контенту возвращена полная ширина. */
+/* Пустая капсула (экран без трека) не должна висеть пилюлей у низа */
+.stage-jump:empty { display: none; }
+
+.stage-jump { /* ЕДИНСТВЕННАЯ раскладка тумблера: без медиа-веток */
+    position: fixed; left: 50%; bottom: 14px; top: auto; right: auto;
+    transform: translateX(-50%);
+    z-index: 45; display: flex; flex-direction: row; align-items: center;
+    gap: 2px; padding: 5px; border-radius: 999px; corner-shape: squircle;
+    max-width: min(94vw, 760px); overflow-x: auto; scrollbar-width: none;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter: blur(18px) saturate(1.2);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    border: 1px solid rgba(var(--ink-rgb), .12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3),
+                0 10px 30px rgba(var(--ink-rgb), .18);
+  }
+  .stage-jump::-webkit-scrollbar { display: none; }
+  .stage-jump .stage-tab {
+    flex: none; justify-content: center; gap: 7px; padding: 8px 14px;
+    border-radius: 999px; corner-shape: squircle; white-space: nowrap;
+  }
+  /* Контент во всю ширину; снизу воздух под капсулу. */
+  #app { padding-left: 28px; padding-bottom: 96px; }
+  .stage-jump:empty { display: none; }
+  /* Тумблер живёт в body (backdrop-filter предка ломал бы fixed) — прячем
+     его на страницах без этапов через :has. */
+body:has(#app.trends-view) #stage-jump,
+body:has(#app.chat-view) #stage-jump,
+body:has(#chat:not(.hidden)) #stage-jump,
+body:has(#music:not(.hidden)) #stage-jump,
+body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
+/* Телефон: нижний край занят доком разделов — капсула этапов над ним. */
+@media (max-width: 700px) {
+  .stage-jump { bottom: 72px; max-width: 94vw; }
+  .stage-jump .stage-tab { padding: 7px 10px; font-size: 11px; }
+}
+
+/* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */
+.mk-studio { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+.mk-title { font-weight: 700; }
+.mk-bar {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 20px; padding: 12px 14px; backdrop-filter: blur(10px);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.mk-prompt {
+  width: 100%; resize: vertical; min-height: 52px;
+  border: 1px solid rgba(var(--ink-rgb), .12); border-radius: 14px;
+  background: var(--inset); padding: 10px 12px; font: inherit; color: var(--text);
+}
+.mk-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mk-chip {
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 999px;
+  background: var(--inset); color: var(--ink-muted);
+  padding: 5px 12px; font-size: .84rem; cursor: pointer;
+}
+.mk-chip.on { background: var(--card-warm); color: var(--text);
+  border-color: var(--border-bright); font-weight: 600; }
+.mk-chip.soon { opacity: .55; }
+.mk-slots { display: flex; gap: 8px; margin-left: auto; }
+.mk-slot {
+  width: 56px; height: 56px; border-radius: 16px; overflow: hidden;
+  border: 1px dashed rgba(var(--ink-rgb), .25); background: var(--inset);
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; cursor: pointer; padding: 0;
+}
+.mk-slot i { font-style: normal; font-size: .56rem; color: var(--ink-muted); }
+.mk-slot span { font-size: 1.1rem; }
+.mk-slot.filled { border-style: solid; border-color: var(--border-bright); }
+.mk-slot img { width: 100%; height: 100%; object-fit: cover; }
+.mk-go {
+  color: var(--on-fire); background: var(--fire-ink);
+  border: 1px solid rgba(var(--ink-rgb), .12); border-radius: 14px;
+  padding: 10px 18px; font-weight: 700; cursor: pointer;
+}
+.mk-go:disabled { opacity: .6; cursor: default; }
+.mk-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+/* ─── ВИТРИНА ШАБЛОНОВ Higgsfield-класса, наш светло-тёплый канон ───
+   Плотная masonry на всю ширину, карточка = ФОТО; подпись — тонкой плашкой
+   ПОВЕРХ низа кадра (не простыня под ним), на ховере проявляется целиком.
+   Без превью — эмодзи на стекле, скелетоны рисует JS классом .skel. */
+.mk-tpl-grid { columns: 5 190px; column-gap: 8px; }
+.mk-tpl {
+  position: relative; display: inline-block; width: 100%; margin: 0 0 8px;
+  padding: 0; border: 1px solid var(--border); border-radius: 16px;
+  corner-shape: squircle; overflow: hidden;
+  background: var(--card); cursor: pointer; text-align: left;
+  break-inside: avoid; box-shadow: none;
+  transition: border-color .15s ease, transform .15s ease;
+}
+.mk-tpl:hover { border-color: var(--border-bright); transform: translateY(-2px); }
+.mk-tpl.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--gold-wash); }
+.mk-tpl img { width: 100%; display: block; }
+.mk-tpl-ph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2rem; aspect-ratio: 3/4;
+  background: color-mix(in srgb, var(--card-solid) 60%, transparent);
+  backdrop-filter: blur(8px);
+}
+.mk-tpl-cap {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; gap: 1px; padding: 16px 9px 7px;
+  background: linear-gradient(transparent, rgba(20, 12, 6, .78));
+  pointer-events: none;
+}
+.mk-tpl-cap b { font-size: .78rem; color: #fff; line-height: 1.15; }
+.mk-tpl-cap i {
+  font-style: normal; font-size: .66rem; color: rgba(255, 255, 255, .75);
+  max-height: 0; overflow: hidden; transition: max-height .18s ease;
+}
+.mk-tpl:hover .mk-tpl-cap i { max-height: 2.4em; }
+/* Карточка без фото: подпись возвращается тёмными чернилами на стекле. */
+.mk-tpl-ph + .mk-tpl-cap { background: none; }
+.mk-tpl-ph + .mk-tpl-cap b { color: var(--ink); }
+.mk-tpl-ph + .mk-tpl-cap i { color: var(--ink-muted); }
+#mk-toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(16px);
+  background: var(--card-solid); color: var(--text);
+  border: 1px solid var(--border-bright); border-radius: 999px;
+  padding: 10px 18px; font-size: .9rem; opacity: 0; pointer-events: none;
+  transition: opacity .25s, transform .25s; z-index: 999;
+  box-shadow: 0 8px 28px rgba(var(--ink-rgb), .14);
+}
+#mk-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* Мини-галерея карточек маркетинг-хаба */
+.mk-card-gallery { display: flex; gap: 6px; margin-top: 10px; }
+.mk-card-gallery img, .mk-card-gallery .mk-gal-ph {
+  width: 56px; height: 72px; border-radius: 12px; object-fit: cover;
+  border: 1px solid var(--border); display: block;
+}
+.mk-gal-ph { display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; }
+.mk-gal-ph.g1 { background: linear-gradient(150deg, #ffe7cf, #ffd2b0); }
+.mk-gal-ph.g2 { background: linear-gradient(150deg, #e4f2ea, #cbe7da); }
+.mk-gal-ph.g3 { background: linear-gradient(150deg, #f3e7f7, #e3d1ef); }
+
+/* ─────────── Cinema-бар (свободная сцена над раскадровкой) ─────────── */
+/* Бар СВЁРНУТ: строка ввода, [Кадр|Видео] и «Сгенерировать». Параметры — за
+   шестерёнкой. Два ряда чипов вперемешку читались как панель настроек,
+   выданная за строку ввода, и владелец забраковал их дословно. */
+.cine-bar { margin: 14px 0 6px; }
+.cine-card { gap: 8px; }
+.cine-title {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-muted);
+}
+.cine-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cine-wrap { position: relative; flex: 1 1 260px; min-width: 0; }
+.cine-prompt {
+  width: 100%; resize: none; min-height: 44px; max-height: 140px;
+  border: 1px solid rgba(var(--ink-rgb), .12); border-radius: 14px;
+  corner-shape: squircle;
+  background: var(--inset); padding: 12px; font: inherit; color: var(--text);
+}
+.cine-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cine-more {
+  font-size: 12px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--card-solid);
+  color: var(--ink-muted); box-shadow: none; cursor: pointer;
+}
+.cine-more.on { color: var(--text); border-color: rgba(var(--ink-rgb), .4); }
+.cine-sum { font-size: 12px; color: var(--gold-ink); font-weight: 600; }
+.cine-hint { font-size: 12px; color: var(--ink-muted); }
+.cine-opts {
+  display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.cine-opt { display: grid; gap: 3px; font-size: 11px; color: var(--ink-muted); }
+.cine-opt select {
+  padding: 7px 10px; font: inherit; font-size: 13px; color: var(--text);
+  background: var(--card-solid); border: 1px solid var(--border);
+  border-radius: 12px; corner-shape: squircle;
+}
+.cine-ac {
+  position: absolute; left: 8px; top: 100%; z-index: 30;
+  background: var(--card-solid); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: 0 10px 30px rgba(var(--ink-rgb), .16);
+  display: flex; flex-direction: column; min-width: 180px; overflow: hidden;
+}
+.cine-ac-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  background: none; border: none; cursor: pointer; font: inherit; text-align: left;
+}
+.cine-ac-item:hover { background: var(--gold-wash); }
+.cine-ac-item img { width: 24px; height: 24px; border-radius: 8px; object-fit: cover; }
+
+/* ─────────── Инструкции «Как это работает» + Школа ─────────── */
+.ms-howto {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 18px; padding: 10px 14px; backdrop-filter: blur(8px);
+}
+.ms-howto > summary { cursor: pointer; font-weight: 700; list-style: none; }
+.ms-howto > summary::-webkit-details-marker { display: none; }
+.ms-howto ol { margin: 10px 0 4px; padding-left: 20px; display: flex;
+  flex-direction: column; gap: 6px; font-size: .92rem; line-height: 1.45; }
+.school-grid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+.trends-hero .ms-howto { margin-top: 12px; text-align: left; }
+
+/* ─────────── Лёгкая карточка трека: один уровень рамок ───────────
+   Внешняя обёртка перестаёт быть «блоком в блоке»: фон/рамку/тень несёт
+   только стеклянная панель этапа, обёртка держит лишь вертикальный ритм. */
+.track-card,
+:root[data-theme="dark"] .track-card,
+:root.os-dark:not([data-theme="light"]) .track-card {
+  background: none; border: none; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  padding: 0 2px; margin-bottom: 44px;
+}
+.mode-setup { gap: 30px; }
+.clip-dock {
+  margin-top: 30px; padding-top: 22px;
+  border-top: 1px solid rgba(var(--ink-rgb), .10); /* волосяной разделитель */
+}
+.storyboard-box, .media-box { border-color: rgba(var(--ink-rgb), .12); }
+
+/* ─────────── Студия «Мокапы»: своя структура страницы ─────────── */
+.mkp-hero { margin-bottom: 14px; }
+.mkp-hero h2 { margin: 0 0 4px; }
+.mkp-hero p { margin: 0; }
+.mkp-gal-title { margin: 22px 0 10px; }
+.mkp-gallery { columns: 4 180px; column-gap: 10px; }
+.mkp-item {
+  display: inline-block; width: 100%; margin: 0 0 10px; padding: 0;
+  border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
+  background: var(--card); cursor: pointer; position: relative;
+  break-inside: avoid;
+}
+.mkp-item img { width: 100%; display: block; }
+.mkp-item.busy, .mkp-item.err {
+  display: inline-flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 4px; min-height: 130px;
+  background: var(--surface-2);
+}
+.mkp-item.busy .mkp-ph { animation: mkpPulse 1.4s ease-in-out infinite; }
+@keyframes mkpPulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+.mkp-item i { font-style: normal; font-size: .72rem; color: var(--ink-muted); }
+.mkp-item.err { border-color: var(--danger); }
+.mkp-ph { font-size: 1.6rem; }
+.mkp-badge, .mkp-busy {
+  position: absolute; right: 8px; top: 8px; font-size: .7rem;
+  background: rgba(0, 0, 0, .55); color: #fff; border-radius: 999px;
+  padding: 3px 8px;
+}
+.mkp-view { display: flex; flex-direction: column; gap: 12px; }
+.mkp-view img, .mkp-view video {
+  max-width: 100%; max-height: 60vh; border-radius: 16px; object-fit: contain;
+  align-self: center;
+}
+.mkp-btn { text-decoration: none; }
+/* Свёрнутые настройки: панели внутри details теряют собственную раму —
+   один уровень рамок, как и в карточке трека. */
+.mkp-settings { display: flex; flex-direction: column; gap: 10px; }
+.mkp-inset, .mkp-inset.panel {
+  background: none; border: none; box-shadow: none; padding: 8px 0 0;
+  margin: 0; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.mkp-set-body > .panel > h2 { display: none; }
+/* Режим мокапов: клиповые этапы и cinema-бар в карточках товаров скрыты. */
+body.mode-mockup .track-card .stage-tabs,
+body.mode-mockup .track-card .cine-bar,
+body.mode-mockup .track-card .s-supergen,
+body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
+  display: none !important;
+}
+
+/* Кабинет: строка настроек (тема · язык · сохранить · выйти) + телефон */
+.acc-settings { justify-content: flex-end; margin-bottom: 12px; gap: 8px; }
+.acc-settings .theme-switch, .acc-settings .lang-switch { display: inline-flex; }
+.acc-phone-wrap { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.acc-phone-flow { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.acc-phone-flow.hidden { display: none; }
+.acc-phone-num { width: 150px; }
+.acc-phone-code { width: 76px; }
+.acc-phone-btn { font-size: 12px; padding: 4px 10px; }
+
+/* Кнопка перегенерации кадра в модалке разложения листа. */
+.cell-regen { font-size: 10.5px; padding: 3px 6px; margin-left: auto; white-space: nowrap; }
+
+/* ── Камера-пресеты в карточке кадра: живые карточки-иконки ──
+   Анимация превью имитирует само движение пресета (маска + сдвиг фона).
+   Медленный бесконечный loop 6-8с; prefers-reduced-motion выключает. */
+.s-cameras { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: thin; }
+.cam-card { flex: 0 0 74px; border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; cursor: pointer; background: var(--inset); padding: 0; text-align: center; }
+.cam-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cam-thumb { position: relative; display: block; width: 100%; aspect-ratio: 3/4; overflow: hidden; }
+.cam-thumb i { position: absolute; inset: -16%; display: flex; align-items: center;
+  justify-content: center; background-size: cover; background-position: center;
+  font-size: 22px; font-style: normal; }
+.cam-thumb i.cam-noimg { background: linear-gradient(160deg, rgba(45,33,26,.10), rgba(45,33,26,.28)); }
+.cam-name { display: block; font-size: 9.5px; line-height: 1.2; padding: 3px 4px 4px;
+  color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes camSlider  { from { transform: translateX(5%) scale(1.05); } to { transform: translateX(-5%) scale(1.1); } }
+@keyframes camVehicle { from { transform: translateX(7%); } to { transform: translateX(-7%); } }
+@keyframes camDrone   { from { transform: scale(1) rotate(-2deg) translateY(3%); } to { transform: scale(1.24) rotate(2deg) translateY(-3%); } }
+@keyframes camTruck   { from { transform: translateX(8%); } to { transform: translateX(-8%); } }
+@keyframes camOrbit   { from { transform: translateX(4%) rotate(-2.4deg) scale(1.08); } to { transform: translateX(-4%) rotate(2.4deg) scale(1.08); } }
+@keyframes camCrane   { from { transform: translateY(-9%) scale(1.12); } to { transform: translateY(9%) scale(1.02); } }
+.cam-anim-slider  .cam-thumb i { animation: camSlider 8s ease-in-out infinite alternate; }
+.cam-anim-vehicle .cam-thumb i { animation: camVehicle 6s linear infinite alternate; }
+.cam-anim-drone   .cam-thumb i { animation: camDrone 7s ease-in infinite alternate; }
+.cam-anim-truck   .cam-thumb i { animation: camTruck 7s ease-in-out infinite alternate; }
+.cam-anim-orbit   .cam-thumb i { animation: camOrbit 8s ease-in-out infinite alternate; }
+.cam-anim-crane   .cam-thumb i { animation: camCrane 8s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .s-cameras .cam-thumb i { animation: none !important; } }
+
+/* Превью карточки движения в промпт-базе: широкий кадр с той же живой
+   CSS-анимацией, что у камера-пресетов. */
+.pb-thumb { display: block; margin: 6px 0 8px; }
+.pb-thumb .cam-thumb { aspect-ratio: 16/9; border-radius: 10px; display: block; }
+/* Живое превью приёма: тот же прямоугольник, что у статичной миниатюры. */
+.pb-thumb-live .pb-vid {
+  display: block; width: 100%; aspect-ratio: 16/9; border-radius: 10px;
+  object-fit: cover; background: var(--inset);
+}
+
+
+/* Зачистка описаний интерфейса (28.08): опустевшие подводки не оставляют
+   пустых обёрток — прячем по :empty, чтобы не ловить каждую в JS. */
+.ms-hint:empty, .ms-text-note:empty, .ac-lead:empty, .sch-muted:empty,
+.trends-hero p:empty, .mkp-hero p:empty { display: none; }
+
+
+/* ─── Страница промта /p/{layer}/{key} ─── */
+.pp-wrap { max-width: 980px; margin: 0 auto; padding: 10px 18px 60px; }
+.pp-crumbs { margin-bottom: 10px; }
+.ghosty {
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 999px;
+  corner-shape: squircle; background: var(--card-solid); color: var(--ink);
+  font: 700 13px/1 var(--font-head); box-shadow: none; cursor: pointer;
+}
+.pp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; }
+.pp-head h1 { margin: 0; font: 800 clamp(24px, 3.4vw, 40px)/1.05 var(--font-head); letter-spacing: -.03em; }
+.pp-desc { width: 100%; margin: 0; color: var(--ink-muted); }
+.pp-use {
+  margin-left: auto; padding: 11px 20px; border: 0; border-radius: 14px;
+  corner-shape: squircle; background: var(--fire-ink); color: var(--on-fire);
+  font: 800 14px/1 var(--font-head); box-shadow: 0 2px 14px rgba(200,96,20,.3);
+}
+.pp-gallery { columns: 3 220px; column-gap: 10px; margin-bottom: 20px; }
+.pp-gallery img, .pp-gallery video {
+  width: 100%; margin-bottom: 10px; border-radius: 16px; corner-shape: squircle;
+  border: 1px solid var(--border); display: block; break-inside: avoid;
+  background: var(--surface-2);
+}
+.pp-muted { color: var(--ink-muted); }
+.pp-more-ex {
+  display: block; width: 100%; padding: 16px; margin-bottom: 10px;
+  border: 1.5px dashed var(--border-bright); border-radius: 16px;
+  corner-shape: squircle; background: var(--inset); color: var(--accent-ink);
+  font-weight: 700; box-shadow: none; break-inside: avoid;
+}
+.pp-prompt {
+  padding: 16px; border: 1px solid var(--border); border-radius: 18px;
+  corner-shape: squircle; background: var(--card);
+}
+.pp-prompt h2 { margin: 0 0 8px; font-size: 15px; }
+.pp-pre {
+  margin: 0; white-space: pre-wrap; font: 12.5px/1.6 var(--font-mono);
+  color: var(--ink-muted);
+}
+
+.mk-tpl-info {
+  position: absolute; right: 6px; top: 6px; z-index: 3;
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border-radius: 50%; background: rgba(20,12,6,.5); color: #fff; font-size: 12px;
+  cursor: pointer;
+}
+
+
+/* ─── Генератор: набор промтов, карусели, прогресс, агент-строка ─── */
+.cc-kit { display: flex; gap: 5px; flex-wrap: wrap; margin: 0 4px 6px; }
+.cc-kit:empty { display: none; }
+.cc-kit-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 6px 4px 10px; border-radius: 999px; corner-shape: squircle;
+  background: var(--gold-wash); color: var(--gold-ink);
+  font-size: 12px; font-weight: 700; border: 1px solid var(--border);
+}
+.cc-kit-chip button { border: 0; background: transparent; box-shadow: none; padding: 0 3px; font-size: 10px; color: inherit; cursor: pointer; }
+
+/* Строка агента — закреплённая шапка капсулы, не строка ленты. */
+.chat-compose .cc-agent {
+  margin: -4px -8px 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  border-radius: 18px 18px 0 0;
+}
+.cc-agent-acts { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.cc-agent-act {
+  font-size: 12px; padding: 5px 11px; border-radius: 999px; corner-shape: squircle;
+  border: 1px solid var(--border-bright); background: var(--card-solid);
+  color: var(--accent-ink); font-weight: 700; box-shadow: none; cursor: pointer;
+}
+.cc-agent-act:hover { background: var(--gold-wash); }
+
+/* Правая панель — единая сетка секций: hairline между, равные отступы. */
+.mk-groups { gap: 0; }
+.mk-groups > .mk-group { padding: 12px 0; border-top: 1px solid var(--border); }
+.mk-groups > .mk-group:first-child { border-top: none; padding-top: 4px; }
+.mk-group-head { min-height: 20px; margin-bottom: 8px; }
+
+/* Карусели заготовок. */
+.mk-show { display: flex; flex-direction: column; gap: 10px; }
+.mk-lane small { display: block; margin-bottom: 5px; color: var(--ink-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; font-family: var(--font-mono); }
+.mk-lane-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.mk-lane-row::-webkit-scrollbar { display: none; }
+.mk-lane-row button {
+  position: relative; flex: none; width: 64px; padding: 0;
+  border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle;
+  overflow: hidden; background: var(--surface-2); box-shadow: none; cursor: pointer;
+}
+.mk-lane-row.tall button { width: 76px; }
+.mk-lane-row img { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; pointer-events: none; }
+.mk-lane-row.tall img { aspect-ratio: 9/13; }
+.mk-lane-row i { display: grid; place-items: center; width: 100%; aspect-ratio: 3/4; font-style: normal; color: var(--ink-muted); }
+.mk-lane-row b {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 4px 3px;
+  font: 700 9px/1.1 var(--font-head); color: #fff; text-align: center;
+  background: linear-gradient(transparent, rgba(20,12,6,.75));
+}
+.mk-lane-row button:hover { border-color: var(--border-bright); }
+
+/* Прогресс генерации: тонкая огненная шкала с процентами. */
+.mk-progress { display: flex; align-items: center; gap: 8px; }
+.mk-progress-bar {
+  flex: 1 1 120px; max-width: 220px; height: 4px; border-radius: 999px;
+  overflow: hidden; background: var(--surface-2); border: 1px solid var(--border);
+}
+.mk-progress-bar i { display: block; height: 100%; background: var(--fire-ink); transition: width 1s linear; }
+.mk-progress em { font: 700 11px/1 var(--font-mono); font-style: normal; color: var(--accent-ink); min-width: 32px; }
+.mk-progress u { text-decoration: none; font-size: 11px; color: var(--ink-muted); }
+/* Карточка в работе мягко дышит; результат появляется fade+scale. */
+.chat-msg:has(.mk-progress) { animation: mk-breathe 2.4s ease-in-out infinite; }
+@keyframes mk-breathe { 0%,100% { opacity: 1; } 50% { opacity: .82; } }
+.chat-media, .mk-variant img, .mk-variant video { animation: mk-appear .35s ease; }
+@keyframes mk-appear { from { opacity: 0; transform: scale(.97); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg:has(.mk-progress), .chat-media, .mk-variant img { animation: none; }
+  .mk-progress-bar i { transition: none; }
+}

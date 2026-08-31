@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 import os
 import threading
@@ -40,6 +41,8 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 import mailer
+import mockup_catalog
+import prompts_library
 from db import (
     AdminAction, AppSetting, Campaign, CampaignRecipient, Chat, ChatMessage, FileOwner,
     PointEvent, ProcessedPayment, Project, RefEvent, Scene, SessionLocal,
@@ -486,11 +489,19 @@ def admin_trends(user: User = Depends(admin_user), db: Session = Depends(db_sess
         core.TrendPreset.position, core.TrendPreset.id).all()
     return {"presets": [{
         "id": t.id, "title": t.title, "enabled": t.enabled,
+        "title_en": getattr(t, "title_en", "") or "",
         "image_prompt": t.image_prompt, "motion_prompt": t.motion_prompt,
+        "image_prompt_ru": getattr(t, "image_prompt_ru", "") or "",
+        "motion_prompt_ru": getattr(t, "motion_prompt_ru", "") or "",
         "image_engine": t.image_engine, "video_engine": t.video_engine,
         "duration_sec": t.duration_sec, "aspect": t.aspect,
         "poster_url": f"/api/media/{t.poster_filename}" if t.poster_filename else "",
         "sample_url": f"/api/media/{t.sample_filename}" if t.sample_filename else "",
+        # Партнёрские поля: без них вкладка «Заработок» не смогла бы отличить
+        # продукт от тренда и показывала бы пустые награду и ссылку.
+        "kind": t.kind or "trend", "landing_url": t.landing_url or "",
+        "reward_note": t.reward_note or "", "reward_pct": int(t.reward_pct or 10),
+        "position": t.position,
     } for t in rows]}
 
 
@@ -504,11 +515,26 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
     if not t:
         t = core.TrendPreset()
         db.add(t)
-    for field in ("title", "image_prompt", "motion_prompt",
+    for field in ("title", "title_en", "image_prompt", "motion_prompt",
+                  "image_prompt_ru", "motion_prompt_ru",
                   "image_engine", "video_engine", "aspect",
                   "kind", "landing_url", "reward_note"):
         if field in body:
             setattr(t, field, str(body[field] or ""))
+    # Автоперевод при сохранении: владелец правит по-русски, английский
+    # пересобирается сам (если его не трогали руками — флаг translate).
+    if body.get("translate"):
+        try:
+            if (t.image_prompt_ru or "").strip():
+                t.image_prompt = await translate_to_en(t.image_prompt_ru)
+            if (t.motion_prompt_ru or "").strip():
+                t.motion_prompt = await translate_to_en(t.motion_prompt_ru)
+            if (t.title or "").strip() and not (t.title_en or "").strip():
+                t.title_en = await translate_to_en(t.title)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+    if "reward_pct" in body:
+        t.reward_pct = max(1, min(50, int(body["reward_pct"] or 10)))
     if "duration_sec" in body:
         t.duration_sec = max(2, min(12, int(body["duration_sec"] or 6)))
     if "enabled" in body:
@@ -544,6 +570,102 @@ async def admin_trend_media(preset_id: int, kind: str = "poster",
         t.poster_filename = fname
     db.commit()
     return {"ok": True, "url": f"/api/media/{fname}"}
+
+
+@router.post("/api/admin/trends/translate-ru")
+async def admin_trends_translate_ru(user: User = Depends(admin_user),
+                                    db: Session = Depends(db_session)):
+    """Разовая миграция: английские промпты трендов → русские исходники.
+    Трогает только записи, где русского ещё нет; английский не меняется."""
+    core = _core()
+    rows = db.query(core.TrendPreset).all()
+    done, failed = 0, []
+    for t in rows:
+        try:
+            changed = False
+            if (t.image_prompt or "").strip() and not (t.image_prompt_ru or "").strip():
+                t.image_prompt_ru = await translate_to_ru(t.image_prompt)
+                changed = True
+            if (t.motion_prompt or "").strip() and not (t.motion_prompt_ru or "").strip():
+                t.motion_prompt_ru = await translate_to_ru(t.motion_prompt)
+                changed = True
+            if changed:
+                db.commit()
+                done += 1
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            failed.append(f"{t.id}: {str(e)[:100]}")
+    return {"ok": True, "translated": done, "failed": failed}
+
+
+@router.post("/api/admin/trends/{preset_id}/preview-generate")
+def admin_trend_preview_generate(preset_id: int, user: User = Depends(admin_user),
+                                 db: Session = Depends(db_session)):
+    """Постер тренда ПО ЕГО ПРОМПТУ КАДРА, бесплатным шлюзом (⚡0).
+
+    Референс-фото человека у превью нет — фразу про него подменяем
+    нейтральным героем, чтобы шлюз не искал несуществующую картинку."""
+    import asyncio
+    core = _core()
+    t = db.get(core.TrendPreset, preset_id)
+    if not t:
+        raise HTTPException(404, "шаблон не найден")
+    prompt = (t.image_prompt or "").strip()
+    if not prompt:
+        raise HTTPException(400, "у тренда пуст промпт кадра")
+    prompt = re.sub(r"the person from the reference photo",
+                    "a stylish young person", prompt, flags=re.I)
+    prompt += " No text, no watermark."
+    try:
+        core.mediagen.reset_task()
+        res = asyncio.run(core.mediagen.generate_image_ex(
+            prompt, None, engine="chatgpt",
+            aspect=(t.aspect or "9:16")))
+        fname = core._save_image(res["data"], res["mime"], upscale=False)
+        core._reg_file(db, fname, None, kind="trend_poster")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"превью не вышло: {str(e)[:200]}")
+    t.poster_filename = fname
+    db.commit()
+    return {"ok": True, "poster_url": f"/api/media/{fname}"}
+
+
+@router.post("/api/admin/trends/{preset_id}/preview-animate")
+def admin_trend_preview_animate(preset_id: int, user: User = Depends(admin_user),
+                                db: Session = Depends(db_session)):
+    """Оживить постер тренда его же motion-промптом, бесплатным шлюзом (⚡0).
+
+    Тот же механизм, что «оживить кадр» у сцены (_animate_grok): вход —
+    картинка-постер, выход — mp4. Ролик ложится в sample_filename и крутится
+    и в админ-карточке, и на витрине /trends вместо статики. Синхронно, как
+    и preview-generate: админ один, очередь ему не нужна, а статус виден
+    строкой «оживляю…» в карточке."""
+    import asyncio
+    import os as _os
+    core = _core()
+    t = db.get(core.TrendPreset, preset_id)
+    if not t:
+        raise HTTPException(404, "шаблон не найден")
+    if not t.poster_filename:
+        raise HTTPException(400, "сначала прикрепи или сгенерируй превью-картинку")
+    motion = (t.motion_prompt or "").strip() or (t.image_prompt or "").strip()
+    if not motion:
+        raise HTTPException(400, "у тренда пуст промпт движения")
+    poster = _os.path.join(core.UPLOAD_DIR, t.poster_filename)
+    if not _os.path.isfile(poster):
+        raise HTTPException(400, "файл превью пропал с диска — перегенерируй его")
+    try:
+        core.mediagen.reset_task()
+        fname = asyncio.run(core.mediagen.animate_scene(
+            prompt=motion, first_path=poster, last_path=None,
+            duration_sec=int(t.duration_sec or 6), provider="free",
+            engine="grok", aspect=(t.aspect or "9:16")))
+        core._reg_file(db, fname, None, kind="trend_sample")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"оживить не вышло: {str(e)[:200]}")
+    t.sample_filename = fname
+    db.commit()
+    return {"ok": True, "sample_url": f"/api/media/{fname}"}
 
 
 @router.delete("/api/admin/trends/{preset_id}")
@@ -725,6 +847,37 @@ def ledger_audit(limit: int = 50, user: User = Depends(admin_user),
 #      должен становиться вторым хранилищем закрытых промптов.
 
 STYLE_ASSET_KINDS = ("poster", "loop", "shot", "ref", "promptfile")
+
+
+def _compress_ref_image(data: bytes, ext: str) -> tuple[bytes, str]:
+    """Референс → jpeg: длинная сторона ≤1536, качество вниз, пока не влезет
+    в ~800КБ. Не вышло сжать — возвращаем оригинал (пусть дорого, но живо)."""
+    import subprocess, tempfile, os as _os
+    src = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    dst_path = src.name + ".out.jpg"
+    try:
+        src.write(data)
+        src.close()
+        for q in (4, 7, 12):
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-i", src.name, "-vf",
+                 "scale='min(1536,iw)':'min(1536,ih)':"
+                 "force_original_aspect_ratio=decrease:flags=lanczos",
+                 "-q:v", str(q), dst_path],
+                capture_output=True, timeout=60)
+            if r.returncode == 0 and _os.path.exists(dst_path):
+                out = open(dst_path, "rb").read()
+                if len(out) <= 800 * 1024 or q == 12:
+                    return out, ".jpg"
+        return data, ext
+    except Exception:  # noqa: BLE001
+        return data, ext
+    finally:
+        for pth in (src.name, dst_path):
+            try:
+                _os.remove(pth)
+            except OSError:
+                pass
 STYLE_ASSET_MAX = int(os.environ.get("STYLE_ASSET_MAX_MB", "40")) * 1024 * 1024
 _STYLE_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
               "video/mp4": ".mp4", "text/plain": ".txt", "text/markdown": ".md"}
@@ -748,6 +901,194 @@ def _asset_dict(core, a: StyleAsset) -> dict:
             "title": a.title or "", "note": a.note or ""}
 
 
+# ─── Вид стиля: "style" (наш) или "reference" (авторский пресет по чужому
+# ролику/инсте). Организация каталога админки, на генерацию не влияет.
+# Живёт в AppSetting одним JSON — колонка в style_override потребовала бы
+# миграции, а грабли DDL при деплое известны (docs: deploy-lock).
+_STYLE_META_KEY = "style_meta"
+_INSTA_RE = re.compile(r"instagram\.com|/reel|инстаграм|инста|reels", re.I)
+
+
+def _style_meta(db: Session) -> dict:
+    row = db.get(AppSetting, _STYLE_META_KEY)
+    try:
+        v = json.loads(row.value) if row and row.value else {}
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _style_meta_save(db: Session, meta: dict) -> None:
+    row = db.get(AppSetting, _STYLE_META_KEY)
+    if not row:
+        row = AppSetting(key=_STYLE_META_KEY, value="{}")
+        db.add(row)
+    row.value = json.dumps(meta, ensure_ascii=False)
+    db.commit()
+
+
+#: Авторские пресеты: их снимали конкретные люди с узнаваемой манерой, и
+#: каталог «Референсы» — это каталог АВТОРОВ, а не второй сорт стилей.
+#: Перенос делается сидом, а не руками владельца: шесть кликов в админке —
+#: это шесть шансов забыть один.
+REFERENCE_AUTHORS = ("spike", "munir", "fanuel", "punkrf", "dreamclad", "katsumi")
+_REF_SEED_MARK = "_authors_v1"
+
+TRANSLATE_SYSTEM = (
+    "Переведи промпт для image-генерации на английский. Сохрани все "
+    "художественные детали, порядок и структуру. Верни ТОЛЬКО перевод, "
+    "без пояснений, без кавычек и без заголовков."
+)
+
+
+TRANSLATE_RU_SYSTEM = (
+    "Переведи промпт для image-генерации на русский язык. Сохрани все "
+    "художественные детали, порядок и структуру. Верни ТОЛЬКО перевод, "
+    "без пояснений, без кавычек и без заголовков."
+)
+
+
+async def translate_to_ru(text: str) -> str:
+    """Английский промпт → русский: разовая миграция каталогов, чтобы
+    владелец читал и правил по-русски."""
+    import textgen  # noqa: PLC0415
+    src = (text or "").strip()
+    if not src:
+        return ""
+    out = await textgen.ask(src, TRANSLATE_RU_SYSTEM)
+    return (out or "").strip()
+
+
+async def translate_to_en(text: str) -> str:
+    """Русский промпт → английский. Через бесплатный текстовый шлюз.
+
+    Владелец думает и правит по-русски, в модель уходит английский: русский
+    промпт картинку рисует заметно хуже, а держать в голове второй язык на
+    каждую правку — способ перестать править вовсе."""
+    import textgen  # noqa: PLC0415
+    src = (text or "").strip()
+    if not src:
+        return ""
+    out = await textgen.ask(src, TRANSLATE_SYSTEM)
+    return (out or "").strip()
+
+
+@router.post("/api/admin/translate")
+async def admin_translate(request: Request, user: User = Depends(admin_user)):
+    body = await request.json() if await request.body() else {}
+    try:
+        return {"en": await translate_to_en(str(body.get("text") or "")[:20000])}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+
+
+def _ensure_reference_seed(db: Session, pc) -> None:
+    """Один раз перевести авторские пресеты в вид «референс»."""
+    meta = _style_meta(db)
+    if meta.get(_REF_SEED_MARK):
+        return
+    for key in REFERENCE_AUTHORS:
+        if key not in pc.STYLE_KEYS:
+            continue
+        cur = dict(meta.get(key) or {})
+        cur["kind"] = "reference"
+        meta[key] = cur
+    meta[_REF_SEED_MARK] = True
+    _style_meta_save(db, meta)
+
+
+def _style_meta_of(db: Session, key: str) -> dict:
+    v = _style_meta(db).get(key)
+    return dict(v) if isinstance(v, dict) else {}
+
+
+def _scene_captions(db: Session, key: str) -> list[str]:
+    """Подписи кадров-референсов автора: «что происходит в кадре»."""
+    rows = (db.query(StyleAsset)
+            .filter(StyleAsset.style_key == key, StyleAsset.kind == "ref")
+            .order_by(StyleAsset.position, StyleAsset.id).all())
+    return [(a.note or "").strip() for a in rows if (a.note or "").strip()]
+
+
+def _compose_story_base(db: Session, key: str, manual: str) -> str:
+    """База для сценариев = заметки владельца + автоблок из подписей кадров.
+
+    Автоблок собирается КАЖДЫЙ раз заново, а хранится только ручная часть:
+    иначе размеченный кадр попадал бы в базу дважды, а удалённый оставался
+    бы в ней навсегда."""
+    caps = _scene_captions(db, key)
+    body = (manual or "").strip()
+    if not caps:
+        return body
+    auto = "Сцены из роликов автора:\n" + "\n".join("— " + c for c in caps)
+    return (body + "\n\n" + auto).strip() if body else auto
+
+
+def _restore_story_base(db: Session, key: str) -> None:
+    """Пересобрать story_base стиля после правки подписи кадра."""
+    core = _core()
+    manual = _style_meta_of(db, key).get("story_manual", "")
+    if not manual and not _scene_captions(db, key):
+        return
+    row = _style_row(db, key)
+    if not row:
+        row = StyleOverride(key=key, builtin=core.prompts_catalog.is_builtin(key))
+        db.add(row)
+    row.story_base = _compose_story_base(db, key, manual)
+    db.commit()
+    core.reload_style_overlay()
+
+
+def _style_meta_defaults(db: Session, pc) -> dict:
+    """Первый запуск: reference — стили, в чьих данных есть инста-ссылки.
+    Остальное остаётся style; ручной переключатель в карточке."""
+    meta = {}
+    for key in pc.STYLE_KEYS:
+        card = pc.public_style(key) or {}
+        blob = json.dumps(card, ensure_ascii=False)
+        blob += " " + (pc.style_prompt(key) or "")
+        notes = " ".join((a.note or "") + " " + (a.title or "")
+                         for a in db.query(StyleAsset)
+                         .filter(StyleAsset.style_key == key).all())
+        m = _INSTA_RE.search(blob + " " + notes)
+        if m:
+            meta[key] = {"kind": "reference"}
+            url = re.search(r"https?://\S*instagram\.com\S*", blob + " " + notes)
+            if url:
+                meta[key]["source_url"] = url.group(0).rstrip('",)')
+    _style_meta_save(db, meta)
+    return meta
+
+
+@router.post("/api/admin/styles/{key}/meta")
+async def admin_style_meta(key: str, request: Request,
+                           user: User = Depends(admin_user),
+                           db: Session = Depends(db_session)):
+    """Вид (style|reference) и ссылка на исходник. Каталог не трогает."""
+    core = _core()
+    if key not in core.prompts_catalog.STYLE_KEYS:
+        raise HTTPException(404, "нет такого стиля")
+    body = await request.json() if await request.body() else {}
+    meta = _style_meta(db)
+    cur = dict(meta.get(key) or {})
+    if "kind" in body:
+        want = str(body["kind"] or "style")
+        if want not in ("style", "reference"):
+            raise HTTPException(400, "kind: style|reference")
+        cur["kind"] = want
+    if "source_url" in body:
+        cur["source_url"] = str(body["source_url"] or "")[:500]
+    if "links" in body:
+        # СПИСОК, а не одно поле: у автора инста, тикток и ютуб, и «одна
+        # ссылка на исходник» заставляла бы выбирать, какую из трёх потерять.
+        cur["links"] = [str(u).strip()[:500]
+                        for u in (body["links"] or []) if str(u).strip()][:12]
+    meta[key] = cur
+    _style_meta_save(db, meta)
+    _log_action(db, user, 0, "style_meta", {"key": key, **cur})
+    return {"ok": True, "key": key, **cur}
+
+
 @router.get("/api/admin/styles")
 def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_session)):
     """Список стилей с пометкой «изменён». Промптов здесь нет — они едут
@@ -756,6 +1097,11 @@ def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_sess
     pc = core.prompts_catalog
     uses = core._style_uses(db)
     overridden = set(pc.overlay_keys())
+    meta = _style_meta(db)
+    if not meta and not db.get(AppSetting, _STYLE_META_KEY):
+        meta = _style_meta_defaults(db, pc)
+    _ensure_reference_seed(db, pc)
+    meta = _style_meta(db)
     assets: dict[str, int] = {}
     for (skey, cnt) in (db.query(StyleAsset.style_key, func.count(StyleAsset.id))
                         .group_by(StyleAsset.style_key).all()):
@@ -774,6 +1120,8 @@ def admin_styles(user: User = Depends(admin_user), db: Session = Depends(db_sess
             "assets": assets.get(key, 0),
             "has_story_base": bool(pc.style_story_base(key)),
             "uses": uses.get(key, 0),
+            "skind": (meta.get(key) or {}).get("kind", "style"),
+            "source_url": (meta.get(key) or {}).get("source_url", ""),
         })
     return {
         "styles": rows,
@@ -814,6 +1162,17 @@ def admin_style_card(key: str, user: User = Depends(admin_user),
         "builtin_card": pc.builtin_style(key) or {},
         "assets": [_asset_dict(core, a) for a in assets],
         "asset_kinds": list(STYLE_ASSET_KINDS),
+        "skind": (_style_meta(db).get(key) or {}).get("kind", "style"),
+        "source_url": (_style_meta(db).get(key) or {}).get("source_url", ""),
+        # Русский исходник промпта и ссылки автора живут в style_meta:
+        # колонка в style_overrides потребовала бы миграции, а грабли DDL
+        # при деплое известны (docs: deploy-lock).
+        "prompt_ru": _style_meta_of(db, key).get("prompt_ru", ""),
+        "links": list(_style_meta_of(db, key).get("links") or []),
+        # База для сценариев показана двумя кусками: ручной (её и правят) и
+        # автоблок из подписей кадров (он только читается).
+        "story_manual": _style_meta_of(db, key).get("story_manual", ""),
+        "story_auto": _scene_captions(db, key),
     }
 
 
@@ -839,6 +1198,31 @@ async def admin_style_save(key: str, request: Request,
     core = _core()
     pc = core.prompts_catalog
     body = await request.json() if await request.body() else {}
+    # РУССКИЙ ИСХОДНИК И АВТОПЕРЕВОД. В модель уходит английский prompt —
+    # это не обсуждается, русский промпт рисует заметно хуже. Но правит
+    # владелец по-русски, и когда он поменял русский текст, а английский не
+    # трогал, переводим сами: иначе поле «промпт» и то, что реально уехало
+    # в генерацию, разъезжаются молча.
+    meta_patch: dict = {}
+    if "prompt_ru" in body:
+        meta_patch["prompt_ru"] = str(body["prompt_ru"] or "")[:20000]
+    if body.get("translate") and meta_patch.get("prompt_ru"):
+        try:
+            body["prompt"] = await translate_to_en(meta_patch["prompt_ru"])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+    # База для сценариев: правится ручная часть, хранится склейка с
+    # автоблоком подписей кадров.
+    if "story_manual" in body:
+        manual = str(body["story_manual"] or "")[:20000]
+        meta_patch["story_manual"] = manual
+        body["story_base"] = _compose_story_base(db, key, manual)
+    if meta_patch:
+        meta = _style_meta(db)
+        cur = dict(meta.get(key) or {})
+        cur.update(meta_patch)
+        meta[key] = cur
+        _style_meta_save(db, meta)
     row = _style_row(db, key)
     if not row:
         row = StyleOverride(key=key, builtin=pc.is_builtin(key))
@@ -930,6 +1314,11 @@ async def admin_style_asset_add(key: str, request: Request,
            or ".bin")
     if ext not in (".jpg", ".jpeg", ".png", ".webp", ".mp4", ".txt", ".md"):
         raise HTTPException(400, f"такой формат не берём: {ext}")
+    # Референсы в генерацию жмём НА СЕРВЕРЕ: длинная сторона до 1536,
+    # jpeg (kie не ест webp), потолок ~800КБ. Pillow в образе нет — ffmpeg,
+    # он тут и так главный обработчик картинок (см. mediagen).
+    if kind == "ref" and ext in (".jpg", ".jpeg", ".png", ".webp"):
+        data, ext = _compress_ref_image(data, ext)
     fname = f"style_{key}_{int(time.time())}_{os.urandom(4).hex()}{ext}"
     path = os.path.join(core.STYLE_ASSETS_DIR, fname)
     with open(path, "wb") as f:
@@ -970,8 +1359,15 @@ async def admin_style_asset_patch(asset_id: int, request: Request,
         asset.title = str(body["title"] or "")[:200]
     if "position" in body:
         asset.position = max(0, int(body["position"] or 0))
+    note_changed = "note" in body
+    if note_changed:
+        # «Что происходит в кадре»: кто, что делает, где, каким приёмом.
+        # Из этих подписей сама собирается база для сценариев автора.
+        asset.note = str(body["note"] or "")[:2000]
     db.commit()
     core.reload_style_overlay()
+    if note_changed:
+        _restore_story_base(db, asset.style_key)
     return _asset_dict(core, asset)
 
 
@@ -1024,6 +1420,240 @@ def admin_style_asset_text(asset_id: int, user: User = Depends(admin_user),
         raise HTTPException(404, "файл потерян")
     with open(path, encoding="utf-8", errors="replace") as f:
         return {"text": f.read(200000), "filename": asset.filename}
+
+
+# ═══════════════════ СЛОИ ПРОМТОВ И ШАБЛОНЫ МОКАПОВ ═══════════════════
+#
+# Одна страница админки «Промты» собирает пять вкладок: слои (этот блок),
+# стили и референсы (блок выше), тренды (/api/admin/trends) и шаблоны
+# мокапов (низ этого блока). Отдельных страниц у них больше нет — два входа
+# в один каталог означали бы два разных представления о том, что сохранено.
+#
+# ХРАНЕНИЕ. Правки лежат наложением в app_settings, файл остаётся источником
+# и живёт в git. Поэтому DELETE у заводской карточки не удаляет её, а СНИМАЕТ
+# правку: удалить строку кода веб-формой нельзя и не нужно.
+
+
+def _prompts_overlay(db: Session) -> dict:
+    core = _core()
+    data = core._overlay_setting(db, core.PROMPTS_OVERLAY_KEY)
+    return {l: dict(data.get(l) or {}) for l in prompts_library.LAYERS}
+
+
+def _layer_or_404(layer: str) -> str:
+    if layer not in prompts_library.LAYERS:
+        raise HTTPException(404, "нет такого слоя промтов")
+    return layer
+
+
+@router.get("/api/admin/prompts")
+def admin_prompt_layers(user: User = Depends(admin_user)):
+    """Оглавление вкладки: слои, их названия и сколько в каждом карточек."""
+    return {"layers": [{
+        "key": l, "title": prompts_library.LAYER_TITLES[l],
+        "count": len(prompts_library.layer_rows(l)),
+        "groups": [{"key": g["key"], "label": g["label"]["ru"]}
+                   for g in prompts_library.layer_groups(l)],
+    } for l in prompts_library.LAYERS]}
+
+
+@router.get("/api/admin/prompts/{layer}")
+def admin_prompt_list(layer: str, user: User = Depends(admin_user)):
+    items = prompts_library.layer_list(layer)
+    # Превью карточек (камера и будущие пачки): общий магазин "layer:key".
+    core = _core()
+    previews = core._layer_previews()
+    for it in items:
+        main, _g = core._preview_entry(previews.get(f"{layer}:{it['key']}"))
+        it["preview_url"] = f"/api/media/{main}" if main else ""
+    return {"layer": _layer_or_404(layer),
+            "title": prompts_library.LAYER_TITLES[layer],
+            "items": items}
+
+
+@router.get("/api/admin/prompts/{layer}/{key}")
+def admin_prompt_card(layer: str, key: str, user: User = Depends(admin_user)):
+    card = prompts_library.layer_card(_layer_or_404(layer), key)
+    if not card:
+        raise HTTPException(404, "нет такой карточки")
+    ov = (prompts_library.library_overlay().get(layer) or {}).get(key) or {}
+    card["ru"] = {f: ov.get(f + "_ru", "")
+                  for f in prompts_library.PROMPT_FIELDS[layer]}
+    core = _core()
+    main, gallery = core._preview_entry(core._layer_previews().get(f"{layer}:{key}"))
+    card["preview_url"] = f"/api/media/{main}" if main else ""
+    card["preview_gallery"] = [{"filename": g, "url": f"/api/media/{g}"} for g in gallery]
+    return card
+
+
+def _clean_patch(layer: str, body: dict) -> dict:
+    """Отфильтровать присланное по белому списку EDITABLE.
+
+    Белый список, а не «всё, что прислали»: поле `acts` или `fits_with`,
+    прилетевшее из браузера, увело бы каталог в состояние, которое чинится
+    только руками в базе.
+
+    Плюс русские исходники промптов (`<поле>_ru`): они хранятся в наложении
+    рядом, но в каталог НЕ попадают — в модель уходит английский текст."""
+    fields = prompts_library.EDITABLE[layer]
+    out: dict = {}
+    for f in prompts_library.PROMPT_FIELDS[layer]:
+        if f + "_ru" in body:
+            out[f + "_ru"] = str(body[f + "_ru"] or "")[:8000]
+    for f in fields:
+        if f not in body:
+            continue
+        v = body[f]
+        if f in prompts_library.BILINGUAL:
+            if not isinstance(v, dict):
+                continue
+            out[f] = {"en": str(v.get("en") or "")[:4000],
+                      "ru": str(v.get("ru") or "")[:4000]}
+        elif isinstance(v, bool):
+            out[f] = v
+        else:
+            out[f] = str(v or "")[:8000]
+    return out
+
+
+@router.put("/api/admin/prompts/{layer}/{key}")
+async def admin_prompt_save(layer: str, key: str, request: Request,
+                            user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    core = _core()
+    _layer_or_404(layer)
+    key = re.sub(r"[^a-z0-9_]", "", (key or "").strip().lower())[:60]
+    if not key:
+        raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
+    body = await request.json()
+    patch = _clean_patch(layer, body)
+    # Автоперевод: поля из `translate` пересобираются из русского исходника.
+    for f in (body.get("translate") or []):
+        if f in prompts_library.PROMPT_FIELDS[layer] and patch.get(f + "_ru"):
+            try:
+                patch[f] = await translate_to_en(patch[f + "_ru"])
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+    data = _prompts_overlay(db)
+    row = dict(data[layer].get(key) or {})
+    row.update(patch)
+    row.pop("enabled", None)          # сохранение всегда возвращает в строй
+    data[layer][key] = row
+    core._overlay_setting_save(db, core.PROMPTS_OVERLAY_KEY, data)
+    core.reload_prompts_overlay(db)
+    _log_action(db, user, user.id, "prompt_save", {"layer": layer, "key": key})
+    return {"ok": True, "card": prompts_library.layer_card(layer, key)}
+
+
+@router.delete("/api/admin/prompts/{layer}/{key}")
+def admin_prompt_delete(layer: str, key: str, hide: int = 0,
+                        user: User = Depends(admin_user),
+                        db: Session = Depends(db_session)):
+    """Заводская карточка: снять правки (hide=1 — убрать её с витрины).
+    Своя карточка: удалить совсем."""
+    core = _core()
+    _layer_or_404(layer)
+    data = _prompts_overlay(db)
+    builtin = key in prompts_library._BUILTIN_BY_KEY_LAYER[layer]
+    if builtin and hide:
+        data[layer][key] = {"enabled": False}
+    else:
+        data[layer].pop(key, None)
+    core._overlay_setting_save(db, core.PROMPTS_OVERLAY_KEY, data)
+    core.reload_prompts_overlay(db)
+    _log_action(db, user, user.id, "prompt_delete",
+                {"layer": layer, "key": key, "hide": bool(hide)})
+    return {"ok": True}
+
+
+# ─────────────────────────── шаблоны мокапов ───────────────────────────
+
+@router.get("/api/admin/mockups")
+def admin_mockups(user: User = Depends(admin_user)):
+    core = _core()
+    previews = core._mockup_previews()
+    items = mockup_catalog.admin_list()
+    ov = mockup_catalog.overlay()
+    for it in items:
+        fname = previews.get(it["id"]) or ""
+        it["preview_url"] = f"/api/media/{fname}" if fname else ""
+        it["prompt_ru"] = (ov.get(it["id"]) or {}).get("prompt_ru", "")
+    return {"items": items, "categories": list(mockup_catalog.CATEGORIES)}
+
+
+@router.put("/api/admin/mockups/{tid}")
+async def admin_mockup_save(tid: str, request: Request,
+                            user: User = Depends(admin_user),
+                            db: Session = Depends(db_session)):
+    core = _core()
+    tid = re.sub(r"[^a-z0-9_]", "", (tid or "").strip().lower())[:60]
+    if not tid:
+        raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
+    body = await request.json()
+    patch: dict = {}
+    if "prompt_ru" in body:
+        patch["prompt_ru"] = str(body["prompt_ru"] or "")[:8000]
+    if body.get("translate") and patch.get("prompt_ru"):
+        try:
+            body["prompt"] = await translate_to_en(patch["prompt_ru"])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+    for f in mockup_catalog.EDITABLE:
+        if f not in body:
+            continue
+        v = body[f]
+        if f in ("motion", "showcase"):
+            patch[f] = bool(v)
+        elif f == "category":
+            cat = str(v or "").strip()
+            if cat and cat not in mockup_catalog.CATEGORIES:
+                raise HTTPException(400, f"неизвестная категория: {cat}")
+            patch[f] = cat
+        else:
+            patch[f] = str(v or "")[:8000]
+    data = core._overlay_setting(db, core.MOCKUP_OVERLAY_KEY)
+    row = dict(data.get(tid) or {})
+    row.update(patch)
+    row.pop("enabled", None)
+    data[tid] = row
+    core._overlay_setting_save(db, core.MOCKUP_OVERLAY_KEY, data)
+    core.reload_mockup_overlay(db)
+    _log_action(db, user, user.id, "mockup_save", {"id": tid})
+    return {"ok": True}
+
+
+@router.delete("/api/admin/mockups/{tid}")
+def admin_mockup_delete(tid: str, hide: int = 0,
+                        user: User = Depends(admin_user),
+                        db: Session = Depends(db_session)):
+    core = _core()
+    data = core._overlay_setting(db, core.MOCKUP_OVERLAY_KEY)
+    if mockup_catalog.is_builtin(tid) and hide:
+        data[tid] = {"enabled": False}
+    else:
+        data.pop(tid, None)
+    core._overlay_setting_save(db, core.MOCKUP_OVERLAY_KEY, data)
+    core.reload_mockup_overlay(db)
+    _log_action(db, user, user.id, "mockup_delete", {"id": tid, "hide": bool(hide)})
+    return {"ok": True}
+
+
+@router.post("/api/admin/mockups/{tid}/preview")
+def admin_mockup_preview(tid: str, user: User = Depends(admin_user)):
+    """Перегенерировать превью одного шаблона нейтральной бутылкой.
+
+    Старое превью снимается ДО генерации: иначе generate_mockup_previews()
+    увидит уже заполненный ключ и честно ничего не сделает."""
+    core = _core()
+    if not mockup_catalog.get(tid):
+        raise HTTPException(404, "нет такого шаблона")
+    previews = core._mockup_previews()
+    previews.pop(tid, None)
+    core._mockup_previews_save(previews)
+    res = core.generate_mockup_previews([tid])
+    if res.get("failed"):
+        raise HTTPException(502, "; ".join(res["failed"])[:300])
+    return {"ok": True, "preview_url": f"/api/media/{core._mockup_previews().get(tid, '')}"}
 
 
 # ═══════════════════════ МОДЕЛИ И НАСТРОЙКИ СЕРВИСА ═══════════════════════

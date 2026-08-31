@@ -62,7 +62,7 @@ from sqlalchemy.orm import Session
 import audio
 import audio_analysis
 import mastering
-from db import FileOwner, MusicLead, MusicTrack, SessionLocal, User, now
+from db import DemoSubmission, FileOwner, MusicLead, MusicTrack, SessionLocal, User, now
 
 log = logging.getLogger("rapclips.music")
 router = APIRouter()
@@ -590,6 +590,12 @@ def track_analysis(track_id: int, refresh: bool = False,
         "bar_sec": data.get("bar_sec"),
         "duration_sec": data.get("duration_sec"),
         "sections": data.get("sections"),
+        # Тональность считается тем же кликом (music.detect_key), но раньше
+        # в ответ не попадала — интерфейсу нечего было показать.
+        "key": data.get("key"),
+        "scale": data.get("scale"),
+        "key_confidence": data.get("confidence"),
+        "key_error": data.get("key_error"),
         "engine": data.get("engine"),
     }
 
@@ -1286,6 +1292,328 @@ def list_leads(limit: int = 50, user: User = Depends(current_user),
         "comment": r.comment, "source": r.source, "track_id": r.track_id,
         "user_id": r.user_id, "status": r.status,
     } for r in rows]}
+
+
+# ═══════════════════════════ дорожки (стемы) ═══════════════════════════
+
+@router.post("/api/music/tracks/{track_id}/stems")
+async def music_track_stems(track_id: int, user: User = Depends(current_user),
+                            db: Session = Depends(db_session)):
+    """Разложение трека раздела «Музыка» на вокал и минус (kie Suno).
+
+    Статус — общий GET /api/music/stems/{task_id} из main.py: результат
+    kie отдаёт своими URL, хранить у нас нечего."""
+    t = _own(db, user, track_id)
+    if not t.source_filename:
+        raise HTTPException(400, "у трека нет файла")
+    core = _core()
+    import music as _music
+    cost = core._points_of_usd(0.05)
+    core._charge(db, user, cost, f"стемы трека (музыка) {t.id}", kind="music")
+    db.commit()
+    url = core.pub_file_url(t.source_filename)
+    try:
+        tid = await _music.vocal_split_start(url)
+    except RuntimeError as e:
+        core._refund(db, user, cost, "стемы не запустились")
+        db.commit()
+        raise HTTPException(502, str(e))
+    return {"ok": True, "task_id": tid, "charged": cost}
+
+
+# ═══════════════════════ дистрибуция: приём демок ═══════════════════════
+# Это НЕ отгрузка на площадки (её без договора не существует), а анкета
+# лейбла: полный пакет с правами и технической проверкой файла.
+
+DEMO_AI_DISCLOSURE = ("none", "music", "vocals", "all")
+
+DEMO_AGREEMENT = """ЧЕРНОВИК — ТРЕБУЕТ ПРОВЕРКИ ЮРИСТОМ. Не является публичной офертой до
+утверждения правообладателем сервиса.
+
+СОГЛАШЕНИЕ О ПЕРЕДАЧЕ ДЕМО-ЗАПИСИ (Demo Submission Agreement)
+
+г. ______________                                «____» ____________ 20___ г.
+
+1. СТОРОНЫ
+1.1. Лейбл: ______________________ (ОГРН/ИНН: ______________, адрес:
+______________________), далее — «Лейбл».
+1.2. Артист: лицо, заполнившее форму отправки демо-записи на странице
+«Дистрибуция» сервиса lolq.ai, далее — «Артист».
+
+2. ПРЕДМЕТ
+2.1. Артист передаёт Лейблу демо-запись (далее — «Материал») исключительно
+для ознакомления и оценки возможности дальнейшего сотрудничества
+(дистрибуция, издание, продвижение).
+2.2. Передача Материала по настоящему Соглашению НЕ является отчуждением
+исключительных прав и не предоставляет Лейблу права коммерческого
+использования Материала. Любое коммерческое использование оформляется
+отдельным договором.
+
+3. ЗАВЕРЕНИЯ АРТИСТА
+3.1. Артист заверяет, что является автором и/или обладателем прав на
+Материал в объёме, достаточном для его передачи на ознакомление, и что
+Материал не нарушает прав третьих лиц (включая права на семплы, биты,
+тексты и фонограммы).
+3.2. Если при создании Материала использовались системы генеративного ИИ
+(музыка, вокал, текст), Артист раскрывает это в форме отправки. Сокрытие
+факта использования ИИ является существенным нарушением заверений.
+3.3. Артист сообщает ISRC, если код уже присвоен, и не заявляет чужие коды.
+
+4. ОБЯЗАННОСТИ ЛЕЙБЛА
+4.1. Лейбл обязуется не публиковать и не передавать Материал третьим лицам
+без отдельного согласия Артиста, за исключением сотрудников и подрядчиков,
+участвующих в оценке.
+4.2. Лейбл не обязан давать развёрнутую рецензию и вправе отклонить
+Материал без объяснения причин.
+4.3. Рассмотрение не порождает у Лейбла обязанности заключить договор.
+
+5. ПЕРСОНАЛЬНЫЕ ДАННЫЕ
+5.1. Контактные данные из формы используются только для связи по существу
+заявки (152-ФЗ «О персональных данных»).
+
+6. ПРОЧЕЕ
+6.1. Соглашение действует с момента отправки формы с отметкой о согласии.
+6.2. Применимое право — право Российской Федерации, если стороны не
+согласуют иное отдельным договором.
+6.3. Реквизиты и подписи сторон вносятся при заключении основного
+договора: настоящий документ фиксирует условия передачи демо-записи.
+
+Лейбл: ____________________            Артист: ____________________
+"""
+
+
+def _demo_audio_checks(path: str, orig_name: str) -> list:
+    """Технические требования к демке, человеческим языком.
+
+    fail — файл не подходит (не lossless, ниже 16 бит / 44.1 кГц);
+    warn — примем, но человек должен знать (клиппинг, потолок под 0 dB)."""
+    out = []
+
+    def add(key, level, text, value=""):
+        out.append({"key": key, "level": level, "text": text, "value": value})
+
+    r = subprocess.run(
+        [FFPROBE, "-v", "error", "-select_streams", "a:0", "-show_entries",
+         "stream=codec_name,sample_rate,bits_per_sample,bits_per_raw_sample",
+         "-of", "json", path], capture_output=True, text=True, timeout=60)
+    try:
+        st = (json.loads(r.stdout or "{}").get("streams") or [{}])[0]
+    except ValueError:
+        st = {}
+    codec = str(st.get("codec_name") or "")
+    sr = int(st.get("sample_rate") or 0)
+    bits = int(st.get("bits_per_raw_sample") or st.get("bits_per_sample") or 0)
+    lossless = codec.startswith("pcm_") or codec in ("flac", "alac")
+    ext = os.path.splitext(orig_name or "")[1].lower()
+    if not codec:
+        add("format", "fail", "Файл не читается как аудио — пришли WAV или FLAC.")
+    elif not lossless:
+        add("format", "fail",
+            f"Нужен lossless-файл (WAV или FLAC), а это {codec.upper() or ext}: "
+            "mp3/aac на лейбл не принимаются.", codec)
+    else:
+        add("format", "ok", "Формат подходит.", codec)
+    if lossless:
+        if bits and bits < 16:
+            add("bits", "fail", f"Битность {bits} бит — нужно 16 бит и выше.", str(bits))
+        else:
+            add("bits", "ok", "Битность в порядке.", str(bits or "16+"))
+        if sr and sr < 44100:
+            add("samplerate", "fail",
+                f"Частота {sr} Гц — нужно 44.1 кГц и выше.", str(sr))
+        else:
+            add("samplerate", "ok", "Частота дискретизации в порядке.", str(sr))
+        # Клиппинг: max_volume вплотную к 0 dB — почти наверняка срезанные
+        # пики. Это предупреждение, не запрет: бывает громкий, но чистый мастер.
+        v = subprocess.run(
+            [FFMPEG, "-v", "info", "-i", path, "-af", "volumedetect",
+             "-f", "null", "-"], capture_output=True, text=True, timeout=300)
+        m = re.search(r"max_volume:\s*(-?[\d.]+) dB", v.stderr or "")
+        if m:
+            peak = float(m.group(1))
+            if peak >= -0.05:
+                add("clipping", "warn",
+                    f"Пик {peak:g} dB — файл упирается в цифровой потолок, "
+                    "похоже на клиппинг. Пересохрани мастер с запасом до −1 dBTP.",
+                    f"{peak:g} dB")
+            else:
+                add("clipping", "ok", "Клиппинга не видно.", f"{peak:g} dB")
+    return out
+
+
+def _demo_cover_checks(path: str, orig_name: str) -> list:
+    w, h = _probe_image(path)
+    ext = os.path.splitext(orig_name or "")[1].lower()
+    out = []
+    if not w or not h:
+        return [{"key": "cover", "level": "fail",
+                 "text": "Обложка не читается как картинка — нужен JPG 3000×3000.",
+                 "value": ""}]
+    if w != h:
+        out.append({"key": "cover", "level": "fail",
+                    "text": f"Обложка {w}×{h} — нужна квадратная 3000×3000.",
+                    "value": f"{w}×{h}"})
+    elif w < COVER_MIN:
+        out.append({"key": "cover", "level": "fail",
+                    "text": f"Обложка {w}×{h} — минимум {COVER_MIN}×{COVER_MIN}, "
+                            f"площадки просят {COVER_TARGET}×{COVER_TARGET}.",
+                    "value": f"{w}×{h}"})
+    elif w < COVER_TARGET:
+        out.append({"key": "cover", "level": "warn",
+                    "text": f"Обложка {w}×{h} — примем, но дистрибьюторы просят "
+                            f"{COVER_TARGET}×{COVER_TARGET}.",
+                    "value": f"{w}×{h}"})
+    else:
+        out.append({"key": "cover", "level": "ok", "text": "Обложка подходит.",
+                    "value": f"{w}×{h}"})
+    if ext not in (".jpg", ".jpeg") and out[-1]["level"] != "fail":
+        out.append({"key": "cover_format", "level": "warn",
+                    "text": "Площадки просят JPG — PNG/WebP лучше пересохранить.",
+                    "value": ext.lstrip(".")})
+    return out
+
+
+@router.get("/api/music/demo/agreement")
+def demo_agreement(user: User = Depends(current_user)):
+    """Черновик соглашения о передаче демки — показывается на странице
+    целиком, с пометкой про юриста прямо в тексте."""
+    return {"text": DEMO_AGREEMENT, "draft": True}
+
+
+@router.post("/api/music/demo")
+async def submit_demo(request: Request,
+                      artist: str = Form(""), track_title: str = Form(""),
+                      genre: str = Form(""), socials: str = Form(""),
+                      contact: str = Form(""), isrc: str = Form(""),
+                      comment: str = Form(""),
+                      original_confirm: str = Form(""),
+                      ai_disclosure: str = Form(""),
+                      agree_terms: str = Form(""),
+                      audio_file: UploadFile | None = None,
+                      cover_file: UploadFile | None = None,
+                      user: User = Depends(current_user),
+                      db: Session = Depends(db_session)):
+    """Приём демки на лейбл: анкета + файлы + технические проверки.
+
+    Ошибки возвращаются СПИСКОМ человеческих фраз (checks): человек чинит
+    всё сразу, а не по одной ошибке за заход."""
+    core = _core()
+    artist = artist.strip()[:200]
+    track_title = track_title.strip()[:200]
+    if not artist or not track_title:
+        raise _api_error(400, "demo_incomplete", "Укажи артиста и название трека.")
+    if not contact.strip():
+        contact = (user.email or user.tg_username or "").strip()
+    if not contact:
+        raise _api_error(400, "contact_required",
+                         "Оставь почту или @telegram — иначе некуда ответить.")
+    if original_confirm.lower() not in ("1", "true", "yes", "on"):
+        raise _api_error(400, "rights_required",
+                         "Подтверди, что материал оригинальный и права на него твои.")
+    if agree_terms.lower() not in ("1", "true", "yes", "on"):
+        raise _api_error(400, "terms_required",
+                         "Нужно согласие с условиями передачи демки.")
+    if ai_disclosure not in DEMO_AI_DISCLOSURE:
+        raise _api_error(400, "disclosure_required",
+                         "Раскрой состав ИИ в материале (включая вариант «без ИИ»).")
+    if audio_file is None or not (audio_file.filename or "").strip():
+        raise _api_error(400, "audio_required", "Прикрепи файл трека (WAV или FLAC).")
+    if cover_file is None or not (cover_file.filename or "").strip():
+        raise _api_error(400, "cover_required", "Прикрепи обложку JPG 3000×3000.")
+
+    a_ext = _ext_of(audio_file.filename)
+    if a_ext not in AUDIO_EXT:
+        raise _api_error(400, "bad_audio", f"Не похоже на аудио: {a_ext or '?'}")
+    c_ext = _ext_of(cover_file.filename)
+    if c_ext not in COVER_EXT:
+        raise _api_error(400, "bad_cover", f"Не похоже на картинку: {c_ext or '?'}")
+
+    a_name = f"demo_{uuid.uuid4().hex}{a_ext}"
+    c_name = f"demo_{uuid.uuid4().hex}{c_ext}"
+    a_path = os.path.join(UPLOAD_DIR, a_name)
+    c_path = os.path.join(UPLOAD_DIR, c_name)
+    await _save_upload(audio_file, a_path, MAX_UPLOAD_MB)
+    await _save_upload(cover_file, c_path, MAX_COVER_MB)
+
+    checks = _demo_audio_checks(a_path, audio_file.filename) \
+        + _demo_cover_checks(c_path, cover_file.filename)
+    fails = [c for c in checks if c["level"] == "fail"]
+    if fails:
+        for pth in (a_path, c_path):
+            try:
+                os.remove(pth)
+            except OSError:
+                pass
+        raise _api_error(422, "demo_rejected",
+                         "Файлы не проходят требования — смотри список.",
+                         checks=checks)
+
+    sub = DemoSubmission(
+        user_id=user.id, artist=artist, track_title=track_title,
+        genre=genre.strip()[:120], socials=socials.strip()[:1000],
+        contact=contact.strip()[:200], isrc=isrc.strip()[:20],
+        comment=comment.strip()[:2000],
+        original_confirm=True, ai_disclosure=ai_disclosure, agree_terms=True,
+        audio_filename=a_name, audio_name=(audio_file.filename or "")[:200],
+        cover_filename=c_name, checks_json=json.dumps(checks, ensure_ascii=False),
+    )
+    db.add(sub)
+    core._reg_file(db, a_name, user.id, kind="audio")
+    core._reg_file(db, c_name, user.id, kind="cover")
+    db.commit()
+    db.refresh(sub)
+    log.info("музыка: демка %s (%s — %s) от %s", sub.id, artist, track_title, user.id)
+    return {"ok": True, "id": sub.id, "checks": checks}
+
+
+def _demo_dict(d: DemoSubmission) -> dict:
+    return {
+        "id": d.id, "created_at": (d.created_at or now()).isoformat(),
+        "artist": d.artist, "track_title": d.track_title, "genre": d.genre,
+        "socials": d.socials, "contact": d.contact, "isrc": d.isrc,
+        "comment": d.comment, "ai_disclosure": d.ai_disclosure,
+        "status": d.status, "user_id": d.user_id,
+        "audio_url": _media(d.audio_filename), "audio_name": d.audio_name,
+        "cover_url": _media(d.cover_filename),
+        "checks": _json_or(d.checks_json, []),
+    }
+
+
+@router.get("/api/music/demo/mine")
+def my_demos(user: User = Depends(current_user), db: Session = Depends(db_session)):
+    rows = (db.query(DemoSubmission).filter(DemoSubmission.user_id == user.id)
+            .order_by(DemoSubmission.id.desc()).limit(50).all())
+    return {"items": [_demo_dict(d) for d in rows]}
+
+
+@router.get("/api/music/demos")
+def list_demos(limit: int = 100, user: User = Depends(current_user),
+               db: Session = Depends(db_session)):
+    """Демки — владельцу сервиса, в админку."""
+    if not user.is_admin:
+        raise HTTPException(404, "не найдено")
+    rows = (db.query(DemoSubmission).order_by(DemoSubmission.id.desc())
+            .limit(max(1, min(300, int(limit or 100)))).all())
+    return {"items": [_demo_dict(d) for d in rows]}
+
+
+@router.post("/api/music/demos/{demo_id}/status")
+async def set_demo_status(demo_id: int, request: Request,
+                          user: User = Depends(current_user),
+                          db: Session = Depends(db_session)):
+    if not user.is_admin:
+        raise HTTPException(404, "не найдено")
+    d = db.get(DemoSubmission, demo_id)
+    if not d:
+        raise HTTPException(404, "не найдено")
+    body = await request.json()
+    st = str(body.get("status") or "").strip()
+    if st in ("new", "seen", "accepted", "declined"):
+        d.status = st
+    if "note" in body:
+        d.note = str(body.get("note") or "")[:2000]
+    db.commit()
+    return {"ok": True, "status": d.status}
 
 
 # ═════════════════════ видео для соцсетей и публикация ═════════════════════
