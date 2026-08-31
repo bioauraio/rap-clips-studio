@@ -838,12 +838,12 @@
     "Fallen Angel":"Падший ангел", "Bullet Time":"Замедление времени", "Fairytale Castle":"Сказочный замок",
     "Comic":"Комикс", "Cold Vision":"Холодное зрение", "Cyclope":"Циклоп", "Particles":"Частицы",
     "Mighty Fighter":"Могучий боец", "Windows":"Окна", "Canvas":"Холст", "Pigeons":"Голуби",
-    "Tracking":"Трекинг", "Superstar":"Суперзвезда", "Pearl Earring":"Жемчужная серёжка", "LSD":"ЛСД",
+    "Tracking":"Отслеживание", "Superstar":"Суперзвезда", "Pearl Earring":"Жемчужные серьги", "LSD":"ЛСД",
     "Blue Depth":"Синяя глубина", "Palette":"Палитра", "Moonwalk":"Лунная походка",
     "Knight's Diary":"Дневник рыцаря", "Argus":"Аргус", "Fragments":"Фрагменты",
     "2000's Paparazzi":"Папарацци нулевых", "Overexposed":"Пересвет", "Dolphin Ride":"На дельфине",
     "Sticker Peel":"Отклеенная наклейка", "Multiverse":"Мультивселенная", "Skatedog":"Пёс на скейте",
-    "Noir":"Нуар", "Casual Monster Slayer":"Будничный охотник на монстров", "Selfie Twin":"Селфи-двойник",
+    "Noir":"Нуар", "Casual Monster Slayer":"Обычный истребитель монстров", "Selfie Twin":"Селфи-двойник",
     "Sketch":"Эскиз", "Monet Muse":"Муза Моне", "Akrill":"Акрилл", "Puffin Ride":"Верхом на тупике",
     "Magazine":"Журнал", "Lost in a Book":"Затерянный в книге", "Penguin Ride":"На пингвине",
     "Cannabis":"Каннабис", "3D Render":"3D-рендер", "Action Figure":"Экшен-фигурка", "Bubbles":"Пузыри",
@@ -852,13 +852,101 @@
     "Random Glow":"Случайное свечение", "Toxic":"Токсичный", "Broken Mirror":"Разбитое зеркало",
     "Hand Paint":"Ручная роспись", "Lava":"Лава", "Marble":"Мрамор", "Modern":"Модерн",
     "Ocean":"Океан", "Origami":"Оригами", "Two Color":"Два цвета", "Ultraviolet":"Ультрафиолет",
-    "Vintage":"Винтаж",
+    "Vintage":"Винтаж", "Masterpiece":"Шедевр", "Animal Ride":"Поездка на животном",
+  };
+
+  const TREND_DESCRIPTIONS = {
+    "Fairytale Castle": {
+      ru: "переносит портрет в волшебный замок с кинематографичным светом и сказочной атмосферой.",
+      en: "places your portrait inside a magical castle with cinematic light and a storybook mood.",
+    },
+    "Masterpiece": {
+      ru: "превращает фотографию в оживший музейный шедевр с выразительной фактурой живописи.",
+      en: "turns your photo into a living museum masterpiece with expressive painterly texture.",
+    },
+    "Agamemnon": {
+      ru: "создаёт монументальный античный образ героя в духе большой исторической сцены.",
+      en: "creates a monumental ancient hero portrait with the scale of an epic historical scene.",
+    },
+    "Ink Riot": {
+      ru: "разрывает кадр потоками туши, графичными штрихами и энергией рисованного бунта.",
+      en: "breaks the frame into ink bursts, graphic strokes and the energy of a hand-drawn riot.",
+    },
+    "Fallen Angel": {
+      ru: "добавляет драматичные крылья, воздушное движение и атмосферу тёмной небесной легенды.",
+      en: "adds dramatic wings, airborne motion and the mood of a dark celestial legend.",
+    },
+    "Cyclope": {
+      ru: "собирает сюрреалистичный образ циклопа с выразительным светом и фантастической пластикой.",
+      en: "builds a surreal cyclops portrait with expressive lighting and fantastical form.",
+    },
+    "Mighty Fighter": {
+      ru: "делает из героя мощного бойца и усиливает позу, динамику и ощущение победного момента.",
+      en: "turns the subject into a mighty fighter with a stronger pose, motion and victorious energy.",
+    },
+    "Tracking": {
+      ru: "ведёт камеру вслед за героем и создаёт ощущение непрерывного движения внутри сцены.",
+      en: "keeps the camera locked on the subject for a smooth sense of continuous motion.",
+    },
+    "Pearl Earring": {
+      ru: "переосмысляет портрет в эстетике классической живописи с мягким светом и жемчужным акцентом.",
+      en: "reimagines your portrait as a classical painting with soft light and a pearl accent.",
+    },
+    "Knight's Diary": {
+      ru: "превращает фотографию в страницу старинного дневника рыцаря с иллюстрациями и следами времени.",
+      en: "turns your photo into an illustrated page from an aged knight's diary.",
+    },
+    "Argus": {
+      ru: "создаёт мистический многоглазый образ с гипнотическим ритмом и необычной глубиной.",
+      en: "creates a mystical many-eyed portrait with hypnotic rhythm and unusual depth.",
+    },
+    "Casual Monster Slayer": {
+      ru: "помещает обычного героя в абсурдную сцену охоты на монстров с лёгкой иронией.",
+      en: "drops an everyday hero into an absurd monster hunt with a playful cinematic tone.",
+    },
+    "Sketch": {
+      ru: "переводит фотографию в живой карандашный эскиз, сохраняя характер лица и движение линии.",
+      en: "translates your photo into a living pencil sketch while keeping the face and linework expressive.",
+    },
+    "Monet Muse": {
+      ru: "наполняет портрет мягким цветом, воздухом и мерцающими мазками в духе импрессионизма.",
+      en: "fills your portrait with soft color, atmosphere and shimmering impressionist brushwork.",
+    },
+    "Lost in a Book": {
+      ru: "встраивает героя в раскрытую книгу, где страницы превращаются в объёмный фантастический мир.",
+      en: "places the subject inside an open book whose pages unfold into a dimensional fantasy world.",
+    },
+    "Bubbles": {
+      ru: "окружает героя прозрачными пузырями, бликами и лёгким парящим движением.",
+      en: "surrounds the subject with translucent bubbles, reflections and weightless motion.",
+    },
+    "Hand Paint": {
+      ru: "оживляет ручную роспись поверх портрета, соединяя фотографию, цвет и тактильные мазки.",
+      en: "animates hand-painted marks over the portrait, blending photography with tactile color.",
+    },
+    "Marble": {
+      ru: "превращает героя в выразительную мраморную скульптуру с живым светом и тонкой детализацией.",
+      en: "turns the subject into an expressive marble sculpture with living light and fine detail.",
+    },
+    "Animal Ride": {
+      ru: "отправляет героя в необычную поездку верхом на животном с динамичной камерой и весёлым сюжетом.",
+      en: "sends the subject on an unexpected animal ride with a dynamic camera and playful story.",
+    },
   };
 
   function trendTitle(title) {
-    if (lang() === "ru") return TREND_TITLES_RU[title] || title;
-    if (title === "Кинотеатр смотрит на тебя") return "The Theater Is Watching You";
-    return title;
+    let value = title;
+    if (lang() === "ru") value = TREND_TITLES_RU[title] || title;
+    else if (title === "Кинотеатр смотрит на тебя") value = "The Theater Is Watching You";
+    return String(value || "").toLocaleLowerCase(lang() === "ru" ? "ru" : "en");
+  }
+
+  function trendDescription(title) {
+    const item = TREND_DESCRIPTIONS[title];
+    if (item) return item[lang()] || item.en;
+    return lang() === "ru"
+      ? "готовый визуальный сценарий: загрузите одну фотографию и получите ролик в выбранной стилистике."
+      : "a ready-made visual scenario: upload one photo and get a video in the selected style.";
   }
 
   function trendVisual(title, index, meta) {
@@ -881,6 +969,99 @@
     return bits.join(" · ");
   }
 
+  function showTrendDetail(page, t) {
+    const displayTitle = trendTitle(t.title);
+    const back = lang() === "ru" ? "все тренды" : "all trends";
+    const examples = lang() === "ru" ? "примеры" : "examples";
+    const generate = lang() === "ru" ? "сгенерировать" : "generate";
+    page.innerHTML = `<section class="trend-detail">
+      <button type="button" class="trend-detail-back" aria-label="${esc(back)}">← ${esc(back)}</button>
+      <header class="trend-detail-head">
+        <h1>${esc(displayTitle)}</h1>
+        <p>${esc(trendDescription(t.title))}</p>
+      </header>
+      <section class="trend-detail-examples" aria-label="${esc(examples)}">
+        <h2>${esc(examples)}</h2>
+        <div class="trend-example-grid">
+          ${[0, 1, 2].map((n) => `<div class="trend-example">
+            ${n === 0 && t.sample_url
+              ? `<video src="${t.sample_url}" muted loop autoplay playsinline ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+              : n === 0 && t.poster_url
+                ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+                : trendVisual(`${t.title}-${n}`, n)}
+            <span>${String(n + 1).padStart(2, "0")}</span>
+          </div>`).join("")}
+        </div>
+      </section>
+      <section class="trend-detail-generate">
+        <div>
+          <h2>${esc(generate)}</h2>
+          <p>${esc(lang() === "ru" ? "загрузите фотографию — остальное уже настроено в тренде." : "upload a photo — everything else is already set up in the trend.")}</p>
+        </div>
+        <label class="trend-card-action trend-detail-action">
+          <span>${esc(generate)}</span>
+          <input type="file" accept="image/*" hidden />
+        </label>
+        <div class="trend-state hidden"></div>
+      </section>
+    </section>`;
+    $(".trend-detail-back", page).addEventListener("click", () => {
+      history.pushState({}, "", "/trends");
+      openTrends();
+    });
+    const input = $(".trend-detail-action input", page);
+    input.addEventListener("change", () => trendMake($(".trend-detail", page), t, input));
+  }
+
+  function goToTrend(t) {
+    history.pushState({}, "", `/trends?trend=${encodeURIComponent(t.id)}`);
+    openTrends();
+  }
+
+  function showTrendsCatalog(page, presets) {
+    page.innerHTML = `<section class="trends-hero">
+      <h1>${lang() === "ru" ? "вирусные тренды" : "viral trends"}</h1>
+      <div class="trends-filters" aria-label="${lang() === "ru" ? "список трендов" : "trend list"}"></div>
+    </section><section class="trends-catalog"></section>`;
+    const body = $(".trends-catalog", page);
+    const grid = document.createElement("div");
+    grid.className = "trend-grid";
+    presets.forEach((t, index) => {
+      const card = document.createElement("article");
+      card.className = `trend-card trend-tile-${index % 12}`;
+      card.dataset.title = t.title;
+      card.tabIndex = 0;
+      card.setAttribute("role", "link");
+      card.setAttribute("aria-label", trendTitle(t.title));
+      card.innerHTML = `
+        ${t.sample_url
+          ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata" ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
+          : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
+          : trendVisual(t.title, index)}
+        <div class="trend-card-name">${esc(trendTitle(t.title))}</div>`;
+      const vid = card.querySelector("video");
+      if (vid) {
+        card.addEventListener("mouseenter", () => vid.play().catch(() => {}));
+        card.addEventListener("mouseleave", () => vid.pause());
+      }
+      card.addEventListener("click", () => goToTrend(t));
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); goToTrend(t); }
+      });
+      grid.appendChild(card);
+    });
+    body.appendChild(grid);
+    const filters = $(".trends-filters", page);
+    presets.forEach((t) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "trends-filter";
+      b.textContent = trendTitle(t.title);
+      b.addEventListener("click", () => goToTrend(t));
+      filters.appendChild(b);
+    });
+  }
+
   function openTrends() {
     if (window.QlolSchool) window.QlolSchool.close(false);
     closeTrendsPage(false);
@@ -892,27 +1073,23 @@
     const page = document.createElement("main");
     page.id = "trends-page";
     page.className = "trends-page";
-    page.innerHTML = `<section class="trends-hero">
-      <h1>${lang() === "ru" ? "вирусные тренды" : "viral trends"}</h1>
-      <div class="trends-filters" role="tablist"></div>
-    </section><section class="trends-catalog"><p class="muted trends-loading">${esc(T("common.loading", "загружаю…"))}</p></section>`;
+    page.innerHTML = `<p class="muted trends-loading">${esc(T("common.loading", "загружаю…"))}</p>`;
     app.appendChild(page);
     paint();
-    const body = $(".trends-catalog", page);
     (async () => {
       let d;
       try {
         d = await api("/api/trends");
       } catch (e) {
-        failed(body, "trends.failed");
+        failed(page, "trends.failed");
         return;
       }
-      body.innerHTML = "";
-      if (!(d.presets || []).length) {
+      const presets = d.presets || [];
+      if (!presets.length) {
         const empty = document.createElement("p");
         empty.className = "muted";
         empty.textContent = T("trends.empty", "Шаблоны скоро появятся.");
-        body.appendChild(empty);
+        page.replaceChildren(empty);
         return;
       }
       const grid = document.createElement("div");
@@ -1476,6 +1653,10 @@
   function boot() {
     mount();
     trackBarHeight();
+    window.addEventListener("popstate", () => {
+      if (location.pathname === "/trends") openTrends();
+      else if ($("#trends-page")) closeTrendsPage(false);
+    });
     if (typeof window.onLangChange === "function") {
       window.onLangChange(() => {
         const trendsOpen = Boolean($("#trends-page"));
