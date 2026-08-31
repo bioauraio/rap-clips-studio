@@ -325,3 +325,8 @@
 
 .e-side { display: flex; flex-direction: column; gap: 6px; flex: none; }
 .e-side .t-anim { font-size: 11.5px; padding: 5px 8px; }
+
+/* Иконки меню — моно-SVG тонкой линией (вместо эмодзи-зоопарка): цвет от
+   currentColor, на активном огне сами становятся светлыми. */
+.adm-tab-ico { display: inline-flex; }
+.adm-tab-ico svg { width: 16px; height: 16px; display: block; }

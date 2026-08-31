@@ -92,15 +92,45 @@
   const pane = () => $(".adm-pane");
   let current = "stats";
 
+  /* ─── ГРУППЫ МЕНЮ: 7 пунктов вместо 13 плоских ───
+     Внутри группы — подвкладки той же механики, что в «Промтах» (.adm-seg).
+     id вкладок СТАРЫЕ: любая закладка /admin?tab=broadcast открывает
+     «Маркетинг → Рассылка» сама, без отдельных редиректов.
+     «Рынок» положен в «Настройки»: его контент — справочник конкурентов для
+     калибровки цен (сосед «Наценки»), а не ежедневная аналитика Сводки.
+     Иконки — моно-SVG тонкой линией, цвет от currentColor. */
+  const GI = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const GROUPS = [
+    { id: "stats", title: "Сводка", tabs: ["stats"],
+      ico: GI('<path d="M4 19V10M10 19V5M16 19v-7M21 19H3"/>') },
+    { id: "users", title: "Клиенты", tabs: ["users"],
+      ico: GI('<circle cx="12" cy="8" r="3.4"/><path d="M5.5 19.5c1-3.4 3.5-5.2 6.5-5.2s5.5 1.8 6.5 5.2"/>') },
+    { id: "mkt", title: "Маркетинг", tabs: ["broadcast", "payouts", "earn"],
+      ico: GI('<path d="M3 11v3l4 1 10 4V6L7 10l-4 1z"/><path d="M8 15.5V19a1.5 1.5 0 0 0 3 0v-2.6"/><path d="M20 10.5a2 2 0 0 1 0 4"/>') },
+    { id: "music", title: "Музыка", tabs: ["demos"],
+      ico: GI('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>') },
+    { id: "prompts", title: "Промты", tabs: ["prompts"],
+      ico: GI('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 11h18M6.5 7l2.5 4M11.5 7l2.5 4M16.5 7l2.5 4M4 7l2-2.5 15 2.5"/>') },
+    { id: "ledger", title: "Журнал", tabs: ["ledger"],
+      ico: GI('<path d="M6 3h12v18l-2-1.4L14 21l-2-1.4L10 21l-2-1.4L6 21V3z"/><path d="M9 8h6M9 12h6M9 16h4"/>') },
+    { id: "cfg", title: "Настройки", tabs: ["settings", "design", "models", "pricing", "market"],
+      ico: GI('<circle cx="12" cy="12" r="3"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>') },
+  ];
+  const groupOf = (id) => GROUPS.find((g) => g.tabs.includes(id)) || GROUPS[0];
+
   function nav() {
     const box = $(".adm-nav");
     box.innerHTML = "";
-    TABS.forEach((t) => {
+    const on = groupOf(current);
+    GROUPS.forEach((g) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "adm-tab" + (t.id === current ? " on" : "");
-      b.innerHTML = `<span class="adm-tab-ico">${t.ico}</span>${esc(t.title)}`;
-      b.addEventListener("click", () => open(t.id));
+      b.className = "adm-tab" + (g.id === on.id ? " on" : "");
+      b.innerHTML = `<span class="adm-tab-ico">${g.ico}</span>${esc(g.title)}`;
+      // Возврат в группу помнит последнюю открытую подвкладку.
+      b.addEventListener("click", () => open(g.id === on.id ? g.tabs[0]
+        : (g.last || g.tabs[0])));
       box.appendChild(b);
     });
   }
@@ -108,15 +138,37 @@
   function open(id) {
     current = TABS.some((t) => t.id === id) ? id : "stats";
     const spec = TABS.find((t) => t.id === current);
-    $(".adm-title").textContent = spec.title;
+    const g = groupOf(current);
+    g.last = current;
+    $(".adm-title").textContent = g.tabs.length > 1
+      ? `${g.title} · ${spec.title}` : spec.title;
     $(".adm-sub").textContent = spec.sub;
     // Подраздел живёт в адресе вместе с разделом: перезагрузка страницы на
     // «Шаблонах мокапов» обязана вернуть на «Шаблоны мокапов», а не в начало.
     history.replaceState(null, "", "/admin?tab=" + current
       + (current === "prompts" ? "&sub=" + promptTab : ""));
     nav();
-    loading(pane());
-    RENDER[current](pane());
+    const p = pane();
+    if (g.tabs.length > 1) {
+      // Подвкладки группы — тот же сегмент-контрол, что в «Промтах».
+      p.innerHTML = `<div class="adm-seg g-seg"></div><div class="g-sub"></div>`;
+      const seg = $(".g-seg", p);
+      g.tabs.forEach((tid) => {
+        const t = TABS.find((x) => x.id === tid);
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = tid === current ? "on" : "";
+        b.textContent = t ? t.title : tid;
+        b.addEventListener("click", () => open(tid));
+        seg.appendChild(b);
+      });
+      const sub = $(".g-sub", p);
+      loading(sub);
+      RENDER[current](sub);
+    } else {
+      loading(p);
+      RENDER[current](p);
+    }
   }
 
   /* ─────────────────────────── сводка ─────────────────────────── */
