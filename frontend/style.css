@@ -15,11 +15,14 @@
   --bg: #faf7f2;
   --bg-glow-1: rgba(255, 122, 41, .16);
   --bg-glow-2: rgba(255, 61, 61, .10);
-  --panel: rgba(255, 255, 255, .78);
-  --card: rgba(255, 252, 247, .92);
+  --panel: rgba(255, 255, 255, .58);
+  --card: rgba(255, 252, 247, .74);
   --inset: rgba(255, 255, 255, .55);
-  --border: rgba(255, 122, 41, .28);
-  --border-bright: rgba(255, 61, 61, .55);
+  /* Рамки НЕЙТРАЛЬНЫЕ (правка владельца 31.08): оранжевые обводки на каждой
+     кнопке спорили с огнём главных действий. Оранжевый — только заливка-огонь;
+     контуры — волосяные чернильные. */
+  --border: rgba(45, 33, 26, .12);
+  --border-bright: rgba(45, 33, 26, .28);
   --text: #241a14;
   /* --muted (#9b8a7d) на бумаге даёт 3.1:1 — ниже нормы 4.5:1. Он остаётся
      ТОЛЬКО как декоративная заливка (точки, торцы). Весь текст берёт
@@ -311,11 +314,13 @@ body {
 
 .panel {
   position: relative;
-  background: var(--panel); backdrop-filter: blur(16px);
+  background: var(--panel);
+  backdrop-filter: blur(18px) saturate(1.15); -webkit-backdrop-filter: blur(18px) saturate(1.15);
   border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 28px;
   padding: 16px; margin-bottom: 16px;
-  /* «картонный 3D»: жёсткая офсетная тень как второй слой картона */
-  box-shadow: 0 6px 24px rgba(var(--ink-rgb), .07);
+  /* Жидкое стекло и на светлой: внутренний блик сверху + мягкая тень,
+     как у тёмной темы, — без него панель читалась плоским картоном. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 6px 24px rgba(var(--ink-rgb), .07);
 }
 /* Градиентная полоса сверху панелей убрана (канон: оранжевый — только
    акцент действия, а не декор каждого блока). */
@@ -353,11 +358,21 @@ button.primary:active:not(:disabled) { transform: translateY(1px); box-shadow: n
 button.ghost { background: transparent; border: none; box-shadow: none; color: var(--ink-muted); padding: 5px 9px; }
 button.danger, button.ghost.danger { color: var(--danger-ink); }
 button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+/* Выключенный primary — НЕ полупрозрачный огонь (лососевая плашка громче
+   соседей), а тихая нейтральная таблетка. */
+button.primary:disabled {
+  opacity: 1; background: rgba(var(--ink-rgb), .07); color: var(--ink-muted);
+  border-color: rgba(var(--ink-rgb), .08); box-shadow: none;
+}
 
 .status { font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em; color: var(--ink-muted); }
 .status::before { content: "◉ "; color: var(--accent-2-ink); }
 .status:empty::before { content: ""; }
-.status.error { color: var(--danger-ink); } .status.error::before { color: var(--danger-ink); }
+.status.error {
+  color: var(--danger-ink); background: var(--danger-wash);
+  padding: 2px 9px; border-radius: 9px;
+}
+.status.error::before { color: var(--danger-ink); }
 .status.done { color: var(--ok-ink); } .status.done::before { color: var(--ok-ink); }
 
 /* ────────── треки ────────── */
