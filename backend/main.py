@@ -5453,7 +5453,7 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
         tpl = next((x for x in mockup_catalog.TEMPLATES if x["id"] == key), None)
         if not tpl:
             raise HTTPException(404, "нет такого шаблона")
-        prev = _mockup_previews().get(key) or ""
+        prev = _mockup_preview_entry(_mockup_previews().get(key))[0]
         out.update({
             "title": tpl["ru"] if lg == "ru" else tpl["en"],
             "desc": tpl.get("category") or "",
@@ -10556,6 +10556,17 @@ def _mockup_previews_save(m: dict) -> None:
     os.replace(tmp, MOCKUP_PREVIEWS_FILE)
 
 
+def _mockup_preview_entry(v) -> tuple[str, str]:
+    """Запись превью шаблона -> (кадр, анимация).
+
+    Исторически в mockup_previews.json лежала строка с именем кадра; с
+    появлением «оживления» запись может быть {"main","anim"} — как у слоёв
+    промтов (_preview_entry). Оба формата равноправны, читаем оба."""
+    if isinstance(v, dict):
+        return str(v.get("main") or ""), str(v.get("anim") or "")
+    return str(v or ""), ""
+
+
 def _mockup_frame_cost(user: User, engine: str) -> int:
     """Цена ОДНОГО кадра. FRAME_COST — прайс пары (см. _frames_cost),
     поэтому одиночный кадр = половина, но не меньше 1."""
@@ -10571,7 +10582,7 @@ def mockup_templates(user: User = Depends(current_user)):
     cost = _mockup_frame_cost(user, engine)
     out = []
     for tpl in mockup_catalog.TEMPLATES:
-        fname = previews.get(tpl["id"]) or ""
+        fname, anim = _mockup_preview_entry(previews.get(tpl["id"]))
         out.append({
             "id": tpl["id"], "ru": tpl["ru"], "en": tpl["en"],
             "category": tpl["category"], "tara": tpl["tara"],
@@ -10581,6 +10592,8 @@ def mockup_templates(user: User = Depends(current_user)):
             # Витрина каталога, а не медиа человека: через /api/media превью
             # видел только админ-владелец файла, остальные получали 404.
             "preview_url": _pub_media_url(fname),
+            # Живой луп сцены (5с, mp4): витрина показывает его поверх кадра.
+            "anim_url": _pub_media_url(anim),
         })
     return {"templates": out, "categories": list(mockup_catalog.CATEGORIES),
             "cost_points": cost}
@@ -10773,7 +10786,7 @@ def generate_mockup_previews(ids: list[str] | None = None,
         previews = _mockup_previews()
         todo = []
         for tpl in mockup_catalog.TEMPLATES:
-            if previews.get(tpl["id"]):
+            if _mockup_preview_entry(previews.get(tpl["id"]))[0]:
                 continue
             if ids and "*" not in ids and tpl["id"] not in ids:
                 continue
@@ -10791,7 +10804,11 @@ def generate_mockup_previews(ids: list[str] | None = None,
                 _reg_file(db, fname, None, kind="mockup_preview")
                 db.commit()
                 previews = _mockup_previews()
-                previews[tpl["id"]] = fname
+                # Анимация переживает перегенерацию кадра: снятый кадр — не
+                # повод терять уже оплаченный работой шлюза луп.
+                _old, anim = _mockup_preview_entry(previews.get(tpl["id"]))
+                previews[tpl["id"]] = ({"main": fname, "anim": anim}
+                                       if anim else fname)
                 _mockup_previews_save(previews)
                 done.append(tpl["id"])
             except Exception as e:  # noqa: BLE001
@@ -10800,6 +10817,51 @@ def generate_mockup_previews(ids: list[str] | None = None,
         return {"done": done, "failed": failed}
     finally:
         db.close()
+
+
+#: Чем оживает превью шаблона. Сцена уже нарисована кадром — ролику остаётся
+#: одно правдоподобное движение, а продукт обязан стоять как вкопанный:
+#: плывущая этикетка на витрине выглядит хуже статичной картинки.
+MOCKUP_ANIM_GUARD = (
+    "Bring this exact scene to life with one gentle believable motion true to "
+    "the scene (steam, ripples, drifting particles, soft light shimmer or a "
+    "slow subtle camera parallax). The product itself stays perfectly still "
+    "and sharp, its label unchanged and readable. Seamless calm loop, no cuts.")
+
+
+def animate_mockup_preview(tid: str, engine: str = "grok") -> str:
+    """Оживить превью шаблона мокапа: кадр превью -> 5с mp4 в поле "anim".
+
+    Та же механика, что у трендов и слоёв (admin_*_preview_animate): вход —
+    главная превью-картинка, выход — sample рядом с ней в mockup_previews.
+    Зовётся из админ-роута и из CLI (docker exec … python3). Синхронно."""
+    import asyncio
+    tpl = mockup_catalog.get(tid)
+    if not tpl:
+        raise RuntimeError("нет такого шаблона")
+    previews = _mockup_previews()
+    main_f, _anim = _mockup_preview_entry(previews.get(tid))
+    if not main_f:
+        raise RuntimeError("сначала сгенерируй превью-картинку шаблона")
+    poster = os.path.join(UPLOAD_DIR, main_f)
+    if not os.path.isfile(poster):
+        raise RuntimeError("файл превью пропал с диска — перегенерируй его")
+    motion = (MOCKUP_ANIM_GUARD + " Scene: " + (tpl.get("prompt") or ""))[:900]
+    mediagen.reset_task()
+    fname = asyncio.run(mediagen.animate_scene(
+        prompt=motion, first_path=poster, last_path=None,
+        duration_sec=5, provider="free", engine=engine, aspect="3:4"))
+    db = SessionLocal()
+    try:
+        _reg_file(db, fname, None, kind="mockup_preview")
+        db.commit()
+    finally:
+        db.close()
+    previews = _mockup_previews()
+    m2, _ = _mockup_preview_entry(previews.get(tid))
+    previews[tid] = {"main": m2 or main_f, "anim": fname}
+    _mockup_previews_save(previews)
+    return fname
 
 
 def _own_item_id(db: Session, user: User, raw) -> int:

@@ -995,8 +995,10 @@ async def admin_dashboard(user: User = Depends(admin_user),
     coverage["trends"] = {"have": trends_have, "total": trends_total}
     mk = core._mockup_previews()
     mk_rows = mockup_catalog.TEMPLATES if hasattr(mockup_catalog, "TEMPLATES") else []
-    coverage["mockups"] = {"have": len([1 for t in mk_rows if mk.get(t["id"])]),
-                           "total": len(mk_rows)}
+    coverage["mockups"] = {
+        "have": len([1 for t in mk_rows
+                     if core._mockup_preview_entry(mk.get(t["id"]))[0]]),
+        "total": len(mk_rows)}
 
     return {
         "providers": light,
@@ -1831,8 +1833,9 @@ def admin_mockups(user: User = Depends(admin_user)):
     items = mockup_catalog.admin_list()
     ov = mockup_catalog.overlay()
     for it in items:
-        fname = previews.get(it["id"]) or ""
+        fname, anim = core._mockup_preview_entry(previews.get(it["id"]))
         it["preview_url"] = f"/api/media/{fname}" if fname else ""
+        it["anim_url"] = f"/api/media/{anim}" if anim else ""
         it["prompt_ru"] = (ov.get(it["id"]) or {}).get("prompt_ru", "")
     return {"items": items, "categories": list(mockup_catalog.CATEGORIES)}
 
@@ -1904,12 +1907,42 @@ def admin_mockup_preview(tid: str, user: User = Depends(admin_user)):
     if not mockup_catalog.get(tid):
         raise HTTPException(404, "нет такого шаблона")
     previews = core._mockup_previews()
-    previews.pop(tid, None)
+    # Кадр снимаем, анимацию оставляем: она оживает от нового кадра той же
+    # сцены, а перегенерация лупа — отдельная дорогая кнопка.
+    _m, anim = core._mockup_preview_entry(previews.pop(tid, None))
+    if anim:
+        previews[tid] = {"main": "", "anim": anim}
     core._mockup_previews_save(previews)
     res = core.generate_mockup_previews([tid])
     if res.get("failed"):
         raise HTTPException(502, "; ".join(res["failed"])[:300])
-    return {"ok": True, "preview_url": f"/api/media/{core._mockup_previews().get(tid, '')}"}
+    fname, _a = core._mockup_preview_entry(core._mockup_previews().get(tid))
+    return {"ok": True, "preview_url": f"/api/media/{fname}"}
+
+
+@router.post("/api/admin/mockups/{tid}/preview-animate")
+async def admin_mockup_preview_animate(tid: str, request: Request,
+                                       user: User = Depends(admin_user),
+                                       db: Session = Depends(db_session)):
+    """Оживить превью шаблона мокапа (5с луп бесплатным шлюзом).
+
+    Та же механика, что у трендов и слоёв: вход — превью-картинка, выход —
+    mp4 в поле "anim" записи mockup_previews. Синхронно: админ один."""
+    core = _core()
+    engine = "grok"
+    try:
+        body = await request.json() if await request.body() else {}
+        engine = str(body.get("engine") or "grok")
+    except Exception:  # noqa: BLE001
+        pass
+    if engine not in core.mediagen.VIDEO_ENGINES:
+        raise HTTPException(400, f"нет такого видео-движка: {engine}")
+    try:
+        fname = core.animate_mockup_preview(tid, engine=engine)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"оживить не вышло: {str(e)[:200]}")
+    _log_action(db, user, user.id, "mockup_anim", {"id": tid})
+    return {"ok": True, "anim_url": f"/api/media/{fname}"}
 
 
 # ═══════════════════════ МОДЕЛИ И НАСТРОЙКИ СЕРВИСА ═══════════════════════
