@@ -1090,6 +1090,11 @@
       }
       body.innerHTML = "";
       const presets = d.presets || [];
+      // Диплинк на страницу одного тренда (/trends?trend=<id>) — детальные
+      // страницы Ани: описание, примеры и одно ясное действие.
+      const wantId = new URLSearchParams(location.search).get("trend");
+      const want = wantId && presets.find((x) => String(x.id) === String(wantId));
+      if (want) { showTrendDetail(page, want); return; }
       if (!presets.length) {
         const empty = document.createElement("p");
         empty.className = "muted";

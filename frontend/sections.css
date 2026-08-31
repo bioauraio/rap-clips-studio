@@ -1456,6 +1456,10 @@
 .mk-note { color: var(--ink-muted); font-size: 12.5px; line-height: 1.4; }
 @media (max-width: 700px) {
   .mk-grid { grid-template-columns: 1fr; }
+  /* Симметрия на телефоне: базовый мобильный #app даёт left 28 / right 8
+     (28px — под боковую капсулу этапов, которой на хабе маркетинга нет),
+     и сетка стояла с перекошенными полями, вылезая за экран. */
+  #app:has(#marketing-page) { padding-left: 8px; padding-right: 8px; }
 }
 
 /* ─────────── Шапка v131: профиль в правом углу, огонь на активном ─────────── */
