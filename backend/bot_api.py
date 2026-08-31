@@ -621,7 +621,9 @@ async def bot_events(request: Request):
     body = await request.json()
     limit = max(1, min(50, int(body.get("limit") or 20)))
     import datetime as _dt  # noqa: PLC0415
-    edge = core.now() - _dt.timedelta(seconds=BOT_EVENT_TTL_S)
+    # created_at в базе НАИВНЫЙ UTC, а core.now() — aware: сравнение падало
+    # TypeError'ом, и КАЖДЫЙ опрос бота отвечал 500 (уведомления молчали).
+    edge = core.now().replace(tzinfo=None) - _dt.timedelta(seconds=BOT_EVENT_TTL_S)
     db = core.SessionLocal()
     try:
         from db import BotEvent  # noqa: PLC0415
