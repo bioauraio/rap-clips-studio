@@ -531,6 +531,11 @@ const I18N = {
       },
     },
 
+    scenario: {
+      label: "Script architecture",
+      auto: "Auto",
+      autoHint: "the model picks the dramaturgy itself",
+    },
     story: {
       title: "Character & story",
       bible: "Character bible",
@@ -1316,6 +1321,10 @@ const I18N = {
     },
 
     scene: {
+      lyrCameras: "Camera",
+      lyrMotions: "Motion",
+      lyrLights: "Light & color",
+
       trimIn: "start here",
       trimOut: "end here",
       trimDo: "Trim",
@@ -3181,6 +3190,11 @@ const I18N = {
       },
     },
 
+    scenario: {
+      label: "Архитектура сценария",
+      auto: "Авто",
+      autoHint: "модель сама выберет драматургию",
+    },
     story: {
       title: "Герой и сюжет",
       bible: "Библия героя",
@@ -3946,6 +3960,10 @@ const I18N = {
     },
 
     scene: {
+      lyrCameras: "Камера",
+      lyrMotions: "Движение",
+      lyrLights: "Свет и цвет",
+
       trimIn: "начало здесь",
       trimOut: "конец здесь",
       trimDo: "Обрезать",

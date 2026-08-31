@@ -453,6 +453,10 @@ class Track(Base):
     style_extra = Column(Text, nullable=False, default="")
     # Сюжетный каркас («что снимаем») из prompts_catalog.CLIP_PRESETS.
     clip_preset_key = Column(String, nullable=False, default="")
+    # Сценарная архитектура из слоя «Сценарии» каталога (prompts_library
+    # SCRIPTS): драматургическая рамка сюжета и раскадровки. Пустая строка —
+    # «Авто», модель решает сама. Колонка приезжает мягкой ALTER-миграцией.
+    scenario_key = Column(String, nullable=False, default="")
 
     # ─── режимы «сериалы» и «UGC»: тот же Track, другая роль ───
     # Сезон живёт КОЛОНКОЙ, а не таблицей. Полноценный Season сменил бы FK у

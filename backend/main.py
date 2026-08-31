@@ -3364,6 +3364,7 @@ def track_dict(t: Track, with_scenes: bool = False) -> dict:
         "style_label": prompts_catalog.labels(keys),
         "style_extra": t.style_extra or "",
         "clip_preset_key": t.clip_preset_key or "",
+        "scenario_key": getattr(t, "scenario_key", "") or "",
         # has_style — «стиль задан»: этапу настройки хватает факта, а не текста.
         # Кастом старого трека (текст без ключей) тоже считается заданным.
         "has_style": bool(keys or (t.style or "").strip()),
@@ -3827,7 +3828,9 @@ def _run_story_generation(project_id: int) -> None:
              "comment": t.comment, "style": t.style,
              # Как стиль трека влияет на сюжет — из админки стилей. До неё
              # стиль умел влиять только на картинку.
-             "style_base": prompts_catalog.story_base(_track_style_keys(t)),
+             "style_base": "\n\n".join(x for x in (
+                 prompts_catalog.story_base(_track_style_keys(t)),
+                 _scenario_frame(t)) if x),
              "audio_profile": t.audio_profile}
             for t in project.tracks
         ]
@@ -5070,14 +5073,52 @@ def api_library(request: Request, lang: str = "", db: Session = Depends(db_sessi
     }
 
 
+
+
+def _scenario_frame(track) -> str:
+    """Драматургическая рамка из слоя «Сценарии» (prompts_library SCRIPTS).
+
+    Подмешивается в story_base генерации сюжета и раскадровки: это ответ на
+    вопрос «какая архитектура у истории», а не «как выглядит картинка»."""
+    key = (getattr(track, "scenario_key", "") or "").strip()
+    if not key:
+        return ""
+    row = next((r for r in prompts_library.layer_rows("scripts")
+                if r["key"] == key), None)
+    if not row:
+        return ""
+    def _bi(f):
+        v = row.get(f) or {}
+        if isinstance(v, dict):
+            return (v.get("ru") or v.get("en") or "").strip()
+        return str(v or "").strip()
+    lab = _bi("label") or key
+    bits = []
+    for f, cap in (("logline", "Логлайн"), ("hero", "Роль героя"),
+                   ("motif", "Сквозной мотив"), ("opens", "Открывающий кадр"),
+                   ("closes", "Финальный кадр")):
+        v = _bi(f)
+        if v:
+            bits.append(f"{cap}: {v}")
+    for f in ("story", "dnote"):
+        v = str(row.get(f) or "").strip()
+        if v:
+            bits.append(v)
+    if not bits:
+        return ""
+    return (f"Сценарная архитектура клипа — «{lab}» (держись её структуры):\n"
+            + "\n".join(bits))
+
+
 @app.get("/api/scripts")
 def api_scripts(request: Request, lang: str = "", cut: str = "", style: str = "",
                 db: Session = Depends(db_session)):
     """Сценарные промты — каркас ВСЕГО клипа. Фильтры: темп монтажа и стиль."""
     lg, plan, adm = _lib_who(request, db, lang)
     return {"lang": lg,
-            "scripts": prompts_library.public_scripts(
-                lang=lg, cut=cut, style=style, plan_id=plan, is_admin=adm)}
+            "scripts": _decorate_layer(prompts_library.public_scripts(
+                lang=lg, cut=cut, style=style, plan_id=plan, is_admin=adm),
+                "scripts")}
 
 
 @app.get("/api/scripts/{key}")
@@ -5738,8 +5779,8 @@ def api_lights(request: Request, lang: str = "", group: str = "",
     lg, plan, adm = _lib_who(request, db, lang)
     return {"lang": lg,
             "groups": _groups(prompts_library.LIGHT_GROUPS, lg),
-            "lights": prompts_library.public_lights(
-                lang=lg, group=group, plan_id=plan, is_admin=adm)}
+            "lights": _decorate_layer(prompts_library.public_lights(
+                lang=lg, group=group, plan_id=plan, is_admin=adm), "lights")}
 
 
 @app.get("/api/lights/{key}")
@@ -5943,6 +5984,12 @@ async def set_track_style(track_id: int, request: Request,
     track.style_keys = ",".join(keys)
     track.style_extra = extra
     track.style = prompts_catalog.fusion(keys, extra)
+
+    if "scenario" in body:
+        skey = str(body.get("scenario") or "").strip()
+        # Пустая строка — честный выбор «Авто»; чужой ключ молча не пишем.
+        track.scenario_key = skey if skey and any(
+            r["key"] == skey for r in prompts_library.layer_rows("scripts")) else ""
 
     if "preset" in body:
         pkey = str(body.get("preset") or "").strip()
@@ -6704,7 +6751,9 @@ def _run_scene_generation(track_id: int) -> None:
                 characters=chars_payload,
                 audio_profile=track.audio_profile,
                 # Как стиль влияет на драматургию (админка стилей).
-                story_base=prompts_catalog.story_base(_track_style_keys(track)),
+                story_base="\n\n".join(x for x in (
+                    prompts_catalog.story_base(_track_style_keys(track)),
+                    _scenario_frame(track)) if x),
                 engine=engine,
                 random_cast=bool(getattr(track, "random_cast", False)),
                 cast_plan=plan,

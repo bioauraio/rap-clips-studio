@@ -5001,10 +5001,76 @@ function msStory(card, tr, mode, isFirst) {
   const real = $("#gen-story-btn");
   gen.disabled = Boolean(real && real.disabled);
   gen.addEventListener("click", () => { if (real) real.click(); });
+  // Кнопка у комментария — тот же генератор сюжета, но флоу короче:
+  // вписал пару фраз → нажал. Несохранённый комментарий сначала уезжает
+  // на сервер, иначе генерация его не увидела бы.
+  const cGen = $(".ms-comment-gen", card);
+  if (cGen) {
+    cGen.classList.remove("hidden");
+    cGen.disabled = Boolean(real && real.disabled);
+    cGen.addEventListener("click", async () => {
+      const ta2 = $(".t-comment", card);
+      if (ta2 && ta2.value !== (tr.comment || "")) {
+        try {
+          await api(`/api/tracks/${tr.id}`, { method: "PATCH",
+            body: { comment: ta2.value } });
+          tr.comment = ta2.value;
+        } catch (e) { fail(e); return; }
+      }
+      if (real) real.click();
+    });
+  }
   $(".ms-story-save", card).addEventListener("click", () => {
     const btn = $("#save-project-btn");
     if (btn) btn.click();
   });
+}
+
+/* Архитектура сценария: слой «Сценарии» каталога карточками. Выбор пишется
+   в track.scenario_key и уходит драматургической рамкой в генерацию сюжета
+   и раскадровки. Пусто — «Авто»: модель решает сама. */
+let scnCache = null;
+function msScenarios(card, tr, mode) {
+  const box = $(".ms-scenarios", card);
+  if (!box) return;
+  const on = mode.id === "clip";
+  box.classList.toggle("hidden", !on);
+  if (!on) return;
+  const row = $(".ms-scn-row", card);
+  const paint = (list) => {
+    row.innerHTML = "";
+    const mk = (key, title, hint, prev) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ms-scn-card" + ((tr.scenario_key || "") === key ? " on" : "");
+      b.title = hint || title;
+      b.innerHTML = `${prev
+        ? `<img src="${esc2(prev)}" alt="" loading="lazy"/>`
+        : `<span class="ms-scn-ph">✦</span>`}
+        <b>${esc2(title)}</b><small>${esc2(hint || "")}</small>`;
+      b.addEventListener("click", async () => {
+        try {
+          await api(`/api/tracks/${tr.id}`, { method: "PATCH",
+            body: { scenario: key } });
+          tr.scenario_key = key;
+          paint(list);
+        } catch (e) { fail(e); }
+      });
+      row.appendChild(b);
+    };
+    mk("", t("scenario.auto"), t("scenario.autoHint"), "");
+    list.forEach((x) => mk(x.key, x.label || x.key,
+      (x.logline || "").split("\n")[0], x.preview_url || ""));
+  };
+  if (scnCache) { paint(scnCache); return; }
+  api("/api/scripts").then((d) => {
+    scnCache = d.scripts || [];
+    paint(scnCache);
+  }).catch(() => box.classList.add("hidden"));
+}
+function esc2(v) {
+  return String(v == null ? "" : v).replace(/[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
 /* Библия героя — тем же зеркалом и по той же причине. */
@@ -6140,6 +6206,7 @@ function mountModeSetup(card, tr, isFirst) {
   msPresets(card, tr, mode);
   msTextModels(card, isFirst);
   msStory(card, tr, mode, isFirst);
+  msScenarios(card, tr, mode);
   msBible(card, mode, isFirst);
   msFrame(card, tr, mode);
   msPhotos(card, tr, mode);
@@ -7475,6 +7542,7 @@ function renderScene(s, audioEl, mode = "board") {
   $(".s-motion", card).value = s.motion_prompt;
   $(".s-motion-last", card).value = s.image_prompt_last || "";
   renderCameraRow(card, s);
+  renderLayerRows(card, s);
   $(".s-del", card).addEventListener("click", () => deleteScene(s.id));
   {
     // Меню «⋯»: закрывается кликом мимо и Esc — оставлять его открытым,
@@ -8484,6 +8552,96 @@ function camFillSlots(text, s) {
   return String(text || "")
     .replace(/\{character\}/g, who[0] || "the subject")
     .replace(/\{location\}/g, "the location of this scene");
+}
+
+// Кэши слоёв каталога для лент карточки кадра (motions/lights).
+const layerRowCache = {};
+async function layerRows(kind) {
+  if (layerRowCache[kind]) return layerRowCache[kind];
+  try {
+    const d = await api(`/api/${kind}`);
+    layerRowCache[kind] = d[kind] || [];
+  } catch (e) { layerRowCache[kind] = []; }
+  return layerRowCache[kind];
+}
+
+/* Переключатель Камера/Движение/Свет + две новые ленты. Карточки тех же
+   пропорций, что камера-пресеты; выбранная — огнём (.on). */
+function renderLayerRows(card, s) {
+  const seg = $(".s-layer-seg", card);
+  if (!seg) return;
+  seg.classList.remove("hidden");
+  const show = (kind) => {
+    $$(".s-layer-seg button", card).forEach((b) =>
+      b.classList.toggle("on", b.dataset.lyr === kind));
+    $$("[data-lyr-row]", card).forEach((r) =>
+      r.classList.toggle("hidden", r.dataset.lyrRow !== kind));
+  };
+  if (!seg.dataset.wired) {
+    seg.dataset.wired = "1";
+    $$("button", seg).forEach((b) =>
+      b.addEventListener("click", () => show(b.dataset.lyr)));
+  }
+  const mkCard = (box, x, prev, isOn, onPick) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cam-card" + (isOn ? " on" : "");
+    btn.title = (x.label || x.key) + (x.desc ? " — " + x.desc : "")
+      + (x.locked ? " · PRO" : "");
+    btn.innerHTML = `<span class="cam-thumb">${prev
+      ? `<i style="background-image:url(&quot;${prev}&quot;)"></i>`
+      : `<i class="cam-noimg">✦</i>`}</span>
+      <span class="cam-name">${esc2(x.label || x.key)}</span>`;
+    btn.addEventListener("click", async () => {
+      if (x.locked) { alert(t("promptbase.locked") || "PRO"); return; }
+      try { await onPick(btn); } catch (e) { fail(e); }
+    });
+    box.appendChild(btn);
+  };
+  // ДВИЖЕНИЕ: полный motion-текст записи → motion_prompt кадра.
+  const mBox = $(".s-motions-row", card);
+  if (mBox && !mBox.dataset.done) {
+    mBox.dataset.done = "1";
+    layerRows("motions").then((rows) => rows.forEach((x) => {
+      const filled = camFillSlots(x.text || "", s);
+      const cur = (s.motion_prompt || "").trim();
+      mkCard(mBox, x, x.preview_url || "",
+        Boolean(filled && cur && cur.startsWith(filled.slice(0, 60))),
+        async (btn) => {
+          await api(`/api/scenes/${s.id}`, { method: "PATCH",
+            body: { motion_prompt: filled, camera_move: x.camera || "" } });
+          s.motion_prompt = filled;
+          s.camera_move = x.camera || "";
+          const ta = $(".s-motion", card);
+          if (ta) ta.value = filled;
+          const cm = $(".s-camera", card);
+          if (cm) cm.value = s.camera_move;
+          Array.from(mBox.children).forEach((c) =>
+            c.classList.toggle("on", c === btn));
+        });
+    }));
+  }
+  // СВЕТ: дописывается в конец промпта картинки, ничего не переписывая.
+  const lBox = $(".s-lights-row", card);
+  if (lBox && !lBox.dataset.done) {
+    lBox.dataset.done = "1";
+    layerRows("lights").then((rows) => rows.forEach((x) => {
+      const add = camFillSlots(x.add || "", s).trim();
+      const has = add && (s.image_prompt || "").includes(add.slice(0, 60));
+      mkCard(lBox, x, x.preview_url || "", Boolean(has), async (btn) => {
+        if (!add) return;
+        const base = (s.image_prompt || "").trim();
+        if (base.includes(add.slice(0, 60))) return;
+        const next = base ? `${base} ${add}` : add;
+        await api(`/api/scenes/${s.id}`, { method: "PATCH",
+          body: { image_prompt: next } });
+        s.image_prompt = next;
+        const ta = $(".s-image", card);
+        if (ta) ta.value = next;
+        btn.classList.add("on");
+      });
+    }));
+  }
 }
 
 function renderCameraRow(card, s) {

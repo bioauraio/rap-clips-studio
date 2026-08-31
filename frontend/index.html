@@ -47,19 +47,19 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=193" />
+<link rel="stylesheet" href="/style.css?v=194" />
 <link rel="stylesheet" href="/api/theme.css" />
-<link rel="stylesheet" href="/landing.css?v=193" />
-<link rel="stylesheet" href="/tg.css?v=193" />
+<link rel="stylesheet" href="/landing.css?v=194" />
+<link rel="stylesheet" href="/tg.css?v=194" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=193" />
+<link rel="stylesheet" href="/music-studio.css?v=194" />
 <!-- Лента разделов, академия и каталог приёмов. ПОСЛЕ style.css: берёт его
      токены и правит шапку только под классом .has-sections — без sections.js
      вёрстка обязана остаться прежней. -->
-<link rel="stylesheet" href="/sections.css?v=193" />
-<link rel="stylesheet" href="/school.css?v=193" />
+<link rel="stylesheet" href="/sections.css?v=194" />
+<link rel="stylesheet" href="/school.css?v=194" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -77,7 +77,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=193"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=194"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -833,6 +833,24 @@
           <section class="ms-sec" data-sec="what">
             <h4 class="ms-h" data-i18n="modeSetup.what"></h4>
             <p class="ms-hint muted"></p>
+            <!-- КОММЕНТАРИЙ — ПЕРВЫЙ ШАГ ФЛОУ (правка владельца 31.08):
+                 вписал пару фраз своими словами → нажал → сюжет, библия и
+                 заметки сгенерились. Поле одно на трек (track.comment),
+                 в «Материале» оно больше не дублируется. -->
+            <div class="ms-comment-row">
+              <div class="ms-comment-col">
+                <label data-i18n="track.comment"></label>
+                <textarea class="t-comment" rows="2" data-i18n-ph="track.commentPh"></textarea>
+              </div>
+              <button type="button" class="ms-comment-gen primary hidden" data-i18n="story.gen"></button>
+            </div>
+            <!-- АРХИТЕКТУРА СЦЕНАРИЯ: слой «Сценарии» каталога карточками.
+                 Выбор пишется в track.scenario_key и уходит рамкой в
+                 генерацию сюжета и раскадровки. Пусто = «Авто». -->
+            <div class="ms-scenarios hidden">
+              <label data-i18n="scenario.label"></label>
+              <div class="ms-scn-row"></div>
+            </div>
             <!-- Витрина каркасов убрана по просьбе владельца: тринадцать
                  карточек с описаниями занимали экран и мешали работе.
                  Каркасы никуда не делись — они живут на лендинге и в каталоге
@@ -1038,8 +1056,7 @@
                   <textarea class="t-lyrics" rows="10" data-i18n-ph="track.lyricsPh"></textarea>
                 </div>
                 <div class="track-right">
-                  <label data-i18n="track.comment"></label>
-                  <textarea class="t-comment" rows="4" data-i18n-ph="track.commentPh"></textarea>
+                  <!-- Комментарий переехал наверх в «Что снимаем» — поле одно. -->
                   <!-- Библия героя — зеркало проектного поля (узел живёт вне
                        #tracks); компактно в правой колонке под комментарием. -->
                   <div class="ms-bible hidden">
@@ -1385,13 +1402,21 @@
             <option value="wide" data-i18n="scene.shot.wide"></option>
             <option value="establishing" data-i18n="scene.shot.establishing"></option>
           </select>
+          <input class="s-camera" data-i18n-ph="scene.cameraPh" data-i18n-title="scene.cameraTitle" />
         </div>
-        <input class="s-camera" data-i18n-ph="scene.cameraPh" data-i18n-title="scene.cameraTitle" />
         <input class="s-lyric" data-i18n-ph="scene.lyricPh" />
         <input class="s-note" data-i18n-ph="scene.notePh" />
-        <!-- Камера-пресеты: 6 карточек-иконок с живым превью движения.
-             Клик пишет полный промпт пресета в motion_prompt кадра. -->
-        <div class="s-cameras hidden" data-i18n-title="scene.cameraPresets"></div>
+        <!-- Слои каталога карточками: Камера / Движение / Свет. Камера и
+             движение пишут промпт движения кадра, свет дописывается в промпт
+             картинки. Превью — из общего layer_previews. -->
+        <div class="s-layer-seg hidden">
+          <button type="button" class="on" data-lyr="cameras" data-i18n="scene.lyrCameras"></button>
+          <button type="button" data-lyr="motions" data-i18n="scene.lyrMotions"></button>
+          <button type="button" data-lyr="lights" data-i18n="scene.lyrLights"></button>
+        </div>
+        <div class="s-cameras hidden" data-lyr-row="cameras" data-i18n-title="scene.cameraPresets"></div>
+        <div class="s-cameras s-motions-row hidden" data-lyr-row="motions"></div>
+        <div class="s-cameras s-lights-row hidden" data-lyr-row="lights"></div>
         <textarea class="s-motion" rows="2" data-i18n-ph="scene.motionPh"></textarea>
         <textarea class="s-motion-last" rows="2" data-i18n-ph="scene.motionLastPh"></textarea>
         <button class="s-save" data-i18n="scene.save"></button>
@@ -1503,32 +1528,32 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=193"></script>
-<script src="/i18n.js?v=193"></script>
-<script src="/app.js?v=193"></script>
+<script src="/modes.js?v=194"></script>
+<script src="/i18n.js?v=194"></script>
+<script src="/app.js?v=194"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=193"></script>
+<script src="/music-studio.js?v=194"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=193"></script>
+<script src="/mode-menu.js?v=194"></script>
 <!-- ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ. ПОСЛЕ app.js и mode-menu.js: она
      ПЕРЕНОСИТ в свою ленту живые кнопки шапки (#chat-btn, #music-btn,
      #account-btn, #admin-btn) вместе с их обработчиками, поэтому обработчики
      к этому моменту должны быть уже навешаны. -->
-<script src="/sections.js?v=193"></script>
-  <link rel="stylesheet" href="/generator.css?v=193" />
-  <script src="/generator.js?v=193" defer></script>
+<script src="/sections.js?v=194"></script>
+  <link rel="stylesheet" href="/generator.css?v=194" />
+  <script src="/generator.js?v=194" defer></script>
 
 <!-- Раздел «Школа»: курсы, модули, уроки, доступ, авторы, кейсы, отзывы.
      ПОСЛЕ sections.js: подсветка раздела и модалка базы знаний живут там. -->
-<script src="/school.js?v=193"></script>
+<script src="/school.js?v=194"></script>
 <!-- Страницы промтов /p/{layer}/{key}: тренды, шаблоны мокапов, слои. -->
-<script src="/prompt-page.js?v=193"></script>
+<script src="/prompt-page.js?v=194"></script>
 <!-- Каталог промтов (четыре слоя и сборка). Отдельным файлом от sections.js:
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
-<script src="/library.js?v=193"></script>
+<script src="/library.js?v=194"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1552,10 +1577,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=193";
+  css.href = "/nav.css?v=194";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=193";
+  js.src = "/nav.js?v=194";
   document.body.appendChild(js);
 })();
 </script>
