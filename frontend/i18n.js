@@ -650,10 +650,10 @@ const I18N = {
     // ─────────────── единый блок параметров режима ───────────────
     modeSetup: {
       what: "1. What we shoot",
-      look: "2. How it looks",
-      frame: "3. Frame",
-      engines: "4. Engines and price",
-      material: "5. Your material",
+      look: "2. How we shoot",
+      frame: "Frame",
+      engines: "Engines and price",
+      material: "3. Your material",
       storyLabel: "Project story (shared by every object)",
       punch: "punch shots",
       aspect: "Aspect",
@@ -3285,10 +3285,10 @@ const I18N = {
     // ─────────────── единый блок параметров режима ───────────────
     modeSetup: {
       what: "1. Что снимаем",
-      look: "2. Как выглядит",
-      frame: "3. Кадр",
-      engines: "4. Движки и цена",
-      material: "5. Твой материал",
+      look: "2. Как снимаем",
+      frame: "Кадр",
+      engines: "Движки и цена",
+      material: "3. Твой материал",
       storyLabel: "Сюжет проекта (общий для всех объектов)",
       punch: "панч-кадры",
       aspect: "Геометрия",

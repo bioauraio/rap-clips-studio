@@ -47,19 +47,19 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
-<link rel="stylesheet" href="/style.css?v=192" />
+<link rel="stylesheet" href="/style.css?v=193" />
 <link rel="stylesheet" href="/api/theme.css" />
-<link rel="stylesheet" href="/landing.css?v=192" />
-<link rel="stylesheet" href="/tg.css?v=192" />
+<link rel="stylesheet" href="/landing.css?v=193" />
+<link rel="stylesheet" href="/tg.css?v=193" />
 <!-- Раздел «Музыка». ПОСЛЕ style.css и landing.css: он берёт их токены и не
      объявляет своих — ровно затем, чтобы не повторить историю nav.css, где
      переопределённый в :root огонь перекрасил весь интерфейс в красный. -->
-<link rel="stylesheet" href="/music-studio.css?v=192" />
+<link rel="stylesheet" href="/music-studio.css?v=193" />
 <!-- Лента разделов, академия и каталог приёмов. ПОСЛЕ style.css: берёт его
      токены и правит шапку только под классом .has-sections — без sections.js
      вёрстка обязана остаться прежней. -->
-<link rel="stylesheet" href="/sections.css?v=192" />
-<link rel="stylesheet" href="/school.css?v=192" />
+<link rel="stylesheet" href="/sections.css?v=193" />
+<link rel="stylesheet" href="/school.css?v=193" />
 <script>
 /* Мини-апп Telegram — та же страница, но с другой точкой входа.
    Telegram кладёт параметры запуска во ФРАГМЕНТ адреса (#tgWebAppData=…),
@@ -77,7 +77,7 @@
   // страница осталась бы с правилами мини-аппа (лендинг и вход скрыты) и
   // человек увидел бы пустой экран вместо честного сайта.
   document.write('<scr' + 'ipt src="https://telegram.org/js/telegram-web-app.js"></scr' + 'ipt>');
-  document.write('<scr' + 'ipt src="/tg.js?v=192"></scr' + 'ipt>');
+  document.write('<scr' + 'ipt src="/tg.js?v=193"></scr' + 'ipt>');
 })();
 </script>
 </head>
@@ -902,16 +902,16 @@
           </section>
 
           <!-- 2. КАК ВЫГЛЯДИТ -->
-          <section class="ms-sec" data-sec="look">
+          <!-- 2. КАК СНИМАЕМ: стили, кадр и движки одной секцией по строкам
+               (правка владельца 31.08). Раньше это были три нумерованные
+               секции, и вертикальные столбики пилюль съедали пол-экрана. -->
+          <section class="ms-sec ms-shoot" data-sec="look">
             <h4 class="ms-h" data-i18n="modeSetup.look"></h4>
-            <label class="ms-style-label" data-i18n-title="track.styleLabelTitle" data-i18n="track.styleLabel"></label>
+            <!-- строка 1: стили-чипы -->
             <div class="t-style-picker style-picker style-picker-wide"></div>
             <input type="hidden" class="t-style" />
-            <!-- ПЕРЕРИСОВАТЬ В НОВОМ СТИЛЕ. Появляется ровно тогда, когда у
-                 объекта уже есть кадры, а стиль сменили: раньше смена чипов
-                 не давала никакого следующего действия, и человек честно
-                 видел «поставил другой стиль — картинки те же».
-                 Цена и потери показываются ДО нажатия. -->
+            <!-- ПЕРЕРИСОВАТЬ В НОВОМ СТИЛЕ: появляется, когда у объекта уже
+                 есть кадры, а стиль сменили. Цена и потери — до нажатия. -->
             <div class="ms-restyle hidden">
               <div class="row">
                 <button type="button" class="t-restyle primary"></button>
@@ -919,44 +919,29 @@
               </div>
               <p class="t-restyle-warn muted"></p>
             </div>
-          </section>
-
-          <!-- 3. КАДР: геометрия, разрешение, зерно. Схлопнуто у всех, кроме
-               мокапов: там квадрат и разрешение — главные параметры съёмки. -->
-          <details class="ms-sec ms-fold" data-sec="frame">
-            <summary data-i18n="modeSetup.frame"></summary>
-            <div class="ms-fold-body">
-              <div class="ms-row">
-                <label data-i18n="modeSetup.aspect"></label>
-                <div class="ms-aspect eng-tabs"></div>
-              </div>
-              <div class="ms-row ms-res-row">
-                <label data-i18n="modeSetup.resolution"></label>
-                <div class="ms-res eng-tabs"></div>
-              </div>
+            <!-- строка 2: формат · качество · зерно одной горизонталью -->
+            <div class="ms-shoot-line" data-sec="frame">
+              <span class="ms-mini-label" data-i18n="modeSetup.aspect"></span>
+              <div class="ms-aspect eng-tabs"></div>
+              <span class="ms-shoot-dot">·</span>
+              <span class="ms-mini-label" data-i18n="modeSetup.resolution"></span>
+              <div class="ms-res eng-tabs"></div>
+              <span class="ms-shoot-dot">·</span>
               <label class="approve-check grain-check" data-i18n-title="track.grainTitle"><input type="checkbox" class="t-grain" /> <span data-i18n="track.grain"></span></label>
-              <p class="ms-frame-note muted"></p>
             </div>
-          </details>
-
-          <!-- 4. ДВИЖКИ И ЦЕНА: один выбор на весь объект, табами.
-               Движков восемь, и цена сцены у них отличается в тридцать раз —
-               выбор такого веса обязан быть виден целиком. -->
-          <section class="ms-sec" data-sec="engines">
-            <h4 class="ms-h" data-i18n="modeSetup.engines"></h4>
+            <p class="ms-frame-note muted"></p>
+            <!-- строки 3: движки в две компактные строки со скроллом -->
             <div class="t-engines">
-              <div class="t-engines-head">
-                <b data-i18n="engines.title"></b>
-                <span class="eng-hint"></span>
-              </div>
-              <div class="eng-row">
+              <span class="eng-hint hidden"></span>
+              <div class="eng-row ms-shoot-line">
                 <label data-i18n="engines.image"></label>
                 <div class="t-img-engines eng-tabs"></div>
               </div>
-              <div class="eng-row">
+              <div class="eng-row ms-shoot-line">
                 <label data-i18n="engines.video"></label>
                 <div class="t-vid-engines eng-tabs"></div>
               </div>
+              <!-- строка 4: итог мелко -->
               <div class="eng-forecast"></div>
             </div>
           </section>
@@ -1518,32 +1503,32 @@
      (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). Пока
      реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
      то есть владелец в обычной студии его не видел вообще. -->
-<script src="/modes.js?v=192"></script>
-<script src="/i18n.js?v=192"></script>
-<script src="/app.js?v=192"></script>
+<script src="/modes.js?v=193"></script>
+<script src="/i18n.js?v=193"></script>
+<script src="/app.js?v=193"></script>
 <!-- Раздел «Музыка». ПОСЛЕ app.js: опирается на его глобали (api, hideScreens,
      showApp, fail) и на словарь i18n.js. -->
-<script src="/music-studio.js?v=192"></script>
+<script src="/music-studio.js?v=193"></script>
 <!-- Тумблер режимов и меню режима. ПОСЛЕ app.js: он опирается на живой
      #project-select и на window.openNewProjectModal / applyModeShortcut. -->
-<script src="/mode-menu.js?v=192"></script>
+<script src="/mode-menu.js?v=193"></script>
 <!-- ВЕРХНЯЯ НАВИГАЦИЯ ПО РАЗДЕЛАМ. ПОСЛЕ app.js и mode-menu.js: она
      ПЕРЕНОСИТ в свою ленту живые кнопки шапки (#chat-btn, #music-btn,
      #account-btn, #admin-btn) вместе с их обработчиками, поэтому обработчики
      к этому моменту должны быть уже навешаны. -->
-<script src="/sections.js?v=192"></script>
-  <link rel="stylesheet" href="/generator.css?v=192" />
-  <script src="/generator.js?v=192" defer></script>
+<script src="/sections.js?v=193"></script>
+  <link rel="stylesheet" href="/generator.css?v=193" />
+  <script src="/generator.js?v=193" defer></script>
 
 <!-- Раздел «Школа»: курсы, модули, уроки, доступ, авторы, кейсы, отзывы.
      ПОСЛЕ sections.js: подсветка раздела и модалка базы знаний живут там. -->
-<script src="/school.js?v=192"></script>
+<script src="/school.js?v=193"></script>
 <!-- Страницы промтов /p/{layer}/{key}: тренды, шаблоны мокапов, слои. -->
-<script src="/prompt-page.js?v=192"></script>
+<script src="/prompt-page.js?v=193"></script>
 <!-- Каталог промтов (четыре слоя и сборка). Отдельным файлом от sections.js:
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
-<script src="/library.js?v=192"></script>
+<script src="/library.js?v=193"></script>
 <script>
 /* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
    Навигация подменяет топбар и переключает панели поверх живого app.js;
@@ -1567,10 +1552,10 @@
   if (!on) return;
   var css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "/nav.css?v=192";
+  css.href = "/nav.css?v=193";
   document.head.appendChild(css);
   var js = document.createElement("script");
-  js.src = "/nav.js?v=192";
+  js.src = "/nav.js?v=193";
   document.body.appendChild(js);
 })();
 </script>
