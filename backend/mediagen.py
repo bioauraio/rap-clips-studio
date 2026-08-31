@@ -291,10 +291,12 @@ IMAGE_ENGINES: dict[str, dict] = {
     "chatgpt": {
         "title": "ChatGPT", "channel": "gateway",
         "usd": 0.0, "max_refs": 1, "native_4k": False, "paid": False,
+        "note": "Наша подписка, ⚡0. Умный промпт-следующий кадр; один референс.",
     },
     "grok": {
         "title": "Grok", "channel": "gateway",
         "usd": 0.0, "max_refs": 1, "native_4k": False, "paid": False,
+        "note": "Наша подписка, ⚡0. Быстрый и дерзкий; стилизация сильнее точности.",
     },
     # Nano Banana (Google Gemini Image) через kie.ai. Смысл не в Elo — по
     # слепым тестам GPT Image 2 со шлюза даже выше, — а в инженерии: до 14
@@ -305,6 +307,7 @@ IMAGE_ENGINES: dict[str, dict] = {
         "title": "Nano Banana (edit)", "channel": "kie",
         "model": "google/nano-banana-edit", "refs_field": "image_urls",
         "usd": 0.02, "max_refs": 10, "native_4k": False, "paid": True,
+        "note": "Правка готового кадра по 10 отдельным референсам — консистентность героя.",
         # ПРЕДПОЛОЖЕНИЕ: у edit-модели поля aspect_ratio в доках нет — не шлём.
         "resolutions": (), "aspect": False,
     },
@@ -315,6 +318,7 @@ IMAGE_ENGINES: dict[str, dict] = {
         "usd": 0.06, "usd_by_res": {"1K": 0.04, "2K": 0.06, "4K": 0.09},
         "max_refs": 14, "native_4k": True, "paid": True,
         "resolutions": ("1K", "2K", "4K"), "aspect": True,
+        "note": "14 референсов, нативные 1К/2К/4К — рабочая лошадь платных кадров.",
     },
     "nano-banana-pro": {
         "title": "Nano Banana Pro", "channel": "kie",
@@ -323,6 +327,7 @@ IMAGE_ENGINES: dict[str, dict] = {
         "usd": 0.09, "usd_by_res": {"1K": 0.09, "2K": 0.09, "4K": 0.12},
         "max_refs": 8, "native_4k": True, "paid": True,
         "resolutions": ("1K", "2K", "4K"), "aspect": True,
+        "note": "Максимум качества Gemini Image: типографика, свет, детали — витринные кадры.",
     },
 }
 

@@ -9305,6 +9305,8 @@ async def scene_voiceover(scene_id: int, request: Request,
     """
     if not voice.available():
         raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
+    if "audio:elevenlabs" in _disabled_models(db):
+        raise HTTPException(503, "озвучка выключена владельцем в админке моделей")
     scene = _own_scene(db, user, scene_id)
     body = await request.json()
     try:

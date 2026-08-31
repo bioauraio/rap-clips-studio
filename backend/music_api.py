@@ -626,6 +626,9 @@ async def generate_music(
                 "Music generation is not connected: no ElevenLabs or kie key yet. "
                 "Upload your own track instead — mastering and release prep work without it.")
         core = _core()
+        if "audio:suno" in core._disabled_models(db):
+            raise _api_error(503, "audio_disabled",
+                             "Suno выключен владельцем в админке моделей.")
         cost = core._points_of_usd(0.06)
         core._charge(db, user, cost, "музыка (Suno)", kind="audio",
                      ref_type="music", engine="suno")
@@ -1307,6 +1310,8 @@ async def music_track_stems(track_id: int, user: User = Depends(current_user),
     if not t.source_filename:
         raise HTTPException(400, "у трека нет файла")
     core = _core()
+    if "audio:vocal-removal" in core._disabled_models(db):
+        raise HTTPException(503, "Стемы выключены владельцем в админке моделей.")
     import music as _music
     cost = core._points_of_usd(0.05)
     core._charge(db, user, cost, f"стемы трека (музыка) {t.id}", kind="music")

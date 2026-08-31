@@ -112,9 +112,8 @@
       ico: GI('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>') },
     { id: "prompts", title: "Промты", tabs: ["prompts"],
       ico: GI('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 11h18M6.5 7l2.5 4M11.5 7l2.5 4M16.5 7l2.5 4M4 7l2-2.5 15 2.5"/>') },
-    { id: "ledger", title: "Журнал", tabs: ["ledger"],
-      ico: GI('<path d="M6 3h12v18l-2-1.4L14 21l-2-1.4L10 21l-2-1.4L6 21V3z"/><path d="M9 8h6M9 12h6M9 16h4"/>') },
-    { id: "cfg", title: "Настройки", tabs: ["settings", "design", "models", "pricing", "market"],
+    { id: "cfg", title: "Настройки",
+      tabs: ["settings", "design", "models", "pricing", "market", "ledger"],
       ico: GI('<circle cx="12" cy="12" r="3"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>') },
   ];
   const groupOf = (id) => GROUPS.find((g) => g.tabs.includes(id)) || GROUPS[0];
@@ -174,9 +173,58 @@
   /* ─────────────────────────── сводка ─────────────────────────── */
   async function renderStats(box) {
     try {
-      const d = await api("/api/admin/stats?days=30");
+      const [d, live] = await Promise.all([
+        api("/api/admin/stats?days=30"),
+        api("/api/admin/dashboard").catch(() => null),
+      ]);
       const margin = d.revenue_cents - d.cost_cents;
-      box.innerHTML = `
+      const gwPill = (ok, name) =>
+        `<span class="adm-pill ${ok ? "" : "warn"}">${name}: ${ok ? "ок" : "недоступен"}</span>`;
+      const dash = !live ? "" : `
+        <div class="adm-grid">
+          ${(() => {
+            const k = live.providers.kie || {};
+            const v = k.ok ? Math.round(k.credit) : "—";
+            const bad = k.ok && k.credit < 500;
+            return `<div class="adm-stat ${bad ? "adm-stat-bad" : ""}">
+              <b>${v}</b><span>кредиты kie.ai${bad ? " — мало!" : ""}</span></div>`;
+          })()}
+          <div class="adm-stat"><b style="font-size:14px;line-height:2">
+            ${gwPill(live.providers.gw_chatgpt, "ChatGPT")} ${gwPill(live.providers.gw_grok, "Grok")}
+          </b><span>шлюзы</span></div>
+          ${stat(num(live.gen.frames_24h) + " / " + num(live.gen.frames_7d), "кадров 24ч / 7д")}
+          ${stat(num(live.gen.videos_24h) + " / " + num(live.gen.videos_7d), "видео 24ч / 7д")}
+          ${stat(num(live.gen.errors_24h), "ошибок за 24ч")}
+          ${stat(num(live.gen.queue), "в очереди сейчас")}
+          ${stat(num(live.economy.spent_7d) + " ⚡", "потрачено за 7д")}
+          ${stat(pct(live.economy.saved, live.economy.users_total), "гость → аккаунт")}
+          ${stat(num(live.household.characters), "персонажей")}
+          ${stat(num(live.household.tracks), "треков")}
+          ${live.household.disk.total ? stat(
+            mb(live.household.disk.free) + " своб.",
+            "диск: занято " + mb(live.household.disk.used)) : ""}
+        </div>
+        <div class="adm-card">
+          <div class="adm-row" style="align-items:center;flex-wrap:wrap">
+            <b>Топ-5 по тратам (7д):</b>
+            ${(live.economy.top || []).map((u) =>
+              `<span class="adm-pill">${esc(u.name)} · ${num(u.spent)} ⚡</span>`).join("") || "<span class='muted'>пусто</span>"}
+          </div>
+        </div>
+        <div class="adm-card">
+          <div class="adm-row" style="align-items:center;flex-wrap:wrap">
+            <b>Превью каталога:</b>
+            ${Object.entries(live.previews || {}).map(([l, c]) =>
+              `<span class="adm-pill ${c.have < c.total ? "warn" : ""}">${esc(l)}: ${c.have}/${c.total}</span>`).join("")}
+            <span style="flex:1"></span>
+            <button type="button" class="ghost dash-go" data-go="prompts">Промты</button>
+            <button type="button" class="ghost dash-go" data-go="demos">Демки</button>
+            <button type="button" class="ghost dash-go" data-go="models">Модели</button>
+            <button type="button" class="ghost dash-batch">Догнать превью</button>
+            <span class="dash-batch-msg muted"></span>
+          </div>
+        </div>`;
+      box.innerHTML = dash + `
         <div class="adm-grid">
           ${stat(num(d.users.total), "клиентов всего")}
           ${stat(num(d.users.paying), "на платном тарифе")}
@@ -202,10 +250,23 @@
                 <td class="num">${num(r.spent)}</td></tr>`).join("")}</tbody>
           </table>
         </div>`;
+      $$(".dash-go", box).forEach((b) =>
+        b.addEventListener("click", () => open(b.dataset.go)));
+      const batch = $(".dash-batch", box);
+      if (batch) batch.addEventListener("click", async () => {
+        const m = $(".dash-batch-msg", box);
+        batch.disabled = true;
+        m.textContent = "запускаю…";
+        try {
+          const r = await api("/api/admin/previews-batch", { method: "POST" });
+          m.textContent = r.busy ? "батч уже идёт" : "пошёл фоном — вернись через пару минут";
+        } catch (e) { m.textContent = "не вышло: " + (e.message || e); batch.disabled = false; }
+      });
     } catch (e) { fail(box, e); }
   }
 
   const stat = (v, s) => `<div class="adm-stat"><b>${esc(v)}</b><span>${esc(s)}</span></div>`;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) + "%" : "—");
 
   /* ─────────────────────────── клиенты ─────────────────────────── */
   async function renderUsers(box) {
@@ -273,50 +334,150 @@
     const box = pane();
     loading(box);
     try {
-      const d = await api("/api/admin/users/" + uid);
+      const [d, note] = await Promise.all([
+        api("/api/admin/users/" + uid),
+        api(`/api/admin/users/${uid}/note`).catch(() => ({ note: "" })),
+      ]);
       const u = d.user || d;
+      const mask = (v) => v ? String(v).replace(/(.{2}).+(@.+)/, "$1…$2") : "";
+      const linked = Object.entries(d.linked || {})
+        .filter(([, v]) => v).map(([k]) => k).join(", ") || "—";
       box.innerHTML = `
         <div class="adm-card">
-          <div class="adm-row">
+          <div class="adm-row" style="align-items:center">
             <button type="button" class="ghost u-back">← к списку</button>
-            <b>${esc(u.name || u.login || ("#" + u.id))}</b>
-            <span class="muted">${esc(u.email || (u.tg ? "@" + u.tg : ""))}</span>
+            ${u.avatar_url ? `<img src="${esc(u.avatar_url)}" style="width:44px;height:44px;border-radius:50%;object-fit:cover">` : ""}
+            <div>
+              <b style="font-size:16px">${esc(u.name || u.login || ("#" + u.id))}</b>
+              ${u.is_blocked ? '<span class="adm-pill warn">заблокирован</span>' : ""}
+              ${u.is_admin ? '<span class="adm-pill">админ</span>' : ""}
+              <div class="muted" style="font-size:12px">
+                ${esc(mask(u.email))} ${u.tg ? "· @" + esc(u.tg) : ""}
+                · входы: ${esc(linked)}
+                · рег. ${when(u.created_at)} · был ${when(u.last_seen_at)}
+              </div>
+            </div>
           </div>
           <div class="adm-grid" style="margin-top:12px">
-            ${stat(esc(u.plan_title || u.plan), "тариф")}
-            ${stat(num(u.points) + " ⚡", "токенов")}
-            ${stat(when(u.plan_until), "активен до")}
+            ${stat(esc(u.plan_title || u.plan) + (u.plan_tier ? " " + esc(u.plan_tier) : ""), "тариф · до " + when(u.plan_until))}
+            ${stat(num(u.points) + " ⚡", "токенов" + (d.drip && d.drip.left ? ` (+${num(d.drip.left)} капельных)` : ""))}
             ${stat(esc(u.pay_source || "—"), "кто списывает")}
+            ${stat(esc(u.ref_code || "—"), "реф-код" + (d.invited_by ? " · пригласил " + esc(d.invited_by.name) : ""))}
+            ${stat(num(d.referrals || 0), "приглашено им")}
+            ${stat(num((d.work || {}).projects || 0) + " / " + num((d.work || {}).tracks || 0), "проектов / треков")}
+            ${stat(num((d.work || {}).scenes || 0) + " / " + num((d.work || {}).clips || 0), "сцен / клипов")}
+            ${stat(money((d.money || {}).paid_cents || 0) + " + " + num(((d.money || {}).paid_kopeks || 0) / 100) + " ₽", "оплачено всего")}
+            ${stat(num((d.money || {}).spent_points || 0) + " ⚡", "потрачено токенов")}
           </div>
         </div>
+
         <div class="adm-card">
-          <h3>Начислить или списать токены</h3>
-          <div class="adm-row">
-            <input type="number" class="p-delta" value="100" style="width:120px" />
-            <input type="text" class="p-why" placeholder="за что (попадёт в журнал)" style="flex:1;min-width:180px" />
-            <button type="button" class="primary p-go">Применить</button>
+          <h3>Действия</h3>
+          <div class="adm-row" style="flex-wrap:wrap">
+            <input type="number" class="p-delta" value="100" style="width:110px" />
+            <input type="text" class="p-why" placeholder="за что (попадёт в журнал)" style="flex:1;min-width:160px" />
+            <button type="button" class="primary p-go">Токены</button>
+            <select class="pl-sel">${(d.plans || []).map((pl) =>
+              `<option value="${esc(pl.id)}" ${pl.id === u.plan ? "selected" : ""}>${esc(pl.title)}</option>`).join("")}</select>
+            <button type="button" class="pl-go">Сменить тариф</button>
+            <button type="button" class="ghost danger b-go">${u.is_blocked ? "Разблокировать" : "Заблокировать"}</button>
             <span class="p-msg"></span>
           </div>
-          <p class="adm-note">Движение токенов идёт через ту же единственную дверь,
-            что и генерации, — и попадает в журнал вместе с тем, кто его сделал.</p>
+          <p class="adm-note">Каждое действие пишется в журнал вместе с тем, кто его сделал.</p>
+        </div>
+
+        <div class="adm-card">
+          <h3>Заметки админа</h3>
+          <textarea class="u-note" rows="3" style="width:100%">${esc(note.note || "")}</textarea>
+          <div class="adm-row"><button type="button" class="u-note-save">Сохранить заметку</button>
+            <span class="u-note-msg muted"></span></div>
+        </div>
+
+        <div class="adm-card">
+          <h3>Оплаты (${num((d.payments || []).length)})</h3>
+          ${(d.payments || []).length ? `<table class="adm-table">
+            <thead><tr><th>когда</th><th>провайдер</th><th>что</th>
+              <th class="num">сумма</th><th class="num">⚡</th></tr></thead>
+            <tbody>${d.payments.map((pp) => `<tr>
+              <td>${when(pp.at)}</td><td>${esc(pp.provider)}</td>
+              <td>${esc(pp.kind)}${pp.plan ? " · " + esc(pp.plan) + "/" + esc(pp.period) : ""}</td>
+              <td class="num">${pp.amount_cents ? money(pp.amount_cents) : num(pp.amount_kopeks / 100) + " ₽"}</td>
+              <td class="num">${num(pp.points)}</td></tr>`).join("")}</tbody>
+          </table>` : '<p class="muted">платежей не было</p>'}
+        </div>
+
+        <div class="adm-card">
+          <h3>Лента действий</h3>
+          <div class="u-timeline"><p class="muted">загружаю…</p></div>
+          <div class="adm-row"><button type="button" class="u-tl-more hidden">Показать раньше</button></div>
         </div>`;
+
       $(".u-back", box).addEventListener("click", () => open("users"));
-      $(".p-go", box).addEventListener("click", async () => {
-        const msg = $(".p-msg", box);
-        msg.textContent = "…";
+      const msg = $(".p-msg", box);
+      const act = async (fn, okText) => {
+        msg.textContent = "…"; msg.className = "p-msg muted";
         try {
-          const r = await api(`/api/admin/users/${uid}/points`, {
-            method: "POST",
-            body: { delta: Number($(".p-delta", box).value || 0),
-                    reason: $(".p-why", box).value.trim() },
-          });
-          msg.className = "p-msg adm-ok";
-          msg.textContent = "стало " + num(r.points != null ? r.points : "");
-        } catch (e) {
-          msg.className = "p-msg adm-err";
-          msg.textContent = e.message;
-        }
+          await fn();
+          msg.className = "p-msg adm-ok"; msg.textContent = okText;
+          userCard(uid);
+        } catch (e) { msg.className = "p-msg adm-err"; msg.textContent = e.message || e; }
+      };
+      $(".p-go", box).addEventListener("click", () => act(() =>
+        api(`/api/admin/users/${uid}/points`, { method: "POST",
+          body: { delta: Number($(".p-delta", box).value || 0),
+                  reason: $(".p-why", box).value.trim() } }), "готово"));
+      $(".pl-go", box).addEventListener("click", () => act(() =>
+        api(`/api/admin/users/${uid}/plan`, { method: "POST",
+          body: { plan: $(".pl-sel", box).value } }), "тариф сменён"));
+      $(".b-go", box).addEventListener("click", () => {
+        const reason = u.is_blocked ? "" :
+          (prompt("Причина блокировки (увидит клиент):") || "");
+        if (!u.is_blocked && !reason) return;
+        act(() => api(`/api/admin/users/${uid}/block`, { method: "POST",
+          body: { blocked: !u.is_blocked, reason } }),
+          u.is_blocked ? "разблокирован" : "заблокирован");
       });
+      $(".u-note-save", box).addEventListener("click", async () => {
+        const m = $(".u-note-msg", box);
+        m.textContent = "…";
+        try {
+          await api(`/api/admin/users/${uid}/note`, { method: "POST",
+            body: { note: $(".u-note", box).value } });
+          m.textContent = "сохранено";
+        } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
+      });
+
+      // Лента: подгружаемая хронология всего по клиенту.
+      const tl = $(".u-timeline", box);
+      const more = $(".u-tl-more", box);
+      const ICO = { signup: "→", payment: "₽", ref: "🤝", project: "▣",
+                    track: "♪", admin: "⚙" };
+      let cursor = "";
+      const loadTl = async () => {
+        const r = await api(`/api/admin/users/${uid}/timeline`
+          + (cursor ? "?before=" + encodeURIComponent(cursor) : ""));
+        if (!cursor) tl.innerHTML = "";
+        (r.items || []).forEach((it) => {
+          const row = document.createElement("div");
+          row.className = "u-tl-row";
+          const ico = ICO[(it.kind || "").split(":")[0]] || "⚡";
+          row.innerHTML = `
+            <span class="u-tl-ico">${ico}</span>
+            ${it.thumb ? `<img src="${esc(it.thumb)}" loading="lazy">` : ""}
+            <div class="u-tl-body">
+              <b>${esc(it.title)}</b>
+              ${it.sub ? `<span class="muted">${esc(it.sub)}</span>` : ""}
+            </div>
+            <span class="u-tl-amt">${esc(it.amount || "")}</span>
+            <span class="muted u-tl-when">${when(it.at)}</span>`;
+          tl.appendChild(row);
+        });
+        if (!tl.childElementCount) tl.innerHTML = '<p class="muted">пока пусто</p>';
+        cursor = r.next_before || "";
+        more.classList.toggle("hidden", !cursor);
+      };
+      more.addEventListener("click", loadTl);
+      loadTl().catch((e) => { tl.innerHTML = `<p class="adm-err">${esc(e.message || e)}</p>`; });
     } catch (e) { fail(box, e); }
   }
 
@@ -1845,7 +2006,7 @@
           <td>с ${esc(e.min_plan)}</td></tr>`).join(""), "тариф")
         + table("Движки кадров", d.images.map((e) => `<tr>
           <td>${tgl(e)}</td>
-          <td><b>${esc(e.title)}</b></td><td>${esc(e.channel)}</td>
+          <td><b>${esc(e.title)}</b><br /><span class="muted">${esc(e.note || "")}</span></td><td>${esc(e.channel)}</td>
           <td>${e.live ? '<span class="adm-pill on">жив</span>'
                         : '<span class="adm-pill off">ключа нет</span>'}</td>
           <td class="num">${num(e.points)}</td>
@@ -1853,11 +2014,20 @@
           ${stat(e)}</tr>`).join(""))
         + table("Движки видео", d.videos.map((e) => `<tr>
           <td>${tgl(e)}</td>
-          <td><b>${esc(e.title)}</b></td><td>${esc(e.family)}</td>
+          <td><b>${esc(e.title)}</b><br /><span class="muted">${esc(e.note || "")}</span></td><td>${esc(e.family)}</td>
           <td>${e.live ? '<span class="adm-pill on">жив</span>'
                         : '<span class="adm-pill off">ключа нет</span>'}</td>
           <td class="num">${num(e.points)}</td>
           <td class="num">$${Number(e.usd).toFixed(3)}</td>
+          ${stat(e)}</tr>`).join(""))
+        + table("Звук и голос", (d.audio || []).map((e) => `<tr>
+          <td>${tgl(e)}</td>
+          <td><b>${esc(e.title)}</b><br /><span class="muted">${esc(e.note || "")}</span></td>
+          <td>${esc(e.channel)}</td>
+          <td>${e.live ? '<span class="adm-pill on">жив</span>'
+                        : '<span class="adm-pill off">ключа нет</span>'}</td>
+          <td class="num">${num(e.points)}</td>
+          <td class="num">$${Number(e.usd || 0).toFixed(3)}</td>
           ${stat(e)}</tr>`).join(""))
         + `<p class="adm-note">Один токен = $${d.point_usd} себестоимости. Цена в токенах
            выводится из этой константы и долларовых цен движков, поэтому разойтись с
@@ -2139,6 +2309,7 @@
     if (sub && P_TABS.some(([id]) => id === sub)) promptTab = sub;
     // Старые закладки на отдельные разделы не должны отдавать пустую
     // страницу: они ведут на те же панели, теперь вкладками.
+    if (want === "journal") return open("ledger");
     if (want === "styles" || want === "refstyles") {
       promptTab = want === "refstyles" ? "refs" : "styles";
       return open("prompts");

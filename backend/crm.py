@@ -369,6 +369,127 @@ async def admin_block(uid: int, request: Request, user: User = Depends(admin_use
     return {"ok": True, **_user_row(core, db, u)}
 
 
+@router.get("/api/admin/users/{uid}/timeline")
+def admin_user_timeline(uid: int, before: str = "", limit: int = 60,
+                        user: User = Depends(admin_user),
+                        db: Session = Depends(db_session)):
+    """Хронология клиента одной лентой: регистрация, токены (генерации,
+    начисления, возвраты), платежи, рефералка, созданные проекты/треки и
+    действия админов. Пагинация курсором before=ISO-время."""
+    core = _core()
+    limit = max(10, min(200, int(limit or 60)))
+    cut = None
+    if before:
+        try:
+            from datetime import datetime as _dt
+            cut = _dt.fromisoformat(before.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:  # noqa: BLE001
+            cut = None
+
+    items: list[dict] = []
+
+    def _push(at, kind, title, sub="", amount="", thumb="", ref=""):
+        atu = core._as_utc(at)
+        if not atu:
+            return
+        if cut and atu.replace(tzinfo=None) >= cut:
+            return
+        items.append({"at": atu.isoformat(), "kind": kind, "title": title,
+                      "sub": sub, "amount": amount, "thumb": thumb, "ref": ref})
+
+    u = db.get(User, uid)
+    if not u:
+        raise HTTPException(404, "клиент не найден")
+    _push(u.created_at, "signup", "Регистрация",
+          "канал: " + ("telegram" if u.tg_id else "yandex" if u.yandex_id
+                       else "google" if u.google_id else "логин/почта"))
+
+    q = db.query(PointEvent).filter(PointEvent.user_id == uid)
+    if cut:
+        q = q.filter(PointEvent.created_at < cut)
+    scene_ids = []
+    pevs = q.order_by(PointEvent.id.desc()).limit(limit).all()
+    for e in pevs:
+        if e.ref_type == "scene" and e.ref_id:
+            scene_ids.append(e.ref_id)
+    thumbs = {}
+    if scene_ids:
+        for sc in db.query(Scene).filter(Scene.id.in_(scene_ids)).all():
+            if sc.image_filename:
+                thumbs[sc.id] = f"/api/thumb/{sc.image_filename}"
+    for e in pevs:
+        sign = "+" if (e.delta or 0) > 0 else ""
+        _push(e.created_at, "points:" + (e.kind or ""),
+              e.what or e.kind or "токены",
+              f"баланс: {e.balance_after}", f"{sign}{e.delta} ⚡",
+              thumbs.get(e.ref_id, "") if e.ref_type == "scene" else "",
+              f"{e.ref_type}:{e.ref_id}" if e.ref_type else "")
+
+    pq = db.query(ProcessedPayment).filter(ProcessedPayment.user_id == uid)
+    if cut:
+        pq = pq.filter(ProcessedPayment.created_at < cut)
+    for pp in pq.order_by(ProcessedPayment.id.desc()).limit(limit).all():
+        amt = (f"{(pp.amount_cents or 0) / 100:.2f} {pp.currency}"
+               if pp.amount_cents else f"{(pp.amount_kopeks or 0) / 100:.0f} ₽")
+        _push(pp.created_at, "payment",
+              f"Платёж · {pp.provider} · {pp.kind}"
+              + (f" · {pp.plan}/{pp.period}" if pp.plan else ""),
+              f"+{pp.points} ⚡" if pp.points else "", amt)
+
+    rq = db.query(RefEvent).filter(or_(RefEvent.ambassador_id == uid,
+                                       RefEvent.referral_id == uid))
+    if cut:
+        rq = rq.filter(RefEvent.created_at < cut)
+    for r in rq.order_by(RefEvent.id.desc()).limit(30).all():
+        _push(r.created_at, "ref",
+              "Рефералка: " + (r.kind or ""),
+              "он амбассадор" if r.ambassador_id == uid else "он приглашённый")
+
+    for pr in db.query(Project).filter(Project.owner_id == uid).all():
+        _push(pr.created_at, "project", f"Проект «{pr.name or pr.id}»",
+              f"{len(pr.tracks)} треков")
+        for t in pr.tracks:
+            _push(t.created_at, "track", f"Трек «{t.title or t.id}»",
+                  f"{len(t.scenes)} сцен")
+
+    aq = db.query(AdminAction).filter(AdminAction.user_id == uid)
+    if cut:
+        aq = aq.filter(AdminAction.created_at < cut)
+    for a in aq.order_by(AdminAction.id.desc()).limit(30).all():
+        _push(a.created_at, "admin", "Админ: " + (a.action or ""),
+              (a.payload_json or "")[:120])
+
+    items.sort(key=lambda x: x["at"], reverse=True)
+    items = items[:limit]
+    return {"items": items,
+            "next_before": items[-1]["at"] if len(items) == limit else ""}
+
+
+@router.get("/api/admin/users/{uid}/note")
+def admin_user_note_get(uid: int, user: User = Depends(admin_user),
+                        db: Session = Depends(db_session)):
+    row = db.get(AppSetting, f"admin_note:{uid}")
+    return {"note": (row.value if row else "") or ""}
+
+
+@router.post("/api/admin/users/{uid}/note")
+async def admin_user_note_set(uid: int, request: Request,
+                              user: User = Depends(admin_user),
+                              db: Session = Depends(db_session)):
+    """Заметка админа о клиенте. Хранится в app_settings, пишется в журнал."""
+    body = await request.json()
+    text = str(body.get("note") or "")[:8000]
+    row = db.get(AppSetting, f"admin_note:{uid}")
+    if row:
+        row.value = text
+    else:
+        db.add(AppSetting(key=f"admin_note:{uid}", value=text))
+    db.add(AdminAction(admin_id=user.id, user_id=uid, action="note",
+                       payload_json=json.dumps({"len": len(text)})))
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/api/admin/users/{uid}/actions")
 def admin_user_actions(uid: int, user: User = Depends(admin_user),
                        db: Session = Depends(db_session)):
@@ -787,6 +908,138 @@ def admin_stats(days: int = 30, user: User = Depends(admin_user),
         "storage": {"files": int(files_n or 0), "bytes": int(files_b or 0)},
         "channels": mailer.state(),
     }
+
+
+_DASH_CACHE: dict = {"at": 0.0, "light": None}
+
+
+@router.get("/api/admin/dashboard")
+async def admin_dashboard(user: User = Depends(admin_user),
+                          db: Session = Depends(db_session)):
+    """Живой дашборд Сводки: остатки провайдеров, генерации, экономика,
+    хозяйство и прогресс батча превью. Лёгкая внешняя часть (kie/шлюзы)
+    кешируется на 60 секунд — Сводку открывают часто."""
+    core = _core()
+    import asyncio
+    import shutil as _sh
+
+    # ── внешнее: кэш 60с ──
+    light = _DASH_CACHE["light"]
+    if not light or time.time() - _DASH_CACHE["at"] > 60:
+        async def _gw(url):
+            import httpx
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as c:
+                    r = await c.get(url)
+                return r.status_code < 500
+            except Exception:  # noqa: BLE001
+                return False
+        img_base = core.mediagen.IMAGE_GATEWAY_URL.rsplit("/generate", 1)[0]
+        kie, gw_img, gw_grok = await asyncio.gather(
+            core.mediagen.kie_credit(),
+            _gw(img_base + "/health"), _gw(core.mediagen.GROK_GATEWAY_URL + "/health"))
+        light = {"kie": kie, "gw_chatgpt": bool(gw_img), "gw_grok": bool(gw_grok)}
+        _DASH_CACHE.update(at=time.time(), light=light)
+
+    d1 = now() - timedelta(days=1)
+    d7 = now() - timedelta(days=7)
+
+    def _gen(kind, since):
+        return (db.query(func.count(PointEvent.id))
+                .filter(PointEvent.kind == kind, PointEvent.delta < 0,
+                        PointEvent.created_at >= since).scalar() or 0)
+    err24 = (db.query(func.count(Scene.id))
+             .filter(Scene.updated_at >= d1,
+                     or_(Scene.image_status == "error",
+                         Scene.video_status == "error")).scalar() or 0)
+    queued = (db.query(func.count(Scene.id))
+              .filter(or_(Scene.image_status.in_(("queued", "running")),
+                          Scene.video_status.in_(("queued", "running")))).scalar() or 0)
+
+    spent7 = (db.query(func.coalesce(func.sum(-PointEvent.delta), 0))
+              .filter(PointEvent.delta < 0, PointEvent.created_at >= d7).scalar() or 0)
+    top = (db.query(User.id, User.name, User.login, User.email,
+                    func.sum(-PointEvent.delta).label("sp"))
+           .join(PointEvent, PointEvent.user_id == User.id)
+           .filter(PointEvent.delta < 0, PointEvent.created_at >= d7)
+           .group_by(User.id).order_by(func.sum(-PointEvent.delta).desc())
+           .limit(5).all())
+    users_total = db.query(func.count(User.id)).scalar() or 0
+    saved = (db.query(func.count(User.id))
+             .filter(or_(User.email != "", User.tg_id != "")).scalar() or 0)
+
+    files_n, files_b = (db.query(func.count(FileOwner.filename),
+                                 func.coalesce(func.sum(FileOwner.size_bytes), 0))
+                        .filter(FileOwner.deleted_at.is_(None)).first() or (0, 0))
+    try:
+        du = _sh.disk_usage(core.UPLOAD_DIR)
+        disk = {"total": du.total, "used": du.used, "free": du.free}
+    except Exception:  # noqa: BLE001
+        disk = {}
+    from db import Character
+    chars_n = db.query(func.count(Character.id)).scalar() or 0
+    tracks_n = db.query(func.count(Track.id)).scalar() or 0
+    projects_n = db.query(func.count(Project.id)).scalar() or 0
+
+    # прогресс батча превью: сколько записей каждого слоя с превью / всего
+    previews = core._layer_previews()
+    def _cov(layer):
+        rows = prompts_library.layer_rows(layer)
+        have = sum(1 for r in rows
+                   if core._preview_entry(previews.get(f"{layer}:{r['key']}"))[0])
+        return {"have": have, "total": len(rows)}
+    coverage = {l: _cov(l) for l in prompts_library.LAYERS}
+    trends_total = db.query(func.count(core.TrendPreset.id)).scalar() or 0
+    trends_have = (db.query(func.count(core.TrendPreset.id))
+                   .filter(core.TrendPreset.poster_filename != "").scalar() or 0)
+    coverage["trends"] = {"have": trends_have, "total": trends_total}
+    mk = core._mockup_previews()
+    mk_rows = mockup_catalog.TEMPLATES if hasattr(mockup_catalog, "TEMPLATES") else []
+    coverage["mockups"] = {"have": len([1 for t in mk_rows if mk.get(t["id"])]),
+                           "total": len(mk_rows)}
+
+    return {
+        "providers": light,
+        "gen": {"frames_24h": _gen("frames", d1), "frames_7d": _gen("frames", d7),
+                "videos_24h": _gen("video", d1), "videos_7d": _gen("video", d7),
+                "errors_24h": err24, "queue": queued},
+        "economy": {"spent_7d": int(spent7),
+                    "top": [{"id": r[0], "name": r[1] or r[2] or r[3] or f"id{r[0]}",
+                             "spent": int(r[4] or 0)} for r in top],
+                    "users_total": users_total, "saved": saved},
+        "household": {"disk": disk, "files": int(files_n or 0),
+                      "bytes": int(files_b or 0), "characters": chars_n,
+                      "tracks": tracks_n, "projects": projects_n},
+        "previews": coverage,
+    }
+
+
+_PREV_BATCH = {"busy": False}
+
+
+@router.post("/api/admin/previews-batch")
+def admin_previews_batch(user: User = Depends(admin_user)):
+    """Догнать недостающие превью всех слоёв одним нажатием из Сводки.
+    Работает фоном (поток), второй запуск при живом первом отбивается."""
+    core = _core()
+    if _PREV_BATCH["busy"]:
+        return {"ok": False, "busy": True}
+    _PREV_BATCH["busy"] = True
+
+    def _run():
+        db2 = SessionLocal()
+        try:
+            for layer in prompts_library.LAYERS:
+                try:
+                    core.generate_layer_previews(db2, layer)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("батч превью %s: %s", layer, e)
+        finally:
+            db2.close()
+            _PREV_BATCH["busy"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "busy": False}
 
 
 @router.get("/api/admin/ledger/audit")
@@ -1694,6 +1947,7 @@ def admin_models(user: User = Depends(admin_user), db: Session = Depends(db_sess
         text.append(row)
     images = [{
         "id": eid, "title": spec["title"], "channel": spec["channel"],
+        "note": spec.get("note", ""),
         "live": eid in core.mediagen.image_engines_live(),
         "points": core.FRAME_COST.get(eid, 0),
         "usd": round(core.mediagen.image_engine_usd(eid), 4),
@@ -1702,14 +1956,37 @@ def admin_models(user: User = Depends(admin_user), db: Session = Depends(db_sess
     } for eid, spec in core.mediagen.IMAGE_ENGINES.items()]
     videos = [{
         "id": eid, "title": spec["title"], "family": spec["family"],
+        "note": spec.get("note", ""),
         "live": core.mediagen.video_engine_live(eid),
         "points": core.VIDEO_COST.get(eid, 0),
         "usd": round(core.mediagen.video_engine_usd(eid, core.SCENE_SEC), 4),
         "enabled": f"video:{eid}" not in off, "toggle_id": f"video:{eid}",
         **_st(eid),
     } for eid, spec in core.mediagen.VIDEO_ENGINES.items()]
+    # «Звук и голос»: те же тумблеры (_disabled_models, ключи audio:*).
+    import music as _music
+    import audio as _audio
+    kie_live = bool(getattr(_music, "KIE_KEY", ""))
+    eleven_live = bool(getattr(_audio, "ELEVEN_KEY", ""))
+    audio_rows = [
+        {"id": "suno", "title": "Suno (kie)", "channel": "kie",
+         "note": "Генерация треков целиком: бит+вокал по промпту. Музыкальная студия.",
+         "live": kie_live, "points": core.TEXT_COST.get("suno", 0), "usd": 0.08,
+         "enabled": "audio:suno" not in off, "toggle_id": "audio:suno",
+         **_st("suno")},
+        {"id": "vocal-removal", "title": "Suno стемы (kie)", "channel": "kie",
+         "note": "Разделение готового трека на вокал и минус — для клипов и караоке.",
+         "live": kie_live, "points": 0, "usd": 0.02,
+         "enabled": "audio:vocal-removal" not in off,
+         "toggle_id": "audio:vocal-removal", **_st("vocal-removal")},
+        {"id": "elevenlabs", "title": "ElevenLabs TTS", "channel": "elevenlabs",
+         "note": "Голоса персонажей и озвучка реплик; мультиязычная модель v2.",
+         "live": eleven_live, "points": 0, "usd": 0.03,
+         "enabled": "audio:elevenlabs" not in off,
+         "toggle_id": "audio:elevenlabs", **_st("elevenlabs")},
+    ]
     return {"text": text, "images": images, "videos": videos,
-            "point_usd": core.POINT_USD}
+            "audio": audio_rows, "point_usd": core.POINT_USD}
 
 
 @router.get("/api/admin/settings")
