@@ -42,7 +42,7 @@
 }
 .mus-word {
   font-family: var(--font-mono); font-size: 12px; font-weight: 800;
-  letter-spacing: .18em; text-transform: uppercase; margin-right: auto;
+  letter-spacing: .18em; text-transform: lowercase; margin-right: auto;
 }
 .mus-word b { font-weight: 800; }
 .mus-count {
@@ -66,7 +66,7 @@
    селектор по прямому потомку давал два разных заголовка в одной карточке. */
 .mus-card h3 {
   margin: 0 0 4px; font-family: var(--font-mono); font-size: 11px;
-  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .12em; text-transform: lowercase; color: var(--ink-muted);
 }
 .mus-engine h3 { margin-top: 4px; }
 .mus-sub { margin: 0 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--ink-muted); }
@@ -168,7 +168,7 @@
 /* Бейдж — капсула без клика. Не заливается ни огнём, ни золотом с белым. */
 .mus-tag {
   font-family: var(--font-mono); font-size: 10px; font-weight: 700;
-  letter-spacing: .05em; text-transform: uppercase; white-space: nowrap;
+  letter-spacing: .05em; text-transform: lowercase; white-space: nowrap;
   padding: 4px 9px; border-radius: 999px;
   border: 1.5px solid rgba(45, 33, 26, .35); background: var(--inset); color: var(--text);
 }
@@ -207,7 +207,7 @@
 .mus-tab {
   flex: none; padding: 6px 12px; border-radius: 999px;
   font-family: var(--font-mono); font-size: 11px; font-weight: 800;
-  letter-spacing: .06em; text-transform: uppercase;
+  letter-spacing: .06em; text-transform: lowercase;
   border: 1.5px solid #2d211a; background: var(--inset); box-shadow: 0 2px 0 #2d211a;
 }
 .mus-tab.on { color: var(--on-fire); background: var(--fire-ink); }
@@ -228,7 +228,7 @@
 .mus-num { padding: 8px 10px; border-radius: 12px; background: var(--inset); border: 1px solid rgba(45, 33, 26, .16); }
 .mus-num i {
   display: block; font-family: var(--font-mono); font-size: 9.5px; font-style: normal;
-  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 3px;
+  letter-spacing: .08em; text-transform: lowercase; color: var(--ink-muted); margin-bottom: 3px;
 }
 .mus-num b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
 .mus-num s { text-decoration: none; font-size: 11px; color: var(--ink-muted); margin-left: 3px; }
@@ -285,7 +285,7 @@
    Плейсхолдер её не заменяет: он исчезает при первом же вводе. */
 .mus-form label > span:first-child {
   display: block; font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .07em; text-transform: lowercase; color: var(--ink-muted);
   margin: 0 0 4px;
 }
 .mus-form .mus-match > span { font-family: inherit; font-size: 13px; text-transform: none; letter-spacing: normal; color: var(--text); margin: 0; }

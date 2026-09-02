@@ -159,7 +159,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-sec-head { max-width: 640px; margin-bottom: var(--s-8); }
 .ld-eyebrow {
   display: block; font-family: var(--font-mono); font-size: var(--fs-meta);
-  letter-spacing: var(--ls-caps); text-transform: uppercase;
+  letter-spacing: var(--ls-caps); text-transform: lowercase;
   color: var(--ink-muted); margin: 0 0 var(--s-2);
 }
 .ld-h2 {
@@ -183,7 +183,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-hero-actions { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-6); }
 .ld-hero-trust {
   margin: var(--s-4) 0 0; font-family: var(--font-mono); font-size: var(--fs-meta);
-  letter-spacing: var(--ls-caps); color: var(--ink-muted); text-transform: uppercase;
+  letter-spacing: var(--ls-caps); color: var(--ink-muted); text-transform: lowercase;
 }
 .ld-hero-more { margin: var(--s-3) 0 0; font-size: var(--fs-sm); }
 .ld-hero-more a { color: var(--accent-2-ink); text-underline-offset: 3px; }
@@ -191,7 +191,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-tag {
   display: inline-flex; align-items: center; gap: var(--s-2);
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--accent-ink);
+  text-transform: lowercase; color: var(--accent-ink);
   background: var(--accent-wash); border: var(--bw-hair) solid var(--accent-line);
   border-radius: 999px; padding: 5px var(--s-3);
 }
@@ -244,7 +244,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 }
 .ld-proof-cap b {
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--text); font-weight: 700;
+  text-transform: lowercase; color: var(--text); font-weight: 700;
 }
 
 /* ────────── как это работает ────────── */
@@ -265,7 +265,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-step p { margin: var(--s-2) 0 0; color: var(--ink-muted); }
 .ld-step .ld-step-meta {
   margin-top: var(--s-3); font-family: var(--font-mono);
-  font-size: var(--fs-meta); letter-spacing: var(--ls-caps); text-transform: uppercase;
+  font-size: var(--fs-meta); letter-spacing: var(--ls-caps); text-transform: lowercase;
 }
 .ld-shot {
   margin: 0; overflow: hidden; background: var(--surface-2);
@@ -285,7 +285,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-feat-tag {
   align-self: flex-start; margin-top: auto;
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--gold-ink);
+  text-transform: lowercase; color: var(--gold-ink);
   background: var(--gold-wash); border-radius: 999px; padding: 3px var(--s-2);
 }
 .ld-feat-wide { grid-column: span 2; flex-direction: row; align-items: center; gap: var(--s-4); }
@@ -335,14 +335,14 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-plan-badge {
   position: absolute; top: calc(-1 * var(--s-3)); right: var(--s-3);
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; font-weight: 700; color: #241a14;
+  text-transform: lowercase; font-weight: 700; color: #241a14;
   background: var(--fire-ink); border: none;
   border-radius: 999px; padding: 4px var(--s-3);
   box-shadow: var(--glow-cta);
 }
 .ld-plan-name {
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 700;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 700;
 }
 .ld-plan-price {
   font-family: var(--font-head); font-size: 30px; font-weight: 700;
@@ -366,7 +366,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .landing .ld-plan button { margin-top: auto; width: 100%; }
 .ld-plan-cur {
   margin-top: auto; text-align: center; font-family: var(--font-mono);
-  font-size: var(--fs-meta); letter-spacing: var(--ls-caps); text-transform: uppercase;
+  font-size: var(--fs-meta); letter-spacing: var(--ls-caps); text-transform: lowercase;
   color: var(--ink-muted); border: var(--bw-hair) dashed var(--line-strong);
   border-radius: var(--r-2); padding: var(--s-3) 0;
 }
@@ -428,12 +428,12 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-readout-price span { font-size: var(--fs-base); font-weight: 500; color: var(--ink-muted); }
 .ld-readout-points {
   font-family: var(--font-mono); font-size: var(--fs-sm); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .ld-readout ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-1); font-size: var(--fs-sm); }
 .ld-readout .ld-save-badge {
   align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-meta);
-  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--gold-ink);
+  letter-spacing: var(--ls-caps); text-transform: lowercase; color: var(--gold-ink);
   background: var(--gold-wash); border-radius: 999px; padding: 3px var(--s-2);
 }
 .ld-scale-note { margin: var(--s-4) 0 0; font-size: var(--fs-sm); color: var(--ink-muted); }
@@ -462,7 +462,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-plan-was s { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-muted); }
 .ld-plan-was .ld-save-badge {
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--gold-ink); background: var(--gold-wash);
+  text-transform: lowercase; color: var(--gold-ink); background: var(--gold-wash);
   border-radius: 999px; padding: 2px var(--s-2); white-space: nowrap;
 }
 
@@ -473,7 +473,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-vol li::before { content: "= "; color: var(--ink-muted); }
 .ld-vol-all { font-size: var(--fs-sm); }
 .ld-vol-all summary { cursor: pointer; color: var(--ink-muted); font-size: var(--fs-meta);
-  font-family: var(--font-mono); letter-spacing: var(--ls-caps); text-transform: uppercase; }
+  font-family: var(--font-mono); letter-spacing: var(--ls-caps); text-transform: lowercase; }
 .ld-vol-all summary:hover { color: var(--text); }
 .ld-vol-all .tw { overflow-x: auto; margin-top: var(--s-2); }
 .ld-vol-all table { border-collapse: collapse; width: 100%; font-size: var(--fs-meta); }
@@ -527,7 +527,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-foot-about p { margin: var(--s-3) 0 0; color: var(--ink-muted); font-size: var(--fs-sm); max-width: 34ch; }
 .ld-foot-col h4 {
   margin: 0 0 var(--s-3); font-family: var(--font-mono); font-size: var(--fs-meta);
-  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted); font-weight: 700;
+  letter-spacing: var(--ls-caps); text-transform: lowercase; color: var(--ink-muted); font-weight: 700;
 }
 .ld-foot-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-2); }
 .ld-foot-col a, .landing .ld-foot-col button {
@@ -543,7 +543,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
    вместе со всем остальным, а content из словаря не достать. */
 .ld-link-off em {
   font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--ls-caps); font-style: normal;
-  text-transform: uppercase; color: var(--gold-ink); background: var(--gold-wash);
+  text-transform: lowercase; color: var(--gold-ink); background: var(--gold-wash);
   border-radius: 999px; padding: 2px 6px;
 }
 .ld-foot-legal {
@@ -707,7 +707,7 @@ body:has(#welcome:not(.hidden)) {
 .ld-card-mark {
   position: absolute; top: var(--s-2); left: var(--s-2);
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-caps);
-  text-transform: uppercase; color: var(--gold-ink); background: var(--gold-wash);
+  text-transform: lowercase; color: var(--gold-ink); background: var(--gold-wash);
   border-radius: 999px; padding: 2px var(--s-2);
 }
 .ld-card-lock { left: auto; right: var(--s-2); color: var(--accent-ink); background: var(--accent-wash); }
@@ -737,7 +737,7 @@ body:has(#welcome:not(.hidden)) {
 }
 .ld-learn-level h3 {
   margin: 0 0 var(--s-2); font-family: var(--font-mono); font-size: var(--fs-meta);
-  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: var(--ls-caps); text-transform: lowercase; color: var(--ink-muted);
 }
 .ld-learn-level ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .ld-learn-level li { display: flex; align-items: center; gap: var(--s-1);
@@ -768,7 +768,7 @@ body:has(#welcome:not(.hidden)) {
 .ld-lesson th, .ld-lesson td { padding: var(--s-1) var(--s-2); text-align: left;
   border-bottom: var(--bw-hair) solid var(--line); white-space: nowrap; }
 .ld-lesson th { font-family: var(--font-mono); font-size: var(--fs-meta);
-  letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--ink-muted); }
+  letter-spacing: var(--ls-caps); text-transform: lowercase; color: var(--ink-muted); }
 .ld-learn-gate {
   margin-top: var(--s-4); padding: var(--s-4); border-radius: var(--r-3);
   background: var(--accent-wash); border: var(--bw-hair) solid var(--edge);
