@@ -998,19 +998,128 @@
           <h2>${esc(generate)}</h2>
           <p>${esc(lang() === "ru" ? "загрузите фотографию — остальное уже настроено в тренде." : "upload a photo — everything else is already set up in the trend.")}</p>
         </div>
-        <label class="trend-card-action trend-detail-action">
+        <button type="button" class="trend-card-action trend-detail-action">
           <span>${esc(generate)}</span>
-          <input type="file" accept="image/*" hidden />
-        </label>
-        <div class="trend-state hidden"></div>
+        </button>
       </section>
     </section>`;
     $(".trend-detail-back", page).addEventListener("click", () => {
       history.pushState({}, "", "/trends");
       openTrends();
     });
-    const input = $(".trend-detail-action input", page);
-    input.addEventListener("change", () => trendMake($(".trend-detail", page), t, input));
+    $(".trend-detail-action", page).addEventListener("click", () => goToTrendEdit(t));
+  }
+
+  function goToTrendEdit(t) {
+    history.pushState({}, "", `/trends?trend=${encodeURIComponent(t.id)}&edit=1`);
+    openTrends();
+  }
+
+  /* Редактор тренда: слева фото + формат/качество + «сгенерировать», справа —
+     вся история генераций пользователя. История — не украшение: человек
+     возвращается за старыми роликами, и они должны ждать его здесь. */
+  function showTrendEditor(page, t) {
+    const ru = lang() === "ru";
+    const displayTitle = trendTitle(t.title);
+    page.innerHTML = `<section class="trend-editor">
+      <button type="button" class="trend-detail-back">← ${esc(displayTitle)}</button>
+      <div class="trend-editor-cols">
+        <div class="trend-editor-main">
+          <h1>${esc(displayTitle)}</h1>
+          <label class="trend-upload">
+            <input type="file" accept="image/*" hidden />
+            <span class="trend-upload-hint">${ru ? "загрузите фотографию" : "upload a photo"}</span>
+            <img class="trend-upload-preview hidden" alt="" />
+          </label>
+          <div class="trend-editor-opts">
+            <label>${ru ? "формат" : "format"}
+              <select class="trend-opt-aspect">
+                <option value="9:16">9:16</option>
+                <option value="1:1">1:1</option>
+                <option value="16:9">16:9</option>
+              </select></label>
+            <label>${ru ? "качество" : "quality"}
+              <select class="trend-opt-res">
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select></label>
+          </div>
+          <button type="button" class="trend-card-action trend-editor-go" disabled>
+            <span>${ru ? "сгенерировать" : "generate"}</span>
+          </button>
+          <div class="trend-state hidden"></div>
+        </div>
+        <aside class="trend-history">
+          <h2>${ru ? "мои генерации" : "my generations"}</h2>
+          <div class="trend-history-list"><p class="muted">${esc(T("common.loading", "загружаю…"))}</p></div>
+        </aside>
+      </div>
+    </section>`;
+    $(".trend-detail-back", page).addEventListener("click", () => goToTrend(t));
+    const input = $(".trend-upload input", page);
+    const preview = $(".trend-upload-preview", page);
+    const go = $(".trend-editor-go", page);
+    input.addEventListener("change", () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      preview.src = URL.createObjectURL(f);
+      preview.classList.remove("hidden");
+      $(".trend-upload-hint", page).classList.add("hidden");
+      go.disabled = false;
+    });
+    go.addEventListener("click", () => {
+      if (!input.files || !input.files.length) return;
+      trendMake($(".trend-editor-main", page), t, input, {
+        aspect: $(".trend-opt-aspect", page).value,
+        resolution: $(".trend-opt-res", page).value,
+        onDone: () => loadTrendHistory(page),
+      });
+      loadTrendHistory(page);
+    });
+    loadTrendHistory(page);
+  }
+
+  async function loadTrendHistory(page) {
+    const box = $(".trend-history-list", page);
+    if (!box) return;
+    let d;
+    try { d = await api("/api/trends/jobs"); }
+    catch (e) { box.innerHTML = `<p class="muted">${lang() === "ru" ? "войдите, чтобы видеть свои генерации" : "sign in to see your generations"}</p>`; return; }
+    const jobs = (d && d.jobs) || [];
+    if (!jobs.length) {
+      box.innerHTML = `<p class="muted">${lang() === "ru" ? "здесь появятся ваши ролики" : "your videos will appear here"}</p>`;
+      return;
+    }
+    box.innerHTML = jobs.map((j) => `<div class="trend-history-item" data-id="${j.id}">
+      ${j.video_url
+        ? `<video src="${j.video_url}" muted loop playsinline preload="metadata"></video>`
+        : j.frame_url ? `<img src="${j.frame_url}" alt="" loading="lazy" />`
+        : `<div class="trend-history-wait"></div>`}
+      <div class="trend-history-meta">
+        <b>${esc(trendTitle(j.title || ""))}</b>
+        <span class="trend-history-status" data-st="${esc(j.status)}">${esc(trendJobStatusLabel(j.status))}</span>
+      </div>
+    </div>`).join("");
+    $$("video", box).forEach((v) => {
+      v.addEventListener("mouseenter", () => v.play().catch(() => {}));
+      v.addEventListener("mouseleave", () => v.pause());
+    });
+    // Живые задачи дополняем опросом: правая колонка сама доедет до «готово».
+    if (jobs.some((j) => j.status === "queued" || j.status === "frame" || j.status === "video")) {
+      clearTimeout(loadTrendHistory._t);
+      loadTrendHistory._t = setTimeout(() => loadTrendHistory(page), 8000);
+    }
+  }
+
+  function trendJobStatusLabel(st) {
+    const ru = lang() === "ru";
+    return ({
+      queued: ru ? "в очереди" : "queued",
+      frame: ru ? "рисую кадр" : "drawing frame",
+      video: ru ? "оживляю" : "animating",
+      done: ru ? "готово" : "done",
+      error: ru ? "не получилось" : "failed",
+    })[st] || st;
   }
 
   function goToTrend(t) {
@@ -1092,8 +1201,11 @@
       const presets = d.presets || [];
       // Диплинк на страницу одного тренда (/trends?trend=<id>) — детальные
       // страницы Ани: описание, примеры и одно ясное действие.
-      const wantId = new URLSearchParams(location.search).get("trend");
+      const params = new URLSearchParams(location.search);
+      const wantId = params.get("trend");
       const want = wantId && presets.find((x) => String(x.id) === String(wantId));
+      // Третий шаг пути: /trends?trend=<id>&edit=1 — окно генерации.
+      if (want && params.get("edit")) { showTrendEditor(page, want); return; }
       if (want) { showTrendDetail(page, want); return; }
       if (!presets.length) {
         const empty = document.createElement("p");
@@ -1109,32 +1221,28 @@
         card.className = `trend-card trend-tile-${index % 12}`;
         card.dataset.title = t.title;
         const displayTitle = trendTitle(t.title);
+        // Анимация живёт на карточке сама (autoplay), а имя и кнопка
+        // «сгенерировать» проявляются только под курсором: витрина — это
+        // движущиеся ролики, подписи не должны спорить с ними за внимание.
         card.innerHTML = `
           ${t.sample_url
-            ? `<video src="${t.sample_url}" muted loop playsinline preload="metadata"
+            ? `<video src="${t.sample_url}" muted loop autoplay playsinline preload="metadata"
                  ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
             : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
             : trendVisual(t.title, index, trendMeta(t))}
-          <div class="trend-card-name">${esc(displayTitle)}</div>
-          <label class="trend-card-action">
-            <span>${lang() === "ru" ? "Сгенерить" : "Generate"}</span>
-            <input type="file" accept="image/*" hidden />
-          </label>
-          <button type="button" class="trend-info" title="${lang() === "ru" ? "страница тренда" : "trend page"}">ⓘ</button>
+          <div class="trend-card-hover">
+            <div class="trend-card-name">${esc(displayTitle)}</div>
+            <button type="button" class="trend-card-action">
+              <span>${lang() === "ru" ? "сгенерировать" : "generate"}</span>
+            </button>
+          </div>
           <div class="trend-state hidden"></div>`;
         const vid = card.querySelector("video");
-        if (vid) {
-          card.addEventListener("mouseenter", () => vid.play().catch(() => {}));
-          card.addEventListener("mouseleave", () => vid.pause());
-        }
-        const inp = card.querySelector("input");
-        inp.addEventListener("change", () => trendMake(card, t, inp));
-        const info = card.querySelector(".trend-info");
-        if (info) info.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          closeTrendsPage(false);
-          if (window.QlolPromptPage) window.QlolPromptPage.open("trend", String(t.id));
+        if (vid) vid.play().catch(() => {});
+        card.addEventListener("click", () => goToTrend(t));
+        card.tabIndex = 0;
+        card.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); goToTrend(t); }
         });
         grid.appendChild(card);
       });
@@ -1158,7 +1266,7 @@
     })();
   }
 
-  async function trendMake(card, t, inp) {
+  async function trendMake(card, t, inp, opts) {
     const f = inp.files && inp.files[0];
     if (!f) return;
     if (!d0Authorized()) {
@@ -1172,6 +1280,9 @@
     state.textContent = T("trends.uploading", "загружаю фото…");
     const fd = new FormData();
     fd.append("photo", f);
+    // Настройки из редактора: формат и качество этой генерации.
+    if (opts && opts.aspect) fd.append("aspect", opts.aspect);
+    if (opts && opts.resolution) fd.append("resolution", opts.resolution);
     const styleEl = card.querySelector(".earn-style");
     if (styleEl && styleEl.value.trim()) fd.append("style", styleEl.value.trim());
     let job;
@@ -1210,6 +1321,7 @@
             b.textContent = T("trends.shared", "Ссылка скопирована ✓ — постись!");
           } catch (e) { b.textContent = String(e.message || e); }
         };
+        if (opts && typeof opts.onDone === "function") opts.onDone();
         return;
       }
       state.textContent = st.status === "video"

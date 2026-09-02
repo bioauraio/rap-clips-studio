@@ -2276,9 +2276,17 @@ async def make_trend(preset_id: int, photo: UploadFile, request: Request = None,
     # а партнёрский ролик может быть каким угодно, кроме одного — продукт в
     # кадре не меняется.
     user_style = ""
+    form = await request.form() if hasattr(request, "form") else {}
     if t.kind == "earn":
-        form = await request.form() if hasattr(request, "form") else {}
         user_style = str(form.get("style") or "")[:1000]
+    # Настройки из редактора тренда: формат и качество этой генерации.
+    # Белые списки жёсткие — всё остальное молча падает в значения пресета.
+    aspect = str(form.get("aspect") or "")
+    if aspect not in ("9:16", "1:1", "16:9"):
+        aspect = ""
+    resolution = str(form.get("resolution") or "")
+    if resolution not in ("720p", "480p"):
+        resolution = ""
     ext = os.path.splitext(photo.filename or "")[1].lower() or ".jpg"
     fname = f"trend_{uuid.uuid4().hex}{ext}"
     with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
@@ -2287,12 +2295,35 @@ async def make_trend(preset_id: int, photo: UploadFile, request: Request = None,
     cost = _trend_dict(t)["cost_points"]
     _charge(db, user, cost, f"тренд «{t.title}»", kind="trend", engine=t.video_engine or "")
     job = TrendJob(preset_id=t.id, user_id=user.id, photo_filename=fname,
-                   user_style=user_style, charged_points=cost)
+                   user_style=user_style, charged_points=cost,
+                   aspect=aspect, resolution=resolution)
     db.add(job)
     db.commit()
     db.refresh(job)
     _spawn_gen(user, _run_trend_job, job.id, kind="video")
     return {"ok": True, "job_id": job.id, "charged": cost}
+
+
+@app.get("/api/trends/jobs")
+def trend_jobs_history(user: User = Depends(current_user),
+                       db: Session = Depends(db_session)):
+    """История генераций трендов ЭТОГО пользователя, свежие сверху.
+
+    Правая колонка редактора тренда: человек видит все свои ролики и
+    возвращается к ним. Отдаём и активные задачи — редактор их дополлит."""
+    rows = (db.query(TrendJob).filter(TrendJob.user_id == user.id)
+            .order_by(TrendJob.id.desc()).limit(100).all())
+    preset_ids = {j.preset_id for j in rows}
+    titles = {p.id: p.title for p in
+              db.query(TrendPreset).filter(TrendPreset.id.in_(preset_ids)).all()} if preset_ids else {}
+    return {"jobs": [{
+        "id": j.id, "preset_id": j.preset_id,
+        "title": titles.get(j.preset_id, ""),
+        "status": j.status, "error": j.error,
+        "frame_url": f"/api/media/{j.frame_filename}" if j.frame_filename else "",
+        "video_url": f"/api/media/{j.video_filename}" if j.video_filename else "",
+        "created_at": j.created_at.isoformat() if j.created_at else "",
+    } for j in rows]}
 
 
 @app.get("/api/trends/jobs/{job_id}")
@@ -2337,9 +2368,14 @@ def _run_trend_job(job_id: int) -> None:
         prompt += ("\n\nThe first reference photo is the REAL person to feature: "
                    "reproduce their exact face, hair and build. Do not beautify "
                    "or restyle them.")
+        # Формат и качество: выбор из редактора сильнее пресета.
+        aspect = (getattr(job, "aspect", "") or t.aspect or "9:16")
+        engine = t.video_engine or "seedance-2-mini"
+        if getattr(job, "resolution", "") == "480p" and engine == "seedance-2-5":
+            engine = "seedance-2-5-480"
         data, mime = asyncio.run(mediagen.generate_image(
             prompt, reference_path=refs[0], reference_paths=refs,
-            engine=t.image_engine or "", aspect=t.aspect or "9:16"))
+            engine=t.image_engine or "", aspect=aspect))
         job.frame_filename = _save_image(data, mime)
         _reg_file(db, job.frame_filename, job.user_id, kind="frames")
         job.status = "video"
@@ -2349,8 +2385,8 @@ def _run_trend_job(job_id: int) -> None:
             prompt=t.motion_prompt or "subtle natural motion",
             first_path=os.path.join(UPLOAD_DIR, job.frame_filename),
             last_path=None, duration_sec=t.duration_sec or 6,
-            provider="seedance", engine=t.video_engine or "seedance-2-mini",
-            aspect=t.aspect or "9:16"))
+            provider="seedance", engine=engine,
+            aspect=aspect))
         _reg_file(db, job.video_filename, job.user_id, kind="video")
         job.status = "done"
         db.commit()

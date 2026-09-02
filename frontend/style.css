@@ -97,7 +97,7 @@ body {
 .login-box { display: flex; flex-direction: column; gap: 14px; width: 300px; }
 .login-box h1 {
   font-family: var(--font-mono); font-size: 17px; letter-spacing: .28em;
-  text-transform: uppercase; text-align: center; margin-bottom: 10px;
+  text-transform: lowercase; text-align: center; margin-bottom: 10px;
   color: var(--text);
 }
 .login-box input {
@@ -172,7 +172,7 @@ body {
 }
 .welcome-title {
   font-family: var(--font-mono); font-size: 34px; letter-spacing: .22em;
-  text-transform: uppercase; margin: 0;
+  text-transform: lowercase; margin: 0;
   color: var(--text);
 }
 .welcome-sub { margin: 0; font-size: 15px; font-weight: 700; color: var(--text); }
@@ -199,7 +199,7 @@ body {
 .welcome-guide > summary {
   cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px;
   font-family: var(--font-mono); font-size: 11.5px; font-weight: 800;
-  letter-spacing: .22em; text-transform: uppercase; color: var(--accent-2-ink);
+  letter-spacing: .22em; text-transform: lowercase; color: var(--accent-2-ink);
 }
 .welcome-guide > summary::-webkit-details-marker { display: none; }
 .welcome-guide > summary::after {
@@ -326,10 +326,10 @@ body {
    акцент действия, а не декор каждого блока). */
 .panel h2 {
   font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .22em;
-  text-transform: uppercase; color: var(--accent-2-ink); margin: 0 0 14px;
+  text-transform: lowercase; color: var(--accent-2-ink); margin: 0 0 14px;
 }
 
-label { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-muted); margin: 8px 0 4px; }
+label { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em; text-transform: lowercase; color: var(--ink-muted); margin: 8px 0 4px; }
 textarea, input[type=text], input[type=number], input:not([type]), select {
   width: 100%; padding: 8px 10px; border-radius: 11px; border: 1.5px solid rgba(var(--ink-rgb),.14);
   background: var(--inset); color: var(--text); font-family: inherit; font-size: 13.5px;
@@ -524,7 +524,7 @@ button.primary:disabled {
 .final-scenes { width: 100%; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
 .final-scenes > summary {
   cursor: pointer; font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .1em; text-transform: lowercase; color: var(--ink-muted);
   padding: 3px 0; user-select: none;
 }
 .final-scenes > summary:hover { color: var(--accent-2-ink); }
@@ -542,13 +542,13 @@ button.primary:disabled {
 .add-track { margin-top: 12px; }
 .add-track summary {
   cursor: pointer; color: var(--accent-2-ink); font-weight: 700; padding: 8px 0;
-  font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase;
+  font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .06em; text-transform: lowercase;
 }
 .track-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 
 /* ────────── лист раскадровки / клип ────────── */
 .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
-.media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
+.media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: lowercase; color: var(--ink-muted); margin-bottom: 8px; }
 .storyboard-box, .media-box {
   background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.18); border-radius: 20px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
@@ -749,7 +749,7 @@ button.primary:disabled {
 .char-chip:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
 .s-prompt-details summary, .style-desc summary {
   cursor: pointer; font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .1em; text-transform: lowercase; color: var(--ink-muted);
   padding: 3px 0; user-select: none;
 }
 .s-prompt-details summary:hover, .style-desc summary:hover { color: var(--accent-2-ink); }
@@ -853,7 +853,7 @@ button.primary:disabled {
 .cc-meta {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-family: var(--font-mono); font-size: 9px; font-weight: 700;
-  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .08em; text-transform: lowercase; color: var(--ink-muted);
 }
 .cc-main {
   color: var(--accent-ink); padding: 2px 8px; border-radius: 999px;
@@ -884,7 +884,7 @@ button.primary:disabled {
 .attrs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .attrs-title {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .attr-add { padding: 3px 9px; font-size: 11px; border-radius: 999px; box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12); flex: none; }
 .attr-add:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
@@ -924,7 +924,7 @@ button.primary:disabled {
 .project-select { width: auto; max-width: 260px; font-weight: 700; }
 .kind-badge {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--accent-ink); padding: 5px 10px; border-radius: 999px;
+  text-transform: lowercase; color: var(--accent-ink); padding: 5px 10px; border-radius: 999px;
   background: var(--accent-wash);
   border: 1px solid rgba(var(--ink-rgb),.12); box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12);
 }
@@ -990,14 +990,14 @@ button.primary:disabled {
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .modal-title {
   font-family: var(--font-mono); font-size: 12px; font-weight: 800;
-  letter-spacing: .2em; text-transform: uppercase; color: var(--accent-2-ink);
+  letter-spacing: .2em; text-transform: lowercase; color: var(--accent-2-ink);
 }
 .modal-close { font-size: 15px; }
 
 .modal-tabs { display: flex; gap: 8px; margin-top: 12px; }
 .modal-tab {
   flex: 1; padding: 9px 12px; border-radius: 999px;
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: lowercase;
   background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.12); box-shadow: 0 1px 2px rgba(var(--ink-rgb),.14);
 }
 .modal-tab.on { color: var(--on-fire); background: var(--fire-ink); }
@@ -1208,7 +1208,7 @@ textarea { transition: min-height .15s; }
   max-height: 88vh; overflow-y: auto; padding: 16px 20px 20px;
 }
 .guide-modal-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -16px; background: var(--panel); padding: 4px 0 8px; }
-.guide-modal-title { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--accent-2-ink); font-weight: 800; }
+.guide-modal-title { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .2em; text-transform: lowercase; color: var(--accent-2-ink); font-weight: 800; }
 @media (max-width: 700px) {
   .wl-grid { grid-template-columns: 1fr; gap: 8px; }
   .welcome-title { font-size: 23px; }
@@ -1293,7 +1293,7 @@ textarea { transition: min-height .15s; }
 .acc-stat b { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
 .acc-stat span {
   font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .acc-stat-hi {
   background: linear-gradient(180deg, var(--gold), var(--accent-2)); color: var(--text);
@@ -1326,7 +1326,7 @@ textarea { transition: min-height .15s; }
 .acc-plan button { margin-top: auto; width: 100%; }
 .acc-plan-cur {
   margin-top: auto; text-align: center; font-family: var(--font-mono); font-size: 9.5px;
-  letter-spacing: .12em; text-transform: uppercase; font-weight: 800; color: var(--accent-ink);
+  letter-spacing: .12em; text-transform: lowercase; font-weight: 800; color: var(--accent-ink);
 }
 .acc-plan-cur.muted { color: var(--ink-muted); }
 
@@ -1334,7 +1334,7 @@ textarea { transition: min-height .15s; }
 .acc-copy-row { display: flex; align-items: center; gap: 8px; }
 .acc-code {
   font-family: var(--font-mono); font-size: 13.5px; font-weight: 800;
-  letter-spacing: .14em; text-transform: uppercase; color: var(--text);
+  letter-spacing: .14em; text-transform: lowercase; color: var(--text);
   padding: 7px 12px; border-radius: 20px; border: 1px solid rgba(var(--ink-rgb),.12);
   background: linear-gradient(90deg, var(--gold), var(--accent-2));
   box-shadow: 0 1px 2px rgba(var(--ink-rgb),.14);
@@ -1365,7 +1365,7 @@ textarea { transition: min-height .15s; }
 }
 .acc-payout b { font-family: var(--font-mono); font-size: 13px; }
 .acc-badge {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: lowercase;
   font-weight: 800; color: var(--ink-muted); padding: 3px 8px; border-radius: 999px;
   border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset);
 }
@@ -1642,7 +1642,7 @@ button.primary:hover:not(:disabled) {
 .char-add-plus { font-size: 30px; font-weight: 800; line-height: 1; }
 .char-add-cap {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em;
-  text-transform: uppercase; text-align: center; padding: 0 8px;
+  text-transform: lowercase; text-align: center; padding: 0 8px;
 }
 
 /* ────────── карточка персонажа: фото и развороты разными рядами ──────────
@@ -1654,7 +1654,7 @@ button.primary:hover:not(:disabled) {
 }
 .char-row-title {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--text);
+  text-transform: lowercase; color: var(--text);
 }
 .char-row-hint { font-size: 11.5px; line-height: 1.35; flex: 1; min-width: 160px; }
 .char-models { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
@@ -1670,7 +1670,7 @@ button.primary:hover:not(:disabled) {
 .char-photo-badge {
   position: absolute; top: 3px; left: 3px; padding: 1px 6px; border-radius: 6px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--accent-ink); background: var(--inset);
+  text-transform: lowercase; color: var(--accent-ink); background: var(--inset);
   border: 1px solid rgba(var(--ink-rgb),.12);
 }
 /* Кнопка лежит ПОВЕРХ картинки — фон нужен непрозрачный, иначе оранжевый
@@ -1721,7 +1721,7 @@ button.primary:hover:not(:disabled) {
 .chat-list-empty { font-size: 12.5px; margin: 8px 2px; }
 .chat-list-group {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted); margin: 10px 2px 2px;
+  text-transform: lowercase; color: var(--ink-muted); margin: 10px 2px 2px;
 }
 .chat-row {
   display: flex; align-items: center; gap: 4px; border-radius: 14px; padding: 2px 4px;
@@ -1784,7 +1784,7 @@ button.primary:hover:not(:disabled) {
 .chat-failed { border-color: var(--danger); box-shadow: 0 3px 0 #f3d7d7, 0 3px 0 2px var(--danger); }
 .chat-msg-head {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ink-muted); margin-bottom: 6px;
+  text-transform: lowercase; color: var(--ink-muted); margin-bottom: 6px;
 }
 .chat-msg-text { font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 /* Вертикальный кадр 9:16 при ширине 320 вырастает до 570 и выпихивает
@@ -1884,7 +1884,7 @@ button.primary:hover:not(:disabled) {
 .mk-acc { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px; }
 .mk-acc > summary {
   display: flex; align-items: center; gap: 8px; cursor: pointer;
-  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  font-size: 11px; letter-spacing: .06em; text-transform: lowercase;
   color: var(--ink-muted); list-style: none;
 }
 .mk-acc > summary::-webkit-details-marker { display: none; }
@@ -1970,7 +1970,7 @@ button.primary:hover:not(:disabled) {
 .mk-proj-group {
   display: flex; align-items: center; gap: 6px; margin: 10px 2px 4px;
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .mk-proj {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
@@ -2109,7 +2109,7 @@ button.primary:hover:not(:disabled) {
    шрифтами и наезжали друг на друга. */
 .mk-group-title, .mk-acc > summary {
   font-family: var(--font-mono); font-size: 10px; font-weight: 800;
-  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .1em; text-transform: lowercase; color: var(--ink-muted);
 }
 .mk-group { gap: 8px; }
 .mk-group-head { display: flex; align-items: center; justify-content: space-between; min-height: 18px; }
@@ -2118,7 +2118,7 @@ button.primary:hover:not(:disabled) {
 .mk-group-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .mk-group-title {
   flex: 1; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .mk-group-reset {
   font-size: 10.5px; padding: 1px 6px; box-shadow: none; color: var(--accent-2-ink);
@@ -2392,7 +2392,7 @@ button.primary:hover:not(:disabled) {
   border: 1px solid rgba(var(--ink-rgb),.12); background: var(--inset);
   box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12);
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
-  letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+  letter-spacing: .06em; text-transform: lowercase; white-space: nowrap;
 }
 .mode-badge .mode-ico { font-size: 13px; letter-spacing: 0; }
 @media (max-width: 700px) { .mode-badge { height: 30px; padding: 0 10px; } }
@@ -2412,7 +2412,7 @@ button.primary:hover:not(:disabled) {
 }
 .t-engines-head b {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 800;
 }
 .t-engines-head .eng-hint { font-size: 11.5px; color: var(--ink-muted); }
 /* Выбор движка в карточке кадра. Был лесенкой по правому краю: чипы разной
@@ -2425,7 +2425,7 @@ button.primary:hover:not(:disabled) {
 .eng-row > label {
   margin: 0; min-width: 0; flex: none;
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: lowercase; color: var(--muted);
 }
 .eng-tabs {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
@@ -2546,7 +2546,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .season-head {
   display: flex; align-items: center; gap: 10px; margin: 18px 0 10px;
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 800;
 }
 .season-head::after {
   content: ""; flex: 1; height: 2px; border-radius: 2px;
@@ -2561,7 +2561,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 /* Акт кадра — метка в углу карточки сцены. */
 .s-act {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .s-speaker { font-size: 11px; font-weight: 700; color: var(--accent-2-ink); }
 
@@ -2582,7 +2582,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .dash-unit {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 800;
 }
 .dash-hero-lines { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
 .dash-line { font-size: 13px; color: var(--ink-muted); }
@@ -2599,7 +2599,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .dash-card > span:first-child {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 800;
 }
 .dash-card b { font-family: var(--font-head); font-size: 19px; line-height: 1.1; }
 .dash-card .dash-sub { font-size: 12px; color: var(--ink-muted); }
@@ -2651,7 +2651,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .dash-ev:last-child { border-bottom: none; }
 .dash-ev .dash-ev-kind {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--ink-muted); min-width: 74px; flex: none;
+  text-transform: lowercase; color: var(--ink-muted); min-width: 74px; flex: none;
 }
 .dash-ev .dash-ev-what {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2794,7 +2794,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .lim-card > span:first-child {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .lim-card b { font-family: var(--font-head); font-size: 18px; line-height: 1.1; }
 .lim-card .lim-sub { font-size: 11.5px; color: var(--ink-muted); }
@@ -3013,7 +3013,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   height: 100%; padding: 0 10px; border-radius: 999px;
   border: 0; background: transparent; color: var(--text);
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
-  letter-spacing: .05em; text-transform: uppercase; white-space: nowrap;
+  letter-spacing: .05em; text-transform: lowercase; white-space: nowrap;
   cursor: pointer; line-height: 1;
 }
 .mode-seg-btn:hover { background: rgba(255, 122, 41, .12); }
@@ -3085,7 +3085,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .mode-sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .mode-sheet-head b {
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .mode-sheet-x {
   margin-left: auto; padding: 2px 8px; border-radius: 999px;
@@ -3111,14 +3111,14 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .mode-card-ttl b { font-size: 16px; }
 .mode-card-badge {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
   padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border-bright);
 }
 .mode-card-note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text); }
 .mode-card-soon { margin: 0; font-size: 12px; color: var(--ink-muted); }
 .mode-card-h {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ink-muted); margin-top: 4px;
+  text-transform: lowercase; color: var(--ink-muted); margin-top: 4px;
 }
 .mode-card-fact { display: flex; gap: 8px; font-size: 12px; }
 .mc-fact-k { color: var(--ink-muted); min-width: 96px; flex: none; }
@@ -3154,7 +3154,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 .ms-h, .ms-fold > summary {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 800;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 800;
   margin: 0 0 8px;
 }
 .ms-fold > summary { cursor: pointer; margin: 0; }
@@ -3326,7 +3326,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 .ms-preset-mark {
   flex: none; font-style: normal;
   font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .08em;
-  text-transform: uppercase; opacity: .6; white-space: nowrap;
+  text-transform: lowercase; opacity: .6; white-space: nowrap;
 }
 /* Каркас подсказывает стиль: styles_fit наконец работает в интерфейсе. */
 .style-chip.ms-fit:not(.on) { border-color: var(--gold); }
@@ -3542,7 +3542,7 @@ details.s-engine-override > summary,
 }
 /* «ПРОМПТ» остаётся капсом-ярлыком — он открывает поле, а не переключает
    настройку, и по нему глаз ищет вход в текст. */
-.s-prompt-details summary { text-transform: uppercase; letter-spacing: .1em; }
+.s-prompt-details summary { text-transform: lowercase; letter-spacing: .1em; }
 /* Разделитель между строкой движка и ссылкой «поменять»: тонкая пунктирная
    черта вместо пустоты — видно, что это одна группа. */
 details.s-engine-override { border-top: 1px solid rgba(var(--ink-rgb),.14); padding-top: 3px; }
@@ -3602,7 +3602,7 @@ details.s-engine-override { border-top: 1px solid rgba(var(--ink-rgb),.14); padd
 }
 .dash-card .dash-card-cap {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: lowercase; color: var(--muted);
 }
 /* Крупные числа не переносим и сжимаем на узких экранах: миллиард в четыре
    строки — это не «крупно», это сломанная вёрстка. */
@@ -3663,7 +3663,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .ms-row > label {
   flex: none; margin: 0; padding-top: 5px;
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: lowercase; color: var(--muted);
 }
 
 /* ────────── режимы: ТЕКСТОМ, наверху ──────────
@@ -3802,7 +3802,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
   border: 1px solid rgba(var(--ink-rgb),.12); background: var(--card);
   box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12); white-space: nowrap;
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 800;
-  letter-spacing: .05em; text-transform: uppercase;
+  letter-spacing: .05em; text-transform: lowercase;
 }
 .topbar .mode-switch:hover { background: #fff; }
 .topbar .mode-switch:active { transform: translateY(1px); box-shadow: none; }
@@ -3921,7 +3921,7 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 .mode-seg-group {
   align-self: center; flex: none; padding: 0 6px;
   font-family: var(--font-mono); font-size: 9px; font-weight: 800;
-  letter-spacing: .09em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .09em; text-transform: lowercase; color: var(--ink-muted);
   border-left: 1px solid rgba(var(--ink-rgb), .10); margin-left: 4px;
 }
 
@@ -4228,7 +4228,7 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   box-shadow: 0 8px 28px rgba(var(--ink-rgb), .06);
 }
 .pane-head {
-  font-family: var(--font-mono); text-transform: uppercase;
+  font-family: var(--font-mono); text-transform: lowercase;
   letter-spacing: .14em; font-size: 12px; color: var(--accent-ink);
   margin: 0 0 12px;
 }
@@ -4496,7 +4496,7 @@ body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
 .cine-card { gap: 8px; }
 .cine-title {
   font-family: var(--font-mono); font-size: 10px; font-weight: 800;
-  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-muted);
+  letter-spacing: .12em; text-transform: lowercase; color: var(--ink-muted);
 }
 .cine-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cine-wrap { position: relative; flex: 1 1 260px; min-width: 0; }
@@ -4755,7 +4755,7 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
 
 /* Карусели заготовок. */
 .mk-show { display: flex; flex-direction: column; gap: 10px; }
-.mk-lane small { display: block; margin-bottom: 5px; color: var(--ink-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; font-family: var(--font-mono); }
+.mk-lane small { display: block; margin-bottom: 5px; color: var(--ink-muted); font-size: 10px; letter-spacing: .08em; text-transform: lowercase; font-family: var(--font-mono); }
 .mk-lane-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
 .mk-lane-row::-webkit-scrollbar { display: none; }
 .mk-lane-row button {

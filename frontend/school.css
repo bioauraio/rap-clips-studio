@@ -211,7 +211,7 @@
   padding: 14px; background: var(--panel);
   border: 1px solid var(--border); border-radius: 20px; corner-shape: squircle;
 }
-.sch-side h2 { margin: 0 0 4px; font-size: 13px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .06em; }
+.sch-side h2 { margin: 0 0 4px; font-size: 13px; color: var(--ink-muted); text-transform: lowercase; letter-spacing: .06em; }
 
 /* ─────────────────────────── страница урока ─────────────────────────── */
 .sch-lesson {

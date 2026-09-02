@@ -253,7 +253,7 @@ body.glass-quiet .wb-next {
   display: inline-flex; align-items: center; gap: 7px;
   font-family: var(--font-mono);
   font-size: 12.5px; font-weight: 800; letter-spacing: .18em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   text-decoration: none;
   color: var(--text);
 }
@@ -302,7 +302,7 @@ body.glass-quiet .wb-next {
   content: "скоро";
   margin-left: 6px;
   font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .1em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   color: var(--gold-ink);
   vertical-align: 1px;
 }
@@ -778,7 +778,7 @@ body.glass-quiet .wb-next {
 .wb-pop-head b { display: block; font-size: 13.5px; }
 .wb-pop-head span {
   font-family: var(--font-mono); font-size: 10px;
-  color: var(--ink-muted); text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink-muted); text-transform: lowercase; letter-spacing: .08em;
 }
 .wb-pop-item {
   width: 100%;
@@ -796,7 +796,7 @@ body.glass-quiet .wb-next {
 .wb-pop-item .wb-pop-tag {
   margin-left: auto;
   font-family: var(--font-mono); font-size: 9.5px;
-  color: var(--ink-muted); text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink-muted); text-transform: lowercase; letter-spacing: .08em;
 }
 .wb-pop-item.danger { color: var(--danger-ink); }
 .wb-pop-sep { height: 1.5px; background: rgba(45,33,26,.14); margin: 6px 4px; }
@@ -828,7 +828,7 @@ body.glass-quiet .wb-next {
 }
 .wb-sheet-title {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .2em;
-  text-transform: uppercase; color: var(--accent-2-ink);
+  text-transform: lowercase; color: var(--accent-2-ink);
   margin: 0 0 12px; flex: none;
 }
 .wb-sheet-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }

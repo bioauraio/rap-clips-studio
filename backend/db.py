@@ -728,6 +728,11 @@ class TrendJob(Base):
     is_public = Column(Boolean, nullable=False, default=False)
     error = Column(Text, nullable=False, default="")
     charged_points = Column(Integer, nullable=False, default=0)
+    # Настройки конкретной генерации из редактора тренда: пустая строка —
+    # взять значения пресета. Держим на задаче, а не на пресете: один тренд
+    # генерят в разных форматах.
+    aspect = Column(String, nullable=False, default="")
+    resolution = Column(String, nullable=False, default="")
     created_at = Column(DateTime, default=now)
 
 

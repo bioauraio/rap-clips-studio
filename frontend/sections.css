@@ -225,7 +225,7 @@
 }
 .tb-phead {
   display: flex; align-items: center; gap: 8px; padding: 7px 10px 8px;
-  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  font-size: 11px; letter-spacing: .06em; text-transform: lowercase;
   color: var(--ink-muted); border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
 }
@@ -596,7 +596,7 @@
   padding: 4px 9px; border-radius: 999px; font-style: normal;
   background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .22);
   color: rgba(255, 255, 255, .94); font: 800 10px/1 var(--font-mono);
-  letter-spacing: .06em; text-transform: uppercase; backdrop-filter: blur(6px);
+  letter-spacing: .06em; text-transform: lowercase; backdrop-filter: blur(6px);
 }
 .trends-page .trend-card .trend-card-name { color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,.75); }
 
@@ -726,7 +726,7 @@
 .ac-lock {
   flex: none;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--gold-ink);
+  text-transform: lowercase; color: var(--gold-ink);
   border: 1px solid rgba(138, 90, 43, .4);
   border-radius: 7px; padding: 2px 6px;
 }
@@ -740,7 +740,7 @@
 .ac-outcome b {
   display: block; margin-bottom: 3px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ink-muted); font-weight: 700;
+  text-transform: lowercase; color: var(--ink-muted); font-weight: 700;
 }
 .ac-outcome ul { margin: 0; padding-left: 17px; color: var(--text); }
 .ac-outcome li { margin-bottom: 2px; }
@@ -804,7 +804,7 @@
 }
 .ac-art-tag {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--accent-2-ink);
+  text-transform: lowercase; color: var(--accent-2-ink);
 }
 .ac-art h4 { margin: 6px 0 4px; font-size: 15.5px; }
 .ac-art p { margin: 0 0 8px; font-size: 13px; }
@@ -825,7 +825,7 @@
 .ac-slot > span {
   display: block; margin-bottom: 3px;
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--ink-muted);
+  text-transform: lowercase; color: var(--ink-muted);
 }
 .ac-slot input, .ac-slot select { width: 100%; }
 .ac-slots { display: grid; gap: 8px; }
@@ -892,7 +892,7 @@
 .lb-prompts { margin: 0 0 10px; }
 .lb-prompts dt {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ink-muted); margin-top: 8px;
+  text-transform: lowercase; color: var(--ink-muted); margin-top: 8px;
 }
 .lb-prompts dd {
   margin: 3px 0 0;
@@ -953,7 +953,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: .06em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   color: var(--ink-muted);
 }
 .ld-promo-input {
@@ -1233,7 +1233,7 @@
 .pb-picked {
   font-size: 10.5px;
   letter-spacing: .04em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   color: var(--accent-2-ink);
   border: 1px solid rgba(193, 64, 27, .35);
   border-radius: 999px;
@@ -1322,7 +1322,7 @@
 .pb-chip-k {
   font-size: 10px;
   letter-spacing: .04em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   color: var(--ink-muted);
 }
 .pb-chip-x { color: var(--ink-muted); font-size: 11px; }
@@ -1357,7 +1357,7 @@
   display: block;
   font-size: 10.5px;
   letter-spacing: .04em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   color: var(--ink-muted);
   margin-bottom: 2px;
 }
@@ -1380,7 +1380,7 @@
   border-top: 1px solid rgba(45, 33, 26, .14);
   font-size: 12.5px;
 }
-.pb-neg b { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.pb-neg b { font-size: 11px; letter-spacing: .04em; text-transform: lowercase; }
 .pb-neg p { margin: 4px 0; }
 
 .pb-check {
@@ -1650,7 +1650,7 @@
 .trend-new {
   display: inline-block; margin-left: 6px; padding: 1px 7px;
   font-style: normal; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
-  text-transform: uppercase; border-radius: 999px;
+  text-transform: lowercase; border-radius: 999px;
   color: var(--gold-ink); background: var(--gold-wash);
 }
 .trend-card-action { min-height: 32px; display: inline-flex; align-items: center; }
@@ -1679,3 +1679,100 @@
   box-shadow: none; cursor: pointer;
 }
 .trend-card { position: relative; }
+
+/* ═══════════ ВИТРИНА ТРЕНДОВ: АНИМАЦИЯ ЖИВЁТ, ПОДПИСЬ — ПОД КУРСОРОМ ═══════════
+   Карточка сама играет свой ролик (autoplay); имя и «сгенерировать»
+   проявляются только на ховере. На тач-устройствах ховера нет — там
+   оверлей виден всегда, иначе карточка немая. */
+.trend-card { cursor: pointer; }
+.trend-card-hover {
+  position: absolute; inset: 0; z-index: 7;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  gap: 10px; padding: 14px;
+  opacity: 0; transition: opacity .22s ease;
+  background: linear-gradient(transparent 55%, rgba(14, 8, 4, .78));
+  pointer-events: none;
+}
+.trend-card:hover .trend-card-hover,
+.trend-card:focus-visible .trend-card-hover,
+.trend-card:focus-within .trend-card-hover { opacity: 1; }
+@media (hover: none) { .trend-card-hover { opacity: 1; } }
+.trend-card-hover .trend-card-name {
+  position: static; padding: 0; background: none; pointer-events: none;
+}
+.trend-card-hover .trend-card-action {
+  position: static; align-self: flex-start; pointer-events: auto;
+  background: none; border: none; padding: 0;
+}
+
+/* ═══════════ РЕДАКТОР ТРЕНДА: СЛЕВА ГЕНЕРАЦИЯ, СПРАВА ИСТОРИЯ ═══════════ */
+.trend-editor { max-width: 1100px; margin: 0 auto; padding: 18px; }
+.trend-editor-cols {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px;
+  align-items: start;
+}
+.trend-editor-main h1 { text-transform: lowercase; margin: 8px 0 14px; }
+.trend-upload {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 280px; border: 1.5px dashed rgba(var(--ink-rgb), .3);
+  border-radius: 18px; cursor: pointer; position: relative; overflow: hidden;
+}
+.trend-upload:hover { border-color: rgba(var(--ink-rgb), .55); }
+.trend-upload-hint { opacity: .65; font-weight: 700; text-transform: lowercase; }
+.trend-upload-preview { max-width: 100%; max-height: 420px; object-fit: contain; }
+.trend-editor-opts { display: flex; gap: 16px; margin: 14px 0; }
+.trend-editor-opts label {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px; font-weight: 700; text-transform: lowercase; opacity: .85;
+}
+.trend-editor-opts select {
+  padding: 8px 12px; border-radius: 10px;
+  border: 1px solid rgba(var(--ink-rgb), .25);
+  background: var(--card-solid); color: inherit; font: inherit;
+}
+.trend-editor-go { margin-top: 4px; }
+.trend-editor-go[disabled] { opacity: .4; pointer-events: none; }
+.trend-history {
+  border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 18px;
+  padding: 14px; max-height: 78vh; overflow-y: auto;
+}
+.trend-history h2 {
+  font-size: 14px; text-transform: lowercase; margin: 0 0 10px; opacity: .8;
+}
+.trend-history-list { display: flex; flex-direction: column; gap: 12px; }
+.trend-history-item {
+  border-radius: 12px; overflow: hidden;
+  border: 1px solid rgba(var(--ink-rgb), .1);
+}
+.trend-history-item video, .trend-history-item img {
+  width: 100%; aspect-ratio: 9 / 16; max-height: 240px; object-fit: cover; display: block;
+}
+.trend-history-wait {
+  width: 100%; height: 90px;
+  background: repeating-linear-gradient(120deg,
+    rgba(var(--ink-rgb), .05), rgba(var(--ink-rgb), .12) 12px, rgba(var(--ink-rgb), .05) 24px);
+}
+.trend-history-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 10px; font-size: 12px;
+}
+.trend-history-meta b { text-transform: lowercase; }
+.trend-history-status { opacity: .7; text-transform: lowercase; }
+.trend-history-status[data-st="error"] { color: #c0392b; opacity: 1; }
+@media (max-width: 900px) {
+  .trend-editor-cols { grid-template-columns: 1fr; }
+  .trend-history { max-height: none; }
+}
+
+/* ═══════════ НАВИГАЦИЯ: НА КОМПЕ И ПЛАНШЕТЕ — ТОЛЬКО НАДПИСИ ═══════════
+   Иконки разделов остаются мобильному доку (≤700px), где они и нужны
+   большому пальцу. Выше — чистые слова, с маленькой буквы. */
+.topbar.has-sections .tb-sec { text-transform: lowercase; }
+@media (min-width: 701px) {
+  .topbar.has-sections .tb-sec[data-ico]::before,
+  .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
+    display: none !important;
+  }
+  /* Брейкпоинт «только значки» больше не имеет смысла — возвращаем подписи. */
+  .topbar.has-sections .tb-sec { font-size: 12.5px; }
+}
