@@ -2572,7 +2572,7 @@ async def admin_login(request: Request, db: Session = Depends(db_session)):
 
 
 # ─────────────────────────── голосовой ввод ───────────────────────────
-# Прокси на whisper-шлюз (STT_URL в infra/.env; lolq: http://172.19.0.1:8787,
+# Прокси на whisper-шлюз (STT_URL в infra/.env, база без пути; lolq: http://172.19.0.1:8787,
 # msk: http://172.18.0.1:8787). Токены не списываются. Нет шлюза — 503 текстом.
 STT_URL = os.environ.get("STT_URL", "").rstrip("/")
 STT_MAX_BYTES = 25 * 1024 * 1024
@@ -2591,11 +2591,11 @@ async def speech_to_text(audio: UploadFile, user: User = Depends(current_user)):
     import httpx  # noqa: PLC0415
     name = audio.filename or "audio.webm"
     ctype = audio.content_type or "application/octet-stream"
-    files = {"file": (name, data, ctype), "audio": (name, data, ctype)}
+    # Шлюз OpenAI-совместимый: POST /v1/audio/transcriptions, поле file.
+    url = STT_URL if "/v1/" in STT_URL else STT_URL + "/v1/audio/transcriptions"
     try:
         async with httpx.AsyncClient(timeout=STT_TIMEOUT) as client:
-            r = await client.post(STT_URL if STT_URL.count("/") > 2 else STT_URL + "/transcribe",
-                                  files=files)
+            r = await client.post(url, files={"file": (name, data, ctype)})
     except httpx.HTTPError as e:
         raise HTTPException(503, f"распознавание недоступно: {str(e)[:120]}")
     if r.status_code >= 400:
@@ -4976,6 +4976,7 @@ def api_styles(request: Request, lang: str = "", group: str = "", tier: str = ""
         # locked — «нельзя снимать на этом тарифе», а не «нельзя смотреть»:
         # карточка, превью и описание открыты всем и всегда.
         s["locked"] = bool(s.get("tier") == "pro" and not paid)
+        s["poster_url"] = str((s.get("media") or {}).get("poster") or "")
     return {
         "lang": lg,
         "groups": [
@@ -5643,9 +5644,9 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
             return str(v or "")
         label = _loc(card.get("label")) or key
         desc = _loc(card.get("desc")) or _loc(card.get("logline")) or _loc(card.get("note"))
-        hint = _loc(card.get("hint")) or _loc(card.get("slots_hint")) \
+        hint = _loc(card.get("hint")) or _loc(card.get("dnote")) \
             or (_loc(card.get("note")) if desc != _loc(card.get("note")) else "") \
-            or _loc(card.get("dnote"))
+            or _loc(card.get("hero"))
         prompt = card.get("text") or card.get("first") or card.get("add") \
             or card.get("story") or ""
         out.update({"title": str(label), "desc": str(desc), "hint": str(hint)[:600],
