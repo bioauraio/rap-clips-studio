@@ -7040,7 +7040,9 @@ function renderTrack(tr) {
       const nb = $(".pane-foot .stage-next", pane);
       if (!nb) return;
       const setupFire = pane.dataset.stage === "setup" && cGenB && !cGenB.classList.contains("hidden");
-      nb.classList.toggle("primary", !(pane.dataset.stage === "setup" ? setupFire : fireIn(pane)));
+      const lead = !(pane.dataset.stage === "setup" ? setupFire : fireIn(pane));
+      nb.classList.toggle("primary", lead);
+      nb.classList.toggle("ghost", !lead);
     });
   }
 
@@ -8571,16 +8573,23 @@ async function deleteScene(id) {
    фона). Клик пишет ПОЛНЫЙ промпт пресета в motion_prompt и camera_move.
    Кэш общий на сессию: каталог одинаков для всех кадров. */
 let cameraPresetsCache = null;
+let cameraPresetsPromise = null;
 
+// Промис-мемо: тридцать карточек кадра зовут это разом до того, как первый
+// ответ лёг в кэш, — без промиса уходило тридцать одинаковых запросов.
 async function cameraPresets() {
   if (cameraPresetsCache) return cameraPresetsCache;
-  try {
-    const d = await api("/api/cameras");
-    cameraPresetsCache = d.cameras || [];
-  } catch (e) {
-    cameraPresetsCache = [];
-  }
-  return cameraPresetsCache;
+  if (cameraPresetsPromise) return cameraPresetsPromise;
+  cameraPresetsPromise = (async () => {
+    try {
+      const d = await api("/api/cameras");
+      cameraPresetsCache = d.cameras || [];
+    } catch (e) {
+      cameraPresetsCache = [];
+    }
+    return cameraPresetsCache;
+  })();
+  return cameraPresetsPromise;
 }
 
 const CAM_FALLBACK_ICO = { slider: "🎞", vehicle: "🚗", drone: "🛸",
@@ -8595,13 +8604,18 @@ function camFillSlots(text, s) {
 
 // Кэши слоёв каталога для лент карточки кадра (motions/lights).
 const layerRowCache = {};
+const layerRowPromise = {};
 async function layerRows(kind) {
   if (layerRowCache[kind]) return layerRowCache[kind];
-  try {
-    const d = await api(`/api/${kind}`);
-    layerRowCache[kind] = d[kind] || [];
-  } catch (e) { layerRowCache[kind] = []; }
-  return layerRowCache[kind];
+  if (layerRowPromise[kind]) return layerRowPromise[kind];
+  layerRowPromise[kind] = (async () => {
+    try {
+      const d = await api(`/api/${kind}`);
+      layerRowCache[kind] = d[kind] || [];
+    } catch (e) { layerRowCache[kind] = []; }
+    return layerRowCache[kind];
+  })();
+  return layerRowPromise[kind];
 }
 
 /* Переключатель Камера/Движение/Свет + две новые ленты. Карточки тех же
@@ -9549,6 +9563,7 @@ function rebuildAddTrackPicker() {
                    (keys) => { form.style_keys.value = keys.join(","); });
 }
 rebuildAddTrackPicker();
+buildAppFoot();
 
 (async () => {
   // ── мини-апп Telegram ──
@@ -9955,6 +9970,16 @@ function ldBuildFeatures() {
       ${tag}
     </article>`;
   }).join("");
+}
+
+/* Стеклянный футер приложения: одна строка — марка, ссылки, контакты. */
+function buildAppFoot() {
+  const box = $("#app-foot");
+  if (!box) return;
+  const links = (LT("footer.cols") || []).flatMap((c) => c.links || [])
+    .filter((l) => l.href && !String(l.href).startsWith("#"));
+  box.innerHTML = `<span class="app-foot-brand">lolq.ai © 2026</span>`
+    + links.map((l) => `<a href="${escHtml(l.href)}"${/^https?:/.test(l.href) ? ' target="_blank" rel="noopener"' : ""}>${escHtml(l.label)}</a>`).join("");
 }
 
 function ldBuildFaq() {
@@ -11094,6 +11119,7 @@ onLangChange(() => {
     if (project) render();
   }
   rebuildAddTrackPicker();
+  buildAppFoot();
   if (!$("#welcome").classList.contains("hidden")) ldRenderText();
   if (!$("#chat").classList.contains("hidden")) chatRenderAll();
   syncLangSwitches();
