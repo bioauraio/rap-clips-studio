@@ -42,6 +42,7 @@ import contextlib
 import html
 import json
 import logging
+import re
 import math
 import os
 import random
@@ -58,6 +59,25 @@ logging.basicConfig(level=os.environ.get("BOT_LOG_LEVEL", "INFO"),
 # httpx печатает полный URL запроса на INFO, а в URL Bot API лежит токен.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+class _TokenMask(logging.Filter):
+    """Страховка второго уровня: любой /bot<токен>/ в сообщении → /bot***/."""
+    _RE = re.compile(r"/bot[0-9]+:[A-Za-z0-9_-]+/")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.args:
+                record.msg = str(record.msg) % record.args
+                record.args = ()
+            record.msg = self._RE.sub("/bot***/", str(record.msg))
+        except Exception:  # noqa: BLE001 — фильтр не должен ронять лог
+            pass
+        return True
+
+
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_TokenMask())
 
 # ─────────────────────────────── настройки ───────────────────────────────
 
@@ -1261,25 +1281,36 @@ class Bot:
     # ── справочники ──
 
     async def load_styles(self) -> list[dict]:
+        """Каталог стилей из витрины /api/styles?lang=…: key/label/desc на
+        двух языках, свёрнутые в [{key, en:{label,desc}, ru:{…}}]. Текстов
+        промптов бот не получает и не собирает — стиль ставится ключами через
+        POST /api/tracks/{id}/style, текст склеивает сервер."""
         if not self.styles:
-            try:
-                data = await self.api.http.get("/api/styles")
-                self.styles = (data.json() or {}).get("styles") or []
-            except Exception as e:  # noqa: BLE001
-                log.warning("не забрал стили из API: %s", e)
-                self.styles = []
+            merged: dict[str, dict] = {}
+            for lg in ("en", "ru"):
+                try:
+                    data = await self.api.http.get("/api/styles", params={"lang": lg})
+                    rows = (data.json() or {}).get("styles") or []
+                except Exception as e:  # noqa: BLE001
+                    log.warning("не забрал стили (%s) из API: %s", lg, e)
+                    rows = []
+                for r in rows:
+                    key = str(r.get("key") or "").strip()
+                    if not key:
+                        continue
+                    item = merged.setdefault(key, {"key": key})
+                    item[lg] = {"label": str(r.get("label") or key),
+                                "desc": str(r.get("desc") or "")}
+            for item in merged.values():
+                item.setdefault("en", item.get("ru") or {"label": item["key"], "desc": ""})
+                item.setdefault("ru", item["en"])
+            self.styles = list(merged.values())
         return self.styles
 
     def style_label(self, key: str, lang: str) -> str:
         for s in self.styles:
             if s["key"] == key:
                 return (s.get(lang) or s.get("en") or {}).get("label") or key
-        return key
-
-    def style_value(self, key: str) -> str:
-        for s in self.styles:
-            if s["key"] == key:
-                return s["value"]
         return key
 
     async def billing(self) -> dict:
@@ -1539,8 +1570,7 @@ class Bot:
                 await self.answer_cb(cb["id"], t(lang, "style_need"), alert=True)
                 return
             await self.answer_cb(cb["id"])
-            value = self.build_style(picked)
-            await self.apply_style(tg_user, chat_id, lang, st.get("track"), value,
+            await self.apply_style(tg_user, chat_id, lang, st.get("track"), picked, "",
                                    " + ".join(self.style_label(k, lang) for k in picked))
             return
         else:
@@ -1556,26 +1586,18 @@ class Bot:
         await self.answer_cb(cb["id"])
         await self.ask_style(tg_user, chat_id, lang, edit_msg=msg_id)
 
-    def build_style(self, picked: list[str]) -> str:
-        """Смешение стилей ровно как на сайте (buildFusionStyle): первый —
-        основа, остальные приклеиваются к нему как акценты."""
-        if not picked:
-            return ""
-        base = self.style_value(picked[0])
-        if len(picked) == 1:
-            return base
-        extra = " ".join(self.style_value(k) for k in picked[1:])
-        return (f"{base}\n\nBlend this base look with accents of: {extra}\n"
-                "Keep the base style dominant and consistent across all frames.")
-
     async def apply_style(self, tg_user: dict, chat_id: int, lang: str,
-                          track_id: int | None, value: str, human: str) -> None:
+                          track_id: int | None, keys: list[str], extra: str,
+                          human: str) -> None:
+        """Ключи (≤3) и/или свой текст → POST /api/tracks/{id}/style.
+        Смешение делает сервер (prompts_catalog.fusion), у бота копии нет."""
         if not track_id:
             await self.send(chat_id, t(lang, "send_audio"), lang)
             return
         try:
-            await self.api.req(tg_user, "PATCH", f"/api/tracks/{track_id}",
-                               json={"style": value})
+            await self.api.req(tg_user, "POST", f"/api/tracks/{track_id}/style",
+                               json={"style_keys": list(keys or [])[:3],
+                                     "extra": (extra or "")[:2000]})
         except Exception as e:  # noqa: BLE001
             await self.report_api_error(chat_id, lang, e)
             return
@@ -3069,7 +3091,8 @@ class Bot:
             if waiting == "style_text":
                 self.store.set_state(tg_id, {**st, "await": None})
                 await self.apply_style(tg_user, chat_id, lang, st.get("track"),
-                                       text[:2000], clip_text(text, 60))
+                                       st.get("styles") or [], text[:2000],
+                                       clip_text(text, 60))
             elif waiting == "char_text":
                 self.store.set_state(tg_id, {**st, "await": None})
                 if await self.create_character(tg_user, chat_id, lang, text):

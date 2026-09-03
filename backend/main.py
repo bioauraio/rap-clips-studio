@@ -2474,27 +2474,142 @@ def start(ref: str = "", db: Session = Depends(db_session)):
     return _session_response(guest)
 
 
+# ── защита входа от перебора: в памяти процесса, ключ ip+логин ──
+LOGIN_MAX_TRIES = 5          # попыток в минуту
+LOGIN_LOCK_SEC = 15 * 60     # блокировка после перебора
+_login_tries: dict[str, list[float]] = {}
+_login_locked: dict[str, float] = {}
+_login_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return fwd or ((request.client.host if request and request.client else "") or "")
+
+
+def _login_guard(key: str) -> None:
+    """403-подобный отказ, если по ключу идёт перебор. Чистит хвосты сама."""
+    now = time.time()
+    with _login_lock:
+        until = _login_locked.get(key, 0.0)
+        if until > now:
+            raise HTTPException(429, "слишком много попыток — подожди 15 минут")
+        if until:
+            _login_locked.pop(key, None)
+        tries = [t for t in _login_tries.get(key, []) if now - t < 60]
+        _login_tries[key] = tries
+        if len(_login_tries) > 5000:      # не копим чужие ключи вечно
+            for k in [k for k, v in _login_tries.items() if not v or now - v[-1] > 60]:
+                _login_tries.pop(k, None)
+
+
+def _login_failed(key: str) -> None:
+    now = time.time()
+    with _login_lock:
+        tries = [t for t in _login_tries.get(key, []) if now - t < 60]
+        tries.append(now)
+        _login_tries[key] = tries
+        if len(tries) >= LOGIN_MAX_TRIES:
+            _login_locked[key] = now + LOGIN_LOCK_SEC
+            _login_tries[key] = []
+
+
+def _login_ok(key: str) -> None:
+    with _login_lock:
+        _login_tries.pop(key, None)
+        _login_locked.pop(key, None)
+
+
 @app.post("/api/login")
 async def login(request: Request, db: Session = Depends(db_session)):
     body = await request.json()
     login_name = str(body.get("login") or "").strip()
     password = str(body.get("password") or "")
-    if login_name:
-        user = db.query(User).filter(User.login == login_name).first()
-        # Человек, зарегистрированный по email, логично вводит email —
-        # даже если поле называется «логин».
-        if not user and "@" in login_name:
-            user = db.query(User).filter(User.email == login_name.lower()).first()
-        if not user or not user.password_hash or not _verify_password(password, user.password_hash):
-            raise HTTPException(401, "неверный логин или пароль")
-        return _session_response(user)
-    # Легаси-вход владельца: один общий пароль, как было до qlolvideo.
-    if not password or password != APP_PASSWORD:
+    if not login_name:
+        # Владельческий вход общим паролем с публичной формы закрыт:
+        # он живёт отдельно в /api/admin/login и только с включённым флагом.
+        raise HTTPException(401, "неверный логин или пароль")
+    key = f"{_client_ip(request)}|{login_name.lower()[:120]}"
+    _login_guard(key)
+    user = db.query(User).filter(User.login == login_name).first()
+    # Человек, зарегистрированный по email, логично вводит email —
+    # даже если поле называется «логин».
+    if not user and "@" in login_name:
+        user = db.query(User).filter(User.email == login_name.lower()).first()
+    if not user or not user.password_hash or not _verify_password(password, user.password_hash):
+        _login_failed(key)
+        raise HTTPException(401, "неверный логин или пароль")
+    _login_ok(key)
+    return _session_response(user)
+
+
+# Легаси-вход владельца: один общий пароль, как было до qlolvideo. Отдельный
+# путь, выключен по умолчанию (ADMIN_LOGIN_ENABLED=1), при желании — только с
+# перечисленных адресов (ADMIN_LOGIN_IPS="1.2.3.4,5.6.7.8").
+ADMIN_LOGIN_ENABLED = os.environ.get("ADMIN_LOGIN_ENABLED", "") in ("1", "true", "yes")
+ADMIN_LOGIN_IPS = {x.strip() for x in os.environ.get("ADMIN_LOGIN_IPS", "").split(",") if x.strip()}
+
+
+@app.post("/api/admin/login")
+async def admin_login(request: Request, db: Session = Depends(db_session)):
+    if not ADMIN_LOGIN_ENABLED:
+        raise HTTPException(404, "not found")
+    ip = _client_ip(request)
+    if ADMIN_LOGIN_IPS and ip not in ADMIN_LOGIN_IPS:
+        raise HTTPException(403, "не с этого адреса")
+    key = f"{ip}|__admin__"
+    _login_guard(key)
+    body = await request.json()
+    password = str(body.get("password") or "")
+    if not password or not hmac.compare_digest(password, APP_PASSWORD):
+        _login_failed(key)
         raise HTTPException(401, "неверный пароль")
     admin = _admin_user(db)
     if not admin:
         raise HTTPException(500, "админ не инициализирован")
+    _login_ok(key)
     return _session_response(admin)
+
+
+# ─────────────────────────── голосовой ввод ───────────────────────────
+# Прокси на whisper-шлюз (STT_URL в infra/.env, база без пути; lolq: http://172.19.0.1:8787,
+# msk: http://172.18.0.1:8787). Токены не списываются. Нет шлюза — 503 текстом.
+STT_URL = os.environ.get("STT_URL", "").rstrip("/")
+STT_MAX_BYTES = 25 * 1024 * 1024
+STT_TIMEOUT = 120
+
+
+@app.post("/api/stt")
+async def speech_to_text(audio: UploadFile, user: User = Depends(current_user)):
+    if not STT_URL:
+        raise HTTPException(503, "голосовой ввод не настроен")
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "пустая запись")
+    if len(data) > STT_MAX_BYTES:
+        raise HTTPException(413, "запись больше 25 МБ")
+    import httpx  # noqa: PLC0415
+    name = audio.filename or "audio.webm"
+    ctype = audio.content_type or "application/octet-stream"
+    # Шлюз OpenAI-совместимый: POST /v1/audio/transcriptions, поле file.
+    url = STT_URL if "/v1/" in STT_URL else STT_URL + "/v1/audio/transcriptions"
+    try:
+        async with httpx.AsyncClient(timeout=STT_TIMEOUT) as client:
+            r = await client.post(url, files={"file": (name, data, ctype)})
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"распознавание недоступно: {str(e)[:120]}")
+    if r.status_code >= 400:
+        raise HTTPException(503, f"распознавание недоступно ({r.status_code})")
+    text = ""
+    try:
+        payload = r.json()
+        if isinstance(payload, dict):
+            text = str(payload.get("text") or payload.get("transcript") or "")
+        elif isinstance(payload, str):
+            text = payload
+    except ValueError:
+        text = r.text or ""
+    return {"text": text.strip()}
 
 
 @app.post("/api/register")
@@ -4634,8 +4749,24 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     if "image_resolution" in body:
         want = str(body["image_resolution"] or "").strip().upper()
         track.image_resolution = want if want in ("1K", "2K", "4K") else ""
+    # АРХИТЕКТУРА СЦЕНАРИЯ. Студия шлёт PATCH {scenario: key} — та же
+    # валидация, что и в /style; пустая строка — честный выбор «Авто».
+    if "scenario" in body:
+        _log_change(db, user, track.project_id, "track", track.id,
+                    "scenario_key", track.scenario_key, body.get("scenario"))
+        track.scenario_key = _scenario_key_of(body.get("scenario"))
     db.commit()
     return track_dict(track)
+
+
+def _scenario_key_of(raw) -> str:
+    """Ключ сюжетной архитектуры из слоя scripts базы промтов.
+    Пустая строка — «Авто»; чужой ключ молча не пишем."""
+    skey = str(raw or "").strip()
+    if not skey:
+        return ""
+    return skey if any(
+        r["key"] == skey for r in prompts_library.layer_rows("scripts")) else ""
 
 
 # ─────────────────────── раздел «Промты»: каталог ───────────────────────
@@ -4845,6 +4976,7 @@ def api_styles(request: Request, lang: str = "", group: str = "", tier: str = ""
         # locked — «нельзя снимать на этом тарифе», а не «нельзя смотреть»:
         # карточка, превью и описание открыты всем и всегда.
         s["locked"] = bool(s.get("tier") == "pro" and not paid)
+        s["poster_url"] = str((s.get("media") or {}).get("poster") or "")
     return {
         "lang": lg,
         "groups": [
@@ -5467,7 +5599,8 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
     is_adm = bool(user and user.is_admin)
     lg = _lang_of(request, lang)
     out = {"layer": layer, "key": key, "is_admin": is_adm, "examples": [],
-           "title": "", "desc": "", "prompt": "", "prompt_ru": "", "use": ""}
+           "title": "", "label": "", "desc": "", "hint": "", "prompt": "",
+           "prompt_ru": "", "preview_url": "", "use": ""}
     if layer == "trend":
         t = db.get(TrendPreset, int(key) if str(key).isdigit() else 0)
         if not t:
@@ -5505,17 +5638,38 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
                      if r["key"] == key), None)
         if not card:
             raise HTTPException(404, "нет такой карточки")
-        label = card.get("label") or key
-        if isinstance(label, dict):
-            label = label.get(lg) or label.get("en") or key
-        desc = card.get("desc") or card.get("note") or ""
-        if isinstance(desc, dict):
-            desc = desc.get(lg) or desc.get("en") or ""
-        prompt = card.get("text") or card.get("first") or card.get("add") or ""
-        out.update({"title": str(label), "desc": str(desc),
+        def _loc(v):
+            if isinstance(v, dict):
+                return str(v.get(lg) or v.get("en") or "")
+            return str(v or "")
+        label = _loc(card.get("label")) or key
+        desc = _loc(card.get("desc")) or _loc(card.get("logline")) or _loc(card.get("note"))
+        hint = _loc(card.get("hint")) or _loc(card.get("dnote")) \
+            or (_loc(card.get("note")) if desc != _loc(card.get("note")) else "") \
+            or _loc(card.get("hero"))
+        prompt = card.get("text") or card.get("first") or card.get("add") \
+            or card.get("story") or ""
+        out.update({"title": str(label), "desc": str(desc), "hint": str(hint)[:600],
                     "prompt": str(prompt), "use": "studio"})
-        out["examples"] = [{"url": u, "kind": "image"}
-                           for u in _prompt_page_extras(layer, key)]
+        # Примеры: превью/анимация карточки слоя + публичные кадры проектов
+        # с этим ключом (см. _layer_public_examples).
+        _raw = _layer_previews().get(f"{layer}:{key}")
+        main_prev, gallery = _preview_entry(_raw)
+        anim = str(_raw.get("anim") or "") if isinstance(_raw, dict) else ""
+        out["preview_url"] = _pub_media_url(main_prev) if main_prev else ""
+        seen = set()
+        for f in gallery:
+            if f and f not in seen:
+                seen.add(f)
+                out["examples"].append({"url": _pub_media_url(f), "poster": _pub_media_url(f),
+                                        "kind": "image"})
+        if anim:
+            out["examples"].insert(0, {"url": _pub_media_url(anim),
+                                       "poster": out["preview_url"], "kind": "video"})
+        for ex in _layer_public_examples(db, layer, key):
+            if ex["url"] not in seen:
+                seen.add(ex["url"])
+                out["examples"].append(ex)
     elif layer == "styles":
         raise HTTPException(404, "у стилей своя карточка в каталоге промтов")
     else:
@@ -5524,6 +5678,36 @@ def prompt_page(layer: str, key: str, request: Request, lang: str = "",
     # открыты; закрытые тексты (styles) сюда не попадают вовсе.
     if not is_adm:
         out["prompt_ru"] = ""
+    out["label"] = out["label"] or out["title"]
+    for ex in out["examples"]:
+        ex.setdefault("poster", ex["url"] if ex.get("kind") != "video" else out["preview_url"])
+    if not out["preview_url"]:
+        first_img = next((e for e in out["examples"] if e.get("kind") == "image"), None)
+        out["preview_url"] = first_img["url"] if first_img else ""
+    return out
+
+
+def _layer_public_examples(db: Session, layer: str, key: str, limit: int = 6) -> list[dict]:
+    """Кадры из проектов, где выбран этот ключ слоя. У проектов нет публичного
+    флага, поэтому берём только витринные проекты владельца (админа) —
+    чужое приватное не показываем."""
+    out: list[dict] = []
+    col = {"scripts": getattr(Track, "scenario_key", None)}.get(layer)
+    admin = _admin_user(db)
+    if col is None or not admin:
+        return out
+    rows = (db.query(Scene)
+            .join(Track, Scene.track_id == Track.id)
+            .join(Project, Track.project_id == Project.id)
+            .filter(col == key, Project.owner_id == admin.id,
+                    Scene.image_filename != "")
+            .order_by(Scene.id.desc()).limit(limit).all())
+    for sc in rows:
+        poster = _pub_media_url(sc.image_filename)
+        if sc.video_filename:
+            out.append({"url": _pub_media_url(sc.video_filename), "poster": poster, "kind": "video"})
+        else:
+            out.append({"url": poster, "poster": poster, "kind": "image"})
     return out
 
 
@@ -6035,10 +6219,7 @@ async def set_track_style(track_id: int, request: Request,
     track.style = prompts_catalog.fusion(keys, extra)
 
     if "scenario" in body:
-        skey = str(body.get("scenario") or "").strip()
-        # Пустая строка — честный выбор «Авто»; чужой ключ молча не пишем.
-        track.scenario_key = skey if skey and any(
-            r["key"] == skey for r in prompts_library.layer_rows("scripts")) else ""
+        track.scenario_key = _scenario_key_of(body.get("scenario"))
 
     if "preset" in body:
         pkey = str(body.get("preset") or "").strip()
@@ -6964,6 +7145,32 @@ async def update_scene(scene_id: int, request: Request, user: User = Depends(cur
                     else _clamp_dur(body[field]))
     if "image_prompt" in body:
         scene.prompt_stale = False
+    # РЕПЛИКИ КАДРА. dialogue:[{who,line}] (≤20) и speaker пишутся сюда же:
+    # раньше карточка их слала, а бэк молча ронял — озвучка не видела текста.
+    if "speaker" in body:
+        scene.speaker = str(body.get("speaker") or "").strip()[:120]
+    if "dialogue" in body:
+        raw = body.get("dialogue")
+        if raw is not None and not isinstance(raw, list):
+            raise HTTPException(400, "dialogue — список реплик")
+        lines = []
+        for item in (raw or [])[:20]:
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "").strip()[:500]
+            if line:
+                lines.append({"who": str(item.get("who") or "").strip()[:120], "line": line})
+        scene.dialogue_json = json.dumps(lines, ensure_ascii=False) if lines else ""
+        if lines:
+            scene.lyric_line = lines[0]["line"]
+            if lines[0]["who"] and "speaker" not in body:
+                scene.speaker = lines[0]["who"]
+    elif "lyric_line" in body:
+        # Правка строки без реплик — первая реплика следует за ней.
+        lines = _scene_dialogue(scene)
+        if lines and isinstance(lines[0], dict):
+            lines[0]["line"] = str(body["lyric_line"] or "")
+            scene.dialogue_json = json.dumps(lines, ensure_ascii=False)
     if "characters" in body:
         scene.characters = _normalize_scene_characters(scene.characters, scene.track.project)
         # ИМЯ ГЕРОЯ ВШИТО В ТЕКСТ ПРОМПТА. Сменить чип персонажа было
@@ -8737,12 +8944,28 @@ def _concat_videos(parts: list[str], dest: str) -> bool:
     with open(lst, "w", encoding="utf-8") as fh:
         for part in parts:
             fh.write("file '" + part.replace("'", "'\\''") + "'\n")
+    raw = dest + ".raw.mp4"
     try:
         r = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lst,
-             "-c", "copy", dest],
+             "-c", "copy", raw],
             capture_output=True, timeout=900)
-        if r.returncode != 0 or not os.path.exists(dest):
+        if r.returncode == 0 and os.path.exists(raw):
+            # Склейка без перекодирования — всегда дожимаем: движки отдают
+            # раздутый битрейт, и итог весил в разы больше нужного.
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-i", raw,
+                 "-c:v", "libx264", "-preset", "medium", "-crf", mediagen.CLIP_CRF,
+                 "-maxrate", mediagen.CLIP_MAXRATE, "-bufsize", mediagen.CLIP_BUFSIZE,
+                 "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                 "-c:a", "aac", "-b:a", "160k", dest],
+                capture_output=True, timeout=1800)
+            if r.returncode != 0 or not os.path.exists(dest):
+                # Дожать не вышло — отдаём несжатую склейку, а не ничего.
+                log.warning("дожатие склейки не удалось: %s", r.stderr.decode()[-200:])
+                os.replace(raw, dest)
+                return True
+        else:
             # Отрезки от разных движков расходятся по кодеку — пересобираем.
             r = subprocess.run(
                 ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lst,
@@ -8754,8 +8977,9 @@ def _concat_videos(parts: list[str], dest: str) -> bool:
         log.warning("склейка отрезков сцены не удалась: %s", str(e)[:200])
         return False
     finally:
-        if os.path.exists(lst):
-            os.remove(lst)
+        for tmp in (lst, raw):
+            if os.path.exists(tmp):
+                os.remove(tmp)
 
 
 def _run_scene_video(scene_id: int) -> None:
@@ -9389,6 +9613,11 @@ def _run_track_voiceover(track_id: int) -> None:
             return
         done, skipped = 0, 0
         for scene in sorted(track.scenes, key=lambda x: x.position):
+            # Тумблер модели уважаем перед КАЖДЫМ кадром: владелец мог
+            # выключить озвучку посреди пакета.
+            if "audio:elevenlabs" in _disabled_models(db):
+                log.info("озвучка серии %s остановлена: модель выключена в админке", track_id)
+                break
             has_lines = bool(_scene_dialogue(scene)) or bool(
                 (scene.lyric_line or "").strip() and scene.speaker)
             if not has_lines:
@@ -9420,6 +9649,8 @@ def track_voiceover(track_id: int, user: User = Depends(current_user),
     """«Озвучить серию»: все кадры с репликами — голосами их персонажей."""
     if not voice.available():
         raise HTTPException(503, "озвучка не настроена — нужен ключ ElevenLabs в infra/.env")
+    if "audio:elevenlabs" in _disabled_models(db):
+        raise HTTPException(503, "озвучка выключена владельцем в админке моделей")
     track = _own_track(db, user, track_id)
     todo = [s for s in track.scenes
             if _scene_dialogue(s) or ((s.lyric_line or "").strip() and s.speaker)]
@@ -10623,9 +10854,11 @@ def _mockup_frame_cost(user: User, engine: str) -> int:
 
 
 @app.get("/api/mockup/templates")
-def mockup_templates(user: User = Depends(current_user)):
+def mockup_templates(request: Request, db: Session = Depends(db_session)):
     # Каталог одинаков для всех, но ЦЕНА кадра — тарифная: боту и витрине
     # нужна честная цифра до нажатия, а не сюрприз в списании.
+    # Гостю — 200 с каталогом и ценой free-тарифа, а не 401.
+    user = _resolve_user(request, db) or User(name="гость", plan="free")
     previews = _mockup_previews()
     engine = _plan_image_engine(user)
     cost = _mockup_frame_cost(user, engine)
@@ -11269,21 +11502,24 @@ async def generate_attribute_model(attr_id: int, request: Request,
 
 
 @app.get("/api/model-sheet")
-def model_sheet_info(user: User = Depends(current_user),
-                     db: Session = Depends(db_session)):
+def model_sheet_info(request: Request, db: Session = Depends(db_session)):
     """Витрине 3D-моделек: честная цена по движку пользователя, доступные
-    виды листа и история его разворотов (kind=model) миниатюрами."""
-    engine = _model_sheet_engine(user)
+    виды листа и история его разворотов (kind=model) миниатюрами.
+    Гостю — 200 с публичной частью и пустой историей."""
+    user = _resolve_user(request, db)
+    who = user or User(name="гость", plan="free")
+    engine = _model_sheet_engine(who)
     spec = mediagen.IMAGE_ENGINES.get(engine, {})
     resolution = "4K" if "4K" in (spec.get("resolutions") or ()) else ""
-    rows = (db.query(CharacterPhoto)
-            .join(Character, CharacterPhoto.character_id == Character.id)
-            .join(Project, Character.project_id == Project.id)
-            .filter(Project.owner_id == user.id, CharacterPhoto.kind == "model")
-            .order_by(CharacterPhoto.id.desc()).limit(18).all())
+    rows = [] if not user else (
+        db.query(CharacterPhoto)
+        .join(Character, CharacterPhoto.character_id == Character.id)
+        .join(Project, Character.project_id == Project.id)
+        .filter(Project.owner_id == user.id, CharacterPhoto.kind == "model")
+        .order_by(CharacterPhoto.id.desc()).limit(18).all())
     return {
         "engine": engine, "engine_title": spec.get("title") or engine,
-        "cost": _image_cost(user, engine, resolution),
+        "cost": _image_cost(who, engine, resolution),
         "views": [{"id": "full", "n": 4}, {"id": "six", "n": 6}, {"id": "eight", "n": 8}],
         "history": [{"id": p.id, "char_id": p.character_id,
                      "url": f"/api/media/{p.filename}"} for p in rows],
@@ -11712,9 +11948,10 @@ async def generate_scene_prompt(scene_id: int, user: User = Depends(current_user
         for x in sorted(track.scenes, key=lambda y: y.position)
         if abs(x.position - scene.position) <= 2 and x.id != scene.id
     ]
-    import asyncio
     try:
-        res = asyncio.run(claude.generate_scene_prompt(
+        # await, а не asyncio.run: роут асинхронный, asyncio.run из живой петли
+        # событий падает RuntimeError → 502 на каждом клике «Промпт».
+        res = await claude.generate_scene_prompt(
             style=track.style, story=project.story or "",
             characters=characters_payload(project), neighbours=near,
             scene={
@@ -11724,7 +11961,7 @@ async def generate_scene_prompt(scene_id: int, user: User = Depends(current_user
             },
             lyrics_line=scene.lyric_line or "", comment=track.comment or "",
             engine=_text_engine_for(db, project, track),
-        ))
+        )
     except Exception as e:  # noqa: BLE001 — причину показываем в карточке
         raise HTTPException(502, f"не вышло написать промпт: {str(e)[:200]}")
     scene.prompt_stale = False

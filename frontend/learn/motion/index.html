@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Motion: what the engine will not ruin — School</title>
+<meta name="description" content="Why video comes out dead or smeared, and the single rule that fixes both — one movement per scene. Five scenes that come out clean even on the cheap engine." />
+<link rel="canonical" href="https://lolq.ai/learn/motion/" />
+<link rel="alternate" hreflang="en" href="https://lolq.ai/learn/motion/" />
+<link rel="alternate" hreflang="ru" href="https://lolq.ai/ru/learn/motion/" />
+<link rel="alternate" hreflang="x-default" href="https://lolq.ai/learn/motion/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" content="Motion: what the engine will not ruin — School" />
+<meta property="og:description" content="Why video comes out dead or smeared, and the single rule that fixes both — one movement per scene. Five scenes that come out clean even on the cheap engine." />
+<meta property="og:url" content="https://lolq.ai/learn/motion/" />
+<meta property="og:image" content="https://lolq.ai/img/guide/anim.png" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Motion: what the engine will not ruin — School" />
+<meta name="twitter:description" content="Why video comes out dead or smeared, and the single rule that fixes both — one movement per scene. Five scenes that come out clean even on the cheap engine." />
+<meta name="twitter:image" content="https://lolq.ai/img/guide/anim.png" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/blog.css?v=1" />
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"LearningResource","name":"Motion: what the engine will not ruin","description":"Why video comes out dead or smeared, and the single rule that fixes both — one movement per scene. Five scenes that come out clean even on the cheap engine.","inLanguage":"en","datePublished":"2026-08-22","dateModified":"2026-08-22","timeRequired":"PT6M","isAccessibleForFree":true,"learningResourceType":"tutorial","url":"https://lolq.ai/learn/motion/","provider":{"@type":"Organization","name":"lolq.ai","url":"https://lolq.ai/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"lolq.ai","item":"https://lolq.ai/"},{"@type":"ListItem","position":2,"name":"School","item":"https://lolq.ai/learn/"},{"@type":"ListItem","position":3,"name":"Motion: what the engine will not ruin"}]}</script>
+</head>
+<body>
+<header class="bh">
+  <a class="bh-brand" href="/"><img src="/img/logo-mark.svg" width="26" height="26" alt="" /><span>lolq<span class="dot">.</span>ai</span></a>
+  <nav class="bh-nav">
+    <a href="/blog/">Journal</a>
+    <a href="/#ld-how">How it works</a>
+    <a href="/#ld-pricing">Pricing</a>
+    <a class="bh-cta" href="/">Start free</a>
+  </nav>
+</header>
+<main class="bw">
+<article class="bpost">
+<p class="bmeta"><a href="/learn/">← All lessons</a>
+ · 6 min read <a class="blang" href="/ru/learn/motion/" hreflang="ru">Читать по-русски</a></p>
+<h1 id="motion-what-the-engine-will-not-ruin">Motion: what the engine will not ruin</h1>
+<p>Two complaints about video sound like opposites and have the same cause.</p>
+<p><strong>"Nothing moves."</strong> The motion prompt describes a mood, not an action. <code>atmospheric, cinematic, dynamic</code> is zero instructions. The engine has nothing to do and honestly does almost nothing.</p>
+<p><strong>"Everything smeared."</strong> Three actions were put in one scene: the character turns, the camera travels, a car passes behind them. The engine tries all three and delivers none.</p>
+<p>One rule covers both: <strong>one movement per scene.</strong></p>
+<h2 id="who-is-moving">Who is moving</h2>
+<p>Before writing the motion prompt, answer one question — what exactly travels:</p>
+<ul><li><strong>the camera, subject still</strong> — push in, pull back, tracking alongside;</li><li><strong>the subject, camera still</strong> — a turn, a run at the lens, a jump;</li><li><strong>neither, the environment moves</strong> — cloth in wind, rain, headlights, a crowd.</li></ul>
+<p>The third option is the most underrated. A scene where neither the camera nor the person moves is still alive — and it never falls apart, because the engine never has to preserve anatomy through movement.</p>
+<h2 id="five-scenes-that-do-not-fall-apart">Five scenes that do not fall apart</h2>
+<div class="tw"><table><thead><tr><th>Device</th><th>What moves</th><th>Why it comes out clean</th></tr></thead><tbody><tr><td><strong>The turn</strong></td><td>subject</td><td>one body part rotates</td></tr><tr><td><strong>Running at the camera</strong></td><td>subject</td><td>movement on one axis, no rotation</td></tr><tr><td><strong>Cloth in the wind</strong></td><td>environment</td><td>fabric is easy, the face is untouched</td></tr><tr><td><strong>The pass-by</strong></td><td>environment</td><td>one large object crosses, everything else is static</td></tr><tr><td><strong>Hands, no face</strong></td><td>subject</td><td>there is no face in frame to get wrong</td></tr></tbody></table></div>
+<p>All five are open on the free plan. Four of the five are deliberately built so the engine gets exactly one job.</p>
+<h3 id="a-note-on-hands-no-face">A note on "Hands, no face"</h3>
+<p>This is the most underrated card in the catalogue. Every clip has scenes where the face drifts, and they are usually fixed by regenerating five times. Hands cannot drift: there is no face in the frame to ruin. The emotion survives anyway — two hands doing one small thing read more precisely than a bad face.</p>
+<h3 id="a-note-on-the-pass-by">A note on "The pass-by"</h3>
+<p>A car crosses the frame and briefly hides everything behind it. In the last frame there is a person standing where nobody was in the first. It is a free wipe: a change of location inside one scene, with no cut and no editing software.</p>
+<h2 id="steps">Steps</h2>
+<ol><li>Walk the storyboard and find the scenes whose <strong>frame animation prompt</strong> field</li></ol>
+<p>contains adjectives. Those are your future dead frames.</p>
+<ol><li>Decide for each one what moves: camera, subject or environment.</li><li>Apply the pack to five scenes and fill the slots: <strong>character</strong>, <strong>location</strong>,</li></ol>
+<p><strong>outfit</strong>. The outfit matters — it is what carries recognition between scenes.</p>
+<ol><li>Rewrite the motion on the remaining scenes on the same principle: one verb.</li><li><strong>Generate frames</strong>, get the pictures right, and only then the video.</li></ol>
+<h2 id="what-to-look-at">What to look at</h2>
+<p>Check the video of the <strong>first</strong> scene before animating the other twenty-nine. Regenerating video is the only action in the studio that costs credits every single time. The order "one scene → look → the rest" saves more than any saving on engines.</p>
+<p>Watch the edges of the frame. If a hand has drifted or the face has become a different person, the problem is not the animation — it is that too much is moving in that scene.</p>
+<h2 id="the-usual-mistakes">The usual mistakes</h2>
+<p><strong>Adjectives instead of verbs.</strong> <code>dynamic, energetic, cinematic motion</code> carries no information. <code>The camera moves forward on one axis, the subject stays still</code> is an instruction.</p>
+<p><strong>Two verbs in one scene.</strong> "Turns and walks" will be read as neither. Split it into two scenes — they will sit better against the music anyway.</p>
+<p><strong>A push-in and a turn at once.</strong> The classic. The camera travels forward while the character rotates, and both smear. Keep one.</p>
+<p><strong>Regenerating video instead of regenerating frames.</strong> If the problem is in the picture, video will not fix it but will charge for it. Redrawing frames is free; regenerating video is not.</p>
+<p><strong>Twelve-second scenes.</strong> The longer the scene, the more the engine has to invent. A long scene needs <strong>mid-frames</strong>, otherwise it picks the shortest, dullest path between the start and the end.</p>
+<h2 id="the-artefact">The artefact</h2>
+<p><strong>Pack "Motion that survives a cheap engine"</strong> (<code>motion_basics</code>) — five scenes built so the engine gets one job: the turn, running at the camera, cloth in the wind, the pass-by, hands only. Slots: character, location, outfit. Free plan.</p>
+<hr />
+<p>Next: <strong><a href="11-cuts.md">Editing: half the clip lives at the cut</a></strong>.</p>
+<aside class="bcta">
+  <p>Make a clip from your own track — the first one is free</p>
+  <a class="bbtn" href="/">Open the studio</a>
+</aside>
+</article>
+</main>
+<footer class="bf">
+  <a href="/">lolq.ai</a> · <a href="/blog/">Journal</a> · <a href="/music.html">qlolmusic</a>
+</footer>
+</body>
+</html>

@@ -25,15 +25,14 @@ BOT_INTERNAL_KEY — его утечка не даёт подделывать м
 from __future__ import annotations
 
 import hmac
-import json
 import logging
 import os
-import re
 import secrets
 import subprocess
 import threading
 import time
 
+import prompts_catalog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -297,92 +296,6 @@ async def stars_grant(request: Request):
         }
     finally:
         db.close()
-
-
-# ─────────────────────── общий словарь стилей ───────────────────────
-# Стили ЖИВУТ во фронте: промпты в app.js, названия и описания в i18n.js.
-# Бот читает их оттуда, а не держит свою копию, иначе через месяц «Ghibli» на
-# сайте и в боте описывались бы по-разному. Файлы лежат в образе рядом
-# (FRONTEND_DIR=/app/static), парсинг кэшируется по mtime.
-_styles_cache: dict = {"mtime": 0.0, "data": []}
-_styles_lock = threading.Lock()
-
-_RE_PRESETS = re.compile(r'const STYLE_PRESETS\s*=\s*\[(.*?)\n\];', re.S)
-_RE_PRESET = re.compile(r'key:\s*"([A-Za-z0-9_]+)"\s*,\s*value:\s*"((?:[^"\\]|\\.)*)"')
-_RE_I18N_BLOCK = re.compile(r'\n\s{2,}styles:\s*\{')
-_RE_I18N_ITEM = re.compile(
-    r'(\w+):\s*\{\s*label:\s*"((?:[^"\\]|\\.)*)"\s*,\s*desc:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\}')
-
-
-def _unquote(raw: str) -> str:
-    try:
-        return json.loads('"' + raw + '"')
-    except ValueError:
-        return raw
-
-
-def _parse_labels(text: str) -> list[dict]:
-    """Названия/описания стилей из i18n.js: первый блок `styles:` — английский,
-    второй — русский (порядок языков в файле именно такой)."""
-    out = []
-    for m in _RE_I18N_BLOCK.finditer(text):
-        chunk = text[m.start(): m.start() + 12000]
-        got = _RE_I18N_ITEM.findall(chunk)
-        if got:
-            out.append({k: {"label": _unquote(lb), "desc": _unquote(ds)} for k, lb, ds in got})
-    return out
-
-
-def _load_styles() -> list[dict]:
-    """[{key, value, en:{label,desc}, ru:{…}}]. Пустой список — не смогли
-    разобрать фронт: врать «стилей нет» нельзя, поэтому наверх уходит пустота,
-    а бот честно переключается на стиль своими словами (API принимает любой
-    текст в поле style)."""
-    core = _core()
-    fdir = getattr(core, "FRONTEND_DIR", "/app/static")
-    p_app, p_i18n = os.path.join(fdir, "app.js"), os.path.join(fdir, "i18n.js")
-    try:
-        mtime = max(os.path.getmtime(p_app), os.path.getmtime(p_i18n))
-    except OSError:
-        log.warning("бот: не найден фронт в %s — список стилей пуст", fdir)
-        return []
-    with _styles_lock:
-        if _styles_cache["data"] and _styles_cache["mtime"] >= mtime:
-            return _styles_cache["data"]
-        try:
-            app_js = open(p_app, encoding="utf-8").read()
-            i18n_js = open(p_i18n, encoding="utf-8").read()
-        except OSError as e:
-            log.warning("бот: не прочитать фронт для стилей: %s", e)
-            return []
-        block = _RE_PRESETS.search(app_js)
-        presets = _RE_PRESET.findall(block.group(1)) if block else []
-        labels = _parse_labels(i18n_js)
-        en = labels[0] if labels else {}
-        ru = labels[1] if len(labels) > 1 else en
-        data = [{
-            "key": key,
-            "value": _unquote(value),
-            "en": en.get(key) or {"label": key, "desc": ""},
-            "ru": ru.get(key) or en.get(key) or {"label": key, "desc": ""},
-        } for key, value in presets]
-        if not data:
-            log.warning("бот: STYLE_PRESETS не разобрались из %s — бот попросит "
-                        "описать стиль словами", p_app)
-        _styles_cache.update({"mtime": mtime, "data": data})
-        return data
-
-
-@router.get("/api/styles")
-def styles(lang: str = ""):
-    """Стили для бота (и для любого другого клиента). lang: en | ru | пусто —
-    пусто отдаёт оба языка."""
-    data = _load_styles()
-    if lang in ("en", "ru"):
-        return {"styles": [{"key": s["key"], "value": s["value"],
-                            "label": s[lang]["label"], "desc": s[lang]["desc"]}
-                           for s in data]}
-    return {"styles": data}
 
 
 # ───────────────────── клип: превью под лимит и ссылка ─────────────────────
@@ -710,7 +623,7 @@ def capabilities(request: Request):
         "supergen_cancel": hasattr(core.Track, "supergen_cancel"),
         "supergen_stage": hasattr(core.Track, "supergen_stage"),
         "bot_events": hasattr(core, "_bot_event"),
-        "styles": len(_load_styles()),
+        "styles": len(prompts_catalog.STYLE_KEYS),
         "public_base": core.PUBLIC_BASE_URL,
         "brand": os.environ.get("BRAND_NAME", "lolq.ai"),
     }
