@@ -141,7 +141,8 @@ def _ci_lower(db: Session) -> None:
     пользовательской с тем же именем и числом аргументов). Делается на
     каждый запрос: пул отдаёт разные соединения, а вызов копеечный."""
     try:
-        raw = db.connection().connection
+        proxy = db.connection().connection          # PoolProxiedConnection
+        raw = getattr(proxy, "dbapi_connection", None) or proxy
         raw.create_function("lower", 1, lambda s: s.lower() if isinstance(s, str) else s)
     except Exception as e:  # noqa: BLE001
         log.debug("crm: lower() не подменился: %s", str(e)[:80])
