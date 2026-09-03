@@ -20,6 +20,7 @@ const I18N = {
   // ═══════════════════════════════ ENGLISH ═══════════════════════════════
   en: {
     common: {
+      search: "search…",
       saved: "saved",
       save: "save",
       saving: "saving…",
@@ -178,6 +179,7 @@ const I18N = {
         studio: "projects, tracks, storyboard and assembly",
         academy: "school: how everything works, courses and shot kits",
         prompts: "shots: first frame, last frame, motion — copy or apply",
+        trends: "photo → trending clip",
       },
     },
 
@@ -628,6 +630,7 @@ const I18N = {
       },
       // Меню режимов: тумблер, карточка режима и шторка.
       menu: {
+        brandGroup: "marketing",
         title: "modes",
         more: "more",
         open: "open",
@@ -1136,6 +1139,7 @@ const I18N = {
       uploading: "uploading the photo…", working: "drawing the frame…",
       animating: "animating…", download: "Download",
       errored: "it failed — your tokens were refunded", failed: "could not load the templates",
+      filterAll: "all", share: "Share link", shared: "link copied ✓",
     },
     voice: {
       btnTitle: "voice this line (ElevenLabs)",
@@ -1205,22 +1209,24 @@ const I18N = {
     marketing: {
       title: "marketing",
       lead: "",
-      mockups: "mockups — product photography",
-      mockupsNote: "packshot frames for listings and ads — from a single photo.",
+      mockups: "mockups",
+      mockupsNote: "",
       ugc: "UGC / creators",
-      ugcNote: "an AI creator talks about your product like a real person.",
-      earn: "earn with lolq.ai",
-      earnNote: "post clips with our products — get a share of every sale.",
+      ugcNote: "",
+      earn: "earn",
+      earnNote: "",
       items: "items",
-      itemsNote: "shared library of items across all projects: photos, descriptions, models.",
+      itemsNote: "",
       chars: "characters",
-      charsNote: "shared library of characters: faces stay consistent everywhere.",
+      charsNote: "",
     },
     earn: {
       title: "earn with lolq.ai",
       intro: "generate a clip with the product — any template, even a cartoon. Post it with your link: every order from your traffic pays you.",
       empty: "products are coming soon.", copy: "Copy my link",
       copied: "copied ✓ — paste it into your post", make: "Make a clip with the product",
+      dClicks: "clicks", dSales: "sales", dEarned: "earned", dPaid: "paid out",
+      howto: "", stylePh: "your style: cartoon, AI creator, 3D…",
     },
     track: {
       audioUrl: "by link",
@@ -2690,6 +2696,7 @@ const I18N = {
   // ═══════════════════════════════ РУССКИЙ ═══════════════════════════════
   ru: {
     common: {
+      search: "поиск…",
       saved: "сохранено",
       save: "сохранить",
       saving: "сохраняю…",
@@ -2842,6 +2849,7 @@ const I18N = {
         studio: "проекты, треки, раскадровка и сборка",
         academy: "школа: как всё устроено, курсы и наборы приёмов",
         prompts: "приёмы: первый кадр, последний, движение — скопировать или применить",
+        trends: "фото → ролик в тренде",
       },
     },
 
@@ -3272,6 +3280,7 @@ const I18N = {
         brand: "бренд", items: "Предметы",
       },
       menu: {
+        brandGroup: "маркетинг",
         title: "режимы",
         more: "ещё",
         open: "открыть",
@@ -3775,6 +3784,7 @@ const I18N = {
       uploading: "загружаю фото…", working: "рисую кадр…",
       animating: "оживляю…", download: "Скачать",
       errored: "не получилось — токены возвращены", failed: "не загрузилась витрина",
+      filterAll: "все", share: "Поделиться ссылкой", shared: "ссылка скопирована ✓",
     },
     voice: {
       btnTitle: "озвучить реплику (ElevenLabs)",
@@ -3840,22 +3850,24 @@ const I18N = {
     marketing: {
       title: "маркетинг",
       lead: "",
-      mockups: "мокапы — предметная съёмка товара",
-      mockupsNote: "кадры упаковки для карточек и рекламы — по одному фото.",
+      mockups: "мокапы",
+      mockupsNote: "",
       ugc: "UGC / блогеры",
-      ugcNote: "ИИ-блогер рассказывает про твой продукт как живой человек.",
-      earn: "заработок с lolq.ai",
-      earnNote: "постишь ролики с продуктами — получаешь долю с продаж.",
+      ugcNote: "",
+      earn: "заработок",
+      earnNote: "",
       items: "предметы",
-      itemsNote: "общая база предметов всех проектов: фото, описание, модельки.",
+      itemsNote: "",
       chars: "персонажи",
-      charsNote: "общая база героев: лица держатся во всех проектах и режимах.",
+      charsNote: "",
     },
     earn: {
       title: "заработок с lolq.ai",
       intro: "сгенерируй ролик с продуктом — любой шаблон, хоть мульт. запости со своей ссылкой: заказы с твоего трафика — твоя выплата.",
       empty: "продукты скоро появятся.", copy: "Скопировать мою ссылку",
       copied: "скопирована ✓ — вставляй в пост", make: "Сделать ролик с продуктом",
+      dClicks: "переходов", dSales: "продаж", dEarned: "начислено", dPaid: "выплачено",
+      howto: "", stylePh: "свой стиль: мульт, ИИ-блогер, 3D…",
     },
     track: {
       audioUrl: "по ссылке",

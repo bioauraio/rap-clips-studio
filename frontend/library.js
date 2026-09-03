@@ -265,7 +265,7 @@
       .map((id) => ({ id: id, n: poolOf(id).filter(matches).length }))
       .filter((x) => x.n);
     if (!hits.length) return "";
-    return `<p class="pb-else">${esc(T("promptbase.foundElsewhere", ""))} ${
+    return `<p class="pb-else">${
       hits.map((h) => `<button type="button" class="pb-else-go" data-tab="${h.id}"
         >${esc(T("promptbase.tab." + h.id, h.id))} · ${h.n}</button>`).join(" ")}</p>`;
   }
