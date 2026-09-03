@@ -97,7 +97,9 @@
     const box = byId("music");
     if (!box) return;
     box.classList.remove("hidden");
-    if (location.hash !== "#/music") history.replaceState(null, "", "#/music");
+    // Хэш-роута #/music больше нет: адрес раздела — /music (app.js), и
+    // «/music#/music» в строке был вторым адресом одного экрана.
+    if (location.hash === "#/music") history.replaceState(null, "", location.pathname);
     applySection();
     boot();
   }
@@ -105,7 +107,6 @@
   function leave() {
     clearTimeout(M.poll);
     stopAB();
-    if (location.hash === "#/music") history.replaceState(null, "", location.pathname);
     if (typeof showApp === "function") showApp();
   }
 
@@ -179,11 +180,14 @@
     const showDist = sct === "dist";
     const open = Boolean(M.open) && !showDist;
     dist.classList.toggle("hidden", !showDist);
-    if (intake) intake.classList.toggle("hidden",
-      showDist || open || sct === "master" || sct === "stems");
+    // Макет «панель · сцена · история»: слева загрузить/сгенерировать, в
+    // центре карточка трека, справа список — они не прячут друг друга.
+    if (intake) intake.classList.toggle("hidden", showDist);
     if (drop) drop.classList.toggle("hidden", sct === "gen");
     if (gen) gen.classList.toggle("hidden", sct !== "gen" && sct !== "analysis");
-    if (list) list.classList.toggle("hidden", showDist || open);
+    if (list) list.classList.toggle("hidden", showDist);
+    const wrap = document.querySelector("#music .mus-wrap");
+    if (wrap) wrap.classList.toggle("has-open", open);
     if (det) det.classList.toggle("hidden", !open);
     if (open) renderDetail();
     if (showDist) renderDist(dist);
@@ -226,8 +230,8 @@
       // Формат ровно как в шапке студии (app.js renderUserBar): «1 000
       // токенов», а монетку марки рисует сама .points-badge фоном. Своя
       // молния рядом с монеткой смотрелась бы вторым значком валюты.
-      p.textContent = (pts === null || admin)
-        ? "" : `${tNum(pts)} ${t("top.pointsUnit")}`;
+      // Формат остатка — как в шапке студии на телефоне: «⚡148».
+      p.textContent = (pts === null || admin) ? "" : `⚡${tNum(pts)}`;
       p.classList.toggle("hidden", pts === null || Boolean(admin));
     }
   }
@@ -255,7 +259,8 @@
 
   function fmtMB(bytes) {
     const mb = (Number(bytes) || 0) / 1048576;
-    return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+    const v = mb >= 10 ? String(Math.round(mb)) : mb.toFixed(1);
+    return `${LANG === "ru" ? v.replace(".", ",") : v} MB`;
   }
 
   function renderList() {
@@ -269,7 +274,6 @@
     if (!M.items.length) {
       const empty = el("div", "mus-empty");
       empty.appendChild(el("div", null, T("list.empty")));
-      empty.appendChild(el("div", null, T("list.emptyNote")));
       box.appendChild(empty);
       return;
     }
@@ -986,7 +990,7 @@
       // черновик соглашения
       const agr = el("div", "mus-card");
       agr.appendChild(el("h3", null, T("dist.agreementTitle")));
-      agr.appendChild(el("p", "mus-sub", T("dist.agreementNote")));
+      if (T("dist.agreementNote")) agr.appendChild(el("p", "mus-sub", T("dist.agreementNote")));
       const pre = el("pre", "mus-agreement");
       pre.style.whiteSpace = "pre-wrap";
       pre.style.font = "12px/1.5 ui-monospace, monospace";
@@ -1092,7 +1096,7 @@
   function paneMaster(pane, o) {
     const card = el("div", "mus-card");
     card.appendChild(el("h3", null, T("master.profile")));
-    card.appendChild(el("p", "mus-sub", T("master.profileNote")));
+    if (T("master.profileNote")) card.appendChild(el("p", "mus-sub", T("master.profileNote")));
 
     const targets = S("mastering").targets || [];
     const chips = el("div", "mus-chips");
@@ -1199,7 +1203,7 @@
     run.appendChild(btn);
     run.appendChild(el("span", "mus-price", T("master.costNote", { n: cost, unit: unit(cost) })));
     card.appendChild(run);
-    if (M.engine === "roex") card.appendChild(el("p", "mus-fh", T("master.cloudNote")));
+    if (M.engine === "roex" && T("master.cloudNote")) card.appendChild(el("p", "mus-fh", T("master.cloudNote")));
 
     if (busy) card.appendChild(status("run", T("master.running")));
     if (o.master_status === "error") {
@@ -1374,7 +1378,7 @@
   function paneRelease(pane, o) {
     const card = el("div", "mus-card");
     card.appendChild(el("h3", null, T("release.meta")));
-    card.appendChild(el("p", "mus-sub", T("release.metaNote")));
+    if (T("release.metaNote")) card.appendChild(el("p", "mus-sub", T("release.metaNote")));
 
     const form = el("div", "mus-form");
     FIELDS.forEach(([key, kind, wide]) => {
@@ -1460,7 +1464,7 @@
     // ── пакет и заявка ──
     const out = el("div", "mus-card");
     out.appendChild(el("h3", null, T("release.deliver")));
-    out.appendChild(el("p", "mus-sub", T("release.deliverNote")));
+    if (T("release.deliverNote")) out.appendChild(el("p", "mus-sub", T("release.deliverNote")));
 
     const row = el("div", "mus-run");
     const pack = el("button", null, T("release.pack"));
@@ -1489,7 +1493,7 @@
       row.appendChild(again);
     }
     out.appendChild(row);
-    out.appendChild(el("p", "mus-fh", T("release.packNote")));
+    if (T("release.packNote")) out.appendChild(el("p", "mus-fh", T("release.packNote")));
 
     const dist = el("div", "mus-dist");
     const d = S("distribution");
