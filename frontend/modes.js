@@ -68,6 +68,7 @@
       id: "chat",
       kind: "external",
       icon: "⚒",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M14.5 4.5l5 5-9 9H5.5v-5z'/><path d='M12 7l5 5'/></svg>",
       get title() { return T("modes.chat.title", "Мастерская"); },
       get full() { return T("modes.chat.full", "Мастерская — один кадр, ролик или ответ"); },
       get note() { return T("modes.chat.note", ""); },
@@ -84,6 +85,7 @@
       id: "clip",
       kind: "mode",
       icon: "🎬",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='3' y='5' width='18' height='14' rx='3'/><path d='M3 9h18M8 5v14M16 5v14'/></svg>",
       // id НЕ трогаем: он в адресе (#/clip/...), в state.lastStep и в
       // сохранённых ссылках владельца. Переименован только заголовок.
       get title() { return T("modes.clip.title", "rap clips"); },
@@ -107,6 +109,7 @@
       id: "pixar",
       kind: "shortcut",
       icon: "🧸",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='12' cy='9' r='4'/><path d='M5 20a7 7 0 0 1 14 0'/></svg>",
       get title() { return T("modes.pixar.title", "3D Pixar"); },
       get full() { return T("modes.pixar.full", "3D Pixar — стиль поверх rap clips"); },
       get note() { return T("modes.pixar.note", ""); },
@@ -121,6 +124,7 @@
       id: "blogger",
       kind: "mode",
       icon: "🎙",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='9' y='3' width='6' height='11' rx='3'/><path d='M5 11a7 7 0 0 0 14 0M12 18v3'/></svg>",
       get title() { return T("modes.blogger.title", "ИИ-блогеры"); },
       get full() { return T("modes.blogger.full", "ИИ-блогеры — сквозной ведущий и его ролики"); },
       get note() { return T("modes.blogger.note", ""); },
@@ -144,6 +148,7 @@
       id: "ugc",
       kind: "mode",
       icon: "📱",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='7' y='2.5' width='10' height='19' rx='2.5'/><path d='M11 18h2'/></svg>",
       // Группа «Маркетинг (for brand)»: UGC и мокапы работают на бренд, а не
       // на артиста — меню режимов рисует их под общим заголовком.
       group: "brand",
@@ -165,6 +170,7 @@
       id: "mockup",
       kind: "mode",
       icon: "📦",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12 3l8 4.5v9L12 21l-8-4.5v-9z'/><path d='M4 7.5l8 4.5 8-4.5M12 12v9'/></svg>",
       group: "brand",
       get title() { return T("modes.mockup.title", "мокапы"); },
       get full() { return T("modes.mockup.full", "Мокапы — предметная съёмка товара"); },
@@ -184,6 +190,7 @@
       id: "series",
       kind: "mode",
       icon: "📺",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='3' y='6' width='18' height='12' rx='3'/><path d='M10 9.5v5l4-2.5z'/></svg>",
       get title() { return T("modes.series.title", "сериалы"); },
       get full() { return T("modes.series.full", "Сериал с сезонами и сериями"); },
       get note() { return T("modes.series.note", ""); },
@@ -208,6 +215,7 @@
       id: "music",
       kind: "external",
       icon: "🎚",
+      svg: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M9 18V6l10-2v12'/><circle cx='6.5' cy='18' r='2.5'/><circle cx='16.5' cy='16' r='2.5'/></svg>",
       get title() { return T("modes.music.title", "музыка"); },
       get full() { return T("modes.music.full", "Трек: загрузка, мастеринг, релиз"); },
       get note() { return T("modes.music.note", ""); },
@@ -250,8 +258,16 @@
   const soon = () => MODES.filter((m) => m.soon);
   const real = () => MODES.filter((m) => m.kind === "mode" && !m.soon);
 
+  /* Одноцветная SVG-иконка режима (stroke 1.75, currentColor) элементом. */
+  function svgEl(m, cls) {
+    const span = document.createElement("span");
+    span.className = cls || "mode-svg";
+    span.innerHTML = (m && m.svg) || "";
+    return span;
+  }
+
   window.QlolModes = {
-    MODES, ACCOUNT_STEPS,
+    MODES, ACCOUNT_STEPS, svgEl,
     byId, ofKind, seg, soon, real,
     isShortcut: (m) => Boolean(m && m.kind === "shortcut"),
     isExternal: (m) => Boolean(m && m.kind === "external"),

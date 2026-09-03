@@ -23,8 +23,8 @@
   /* ── обводки: три уровня ── */
   --edge: #2d211a;
   --bw-hair: 1px; --bw-edge: 1.5px; --bw-hero: 2px;
-  --line: rgba(45, 33, 26, .12);
-  --line-strong: rgba(45, 33, 26, .20);
+  --line: rgba(var(--ink-rgb), .12);
+  --line-strong: rgba(var(--ink-rgb), .20);
 
   /* ── тени: офсет 1–3px у предметов, блюр только у парящего ── */
   --lift-1: 0 1px 0 var(--edge);
@@ -121,7 +121,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   color: var(--ink-muted); text-decoration: none; font-size: var(--fs-base); font-weight: 500;
   padding: var(--s-2) var(--s-3); border-radius: var(--r-2); white-space: nowrap;
 }
-.ld-menu a:hover { color: var(--text); background: rgba(45, 33, 26, .06); }
+.ld-menu a:hover { color: var(--text); background: rgba(var(--ink-rgb), .06); }
 .ld-bar-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; }
 @media (max-width: 940px) { .ld-menu { display: none; } .ld-bar-actions { margin-left: auto; } }
 
@@ -146,7 +146,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   background: transparent; border: none; box-shadow: none;
   color: var(--ink-muted); font-weight: 500; padding: 0 var(--s-3);
 }
-.landing button.ghost:hover:not(:disabled) { color: var(--text); background: rgba(45,33,26,.06); }
+.landing button.ghost:hover:not(:disabled) { color: var(--text); background: rgba(var(--ink-rgb), .06); }
 .landing button:disabled { opacity: .5; cursor: default; box-shadow: none; filter: none; }
 .ld-cta { min-height: 48px; font-size: var(--fs-md); padding: 0 var(--s-6); }
 
@@ -305,7 +305,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   min-height: 36px; padding: 0 var(--s-4); border: none; box-shadow: none;
   background: transparent; color: var(--ink-muted); font-size: var(--fs-base);
 }
-.landing .ld-period button:hover:not(:disabled) { background: rgba(45,33,26,.05); color: var(--text); }
+.landing .ld-period button:hover:not(:disabled) { background: rgba(var(--ink-rgb), .05); color: var(--text); }
 .landing .ld-period button.on,
 .landing .ld-period button.on:hover:not(:disabled) {
   background: var(--surface); color: var(--text); font-weight: 600;
@@ -397,7 +397,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 .ld-range::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 26px; height: 26px; border-radius: 50%;
   background: var(--surface); border: var(--bw-hair) solid var(--line-strong);
-  box-shadow: var(--shadow-soft), 0 1px 4px rgba(45, 33, 26, .25); cursor: grab; margin-top: -11px;
+  box-shadow: var(--shadow-soft), 0 1px 4px rgba(var(--ink-rgb), .25); cursor: grab; margin-top: -11px;
 }
 .ld-range::-moz-range-thumb {
   width: 24px; height: 24px; border-radius: 50%;
@@ -410,7 +410,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: .04em;
   color: var(--ink-muted); border-radius: var(--r-1);
 }
-.landing .ld-ticks button:hover:not(:disabled) { background: rgba(45,33,26,.05); color: var(--text); }
+.landing .ld-ticks button:hover:not(:disabled) { background: rgba(var(--ink-rgb), .05); color: var(--text); }
 .landing .ld-ticks button.on { color: var(--accent-ink); font-weight: 700; background: var(--accent-wash); }
 .ld-tick-sub { font-size: var(--fs-meta); letter-spacing: 0; }
 
@@ -612,8 +612,8 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
 body:has(#welcome:not(.hidden)) {
   background:
     radial-gradient(1100px 520px at 88% -14%, rgba(255, 122, 41, .10), transparent 62%),
-    linear-gradient(rgba(45, 33, 26, .030) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(45, 33, 26, .030) 1px, transparent 1px),
+    linear-gradient(rgba(var(--ink-rgb), .030) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--ink-rgb), .030) 1px, transparent 1px),
     var(--bg);
   background-size: auto, 64px 64px, 64px 64px, auto;
 }
@@ -637,7 +637,7 @@ body:has(#welcome:not(.hidden)) {
   letter-spacing: var(--ls-caps); color: var(--ink-muted);
   background: transparent; box-shadow: none;
 }
-.landing .lang-switch button:hover:not(:disabled) { background: rgba(45, 33, 26, .06); color: var(--text); }
+.landing .lang-switch button:hover:not(:disabled) { background: rgba(var(--ink-rgb), .06); color: var(--text); }
 .landing .lang-switch button:active:not(:disabled) { transform: none; box-shadow: none; }
 .landing .lang-switch button.on,
 .landing .lang-switch button.on:hover:not(:disabled) {

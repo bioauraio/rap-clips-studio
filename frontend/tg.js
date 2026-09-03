@@ -18,7 +18,9 @@
 
   const W = window.Telegram && window.Telegram.WebApp;
   const TG = {
-    active: Boolean(W && (W.initData || (W.initDataUnsafe && W.initDataUnsafe.user))),
+    // Только с живым initData: без него это обычный сайт, а не мини-апп —
+    // иначе /api/auth/telegram-webapp гарантированно отвечал 403.
+    active: Boolean(W && W.initData),
     raw: W || null,
     token: "",            // Bearer для Desktop/Web, где кука в iframe не едет
     startParam: "",
