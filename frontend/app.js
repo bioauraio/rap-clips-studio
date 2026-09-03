@@ -5942,9 +5942,9 @@ async function msCinemaBar(card, tr, mode) {
   // общего файла на 5000 строк ради двух слов.
   const ct = (key, ru, en) => t(key) || (LANG === "ru" ? ru : en);
   box.innerHTML = `
-    <div class="mk-bar cine-card">
-      <span class="cine-title">${escHtml(ct("cine.title", "Свободная сцена",
-        "Free scene"))}</span>
+    <div class="mk-bar cine-card${tr._cineOpen ? " open" : ""}">
+      <button type="button" class="cine-title" aria-expanded="${tr._cineOpen ? "true" : "false"}">${escHtml(ct("cine.title", "Свободная сцена",
+        "Free scene"))}</button>
       <div class="cine-line">
         <div class="cine-wrap">
           <textarea class="cine-prompt" rows="1"
@@ -5972,6 +5972,19 @@ async function msCinemaBar(card, tr, mode) {
       </div>
       <span class="cine-status status"></span>
     </div>`;
+  {
+    // Весь бар свёрнут до заголовка: раскадровка — про сцены трека, свободная
+    // сцена нужна раз в проект, а развёрнутой она давала вторую огненную
+    // кнопку на экране этапа.
+    const title = $(".cine-title", box);
+    const cardEl = $(".cine-card", box);
+    title.addEventListener("click", () => {
+      const open = cardEl.classList.toggle("open");
+      tr._cineOpen = open;
+      title.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) { const ta = $(".cine-prompt", box); ta && ta.focus(); }
+    });
+  }
   {
     // Параметры свёрнуты по умолчанию: на виду только «опиши сцену» и
     // «сгенерировать». Две строки чипов вперемешку («камера: авто…»,

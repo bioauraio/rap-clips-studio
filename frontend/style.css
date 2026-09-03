@@ -4324,7 +4324,10 @@ body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
   #app { padding-bottom: 104px; }
 }
 @media (max-width: 420px) {
-  .stage-jump .stage-tab { padding: 0 8px; }
+  .stage-jump .stage-tab { padding: 0 8px; flex: 0 0 auto; }
+  /* На узком экране подпись остаётся только у активного этапа —
+     четыре пункта входят без обрезки и прокрутки. */
+  .stage-jump .stage-tab:not(.on) .st-cap { display: none; }
 }
 @media (max-width: 700px) {
   body:has(#stage-jump:not(:empty)) #app { padding-bottom: 104px !important; }
@@ -4439,7 +4442,13 @@ body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
 .cine-title {
   font-family: var(--font-mono); font-size: 10px; font-weight: 800;
   letter-spacing: .12em; text-transform: lowercase; color: var(--ink-muted);
+  background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
+  display: inline-flex; align-items: center; gap: 6px;
 }
+.cine-title::before { content: "+"; font-size: 13px; line-height: 1; }
+.cine-card.open .cine-title::before { content: "−"; }
+.cine-card:not(.open) > :not(.cine-title) { display: none; }
+.cine-card:not(.open) { padding-top: 10px; padding-bottom: 10px; }
 .cine-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cine-wrap { position: relative; flex: 1 1 260px; min-width: 0; }
 .cine-prompt {
