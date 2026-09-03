@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 log = logging.getLogger("rapclips.textgen")
 
@@ -149,13 +150,50 @@ def engine_live(engine: str) -> bool:
     if ch == "gateway":
         return True
     if ch == "anthropic":
-        # Живой всегда: либо прямой API-ключ, либо Claude-шлюз подписки
-        # владельца (ask() выбирает канал сам). Раньше без ключа выбор
-        # Opus/Sonnet молча проваливался в «авто».
-        return True
+        # Либо прямой API-ключ, либо живой Claude-шлюз подписки владельца
+        # (ask() выбирает канал сам). Ни того ни другого — честное «нет».
+        return anthropic_channel() != "none"
     if ch == "openrouter":
         return bool(OPENROUTER_API_KEY)
     return False
+
+
+_gw_health: dict = {"ts": 0.0, "ok": False}
+_GW_HEALTH_TTL = 60.0
+
+
+def gateway_alive() -> bool:
+    """Жив ли шлюз (GET на корень/health с коротким таймаутом), кэш 60 с."""
+    now = time.time()
+    if now - _gw_health["ts"] < _GW_HEALTH_TTL:
+        return bool(_gw_health["ok"])
+    ok = False
+    base = GATEWAY_URL.rsplit("/", 1)[0]
+    try:
+        import httpx  # noqa: PLC0415
+        with httpx.Client(timeout=2.0) as c:
+            for url in (base + "/health", base + "/"):
+                try:
+                    r = c.get(url)
+                except httpx.HTTPError:
+                    continue
+                if r.status_code < 500:
+                    ok = True
+                    break
+    except Exception:  # noqa: BLE001
+        ok = False
+    _gw_health.update({"ts": now, "ok": ok})
+    return ok
+
+
+def anthropic_channel() -> str:
+    """'key' — прямой ANTHROPIC_API_KEY (и SDK), 'gateway' — Claude-шлюз
+    подписки владельца отвечает, 'none' — ни того ни другого."""
+    if ANTHROPIC_API_KEY and _sdk_available():
+        return "key"
+    if gateway_alive():
+        return "gateway"
+    return "none"
 
 
 def text_engines_live() -> list[str]:
@@ -210,6 +248,9 @@ def public_engines(plan: str = "free", *, admin: bool = False,
             "title": spec["title"],
             "title_en": spec.get("title_en", spec["title"]),
             "channel": spec["channel"],
+            # Честный канал для admin/models: key | gateway | none.
+            "live_channel": (anthropic_channel() if spec["channel"] == "anthropic"
+                             else ("gateway" if live else "none")),
             "min_plan": spec.get("min_plan", "free"),
             "locked": not plan_allows(eid, plan),
             "live": live,
@@ -356,6 +397,8 @@ def state() -> dict:
     их одним XSS."""
     return {
         "anthropic_key": bool(ANTHROPIC_API_KEY),
+        "anthropic_channel": anthropic_channel(),
+        "gateway_alive": gateway_alive(),
         "anthropic_sdk": _sdk_available(),
         "openrouter_key": bool(OPENROUTER_API_KEY),
         "egress_proxy": EGRESS_PROXY or "",

@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import threading
 import time
 
@@ -34,6 +35,28 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 log = logging.getLogger("rapclips")
+# httpx печатает URL Bot API на INFO — вместе с токеном. Глушим и маскируем.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+class _TokenMask(logging.Filter):
+    _RE = re.compile(r"/bot[0-9]+:[A-Za-z0-9_-]+/")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.args:
+                record.msg = str(record.msg) % record.args
+                record.args = ()
+            record.msg = self._RE.sub("/bot***/", str(record.msg))
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+
+for _h in logging.getLogger().handlers:
+    if not any(isinstance(f, _TokenMask) for f in _h.filters):
+        _h.addFilter(_TokenMask())
 
 router = APIRouter()
 

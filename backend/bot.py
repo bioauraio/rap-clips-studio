@@ -42,6 +42,7 @@ import contextlib
 import html
 import json
 import logging
+import re
 import math
 import os
 import random
@@ -58,6 +59,25 @@ logging.basicConfig(level=os.environ.get("BOT_LOG_LEVEL", "INFO"),
 # httpx печатает полный URL запроса на INFO, а в URL Bot API лежит токен.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+class _TokenMask(logging.Filter):
+    """Страховка второго уровня: любой /bot<токен>/ в сообщении → /bot***/."""
+    _RE = re.compile(r"/bot[0-9]+:[A-Za-z0-9_-]+/")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.args:
+                record.msg = str(record.msg) % record.args
+                record.args = ()
+            record.msg = self._RE.sub("/bot***/", str(record.msg))
+        except Exception:  # noqa: BLE001 — фильтр не должен ронять лог
+            pass
+        return True
+
+
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_TokenMask())
 
 # ─────────────────────────────── настройки ───────────────────────────────
 
