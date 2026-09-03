@@ -4634,8 +4634,24 @@ async def update_track(track_id: int, request: Request, user: User = Depends(cur
     if "image_resolution" in body:
         want = str(body["image_resolution"] or "").strip().upper()
         track.image_resolution = want if want in ("1K", "2K", "4K") else ""
+    # АРХИТЕКТУРА СЦЕНАРИЯ. Студия шлёт PATCH {scenario: key} — та же
+    # валидация, что и в /style; пустая строка — честный выбор «Авто».
+    if "scenario" in body:
+        _log_change(db, user, track.project_id, "track", track.id,
+                    "scenario_key", track.scenario_key, body.get("scenario"))
+        track.scenario_key = _scenario_key_of(body.get("scenario"))
     db.commit()
     return track_dict(track)
+
+
+def _scenario_key_of(raw) -> str:
+    """Ключ сюжетной архитектуры из слоя scripts базы промтов.
+    Пустая строка — «Авто»; чужой ключ молча не пишем."""
+    skey = str(raw or "").strip()
+    if not skey:
+        return ""
+    return skey if any(
+        r["key"] == skey for r in prompts_library.layer_rows("scripts")) else ""
 
 
 # ─────────────────────── раздел «Промты»: каталог ───────────────────────
@@ -6022,10 +6038,7 @@ async def set_track_style(track_id: int, request: Request,
     track.style = prompts_catalog.fusion(keys, extra)
 
     if "scenario" in body:
-        skey = str(body.get("scenario") or "").strip()
-        # Пустая строка — честный выбор «Авто»; чужой ключ молча не пишем.
-        track.scenario_key = skey if skey and any(
-            r["key"] == skey for r in prompts_library.layer_rows("scripts")) else ""
+        track.scenario_key = _scenario_key_of(body.get("scenario"))
 
     if "preset" in body:
         pkey = str(body.get("preset") or "").strip()
@@ -11699,9 +11712,10 @@ async def generate_scene_prompt(scene_id: int, user: User = Depends(current_user
         for x in sorted(track.scenes, key=lambda y: y.position)
         if abs(x.position - scene.position) <= 2 and x.id != scene.id
     ]
-    import asyncio
     try:
-        res = asyncio.run(claude.generate_scene_prompt(
+        # await, а не asyncio.run: роут асинхронный, asyncio.run из живой петли
+        # событий падает RuntimeError → 502 на каждом клике «Промпт».
+        res = await claude.generate_scene_prompt(
             style=track.style, story=project.story or "",
             characters=characters_payload(project), neighbours=near,
             scene={
@@ -11711,7 +11725,7 @@ async def generate_scene_prompt(scene_id: int, user: User = Depends(current_user
             },
             lyrics_line=scene.lyric_line or "", comment=track.comment or "",
             engine=_text_engine_for(db, project, track),
-        ))
+        )
     except Exception as e:  # noqa: BLE001 — причину показываем в карточке
         raise HTTPException(502, f"не вышло написать промпт: {str(e)[:200]}")
     scene.prompt_stale = False
