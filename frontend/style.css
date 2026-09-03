@@ -4332,6 +4332,8 @@ body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
 @media (max-width: 700px) {
   body:has(#stage-jump:not(:empty)) #app { padding-bottom: 104px !important; }
 }
+/* Капсула этапов закреплена снизу — подвал не должен под неё заезжать. */
+body:has(#stage-jump:not(:empty)) #app-foot { margin-bottom: 72px; }
 
 /* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */
 .mk-studio { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
