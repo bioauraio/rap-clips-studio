@@ -134,6 +134,19 @@ def _user_row(core, db: Session, u: User) -> dict:
     }
 
 
+def _ci_lower(db: Session) -> None:
+    """Встроенный lower() SQLite знает только ASCII: «Иван» им не
+    опускается, и поиск q=иван его не находил. Подменяем lower на
+    str.lower у ЭТОГО соединения (sqlite перекрывает встроенную функцию
+    пользовательской с тем же именем и числом аргументов). Делается на
+    каждый запрос: пул отдаёт разные соединения, а вызов копеечный."""
+    try:
+        raw = db.connection().connection
+        raw.create_function("lower", 1, lambda s: s.lower() if isinstance(s, str) else s)
+    except Exception as e:  # noqa: BLE001
+        log.debug("crm: lower() не подменился: %s", str(e)[:80])
+
+
 @router.get("/api/admin/users")
 def admin_users(q: str = "", plan: str = "", state: str = "", has: str = "",
                 sort: str = "new", cursor: int = 0, limit: int = 50,
@@ -142,12 +155,14 @@ def admin_users(q: str = "", plan: str = "", state: str = "", has: str = "",
 
     ГРАБЛЯ ПОИСКА: база — SQLite, и LIKE по кириллице там регистрозависим
     ровно так же, как ILIKE в Postgres с C-collation. Поэтому сравниваем
-    через LOWER() с нормализованной строкой, а не «как получится»."""
+    через LOWER() с нормализованной строкой, а lower() подменяем на
+    юникодный (_ci_lower) — встроенный кириллицу не берёт."""
     core = _core()
     limit = max(1, min(200, int(limit or 50)))
     query = db.query(User)
     needle = str(q or "").strip().lower()
     if needle:
+        _ci_lower(db)
         like = f"%{needle}%"
         conds = [func.lower(User.name).like(like), func.lower(User.login).like(like),
                  func.lower(User.email).like(like),
@@ -644,6 +659,9 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
             setattr(t, field, str(body[field] or ""))
     # Автоперевод при сохранении: владелец правит по-русски, английский
     # пересобирается сам (если его не трогали руками — флаг translate).
+    # Упавший шлюз перевода НЕ откатывает правку: всё остальное и русский
+    # текст сохраняются, английский остаётся старым, в ответе warning.
+    warning = ""
     if body.get("translate"):
         try:
             if (t.image_prompt_ru or "").strip():
@@ -653,7 +671,7 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
             if (t.title or "").strip() and not (t.title_en or "").strip():
                 t.title_en = await translate_to_en(t.title)
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+            warning = _no_translate_warning(e)
     if "reward_pct" in body:
         t.reward_pct = max(1, min(50, int(body["reward_pct"] or 10)))
     if "duration_sec" in body:
@@ -664,7 +682,7 @@ async def admin_trend_save(request: Request, user: User = Depends(admin_user),
         t.position = int(body["position"] or 0)
     db.commit()
     db.refresh(t)
-    return {"ok": True, "id": t.id}
+    return {"ok": True, "id": t.id, "warning": warning}
 
 
 @router.post("/api/admin/trends/{preset_id}/media")
@@ -1214,6 +1232,12 @@ async def translate_to_ru(text: str) -> str:
     return (out or "").strip()
 
 
+def _no_translate_warning(e: Exception) -> str:
+    """Один текст на все четыре ручки сохранения: правка легла, перевод нет."""
+    log.warning("crm: перевод не вышел, сохранено без него: %s", str(e)[:200])
+    return "сохранено без перевода: " + str(e)[:120]
+
+
 async def translate_to_en(text: str) -> str:
     """Русский промпт → английский. Через бесплатный текстовый шлюз.
 
@@ -1459,13 +1483,17 @@ async def admin_style_save(key: str, request: Request,
     # трогал, переводим сами: иначе поле «промпт» и то, что реально уехало
     # в генерацию, разъезжаются молча.
     meta_patch: dict = {}
+    warning = ""
     if "prompt_ru" in body:
         meta_patch["prompt_ru"] = str(body["prompt_ru"] or "")[:20000]
     if body.get("translate") and meta_patch.get("prompt_ru"):
         try:
             body["prompt"] = await translate_to_en(meta_patch["prompt_ru"])
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+            # Правка не теряется: русский и остальные поля ложатся,
+            # английский остаётся прежним, фронт покажет warning.
+            warning = _no_translate_warning(e)
+            body.pop("prompt", None)
     # База для сценариев: правится ручная часть, хранится склейка с
     # автоблоком подписей кадров.
     if "story_manual" in body:
@@ -1517,7 +1545,7 @@ async def admin_style_save(key: str, request: Request,
         "story_base": _prompt_mark(row.story_base),
         "enabled": bool(row.enabled),
     })
-    return admin_style_card(key, user=user, db=db)
+    return {**admin_style_card(key, user=user, db=db), "warning": warning}
 
 
 @router.delete("/api/admin/styles/{key}")
@@ -1535,6 +1563,17 @@ def admin_style_reset(key: str, user: User = Depends(admin_user),
                                  "его можно только выключить")
     db.delete(row)
     db.commit()
+    # Русский исходник, ручная база сценариев и ссылки живут в style_meta —
+    # «заводской» без их очистки показывал бы старый RU-промпт поверх
+    # заводского EN. Вид (kind: стиль/референс) — организация каталога,
+    # его оставляем.
+    meta = _style_meta(db)
+    cur = dict(meta.get(key) or {})
+    if cur:
+        meta[key] = {"kind": cur["kind"]} if cur.get("kind") else {}
+        if not meta[key]:
+            meta.pop(key, None)
+        _style_meta_save(db, meta)
     core.reload_style_overlay()
     _log_action(db, user, 0, "style_reset", {"key": key})
     return {"ok": True, "key": key}
@@ -1786,12 +1825,16 @@ async def admin_prompt_save(layer: str, key: str, request: Request,
     body = await request.json()
     patch = _clean_patch(layer, body)
     # Автоперевод: поля из `translate` пересобираются из русского исходника.
+    # Упал шлюз — поле остаётся прежним (EN из формы не перетирает старое),
+    # остальное сохраняется, в ответе warning.
+    warning = ""
     for f in (body.get("translate") or []):
         if f in prompts_library.PROMPT_FIELDS[layer] and patch.get(f + "_ru"):
             try:
                 patch[f] = await translate_to_en(patch[f + "_ru"])
             except Exception as e:  # noqa: BLE001
-                raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+                warning = _no_translate_warning(e)
+                patch.pop(f, None)
     data = _prompts_overlay(db)
     row = dict(data[layer].get(key) or {})
     row.update(patch)
@@ -1800,7 +1843,8 @@ async def admin_prompt_save(layer: str, key: str, request: Request,
     core._overlay_setting_save(db, core.PROMPTS_OVERLAY_KEY, data)
     core.reload_prompts_overlay(db)
     _log_action(db, user, user.id, "prompt_save", {"layer": layer, "key": key})
-    return {"ok": True, "card": prompts_library.layer_card(layer, key)}
+    return {"ok": True, "card": prompts_library.layer_card(layer, key),
+            "warning": warning}
 
 
 @router.delete("/api/admin/prompts/{layer}/{key}")
@@ -1814,7 +1858,12 @@ def admin_prompt_delete(layer: str, key: str, hide: int = 0,
     data = _prompts_overlay(db)
     builtin = key in prompts_library._BUILTIN_BY_KEY_LAYER[layer]
     if builtin and hide:
-        data[layer][key] = {"enabled": False}
+        # Скрыть — это флаг ПОВЕРХ наложения, а не вместо него: название,
+        # RU-промпт и тариф остаются; PUT {} снимает enabled и возвращает
+        # карточку с теми же правками.
+        row = dict(data[layer].get(key) or {})
+        row["enabled"] = False
+        data[layer][key] = row
     else:
         data[layer].pop(key, None)
     core._overlay_setting_save(db, core.PROMPTS_OVERLAY_KEY, data)
@@ -1850,13 +1899,15 @@ async def admin_mockup_save(tid: str, request: Request,
         raise HTTPException(400, "ключ только из латиницы, цифр и подчёркиваний")
     body = await request.json()
     patch: dict = {}
+    warning = ""
     if "prompt_ru" in body:
         patch["prompt_ru"] = str(body["prompt_ru"] or "")[:8000]
     if body.get("translate") and patch.get("prompt_ru"):
         try:
             body["prompt"] = await translate_to_en(patch["prompt_ru"])
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"перевод не вышел: {str(e)[:200]}") from e
+            warning = _no_translate_warning(e)
+            body.pop("prompt", None)
     for f in mockup_catalog.EDITABLE:
         if f not in body:
             continue
@@ -1878,7 +1929,7 @@ async def admin_mockup_save(tid: str, request: Request,
     core._overlay_setting_save(db, core.MOCKUP_OVERLAY_KEY, data)
     core.reload_mockup_overlay(db)
     _log_action(db, user, user.id, "mockup_save", {"id": tid})
-    return {"ok": True}
+    return {"ok": True, "warning": warning}
 
 
 @router.delete("/api/admin/mockups/{tid}")
@@ -1888,7 +1939,9 @@ def admin_mockup_delete(tid: str, hide: int = 0,
     core = _core()
     data = core._overlay_setting(db, core.MOCKUP_OVERLAY_KEY)
     if mockup_catalog.is_builtin(tid) and hide:
-        data[tid] = {"enabled": False}
+        row = dict(data.get(tid) or {})
+        row["enabled"] = False
+        data[tid] = row
     else:
         data.pop(tid, None)
     core._overlay_setting_save(db, core.MOCKUP_OVERLAY_KEY, data)
@@ -1972,10 +2025,21 @@ def admin_models(user: User = Depends(admin_user), db: Session = Depends(db_sess
         return {"uses": d.get("uses", 0), "earned": d.get("earned", 0)}
 
     text = []
+    # Честный статус Claude: engine_live для anthropic всегда True (без
+    # ключа канал живёт через шлюз подписки). Админу важно, ЧЕМ он жив:
+    # live_via = key | gateway | none.
+    tst = core.textgen.state()
     for row in core.textgen.public_engines("studio", admin=True):
         row["points"] = core.TEXT_COST.get(row["id"], 0)
         row["enabled"] = f"text:{row['id']}" not in off
         row["toggle_id"] = f"text:{row['id']}"
+        ch = row.get("channel")
+        if ch == "anthropic":
+            row["live_via"] = "key" if tst.get("anthropic_key") else "gateway"
+        elif ch == "gateway":
+            row["live_via"] = "gateway"
+        else:
+            row["live_via"] = "key" if row.get("live") else "none"
         row.update(_st(row["id"]))
         text.append(row)
     images = [{
