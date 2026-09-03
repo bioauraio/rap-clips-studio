@@ -8,12 +8,12 @@
 .gen-head-tools { display: flex; align-items: center; gap: 10px; }
 .gen-switch { display: flex; gap: 4px; padding: 4px; border-radius: 12px; corner-shape: squircle; background: var(--surface-2); }
 .gen-switch button { padding: 8px 16px; border: 0; border-radius: 9px; corner-shape: squircle; background: transparent; color: var(--ink-muted); font: 700 13px/1 var(--font-head); box-shadow: none; }
-.gen-switch button.on { background: var(--fire-ink); color: var(--on-fire); }
+.gen-switch button.on { background: var(--card-solid); color: var(--text); box-shadow: 0 0 0 1.5px rgba(var(--ink-rgb), .55); }
 
 /* вход */
 .gen-entry { display: flex; min-height: 60vh; flex-direction: column; align-items: center; justify-content: center; gap: clamp(28px, 4vw, 48px); }
-.gen-entry h1 { margin: 0; font: 800 clamp(34px, 5vw, 64px)/1 var(--font-head); letter-spacing: -.045em; }
-.gen-entry-cards { display: grid; grid-template-columns: repeat(4, minmax(170px, 225px)); gap: 14px; justify-content: center; }
+.gen-entry h1 { margin: 0; font: 800 22px/1.1 var(--font-head); letter-spacing: -.03em; }
+.gen-entry-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 1100px; }
 .gen-entry-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 5px;
   padding: 10px 10px 12px; border: 1px solid var(--border);
@@ -25,8 +25,8 @@
 }
 .gen-entry-card:hover { border-color: var(--border-bright); }
 .gen-entry-card:hover { transform: translateY(-4px); box-shadow: 0 18px 60px rgba(0,0,0,.14); }
-.gen-entry-card b { font: 800 15px/1.15 var(--font-head); }
-.gen-entry-card small { color: var(--ink-muted); font-size: 11.5px; line-height: 1.35; }
+.gen-entry-card b { font: 800 14px/1.2 var(--font-head); display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-entry-card small { display: none; }
 .gen-entry-art { position: relative; display: flex; gap: 3px; width: 100%; aspect-ratio: 4/3; margin-bottom: 5px; overflow: hidden; border-radius: 14px; corner-shape: squircle; background: var(--surface-2); }
 .gen-entry-art > img { width: 100%; height: 100%; object-fit: cover; display: block; flex: 1; min-width: 0; }
 .gen-art-super > img { width: 33.4%; }
@@ -54,7 +54,7 @@
 .gen-3d-kinds button:hover:not(:disabled),
 .gen-count button:hover:not(:disabled) { background: transparent; }
 .gen-switch button.on:hover:not(:disabled),
-.gen-3d-kinds button.on:hover:not(:disabled) { background: var(--fire-ink); }
+.gen-3d-kinds button.on:hover:not(:disabled) { background: var(--card-solid); }
 .gen-chip-btn:hover:not(:disabled) { background: var(--inset); }
 .gen-chip-menu button:hover:not(:disabled) { background: var(--gold-wash); }
 .gen-blog-card .gen-go:hover:not(:disabled),
@@ -92,10 +92,10 @@
 /* видео-студия */
 .gen-video-view { background: var(--bg); color: var(--text); }
 .gen-video-view .gen-head h1 { color: var(--text); }
-.gen-studio { display: grid; grid-template-columns: 300px minmax(0, 1fr) 180px; gap: 14px; align-items: start; }
-.gen-vpanel { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle; background: var(--card-solid); }
+.gen-studio { display: grid; grid-template-columns: 300px minmax(0, 1fr) 200px; gap: 14px; align-items: start; }
+.gen-vpanel { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 20px; corner-shape: squircle; background: var(--panel); backdrop-filter: blur(18px) saturate(1.15); -webkit-backdrop-filter: blur(18px) saturate(1.15); box-shadow: inset 0 1px 0 rgba(255,255,255,.72), 0 6px 24px rgba(var(--ink-rgb),.07); }
 .gen-vmode { padding: 9px 12px; border-radius: 10px; corner-shape: squircle; background: var(--gold-wash); color: var(--gold-ink); font: 700 12px/1 var(--font-head); }
-.gen-vref { position: relative; display: flex; min-height: 120px; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1.5px dashed var(--border-bright); border-radius: 14px; corner-shape: squircle; background: var(--inset); cursor: pointer; overflow: hidden; }
+.gen-vref { position: relative; display: flex; min-height: 56px; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1.5px dashed var(--border-bright); border-radius: 14px; corner-shape: squircle; background: var(--inset); cursor: pointer; overflow: hidden; }
 .gen-vref img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .gen-vref-plus { font-size: 22px; color: var(--accent-ink); }
 .gen-vref b { font: 700 13px/1 var(--font-head); }
@@ -106,8 +106,9 @@
 .gen-vrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .gen-vrow:empty { display: none; }
 .gen-vrow small { color: var(--ink-muted); font-size: 11px; }
-.gen-vgo { width: 100%; padding: 14px; font-size: 15px; }
-.gen-vstage { display: flex; flex-direction: column; gap: 12px; min-height: 62vh; padding: 18px; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 18px; corner-shape: squircle; background: radial-gradient(rgba(var(--ink-rgb),.12) 1px, transparent 1px) 0 0/9px 9px var(--card-warm); }
+/* Единственный огонь экрана — главная кнопка панели, 40px, внизу панели. */
+.gen-vgo { width: 100%; height: 40px; padding: 0 16px; margin-top: auto; font-size: 14px; }
+.gen-vstage { display: flex; flex-direction: column; gap: 12px; min-height: 62vh; padding: 18px; align-items: center; justify-content: center; border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 20px; corner-shape: squircle; background: var(--panel); }
 .gen-vstage video { max-width: 92%; max-height: 74vh; border-radius: 14px; }
 .gen-vempty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--ink-muted); text-align: center; padding: 30px; }
 .gen-vempty b { font: 700 16px/1.3 var(--font-head); color: var(--text); }
@@ -116,17 +117,22 @@
 .gen-vhistory { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow: auto; scrollbar-width: none; }
 .gen-vhistory::-webkit-scrollbar { display: none; }
 .gen-vhistory small { color: var(--ink-muted); font-size: 11px; }
-.gen-vempty-mini { padding: 20px 8px; border: 1px dashed var(--border); border-radius: 12px; corner-shape: squircle; color: var(--ink-muted); font-size: 11px; text-align: center; }
-/* CTA в пустышках: пустое состояние всегда ведёт к первому шагу. */
+.gen-vempty-mini { padding: 20px 8px; border: 1px dashed rgba(var(--ink-rgb), .22); border-radius: 12px; corner-shape: squircle; color: var(--ink-muted); font-size: 11px; text-align: center; }
+/* CTA в пустышках — стекло: огонь на экране один, на кнопке панели. */
 .gen-vcta {
-  margin-top: 4px; padding: 9px 16px; border: 1px solid rgba(45, 33, 26, .22);
-  border-radius: 999px; background: var(--fire-ink); color: var(--on-fire);
-  font: 700 12px/1 var(--font-head); text-transform: lowercase; letter-spacing: .03em;
-  cursor: pointer; box-shadow: 0 4px 14px rgba(20, 10, 5, .18);
+  margin-top: 4px; padding: 9px 16px; border: 1px solid rgba(var(--ink-rgb), .10);
+  border-radius: 999px; background: var(--card-solid); color: var(--text);
+  font: 700 12px/1 var(--font-head); letter-spacing: 0;
+  cursor: pointer; box-shadow: none;
 }
-.gen-vcta:hover { transform: translateY(-1px); }
-.gen-vempty .gen-vcta + .gen-vcta { background: transparent; color: var(--text); box-shadow: none; }
-.gen-vempty-mini .gen-vcta { display: block; margin: 10px auto 0; }
+.gen-vcta:hover:not(:disabled) { background: var(--card-solid); transform: translateY(-1px); }
+/* Пустой стейдж: пунктирная рамка 9:16, одна строка по центру. */
+.gen-vempty-frame {
+  display: grid; place-items: center; width: min(100%, calc(46vh * 9 / 16)); aspect-ratio: 9 / 16;
+  margin: 0; padding: 0; border: 1.5px dashed rgba(var(--ink-rgb), .22); border-radius: 16px;
+  background: transparent; color: var(--ink-muted); font: 700 13px/1.3 var(--font-head); box-shadow: none;
+}
+.gen-vempty-frame:hover:not(:disabled) { background: transparent; transform: none; border-color: rgba(var(--ink-rgb), .45); }
 
 /* КАРТОЧКА ИСТОРИИ — одна на все экраны генератора: миниатюра, подпись,
    отметка текущего. Данные истории серверные, поэтому она переживает
@@ -134,8 +140,10 @@
 .gen-hcard {
   position: relative; flex: 0 0 auto; width: 100%; padding: 0; overflow: hidden;
   border: 1px solid var(--border); border-radius: 12px; corner-shape: squircle;
-  background: var(--surface-2); box-shadow: none; aspect-ratio: 3/4; cursor: pointer;
+  background: var(--surface-2); box-shadow: none; aspect-ratio: 9/16; cursor: pointer;
 }
+/* Пустая история — три пунктирные плитки той же геометрии, без текста. */
+.gen-hcard.ph { display: block; border: 1.5px dashed rgba(var(--ink-rgb), .18); background: transparent; cursor: default; }
 .gen-hcard img, .gen-hcard video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .gen-hcard.on { border-color: var(--border-bright); box-shadow: 0 0 0 2px var(--gold-wash); }
 .gen-hcard:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-bright); transform: none; }
@@ -165,7 +173,7 @@
   .gen-studio { grid-template-columns: 1fr; }
   .gen-vhistory { flex-direction: row; max-height: none; overflow-x: auto; }
   .gen-vhistory small { display: none; }
-  .gen-hcard { width: 96px; }
+  .gen-hcard { width: 72px; }
 }
 
 /* страница генератора живёт в app-режиме «страница поверх студии» */
@@ -184,7 +192,6 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 
 /* «нужен вход»: гость упёрся в супергенератор — дверь, а не ошибка */
 .gen-locked { min-height: 46vh; }
-.gen-locked-sub { margin: 0; max-width: 44ch; color: var(--ink-muted); text-align: center; line-height: 1.5; }
 .gen-locked-row { display: flex; align-items: center; gap: 12px; }
 
 
@@ -198,7 +205,7 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 /* ─── 3D-модель: рабочий экран ─── */
 .gen-drop {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; min-height: 180px; padding: 14px; cursor: pointer; text-align: center;
+  gap: 6px; min-height: 56px; padding: 12px 14px; cursor: pointer; text-align: center;
   border: 1.5px dashed var(--border-bright); border-radius: 18px; corner-shape: squircle;
   background: var(--inset);
 }
@@ -209,15 +216,13 @@ body.gen-open #app > :not(.topbar):not(#generator-page) { display: none !importa
 .gen-drop small { color: var(--ink-muted); font-size: 11.5px; }
 .gen-3d-kinds { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface-2); width: max-content; }
 .gen-3d-kinds button { border: 0; box-shadow: none; background: transparent; padding: 7px 13px; border-radius: 999px; font: 700 12.5px/1 var(--font-head); color: var(--ink-muted); }
-.gen-3d-kinds button.on { background: var(--fire-ink); color: var(--on-fire); }
-.gen-3d-hint { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.5; max-width: 40ch; }
+.gen-3d-kinds button.on { background: var(--card-solid); color: var(--text); box-shadow: 0 0 0 1.5px rgba(var(--ink-rgb), .55); }
 .gen-3d-acts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .gen-3d-acts a { color: var(--accent-ink); font-weight: 700; text-decoration: none; }
 .gen-3d-saved { color: var(--ok-ink); font-size: 12.5px; font-weight: 700; }
 .gen-3d-again { border: 1px solid var(--border); border-radius: 999px; background: var(--card-solid); padding: 7px 13px; font-size: 12.5px; box-shadow: none; }
 
 /* ─── персонаж: база героев ─── */
-.gen-blog-lead { margin: 0; color: var(--ink-muted); font-size: 12.5px; line-height: 1.5; }
 .gen-blog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-width: 900px; }
 .gen-blog-card {
   display: flex; flex-direction: column; gap: 6px; padding: 8px;
