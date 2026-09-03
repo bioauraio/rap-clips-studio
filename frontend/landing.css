@@ -21,15 +21,17 @@
   --ls-caps: .06em; --ls-head: -.01em;
 
   /* ── обводки: три уровня ── */
-  --edge: #2d211a;
-  --bw-hair: 1px; --bw-edge: 1.5px; --bw-hero: 2px;
+  /* Канон «Тёплое стекло»: кромка — чернила .10, толщина 1px везде;
+     офсетных «картонных» теней нет — только блик сверху и мягкая тень. */
+  --edge: rgba(var(--ink-rgb), .10);
+  --bw-hair: 1px; --bw-edge: 1px; --bw-hero: 1px;
   --line: rgba(var(--ink-rgb), .12);
   --line-strong: rgba(var(--ink-rgb), .20);
 
   /* ── тени: офсет 1–3px у предметов, блюр только у парящего ── */
-  --lift-1: 0 1px 0 var(--edge);
-  --lift-2: 0 2px 0 var(--edge);
-  --lift-3: 0 3px 0 var(--edge);
+  --lift-1: inset 0 1px 0 rgba(255, 255, 255, .72), 0 4px 16px rgba(45, 33, 26, .06);
+  --lift-2: inset 0 1px 0 rgba(255, 255, 255, .72), 0 6px 24px rgba(45, 33, 26, .07);
+  --lift-3: inset 0 1px 0 rgba(255, 255, 255, .72), 0 10px 30px rgba(45, 33, 26, .09);
   --shadow-soft: 0 8px 20px -14px rgba(90, 52, 24, .28);
   --shadow-lift: 0 18px 40px -26px rgba(90, 52, 24, .40);
   --glow-cta: 0 6px 16px -8px rgba(200, 96, 20, .26);
@@ -97,7 +99,7 @@ html:has(#welcome:not(.hidden)) { scroll-behavior: smooth; }
   padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
   border: var(--bw-hero) solid var(--edge); border-radius: var(--r-4);
   background: linear-gradient(180deg, rgba(255,252,247,.86), rgba(255,244,232,.76));
-  box-shadow: 0 2px 0 var(--edge), var(--shadow-soft), inset 0 1px 0 rgba(255,255,255,.9);
+  box-shadow: var(--lift-2);
   backdrop-filter: blur(18px) saturate(1.7);
   -webkit-backdrop-filter: blur(18px) saturate(1.7);
 }
@@ -785,7 +787,10 @@ body:has(#welcome:not(.hidden)) {
 :root[data-theme="dark"], :root[data-theme="dark"] .landing,
 :root:not([data-theme="light"]).os-dark,
 :root:not([data-theme="light"]).os-dark .landing {
-  --edge: rgba(0, 0, 0, .72);
+  --edge: rgba(240, 231, 220, .10);
+  --lift-1: inset 0 1px 0 rgba(255, 255, 255, .07), 0 4px 16px rgba(0, 0, 0, .28);
+  --lift-2: inset 0 1px 0 rgba(255, 255, 255, .07), 0 6px 24px rgba(0, 0, 0, .32);
+  --lift-3: inset 0 1px 0 rgba(255, 255, 255, .07), 0 10px 30px rgba(0, 0, 0, .38);
   --line: rgba(240, 231, 220, .12);
   --line-strong: rgba(240, 231, 220, .22);
   --surface: #2b231c;
@@ -806,7 +811,7 @@ body:has(#welcome:not(.hidden)) {
 :root[data-theme="dark"] .ld-bar,
 :root:not([data-theme="light"]).os-dark .ld-bar {
   background: linear-gradient(180deg, rgba(46, 38, 30, .82), rgba(38, 31, 25, .72));
-  box-shadow: 0 2px 0 var(--edge), var(--shadow-soft),
+  box-shadow: var(--lift-2),
               inset 0 1px 0 rgba(255, 255, 255, .07);
 }
 :root[data-theme="dark"] .landing button:hover:not(:disabled),

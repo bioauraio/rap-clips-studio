@@ -40,8 +40,8 @@
   /* ─────────────────────────── словарь ─────────────────────────── */
   const D = {
     ru: {
-      title: "Школа", lead: "Курсы и база знаний lolq.ai",
-      tabCourses: "Курсы", tabBase: "База знаний",
+      title: "Школа", lead: "",
+      tabCourses: "Курсы", tabBase: "База",
       empty: "Курсов пока нет.",
       emptyAdmin: "Курсов пока нет — создай первый.",
       newCourse: "Создать курс", newModule: "Создать модуль",
@@ -81,12 +81,12 @@
       moderate: "Опубликовать", hide: "Скрыть",
       confirmDel: "Удалить безвозвратно?",
       deleted: "удалено", saved: "сохранено",
-      baseLead: "Как устроен каждый раздел сервиса.",
-      openLesson: "Открыть урок",
+      baseLead: "",
+      openLesson: "Открыть урок", soon: "скоро",
     },
     en: {
-      title: "School", lead: "Courses and the lolq.ai knowledge base",
-      tabCourses: "Courses", tabBase: "Knowledge base",
+      title: "School", lead: "",
+      tabCourses: "Courses", tabBase: "Base",
       empty: "No courses yet.",
       emptyAdmin: "No courses yet — create the first one.",
       newCourse: "Create course", newModule: "Create module",
@@ -126,8 +126,8 @@
       moderate: "Publish", hide: "Hide",
       confirmDel: "Delete permanently?",
       deleted: "deleted", saved: "saved",
-      baseLead: "How every section of the service works.",
-      openLesson: "Open lesson",
+      baseLead: "",
+      openLesson: "Open lesson", soon: "soon",
     },
   };
 
@@ -247,25 +247,32 @@
     if (window.QlolSections && window.QlolSections.paint) window.QlolSections.paint();
   }
 
+  /* Одна строка: заголовок + сегмент «Курсы | База». Тот же сегмент стоит
+     на странице курса — база знаний доступна оттуда без возврата на витрину. */
+  function tabs(cur) {
+    return `<div class="sch-tabs" role="tablist">
+        <button type="button" class="sch-tab${cur === "courses" ? " on" : ""}"
+                data-tab="courses" role="tab">${esc(T("tabCourses"))}</button>
+        <button type="button" class="sch-tab${cur === "base" ? " on" : ""}"
+                data-tab="base" role="tab">${esc(T("tabBase"))}</button>
+      </div>`;
+  }
   function hero() {
     return `<section class="trends-hero sch-hero">
       <h1>${esc(T("title"))}</h1>
-      <p>${esc(T("lead"))}</p>
-      <div class="sch-tabs" role="tablist">
-        <button type="button" class="sch-tab${state.tab === "courses" ? " on" : ""}"
-                data-tab="courses" role="tab">${esc(T("tabCourses"))}</button>
-        <button type="button" class="sch-tab${state.tab === "base" ? " on" : ""}"
-                data-tab="base" role="tab">${esc(T("tabBase"))}</button>
-      </div>
+      ${tabs(state.tab)}
     </section>`;
+  }
+  function wireTabs(p) {
+    $$(".sch-tab", p).forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.tab === "courses" && state.tab === "courses" && !state.courseId) return;
+      open(b.dataset.tab);
+    }));
   }
 
   function render(p) {
     p.innerHTML = hero() + `<section class="sch-body"></section>`;
-    $$(".sch-tab", p).forEach((b) => b.addEventListener("click", () => {
-      state.tab = b.dataset.tab;
-      render(p);
-    }));
+    wireTabs(p);
     const body = $(".sch-body", p);
     if (state.tab === "base") renderBase(body);
     else renderCourses(body);
@@ -281,11 +288,9 @@
       data = await api(`/api/learn?lang=${encodeURIComponent(lang())}`);
     } catch (e) { failed(body); return; }
     const courses = data.courses || [];
-    body.innerHTML = `<p class="sch-muted">${esc(T("baseLead"))}</p>`
-      + `<div class="sch-base">` + courses.map((c) => `
+    body.innerHTML = `<div class="sch-base">` + courses.map((c) => `
         <article class="sch-base-card">
           <h3>${esc(c.title)}</h3>
-          <p class="sch-muted">${esc(c.lead || "")}</p>
           <ul>${(c.lessons || []).map((l) => `
             <li><button type="button" class="sch-base-lesson" data-slug="${esc(l.slug)}">
               <span>${esc(l.title)}</span>
@@ -305,27 +310,36 @@
     return `<span class="sch-badge free">${esc(T("free"))}</span>`;
   }
 
+  /* Курс «скоро» — все уроки заглушки. Флаг c.soon отдаёт сервер
+     (_course_card); без него считаем по странице курса (allSoon). */
+  function courseSoon(c) {
+    if (typeof c.soon === "boolean") return c.soon;
+    const mods = c.modules || [];
+    const ls = mods.flatMap((m) => m.lessons || []);
+    return ls.length > 0 && ls.every((l) => l.soon);
+  }
+  /* Одна meta-строка: «6 уроков · бесплатно» / «· ⚡120» / «· скоро». */
+  function courseMeta(c) {
+    const bits = [`${c.lessons} ${lessonWord(c.lessons)}`];
+    if (courseSoon(c)) bits.push(T("soon"));
+    else if (c.status === "draft") bits.push(T("draft"));
+    else if (c.access === "paid") {
+      bits.push(c.price_points && !c.unlocked ? `⚡${c.price_points}` : T("paid"));
+    } else bits.push(T("free"));
+    if (c.rating) bits.push(`★ ${c.rating}`);
+    return bits.join(" · ");
+  }
   function courseCard(c) {
     const cover = c.cover_url
       ? `<span class="sch-cover" style="background-image:url('${esc(c.cover_url)}')"></span>`
-      : `<span class="sch-cover ph">🎓</span>`;
-    const avas = (c.authors || []).slice(0, 4).map((a) => (a.avatar_url
-      ? `<span class="sch-ava" style="background-image:url('${esc(a.avatar_url)}')"
-              title="${esc(a.name)}"></span>`
-      : `<span class="sch-ava ph" title="${esc(a.name)}">${esc((a.name || "?").slice(0, 1))}</span>`
-    )).join("");
+      : `<span class="sch-cover ph"></span>`;
+    const pct = Math.max(0, Math.min(100, c.percent || 0));
     return `<button type="button" class="sch-card" data-id="${c.id}">
-      ${cover}
+      <span class="sch-cover-wrap">${cover}${pct
+        ? `<span class="sch-bar line"><span style="width:${pct}%"></span></span>` : ""}</span>
       <span class="sch-card-body">
-        <span class="sch-card-top">${badge(c)}${c.rating
-          ? `<span class="sch-rate">★ ${esc(String(c.rating))}</span>` : ""}</span>
         <span class="sch-card-t">${esc(c.title)}</span>
-        <span class="sch-card-s">${esc(c.subtitle || "")}</span>
-        <span class="sch-card-m">${esc(String(c.lessons))} ${esc(lessonWord(c.lessons))}${
-          c.access === "paid" && c.price_points && !c.unlocked
-            ? ` · ⚡${esc(String(c.price_points))}` : ""}</span>
-        <span class="sch-bar"><span style="width:${Math.max(0, Math.min(100, c.percent))}%"></span></span>
-        ${avas ? `<span class="sch-avas">${avas}</span>` : ""}
+        <span class="sch-card-m">${esc(courseMeta(c))}</span>
       </span>
     </button>`;
   }
@@ -338,10 +352,9 @@
     const rows = data.courses || [];
     if (!rows.length) {
       body.innerHTML = `<div class="sch-empty">
-        <span class="sch-empty-ico" aria-hidden="true">🎓</span>
-        <p>${esc(state.isAdmin ? T("emptyAdmin") : T("empty"))}</p>
+        <span>${esc(T("empty"))}</span>
         ${state.isAdmin
-          ? `<button type="button" class="sch-fire" data-new>${esc(T("newCourse"))}</button>` : ""}
+          ? `<button type="button" class="sch-ghost" data-new>${esc(T("newCourse"))}</button>` : ""}
       </div>`;
     } else {
       body.innerHTML = (state.isAdmin
@@ -381,7 +394,9 @@
   }
 
   function statusChip(c) {
-    const map = { live: T("live"), draft: T("draft"), archived: T("archived") };
+    if (courseSoon(c)) return `<span class="sch-chip">${esc(T("soon"))}</span>`;
+    if (c.status === "live") return "";
+    const map = { draft: T("draft"), archived: T("archived") };
     return `<span class="sch-chip ${esc(c.status)}">${esc(map[c.status] || c.status)}</span>`;
   }
 
@@ -499,8 +514,9 @@
     </aside>` : "";
 
     p.innerHTML = `
-      <nav class="sch-crumbs">
+      <nav class="sch-crumbs sch-crumbs-row">
         <button type="button" class="sch-ghost sm" data-all>← ${esc(T("backAll"))}</button>
+        ${tabs("courses")}
       </nav>
       <section class="sch-chero" ${cover}>
         <div class="sch-chero-in">
@@ -521,6 +537,7 @@
         ${admin}
       </div>`;
     wireCourse(p);
+    wireTabs(p);
   }
 
   function wireCourse(p) {
@@ -529,6 +546,9 @@
     on("[data-all]", () => open("courses"));
     on(".sch-lopen", (e) => {
       const id = Number(e.currentTarget.dataset.lid);
+      const l = (c.modules || []).flatMap((m) => m.lessons || []).find((x) => x.id === id);
+      // Урок-заглушка: открывать нечего — честный тост «скоро», не пустая страница.
+      if (l && l.soon && !state.isAdmin) { toast(T("soon")); return; }
       openLesson(id);
     });
     const buy = $("[data-buy]", p);

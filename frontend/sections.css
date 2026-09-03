@@ -72,7 +72,7 @@
 .topbar.has-sections .tb-sec:hover:not(:disabled) {
   color: var(--text);
   background: transparent;
-  border-color: rgba(45, 33, 26, .16);
+  border-color: rgba(var(--ink-rgb), .16);
 }
 /* Нажатие не «проваливает» кнопку: у студийных кнопок это подушка объекта,
    а вкладка — не объект, её не вдавливают. */
@@ -83,7 +83,7 @@
 .topbar.has-sections .tb-sec.on {
   color: var(--text);
   font-weight: 800;
-  border-color: rgba(45, 33, 26, .55);
+  border-color: rgba(var(--ink-rgb), .55);
   background: transparent;
 }
 /* «Тренды» писались строчными — единственный пункт с чужим регистром. */
@@ -449,10 +449,11 @@
   z-index: 300;
   max-width: min(440px, 92vw);
   padding: 10px 16px;
-  border: 2px solid #2d211a;
+  border: 1px solid rgba(var(--ink-rgb), .10);
   border-radius: 14px;
-  background: var(--inset);
-  box-shadow: 0 5px 0 #2d211a, 0 14px 30px rgba(180, 90, 30, .18);
+  background: var(--panel);
+  backdrop-filter: blur(18px) saturate(1.15); -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 6px 24px rgba(var(--ink-rgb), .12);
   font-size: 13px;
   font-weight: 700;
   color: var(--text);
@@ -467,27 +468,34 @@
 #app.trends-view > :not(.topbar):not(.trends-page) { display: none !important; }
 #app.trends-view .topbar > .tb-modeline { display: none; }
 .trends-page {
-  width: 100%; min-height: calc(100vh - 84px); padding: clamp(52px, 7vw, 104px) 0 88px;
-  background: var(--bg); color: var(--text);
+  width: 100%; min-height: calc(100vh - 84px); padding: clamp(20px, 3vw, 36px) 0 88px;
+  color: var(--text);
 }
 .trends-loading { margin: 0; text-align: center; text-transform: lowercase; }
-.trends-hero { text-align: center; max-width: none; margin: 0 auto clamp(46px, 6vw, 82px); padding: 0 18px; }
+.trends-hero { text-align: left; width: 100%; max-width: none; box-sizing: border-box; margin: 0 auto 18px; padding: 0 18px; }
 .trends-kicker {
   display: inline-block; margin-bottom: 10px; font-family: var(--font-mono); font-size: 11px;
   font-weight: 800; letter-spacing: .18em; color: var(--fire-ink); text-transform: lowercase;
 }
-.trends-hero h1 { margin: 0; font-family: var(--font-head); font-size: clamp(58px, 9vw, 132px); line-height: .88; letter-spacing: -.065em; }
+.trends-hero h1 { margin: 0; font: 800 22px/1.1 var(--font-head); letter-spacing: -.03em; text-transform: none; }
 .trends-hero p { max-width: 650px; margin: 22px auto 28px; color: var(--ink-muted); font-size: clamp(14px, 1.5vw, 18px); }
+/* Фильтры — ОДНА прокручиваемая строка пилюль: перенос на 50 названий давал
+   блок в пол-экрана на телефоне, а ширина по контенту уезжала за край. */
 .trends-filters {
-  display: flex; flex-wrap: wrap; justify-content: center; align-content: center;
-  width: min(1460px, calc(100vw - 36px)); margin: clamp(30px, 4vw, 48px) auto 0; gap: 7px 18px;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+  width: 100%; max-width: 100%; box-sizing: border-box; margin: 12px 0 0;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  padding: 2px 0 6px;
 }
+.trends-filters::-webkit-scrollbar { display: none; }
 .trends-filter {
-  padding: 3px 1px; border: 0; border-radius: 0; background: transparent;
-  color: var(--ink-muted); box-shadow: none; font-size: 14px; font-weight: 850;
-  letter-spacing: -.01em; text-transform: lowercase;
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 34px;
+  padding: 0 14px; border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 999px;
+  background: var(--panel); color: var(--ink-muted); box-shadow: none;
+  font-size: 13px; font-weight: 700; letter-spacing: 0; text-transform: none; white-space: nowrap;
 }
-.trends-filter:hover, .trends-filter:focus-visible { color: var(--text); border: 0; background: transparent; box-shadow: inset 0 -1px currentColor; }
+.trends-filter:hover:not(:disabled), .trends-filter:focus-visible { color: var(--text); background: var(--card-solid); border-color: rgba(var(--ink-rgb), .10); box-shadow: none; }
+.trends-filter.on { color: var(--text); background: var(--card-solid); box-shadow: 0 0 0 1.5px rgba(var(--ink-rgb), .55); }
 .trends-catalog { width: 100%; max-width: none; margin: 0; }
 .trends-page .trend-grid {
   display: block; column-count: 5; column-gap: 8px;
@@ -495,11 +503,11 @@
 .trends-page .trend-card {
   position: relative; display: inline-block; width: 100%; aspect-ratio: 4 / 5;
   margin: 0 0 8px; padding: 0; overflow: hidden; break-inside: avoid;
-  border-radius: 20px; background: #070707; border: 0; box-shadow: none; cursor: pointer;
+  border-radius: 20px; background: var(--surface-2); border: 0; box-shadow: none; cursor: pointer;
   transition: transform .2s ease, filter .2s ease;
 }
 .trends-page .trend-card:hover { transform: translateY(-2px); filter: brightness(1.12); }
-.trends-page .trend-card:focus-visible { outline: 3px solid var(--fire-ink); outline-offset: -3px; }
+.trends-page .trend-card:focus-visible { outline: 2px solid rgba(var(--ink-rgb), .55); outline-offset: -2px; }
 /* Разная высота создаёт вертикальную masonry-ленту, а не горизонтальные
    ряды. Все варианты остаются вертикальными или квадратными. */
 .trends-page .trend-card.trend-tile-1,
@@ -560,7 +568,7 @@
 /* До загрузки настоящего ролика карточка не пустая: это самостоятельная
    процедурная заставка, собранная из CSS-слоёв. Цвет и геометрия вычисляются
    из названия — поэтому каталог живой, но не копирует чужие превью. */
-.trend-visual { position: relative; isolation: isolate; overflow: hidden; background: #070707; }
+.trend-visual { position: relative; isolation: isolate; overflow: hidden; background: var(--surface-2); }
 .trend-visual::before, .trend-visual::after, .trend-visual i { content: ""; position: absolute; display: block; }
 .trend-visual::before { inset: -35%; background: repeating-conic-gradient(from 20deg, transparent 0 12deg, hsla(var(--th2), 100%, 88%, .3) 13deg 15deg); animation: tv-spin 12s linear infinite; animation-delay: var(--td); }
 .trend-visual::after { inset: 0; background: linear-gradient(115deg, transparent 25%, rgba(255,255,255,.33) 48%, transparent 66%); transform: translateX(-120%); animation: tv-scan 3.8s ease-in-out infinite; animation-delay: var(--td); }
@@ -610,7 +618,7 @@
 /* Страница одного тренда: короткое объяснение, три примера и одно ясное
    действие. Заголовки и кнопки наследуют нижний регистр от самой витрины. */
 .trend-detail {
-  width: min(1500px, calc(100vw - 40px)); margin: 0 auto; text-transform: lowercase;
+  width: min(1500px, calc(100vw - 40px)); margin: 0 auto;
 }
 .trend-detail-back {
   margin: 0 0 clamp(34px, 5vw, 70px); padding: 0; border: 0; background: transparent;
@@ -619,11 +627,10 @@
 .trend-detail-back:hover { color: var(--text); background: transparent; border: 0; box-shadow: none; }
 .trend-detail-head {
   display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
-  align-items: end; gap: 32px; margin-bottom: clamp(52px, 7vw, 96px);
+  align-items: end; gap: 32px; margin-bottom: 22px;
 }
 .trend-detail-head h1 {
-  margin: 0; font-family: var(--font-head); font-size: clamp(58px, 9vw, 136px);
-  line-height: .84; letter-spacing: -.065em; text-transform: lowercase;
+  margin: 0; font: 800 clamp(22px, 3vw, 28px)/1.1 var(--font-head); letter-spacing: -.03em;
 }
 .trend-detail-head p {
   max-width: 54ch; margin: 0 0 5px; color: var(--ink-muted); font-size: clamp(15px, 1.35vw, 19px); line-height: 1.48;
@@ -633,7 +640,7 @@
 }
 .trend-example-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .trend-example {
-  position: relative; aspect-ratio: 4 / 5; overflow: hidden; border-radius: 20px; background: #070707;
+  position: relative; aspect-ratio: 4 / 5; overflow: hidden; border-radius: 20px; background: var(--surface-2);
 }
 .trend-example > video, .trend-example > img, .trend-example > .trend-ph {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
@@ -642,21 +649,20 @@
   position: absolute; z-index: 3; left: 16px; bottom: 14px; color: rgba(255,255,255,.78);
   font: 800 11px/1 var(--font-mono); letter-spacing: .08em;
 }
-.trend-detail-generate {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px;
-  margin-top: 8px; padding: clamp(28px, 4vw, 52px); border-radius: 20px; background: #070707; color: #fff;
+.trend-detail-generate.panel {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px;
+  margin: 14px 0 0; padding: 16px 18px; border-radius: 20px;
 }
-.trend-detail-generate h2 { margin-bottom: 9px; font-size: clamp(24px, 3vw, 42px); }
-.trend-detail-generate p { margin: 0; color: rgba(255,255,255,.64); font-size: 14px; }
+.trend-detail-meta { font: 700 12px/1 var(--font-mono); color: var(--ink-muted); letter-spacing: .04em; }
 .trend-card-action.trend-detail-action {
   position: static; display: inline-flex; align-items: center; justify-content: center; min-width: 190px;
-  cursor: pointer; color: #0a0a0a; background: #c9ff2f; opacity: 1; border-radius: 999px;
+  cursor: pointer; opacity: 1; border-radius: 999px; background: var(--fire-ink); color: var(--on-fire);
 }
 .trend-card-action.trend-detail-action span {
-  padding: 15px 24px; font: 900 13px/1 var(--font-head); letter-spacing: .02em; text-transform: lowercase;
+  padding: 12px 22px; font: 800 13px/1 var(--font-head); letter-spacing: .02em; background: transparent; border: 0; box-shadow: none;
 }
 .trend-detail .trend-state {
-  grid-column: 1 / -1; position: static; padding: 18px 0 0; background: transparent; color: #fff; overflow: visible;
+  grid-column: 1 / -1; position: static; padding: 12px 0 0; background: transparent; color: var(--text); overflow: visible;
 }
 .trend-detail .trend-state video { display: block; width: min(420px, 100%); margin-bottom: 12px; border-radius: 14px; }
 .trend-detail .trend-dl, .trend-detail .trend-share { margin-right: 8px; }
@@ -673,7 +679,7 @@
   .trend-detail-head { display: block; }
   .trend-detail-head h1 { margin-bottom: 22px; }
   .trend-example-grid { grid-template-columns: 1fr; }
-  .trend-detail-generate { grid-template-columns: 1fr; }
+  .trend-detail-generate.panel { grid-template-columns: 1fr; }
   .trend-card-action.trend-detail-action { width: 100%; }
 }
 @media (min-width: 621px) and (max-width: 980px) {
@@ -690,7 +696,7 @@
 .ac-bar {
   height: 4px;
   border-radius: 3px;
-  background: rgba(45, 33, 26, .12);
+  background: rgba(var(--ink-rgb), .12);
   overflow: hidden;
 }
 .ac-bar span {
@@ -714,7 +720,7 @@
 }
 
 .ac-course {
-  border: 1px solid rgba(45, 33, 26, .22);
+  border: 1px solid rgba(var(--ink-rgb), .22);
   border-radius: 16px;
   padding: 15px 16px;
   background: var(--surface);
@@ -726,7 +732,7 @@
   flex: none;
   width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(45, 33, 26, .3);
+  border: 1px solid rgba(var(--ink-rgb), .3);
   border-radius: 50%;
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-muted);
 }
@@ -765,7 +771,7 @@
   font-weight: 600;
   cursor: pointer;
 }
-.ac-lesson:hover:not(:disabled) { background: transparent; border-color: rgba(45, 33, 26, .18); }
+.ac-lesson:hover:not(:disabled) { background: transparent; border-color: rgba(var(--ink-rgb), .18); }
 .ac-lesson:active:not(:disabled) { transform: none; box-shadow: none; }
 .ac-lesson-t { flex: 1; font-size: 13.5px; }
 .ac-lesson-m {
@@ -791,10 +797,10 @@
   font-family: var(--font-mono); font-size: 12.5px;
   background: var(--surface-2); border-radius: 5px; padding: 1px 5px;
 }
-.ac-text hr { border: none; border-top: 1px solid rgba(45, 33, 26, .16); margin: 20px 0; }
+.ac-text hr { border: none; border-top: 1px solid rgba(var(--ink-rgb), .16); margin: 20px 0; }
 .ac-text table { border-collapse: collapse; font-size: 13px; }
 .ac-text th, .ac-text td {
-  border: 1px solid rgba(45, 33, 26, .18); padding: 6px 9px; text-align: left;
+  border: 1px solid rgba(var(--ink-rgb), .18); padding: 6px 9px; text-align: left;
 }
 .ac-foot { margin-top: 16px; align-items: center; gap: 12px; }
 .ac-perma { font-size: 12px; color: var(--ink-muted); }
@@ -805,7 +811,7 @@
 .ac-art {
   margin: 22px 0 0;
   padding: 15px 16px;
-  border: 1px solid rgba(45, 33, 26, .28);
+  border: 1px solid rgba(var(--ink-rgb), .28);
   border-radius: 16px;
   background: var(--surface);
 }
@@ -821,7 +827,7 @@
 }
 .ac-art-shots li {
   font-size: 11.5px; color: var(--ink-muted);
-  border: 1px solid rgba(45, 33, 26, .18);
+  border: 1px solid rgba(var(--ink-rgb), .18);
   border-radius: 8px; padding: 2px 8px;
 }
 .ac-art-preset { font-size: 12.5px; color: var(--ink-muted); }
@@ -849,12 +855,12 @@
   margin: 0 0 10px;
   padding: 9px 12px;
   font-size: 13.5px;
-  border: 1px solid rgba(45, 33, 26, .3);
+  border: 1px solid rgba(var(--ink-rgb), .3);
   border-radius: 12px;
   background: var(--surface);
   color: var(--text);
 }
-.lb-search:focus { outline: none; border-color: rgba(45, 33, 26, .6); }
+.lb-search:focus { outline: none; border-color: rgba(var(--ink-rgb), .6); }
 
 .lb-cats { display: flex; flex-wrap: wrap; gap: 4px; }
 .lb-cat {
@@ -862,13 +868,13 @@
   font-size: 12.5px; font-weight: 600;
   color: var(--ink-muted);
   background: transparent;
-  border: 1px solid rgba(45, 33, 26, .18);
+  border: 1px solid rgba(var(--ink-rgb), .18);
   border-radius: 999px;
   box-shadow: none;
 }
 .lb-cat:hover:not(:disabled) { background: transparent; color: var(--text); }
 .lb-cat:active:not(:disabled) { transform: none; box-shadow: none; }
-.lb-cat.on { color: var(--text); font-weight: 800; border-color: rgba(45, 33, 26, .55); }
+.lb-cat.on { color: var(--text); font-weight: 800; border-color: rgba(var(--ink-rgb), .55); }
 
 .lb-list { display: grid; gap: 12px; margin-top: 14px; }
 @media (min-width: 900px) {
@@ -876,7 +882,7 @@
 }
 
 .lb-card {
-  border: 1px solid rgba(45, 33, 26, .22);
+  border: 1px solid rgba(var(--ink-rgb), .22);
   border-radius: 16px;
   padding: 14px 15px;
   background: var(--surface);
@@ -937,7 +943,7 @@
 .pl-queue {
   margin: 10px 0 0;
   padding: 9px 11px;
-  border: 1px solid rgba(45, 33, 26, .2);
+  border: 1px solid rgba(var(--ink-rgb), .2);
   border-radius: 11px;
   font-size: 12.5px;
   color: var(--ink-muted);
@@ -970,10 +976,10 @@
   font-size: 13.5px;
   color: var(--text);
   background: var(--surface);
-  border: 1px solid rgba(45, 33, 26, .3);
+  border: 1px solid rgba(var(--ink-rgb), .3);
   border-radius: 11px;
 }
-.ld-promo-input:focus { outline: none; border-color: rgba(45, 33, 26, .6); }
+.ld-promo-input:focus { outline: none; border-color: rgba(var(--ink-rgb), .6); }
 .ld-promo-msg { flex-basis: 100%; font-size: 12px; }
 
 /* Прямая цена одного токена в шкале докупки. */
@@ -994,7 +1000,7 @@
    остаться прежней, вплоть до заливки. */
 .topbar.has-sections .mode-seg {
   border-width: 1px;
-  border-color: rgba(45, 33, 26, .28);
+  border-color: rgba(var(--ink-rgb), .28);
   box-shadow: none;
 }
 .topbar.has-sections .mode-seg-btn { color: var(--ink-muted); }
@@ -1007,7 +1013,7 @@
   background: transparent;
   /* Кольцо внутренней тенью, а не border: у кнопки border:0, и добавление
      рамки сдвинуло бы соседей на два пикселя при каждом переключении. */
-  box-shadow: inset 0 0 0 1px rgba(45, 33, 26, .55);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink-rgb), .55);
 }
 /* Схлопнутая капсула режима (узкий экран) — тем же языком. */
 .topbar.has-sections .mode-switch {
@@ -1034,7 +1040,7 @@
 .lb-actions .lb-plans {
   padding: 6px 12px;
   font-size: 12.5px;
-  border: 1px solid rgba(45, 33, 26, .45);
+  border: 1px solid rgba(var(--ink-rgb), .45);
   border-radius: 10px;
   background: transparent;
   box-shadow: none;
@@ -1042,7 +1048,7 @@
 }
 .lb-actions .lb-apply:hover:not(:disabled),
 .lb-actions .lb-apply-pack:hover:not(:disabled),
-.lb-actions .lb-plans:hover:not(:disabled) { background: #fff; }
+.lb-actions .lb-plans:hover:not(:disabled) { background: var(--card-solid); }
 .lb-actions .lb-apply:active:not(:disabled),
 .lb-actions .lb-apply-pack:active:not(:disabled),
 .lb-actions .lb-plans:active:not(:disabled) { transform: none; box-shadow: none; }
@@ -1132,7 +1138,7 @@
 .pb-tab.on {
   color: var(--text);
   font-weight: 800;
-  border-color: rgba(45, 33, 26, .55);
+  border-color: rgba(var(--ink-rgb), .55);
 }
 .pb-tab:focus-visible { outline: 2px solid var(--edge); outline-offset: 2px; }
 .pb-n {
@@ -1159,13 +1165,13 @@
   width: 100%;
   margin: 0 0 8px;
   padding: 8px 12px;
-  border: 1px solid rgba(45, 33, 26, .22);
+  border: 1px solid rgba(var(--ink-rgb), .22);
   border-radius: 10px;
   background: var(--inset);
   font-size: 13.5px;
   color: var(--text);
 }
-.pb-search:focus { outline: none; border-color: rgba(45, 33, 26, .6); }
+.pb-search:focus { outline: none; border-color: rgba(var(--ink-rgb), .6); }
 
 .pb-groups { display: flex; flex-wrap: wrap; gap: 4px; }
 .pb-group {
@@ -1182,7 +1188,7 @@
 .pb-group.on {
   color: var(--text);
   font-weight: 800;
-  border-color: rgba(45, 33, 26, .45);
+  border-color: rgba(var(--ink-rgb), .45);
 }
 /* Хвостовой чип уводит в ПРЕЖНИЙ слой (приёмы, наборы) — волосяная линия
    слева отделяет «другую сущность» от групп текущей. */
@@ -1196,7 +1202,7 @@
   left: -7px; top: 50%;
   width: 1px; height: 14px;
   transform: translateY(-50%);
-  background: rgba(45, 33, 26, .16);
+  background: rgba(var(--ink-rgb), .16);
 }
 
 /* УЗКИЙ ЭКРАН: вкладки и группы едут В ОДНУ СТРОКУ, как лента разделов в
@@ -1229,7 +1235,7 @@
 .pb-card { scroll-margin-top: 90px; }
 /* Пришли по ссылке на карточку — она подсвечена рамкой, а не заливкой:
    заливка здесь означала бы «выбрано», а это всего лишь «вот она». */
-.pb-card.hit { border-color: rgba(45, 33, 26, .55); }
+.pb-card.hit { border-color: rgba(var(--ink-rgb), .55); }
 
 .pb-meta {
   margin: 0 0 8px;
@@ -1241,8 +1247,8 @@
   font-size: 10.5px;
   letter-spacing: .04em;
   text-transform: lowercase;
-  color: var(--accent-2-ink);
-  border: 1px solid rgba(193, 64, 27, .35);
+  color: var(--text);
+  border: 0; box-shadow: 0 0 0 1px rgba(var(--ink-rgb), .45);
   border-radius: 999px;
   padding: 1px 7px;
 }
@@ -1250,7 +1256,7 @@
 .pb-trait {
   font-size: 11px;
   color: var(--ink-muted);
-  border: 1px solid rgba(45, 33, 26, .14);
+  border: 1px solid rgba(var(--ink-rgb), .14);
   border-radius: 999px;
   padding: 1px 7px;
 }
@@ -1273,7 +1279,7 @@
 .lb-actions .pb-pick,
 .lb-actions .pb-plans {
   background: transparent;
-  border: 1px solid rgba(45, 33, 26, .28);
+  border: 1px solid rgba(var(--ink-rgb), .28);
   border-radius: 9px;
   padding: 5px 11px;
   font-size: 12.5px;
@@ -1283,7 +1289,7 @@
 }
 .lb-actions .pb-apply:hover:not(:disabled),
 .lb-actions .pb-pick:hover:not(:disabled),
-.lb-actions .pb-plans:hover:not(:disabled) { background: #fff; }
+.lb-actions .pb-plans:hover:not(:disabled) { background: var(--card-solid); }
 .lb-actions .pb-apply:active:not(:disabled),
 .lb-actions .pb-pick:active:not(:disabled),
 .lb-actions .pb-plans:active:not(:disabled) { transform: none; box-shadow: none; }
@@ -1305,7 +1311,7 @@
   margin-top: 16px;
   padding: 10px 12px;
   background: var(--inset);
-  border: 1px solid rgba(45, 33, 26, .22);
+  border: 1px solid rgba(var(--ink-rgb), .22);
   border-radius: 12px;
 }
 .pb-mix-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
@@ -1317,14 +1323,14 @@
   align-items: baseline;
   gap: 6px;
   background: var(--card);
-  border: 1px solid rgba(45, 33, 26, .2);
+  border: 1px solid rgba(var(--ink-rgb), .2);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 12.5px;
   color: var(--text);
   box-shadow: none;
 }
-.pb-chip:hover:not(:disabled) { background: #fff; }
+.pb-chip:hover:not(:disabled) { background: var(--card-solid); }
 .pb-chip:active:not(:disabled) { transform: none; box-shadow: none; }
 .pb-chip-k {
   font-size: 10px;
@@ -1353,7 +1359,7 @@
 /* ── «было → станет» ── */
 .pb-diff { margin: 12px 0; }
 .pb-diff-in {
-  border: 1px solid rgba(45, 33, 26, .16);
+  border: 1px solid rgba(var(--ink-rgb), .16);
   border-radius: 11px;
   padding: 10px 12px;
   background: var(--inset);
@@ -1384,7 +1390,7 @@
 .pb-neg {
   margin-top: 10px;
   padding-top: 9px;
-  border-top: 1px solid rgba(45, 33, 26, .14);
+  border-top: 1px solid rgba(var(--ink-rgb), .14);
   font-size: 12.5px;
 }
 .pb-neg b { font-size: 11px; letter-spacing: .04em; text-transform: lowercase; }
@@ -1407,7 +1413,7 @@
 .pb-else { margin: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); }
 .pb-else-go {
   background: transparent;
-  border: 1px solid rgba(45, 33, 26, .28);
+  border: 1px solid rgba(var(--ink-rgb), .28);
   border-radius: 999px;
   padding: 3px 10px;
   margin-left: 4px;
@@ -1415,7 +1421,7 @@
   color: var(--text);
   box-shadow: none;
 }
-.pb-else-go:hover:not(:disabled) { background: #fff; }
+.pb-else-go:hover:not(:disabled) { background: var(--card-solid); }
 .pb-else-go:active:not(:disabled) { transform: none; box-shadow: none; }
 
 /* ─────────────────────────── маркетинг: хаб ─────────────────────────── */
@@ -1431,10 +1437,14 @@
 .mk-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
   padding: 16px 16px 14px; text-align: left; cursor: pointer;
-  background: var(--card); border: 1px solid rgba(var(--ink-rgb), .10);
-  border-radius: 28px; box-shadow: none; color: var(--text);
+  background: var(--panel); border: 1px solid rgba(var(--ink-rgb), .10);
+  backdrop-filter: blur(18px) saturate(1.15); -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  border-radius: 20px; color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 6px 24px rgba(var(--ink-rgb), .07);
   transition: transform .16s ease, border-color .16s ease;
 }
+.mk-card:hover:not(:disabled) { background: var(--panel); }
+.mk-hero h1 { font-size: 22px; }
 .mk-card:hover { transform: translateY(-2px); border-color: rgba(var(--ink-rgb), .22); }
 /* Иконки карточек — моно-SVG маской в цвет марки, не эмодзи. */
 .mk-ico {
@@ -1457,10 +1467,10 @@
   border-radius: 12px; corner-shape: squircle; border: 1px solid var(--border);
 }
 .mk-card b {
-  font-family: var(--font-head); font-size: clamp(16px, 1.6vw, 19px);
-  line-height: 1.06; letter-spacing: -.035em;
+  font-family: var(--font-head); font-size: 16px;
+  line-height: 1.1; letter-spacing: -.02em; text-transform: none;
 }
-.mk-note { color: var(--ink-muted); font-size: 12.5px; line-height: 1.4; }
+.mk-note { display: none; }
 @media (max-width: 700px) {
   .mk-grid { grid-template-columns: 1fr; }
   /* Симметрия на телефоне: базовый мобильный #app даёт left 28 / right 8
@@ -1474,7 +1484,7 @@
 .topbar.has-sections .tb-sec.on {
   background: var(--fire-ink);
   color: var(--on-fire);
-  border-color: rgba(45, 33, 26, .12);
+  border-color: rgba(var(--ink-rgb), .12);
 }
 /* «Профиль» — капсула на стекле в правом углу, ава покрупнее. */
 .topbar #account-btn.profile-btn {
@@ -1510,7 +1520,7 @@
      каскад по порядку в файле, специфичность одинаковая. */
   .topbar.has-sections > .tb-sections {
     background: var(--inset);
-    border: 1px solid rgba(45, 33, 26, .12);
+    border: 1px solid rgba(var(--ink-rgb), .12);
     border-radius: 16px;
     padding: 3px;
     gap: 2px;
@@ -1662,7 +1672,7 @@
    «Сгенерить» — палец должен попадать (было 22px). Пустое превью — тёплая
    заглушка вместо сломанной картинки. */
 .trend-new {
-  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  display: inline-flex; align-items: center; flex: none; margin: 0; padding: 2px 7px; line-height: 1;
   font-style: normal; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
   text-transform: lowercase; border-radius: 999px;
   color: var(--gold-ink); background: var(--gold-wash);
@@ -1790,3 +1800,13 @@
   /* Брейкпоинт «только значки» больше не имеет смысла — возвращаем подписи. */
   .topbar.has-sections .tb-sec { font-size: 12.5px; }
 }
+
+/* ─────────── страница промта /p/{layer}/{key}: заголовок 22px, промпт стеклом ─────────── */
+.pp-page .pp-head h1 { font-size: 22px; line-height: 1.1; }
+.pp-page .pp-desc { font-size: 13.5px; }
+.pp-page .pp-hint { width: 100%; margin: 0; color: var(--ink-muted); font-size: 12.5px; }
+.pp-page .pp-prompt { padding: 14px 16px; border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 20px; background: var(--panel); }
+.pp-page .pp-pre { white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
+.pp-page .pp-gallery video, .pp-page .pp-gallery img { background: var(--surface-2); }
+/* Цена на витрине трендов — у КАЖДОЙ карточки, не только у заглушки. */
+.trends-page .trend-card > .trend-card-meta { position: absolute; z-index: 8; left: 12px; top: 12px; }

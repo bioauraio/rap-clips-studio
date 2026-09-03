@@ -20,6 +20,7 @@ const I18N = {
   // ═══════════════════════════════ ENGLISH ═══════════════════════════════
   en: {
     common: {
+      search: "search…",
       saved: "saved",
       save: "save",
       saving: "saving…",
@@ -181,6 +182,7 @@ const I18N = {
         studio: "projects, tracks, storyboard and assembly",
         academy: "school: how everything works, courses and shot kits",
         prompts: "shots: first frame, last frame, motion — copy or apply",
+        trends: "photo → trending clip",
       },
     },
 
@@ -627,6 +629,7 @@ const I18N = {
       },
       // Меню режимов: тумблер, карточка режима и шторка.
       menu: {
+        brandGroup: "marketing",
         title: "modes",
         more: "more",
         open: "open",
@@ -1137,6 +1140,7 @@ const I18N = {
       uploading: "uploading the photo…", working: "drawing the frame…",
       animating: "animating…", download: "Download",
       errored: "it failed — your tokens were refunded", failed: "could not load the templates",
+      filterAll: "all", share: "Share link", shared: "link copied ✓",
     },
     voice: {
       btnTitle: "voice this line (ElevenLabs)",
@@ -1206,22 +1210,24 @@ const I18N = {
     marketing: {
       title: "marketing",
       lead: "",
-      mockups: "mockups — product photography",
-      mockupsNote: "packshot frames for listings and ads — from a single photo.",
+      mockups: "mockups",
+      mockupsNote: "",
       ugc: "UGC / creators",
-      ugcNote: "an AI creator talks about your product like a real person.",
-      earn: "earn with lolq.ai",
-      earnNote: "post clips with our products — get a share of every sale.",
+      ugcNote: "",
+      earn: "earn",
+      earnNote: "",
       items: "items",
-      itemsNote: "shared library of items across all projects: photos, descriptions, models.",
+      itemsNote: "",
       chars: "characters",
-      charsNote: "shared library of characters: faces stay consistent everywhere.",
+      charsNote: "",
     },
     earn: {
       title: "earn with lolq.ai",
       intro: "generate a clip with the product — any template, even a cartoon. Post it with your link: every order from your traffic pays you.",
       empty: "products are coming soon.", copy: "Copy my link",
       copied: "copied ✓ — paste it into your post", make: "Make a clip with the product",
+      dClicks: "clicks", dSales: "sales", dEarned: "earned", dPaid: "paid out",
+      howto: "", stylePh: "your style: cartoon, AI creator, 3D…",
     },
     track: {
       randomCast: "random cast",
@@ -2162,12 +2168,12 @@ const I18N = {
     // место: загрузка, замеры, мастеринг, релиз. общее у них только слово.
     mus: {
       sec: {
-        analysis: "analysis", master: "Mastering", stems: "Stems",
-        gen: "generate a track", dist: "Distribution",
+        analysis: "Analysis", master: "Mastering", stems: "Stems",
+        gen: "Generate", dist: "Distribution",
       },
       stems: {
         title: "stems: vocal and instrumental",
-        note: "the track is split into an a cappella and a beat by the Suno engine. Takes a couple of minutes.",
+        note: "",
         run: "split into stems",
         running: "splitting…",
         vocal: "vocal (a cappella)", instrumental: "Instrumental (beat)",
@@ -2186,7 +2192,7 @@ const I18N = {
       },
       dist: {
         title: "demo submission to the label",
-        note: "this is an application, not an instant release: distribution to stores only exists via a distributor contract. We answer by the contact you leave.",
+        note: "",
         artist: "artist", track: "Track title", genre: "Genre",
         socials: "social links (one per line)", isrc: "ISRC (if you have one)",
         contact: "contact (email or @telegram)", comment: "Comment",
@@ -2216,8 +2222,7 @@ const I18N = {
 
       drop: {
         titleHtml: "drop a track here or <u>choose a file</u>",
-        hint: "{formats} · up to {mb} MB · up to {min} min. "
-              + "We measure loudness and tempo right after upload — that part is free.",
+        hint: "",
         sending: "uploading… {p}%",
         errFormat: ".{ext} is not an audio format we can read. Accepted: {formats}.",
         errBig: "the file is {got}, the limit is {mb} MB. Bounce a shorter version "
@@ -2226,7 +2231,7 @@ const I18N = {
 
       gen: {
         title: "generate a track",
-        sub: "describe the music in words: genre, tempo, instruments, mood.",
+        sub: "",
         ph: "boom bap, 90 BPM, dusty piano loop, vinyl noise, no vocals",
         instr: "instrumental only",
         run: "generate",
@@ -2239,8 +2244,7 @@ const I18N = {
       list: {
         title: "your tracks",
         empty: "no tracks yet.",
-        emptyNote: "upload a mix or generate one — the measurements and the waveform "
-                   + "appear straight away, before anything is charged.",
+        emptyNote: "",
         loadMore: "load more",
       },
 
@@ -2274,15 +2278,12 @@ const I18N = {
         sec_quiet: "quiet", sec_steady: "steady", sec_full: "full", sec_peak: "peak",
         bpmAlt: "could also be read as {n} BPM",
         tempoOff: "tempo analysis is off in this build.",
-        note: "streaming platforms play everything at about −14 LUFS and turn louder "
-              + "masters down. True peak below −1 dBTP leaves room for the lossy "
-              + "encoders. Dynamics is the range between quiet and loud — the smaller "
-              + "it is, the flatter the track sounds.",
+        note: "",
       },
 
       master: {
         profile: "what is it for",
-        profileNote: "pick the job, not the number. The numbers are right here anyway.",
+        profileNote: "",
         p_streaming: "streaming", p_club: "Club / loud", p_youtube: "YouTube", p_cd: "CD",
         targetLine: "{what}: aiming at {lufs} LUFS, true peak {tp} dBTP.",
         engine: "how to master",
@@ -2311,8 +2312,7 @@ const I18N = {
                     + "uploaded to the server. Any track you want to sound like works.",
         run: "master · {n} {unit}",
         costNote: "{n} {unit}, charged when the master is ready",
-        cloudNote: "the cloud engine spends real money per track. That is why it is a "
-                   + "separate button and why it costs more than a whole clip.",
+        cloudNote: "",
         running: "mastering…",
         error: "mastering failed.",
         listenBefore: "before", listenAfter: "After",
@@ -2327,8 +2327,7 @@ const I18N = {
 
       release: {
         meta: "release metadata",
-        metaNote: "exactly these fields go into the package and into the application. "
-                  + "Nothing is invented for you.",
+        metaNote: "",
         f_title: "title", f_artist: "Artist", f_feat: "Featuring", f_genre: "Genre",
         f_version: "version", f_language: "Language", f_release_date: "Release date",
         f_isrc: "ISRC", f_upc: "UPC", f_ai_disclosure: "AI disclosure",
@@ -2344,8 +2343,7 @@ const I18N = {
         ai_vocals: "vocals generated", ai_all: "fully generated",
         coverHave: "cover uploaded", coverNone: "No cover yet",
         coverSize: "{w}×{h} px — click to replace",
-        coverHint: "square, {px}×{px} px, JPG or PNG. We do not crop it for you: what "
-                   + "gets cut off is your decision, not ours.",
+        coverHint: "",
         checks: "what the stores will look at",
         c_title: "title", c_artist: "Artist", c_master: "Master",
         c_truepeak: "true peak", c_loudness: "Loudness", c_cover: "Cover",
@@ -2366,13 +2364,11 @@ const I18N = {
         checkFails: "{n} things must be fixed before this can go anywhere.",
         checkOk: "nothing is blocking the release. Warnings left: {n}.",
         deliver: "getting it out",
-        deliverNote: "two honest options, and neither of them pretends to be a "
-                     + "one-click upload to Spotify.",
+        deliverNote: "",
         pack: "build the package",
         packing: "building…",
         packDownload: "download again",
-        packNote: "a zip with the master, the cover and metadata.csv — exactly what a "
-                  + "distributor asks for. Take it anywhere, including to someone else.",
+        packNote: "",
         distTitle: "who actually delivers to the stores",
         distNotYet: "nobody can push a track to Spotify, Apple Music, VK or Yandex Music "
                     + "without a distributor contract — that is how the stores work. Ours "
@@ -2391,8 +2387,7 @@ const I18N = {
 
       social: {
         title: "video for socials",
-        note: "instagram, YouTube and TikTok do not accept bare audio, so the cover and "
-              + "the track are rendered into a vertical video first.",
+        note: "",
         build: "build the video · {n} {unit}",
         buildNote: "1080×1920, first 60 seconds",
         noCover: "no cover yet — the video will be built on a plain background.",
@@ -2700,6 +2695,7 @@ const I18N = {
   // ═══════════════════════════════ РУССКИЙ ═══════════════════════════════
   ru: {
     common: {
+      search: "поиск…",
       saved: "сохранено",
       save: "сохранить",
       saving: "сохраняю…",
@@ -2855,6 +2851,7 @@ const I18N = {
         studio: "проекты, треки, раскадровка и сборка",
         academy: "школа: как всё устроено, курсы и наборы приёмов",
         prompts: "приёмы: первый кадр, последний, движение — скопировать или применить",
+        trends: "фото → ролик в тренде",
       },
     },
 
@@ -3285,6 +3282,7 @@ const I18N = {
         brand: "бренд", items: "Предметы",
       },
       menu: {
+        brandGroup: "маркетинг",
         title: "режимы",
         more: "ещё",
         open: "открыть",
@@ -3794,6 +3792,7 @@ const I18N = {
       uploading: "загружаю фото…", working: "рисую кадр…",
       animating: "оживляю…", download: "Скачать",
       errored: "не получилось — токены возвращены", failed: "не загрузилась витрина",
+      filterAll: "все", share: "Поделиться ссылкой", shared: "ссылка скопирована ✓",
     },
     voice: {
       btnTitle: "озвучить реплику (ElevenLabs)",
@@ -3859,22 +3858,24 @@ const I18N = {
     marketing: {
       title: "маркетинг",
       lead: "",
-      mockups: "мокапы — предметная съёмка товара",
-      mockupsNote: "кадры упаковки для карточек и рекламы — по одному фото.",
+      mockups: "мокапы",
+      mockupsNote: "",
       ugc: "UGC / блогеры",
-      ugcNote: "ИИ-блогер рассказывает про твой продукт как живой человек.",
-      earn: "заработок с lolq.ai",
-      earnNote: "постишь ролики с продуктами — получаешь долю с продаж.",
+      ugcNote: "",
+      earn: "заработок",
+      earnNote: "",
       items: "предметы",
-      itemsNote: "общая база предметов всех проектов: фото, описание, модельки.",
+      itemsNote: "",
       chars: "персонажи",
-      charsNote: "общая база героев: лица держатся во всех проектах и режимах.",
+      charsNote: "",
     },
     earn: {
       title: "заработок с lolq.ai",
       intro: "сгенерируй ролик с продуктом — любой шаблон, хоть мульт. запости со своей ссылкой: заказы с твоего трафика — твоя выплата.",
       empty: "продукты скоро появятся.", copy: "Скопировать мою ссылку",
       copied: "скопирована ✓ — вставляй в пост", make: "Сделать ролик с продуктом",
+      dClicks: "переходов", dSales: "продаж", dEarned: "начислено", dPaid: "выплачено",
+      howto: "", stylePh: "свой стиль: мульт, ИИ-блогер, 3D…",
     },
     track: {
       audioUrl: "по ссылке",
@@ -4799,12 +4800,12 @@ const I18N = {
     // ──────────── Раздел «Музыка» в приложении (экран #music) ────────────
     mus: {
       sec: {
-        analysis: "анализ", master: "Мастеринг", stems: "Дорожки",
-        gen: "генерация трека", dist: "Дистрибуция",
+        analysis: "Анализ", master: "Мастеринг", stems: "Дорожки",
+        gen: "Генерация", dist: "Дистрибуция",
       },
       stems: {
         title: "дорожки: вокал и минус",
-        note: "трек раскладывается на акапеллу и бит движком Suno. занимает пару минут.",
+        note: "",
         run: "разложить на дорожки",
         running: "раскладываю…",
         vocal: "вокал (акапелла)", instrumental: "Минус (бит)",
@@ -4823,7 +4824,7 @@ const I18N = {
       },
       dist: {
         title: "отправка демки на лейбл",
-        note: "это заявка, а не мгновенный релиз: отгрузка на площадки существует только через договор с дистрибьютором. ответим по контакту из формы.",
+        note: "",
         artist: "артист", track: "Название трека", genre: "Жанр",
         socials: "соцсети (по ссылке на строку)", isrc: "ISRC (если уже есть)",
         contact: "контакт (почта или @telegram)", comment: "Комментарий",
@@ -4851,8 +4852,7 @@ const I18N = {
 
       drop: {
         titleHtml: "перетащи трек сюда или <u>выбери файл</u>",
-        hint: "{formats} · до {mb} МБ · до {min} мин. "
-              + "Громкость и темп меряем сразу после загрузки — это бесплатно.",
+        hint: "",
         sending: "загружаю… {p}%",
         errFormat: ".{ext} — не тот формат, мы его не прочитаем. берём: {formats}.",
         errBig: "файл на {got}, потолок — {mb} МБ. сведи покороче или отдай сжатым.",
@@ -4860,7 +4860,7 @@ const I18N = {
 
       gen: {
         title: "сгенерировать трек",
-        sub: "опиши музыку словами: жанр, темп, инструменты, настроение.",
+        sub: "",
         ph: "boom bap, 90 BPM, пыльный рояльный луп, шум винила, без вокала",
         instr: "только инструментал",
         run: "сгенерировать",
@@ -4873,8 +4873,7 @@ const I18N = {
       list: {
         title: "твои треки",
         empty: "треков пока нет.",
-        emptyNote: "загрузи сведёнку или сгенерируй — замеры и волна появятся сразу, "
-                   + "до всякого списания.",
+        emptyNote: "",
         loadMore: "показать ещё",
       },
 
@@ -4908,14 +4907,12 @@ const I18N = {
         sec_quiet: "тихо", sec_steady: "спокойно", sec_full: "плотно", sec_peak: "врыв",
         bpmAlt: "с тем же успехом это {n} BPM",
         tempoOff: "разбор темпа в этой сборке выключен.",
-        note: "площадки играют всё примерно на −14 LUFS и громкие мастера прикручивают. "
-              + "Истинный пик ниже −1 dBTP оставляет запас кодекам. динамика — это "
-              + "расстояние между тихим и громким: чем она меньше, тем площе звучит трек.",
+        note: "",
       },
 
       master: {
         profile: "подо что мастерим",
-        profileNote: "выбирай задачу, а не число. числа всё равно рядом.",
+        profileNote: "",
         p_streaming: "стриминг", p_club: "Клуб / громко", p_youtube: "YouTube", p_cd: "CD",
         targetLine: "{what}: целимся в {lufs} LUFS, истинный пик {tp} dBTP.",
         engine: "чем мастерим",
@@ -4944,8 +4941,7 @@ const I18N = {
                     + "Подойдёт любой трек, на который ты хочешь быть похож.",
         run: "отмастерить · {n} {unit}",
         costNote: "{n} {unit}, спишем по готовому мастеру",
-        cloudNote: "облачный движок тратит живые деньги за каждый трек. поэтому он "
-                   + "отдельной кнопкой и стоит дороже целого клипа.",
+        cloudNote: "",
         running: "мастерю…",
         error: "мастеринг не прошёл.",
         listenBefore: "до", listenAfter: "После",
@@ -4960,7 +4956,7 @@ const I18N = {
 
       release: {
         meta: "метаданные релиза",
-        metaNote: "ровно эти поля уедут в пакет и в заявку. ничего за тебя не выдумываем.",
+        metaNote: "",
         f_title: "название", f_artist: "Исполнитель", f_feat: "Совместно с",
         f_genre: "жанр", f_version: "Версия", f_language: "Язык",
         f_release_date: "дата релиза", f_isrc: "ISRC", f_upc: "UPC",
@@ -4977,8 +4973,7 @@ const I18N = {
         ai_vocals: "вокал сгенерирован", ai_all: "сгенерировано целиком",
         coverHave: "обложка загружена", coverNone: "Обложки нет",
         coverSize: "{w}×{h} px — клик, чтобы заменить",
-        coverHint: "квадрат, {px}×{px} px, JPG или PNG. сами не режем: что обрежется "
-                   + "на твоей обложке — решать тебе, а не нам.",
+        coverHint: "",
         checks: "на что посмотрят площадки",
         c_title: "название", c_artist: "Исполнитель", c_master: "Мастер",
         c_truepeak: "истинный пик", c_loudness: "Громкость", c_cover: "Обложка",
@@ -4999,13 +4994,11 @@ const I18N = {
         checkFails: "сначала надо починить {n} пункта(ов) — без них никуда не отдать.",
         checkOk: "ничего не мешает выпуску. предупреждений осталось: {n}.",
         deliver: "как это выйдет наружу",
-        deliverNote: "два честных пути, и ни один из них не притворяется публикацией "
-                     + "в Spotify одной кнопкой.",
+        deliverNote: "",
         pack: "собрать пакет",
         packing: "собираю…",
         packDownload: "скачать ещё раз",
-        packNote: "zip с мастером, обложкой и metadata.csv — ровно то, что просит "
-                  + "дистрибьютор. можно унести куда угодно, хоть к другому сервису.",
+        packNote: "",
         distTitle: "кто на самом деле отгружает на площадки",
         distNotYet: "отправить трек в Spotify, Apple Music, VK или Яндекс Музыку без "
                     + "договора с дистрибьютором не может никто — так устроены сами "
@@ -5024,8 +5017,7 @@ const I18N = {
 
       social: {
         title: "видео для соцсетей",
-        note: "ни Instagram, ни YouTube, ни TikTok не принимают голое аудио — поэтому "
-              + "из обложки и дорожки сначала собирается вертикальное видео.",
+        note: "",
         build: "собрать видео · {n} {unit}",
         buildNote: "1080×1920, первые 60 секунд",
         noCover: "обложки нет — видео соберётся на ровном фоне.",

@@ -12,22 +12,27 @@
 .sch-page { padding-bottom: 48px; }
 .sch-muted { color: var(--ink-muted); }
 
-/* ─────────────────────────── вкладки ─────────────────────────── */
+/* ─────────────────────────── шапка: строка + сегмент ─────────────────────────── */
+.sch-hero { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.sch-hero h1 { margin: 0; font: 800 22px/1.1 var(--font-head); letter-spacing: -.03em; }
 .sch-tabs {
-  display: flex; gap: 6px; margin-top: 14px;
-  padding: 4px; border-radius: 14px; corner-shape: squircle;
-  background: var(--surface-2); border: 1px solid var(--border);
+  display: flex; gap: 4px; margin: 0;
+  padding: 3px; border-radius: 12px; corner-shape: squircle;
+  background: var(--panel-soft, rgba(255, 255, 255, .46)); border: 1px solid rgba(var(--ink-rgb), .10);
   width: max-content; max-width: 100%;
 }
 .sch-tab {
   border: none; background: transparent; box-shadow: none;
-  padding: 7px 16px; border-radius: 11px; corner-shape: squircle;
-  font-weight: 700; color: var(--ink-muted); cursor: pointer;
+  padding: 6px 14px; border-radius: 9px; corner-shape: squircle;
+  font-weight: 700; font-size: 13px; color: var(--ink-muted); cursor: pointer;
 }
-.sch-tab.on {
-  color: var(--on-fire); background: var(--fire-ink);
-  box-shadow: 0 1px 6px rgba(200, 96, 20, .22);
+.sch-tab:hover:not(:disabled) { background: transparent; color: var(--text); }
+/* Активный — плотная карточка и кольцо, не огонь: огонь на экране один. */
+.sch-tab.on, .sch-tab.on:hover:not(:disabled) {
+  color: var(--text); background: var(--card-solid);
+  box-shadow: 0 0 0 1.5px rgba(var(--ink-rgb), .55);
 }
+.sch-crumbs-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 
 /* ─────────────────────────── сетка курсов ─────────────────────────── */
 .sch-admin-row { margin: 18px 0 10px; }
@@ -37,22 +42,27 @@
 }
 .sch-card {
   display: flex; flex-direction: column; gap: 0; padding: 0; text-align: left;
-  border: 1px solid var(--border); border-radius: 20px; corner-shape: squircle;
-  background: var(--card); overflow: hidden; cursor: pointer;
-  box-shadow: 0 2px 14px rgba(var(--ink-rgb), .06);
+  border: 1px solid rgba(var(--ink-rgb), .10); border-radius: 20px; corner-shape: squircle;
+  background: var(--panel); overflow: hidden; cursor: pointer;
+  backdrop-filter: blur(18px) saturate(1.15); -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 6px 24px rgba(var(--ink-rgb), .07);
 }
-.sch-card:hover { border-color: var(--border-bright); }
+.sch-card:hover:not(:disabled) { background: var(--panel); border-color: rgba(var(--ink-rgb), .22); transform: none; }
+.sch-cover-wrap { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; }
 .sch-cover {
-  display: block; width: 100%; aspect-ratio: 16 / 9;
+  display: block; width: 100%; height: 100%; aspect-ratio: 16 / 9; box-sizing: border-box;
   background: var(--surface-2) center / cover no-repeat;
 }
+/* Без обложки — пунктирный плейсхолдер той же геометрии: сетка не ломается. */
 .sch-cover.ph {
-  display: grid; place-items: center; font-size: 34px;
-  background: linear-gradient(135deg, var(--gold-wash), var(--accent-wash));
+  background: transparent; border: 1.5px dashed rgba(var(--ink-rgb), .22);
+  border-radius: 14px; corner-shape: squircle; margin: 8px; width: calc(100% - 16px); height: calc(100% - 16px);
 }
-.sch-card-body { display: flex; flex-direction: column; gap: 6px; padding: 14px; }
+/* Прогресс — тонкая линия поверх обложки, не отдельная полоса под текстом. */
+.sch-bar.line { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border: 0; border-radius: 0; background: rgba(var(--ink-rgb), .12); }
+.sch-card-body { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px 14px; }
 .sch-card-top { display: flex; align-items: center; gap: 8px; }
-.sch-card-t { font-weight: 800; font-size: 16px; color: var(--ink); }
+.sch-card-t { font-weight: 800; font-size: 15px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sch-card-s, .sch-card-m { font-size: 13px; color: var(--ink-muted); }
 .sch-badge {
   font-size: 11px; font-weight: 800; padding: 2px 9px; border-radius: 999px;
@@ -81,12 +91,10 @@
 
 /* ─────────────────────────── пустое состояние ─────────────────────────── */
 .sch-empty {
-  display: grid; justify-items: center; gap: 12px; text-align: center;
-  padding: 48px 20px; margin-top: 20px;
-  border: 1px dashed var(--border); border-radius: 22px; corner-shape: squircle;
-  background: var(--panel);
+  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;
+  padding: 28px 20px; margin-top: 16px; color: var(--ink-muted);
+  border: 1.5px dashed rgba(var(--ink-rgb), .22); border-radius: 20px; corner-shape: squircle;
 }
-.sch-empty-ico { font-size: 40px; }
 
 /* ─────────────────────────── база знаний ─────────────────────────── */
 .sch-base {

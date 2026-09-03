@@ -548,14 +548,13 @@
           body.appendChild(dash);
         } catch (e) { /* дашборд не обязателен для витрины */ }
       }
-      const intro = document.createElement("div");
-      intro.className = "earn-howto muted";
-      intro.innerHTML = T("earn.howto",
-        "<b>Как это работает:</b> 1) выбери продукт — он уже встроен в шаблон, менять его нельзя · "
-        + "2) опиши свой стиль: ИИ-блогер, мульт, 3D — что угодно · "
-        + "3) запости ролик со своей ссылкой · "
-        + "4) получай 10–20% с продаж; оплачивается только ПЕРВАЯ покупка каждого клиента.");
-      body.appendChild(intro);
+      const howto = T("earn.howto", "");
+      if (howto) {
+        const intro = document.createElement("div");
+        intro.className = "earn-howto muted";
+        intro.innerHTML = howto;
+        body.appendChild(intro);
+      }
       if (!(d.products || []).length) {
         const empty = document.createElement("p");
         empty.className = "muted";
@@ -603,7 +602,8 @@
         });
         const inp = card.querySelector("input");
         inp.addEventListener("change", () => trendMake(card, t, inp));
-        card.querySelector(".trend-info").addEventListener("click", (ev) => {
+        const info = card.querySelector(".trend-info");
+        if (info) info.addEventListener("click", (ev) => {
           ev.stopPropagation();
           closeTrendsPage(false);
           if (window.QlolPromptPage) window.QlolPromptPage.open("trend", String(t.id));
@@ -725,10 +725,18 @@
     if (location.pathname === "/marketing") history.pushState({}, "", "/studio");
     const studio = SECTIONS.find((x) => x.id === "studio");
     if (studio && studio.open) studio.open();
-    if (window.QlolModeMenu && window.QlolModeMenu.pick) {
-      window.QlolModeMenu.pick(modeId);
-    }
     paint();
+    // Карточка режима — ПОСЛЕ того, как студия встала на экран: pick()
+    // меряет позицию якоря, и на ещё скрытом #app лист открывался «в никуда»,
+    // оставляя человека в голой студии с проектом «Клип».
+    const kindOf = { mockup: "mockup", ugc: "ugc", blogger: "blogger", series: "series" };
+    setTimeout(() => {
+      if (window.QlolModeMenu && window.QlolModeMenu.pick) {
+        window.QlolModeMenu.pick(modeId);
+      } else if (typeof window.openNewProjectModal === "function") {
+        window.openNewProjectModal(kindOf[modeId] || "album");
+      }
+    }, 120);
   }
 
   function openMarketing() {
@@ -743,35 +751,17 @@
     const page = document.createElement("main");
     page.id = "marketing-page";
     page.className = "trends-page marketing-page";
-    const mkLead = T("marketing.lead", "");
-    page.innerHTML = `<section class="trends-hero">
+    page.innerHTML = `<section class="trends-hero mk-hero">
       <h1>${esc(T("marketing.title", "Маркетинг"))}</h1>
-      ${mkLead ? `<p>${esc(mkLead)}</p>` : ""}
-      ${window.lolqHowto ? window.lolqHowto("marketing") : ""}
     </section><section class="mk-grid"></section>`;
     const grid = $(".mk-grid", page);
     const cards = [
-      { icon: "📦",
-        t: T("marketing.mockups", "Мокапы — предметная съёмка товара"),
-        d: T("marketing.mockupsNote", "Кадры упаковки для карточек и рекламы — по одному фото."),
-        go: () => goStudioMode("mockup") },
-      { icon: "🤳",
-        t: T("marketing.ugc", "UGC / блогеры"),
-        d: T("marketing.ugcNote", "ИИ-блогер рассказывает про твой продукт как живой человек."),
-        go: () => goStudioMode("ugc") },
-      { icon: "💸",
-        t: T("marketing.earn", "Заработок с lolq.ai"),
-        d: T("marketing.earnNote", "Постишь ролики с продуктами — получаешь долю с продаж."),
-        go: () => openEarn() },
+      { t: T("marketing.mockups", "Мокапы"), go: () => goStudioMode("mockup") },
+      { t: T("marketing.ugc", "UGC / блогеры"), go: () => goStudioMode("ugc") },
+      { t: T("marketing.earn", "Заработок"), go: () => openEarn() },
       // Общие базы: те же сущности, что в студии, отдельным входом.
-      { icon: "🧴",
-        t: T("marketing.items", "Предметы"),
-        d: T("marketing.itemsNote", "Общая база предметов всех проектов: фото, описание, модельки."),
-        go: () => openBase("items") },
-      { icon: "👥",
-        t: T("marketing.chars", "Персонажи"),
-        d: T("marketing.charsNote", "Общая база героев: лица держатся во всех проектах и режимах."),
-        go: () => openBase("chars") },
+      { t: T("marketing.items", "Предметы"), go: () => openBase("items") },
+      { t: T("marketing.chars", "Персонажи"), go: () => openBase("chars") },
     ];
     // Иконка — моно-SVG маской (см. sections.css .mk-ico-*), не эмодзи;
     // галерея — ЖИВЫЕ примеры: мокапы и UGC дозаполняются превью ниже.
@@ -782,7 +772,7 @@
       b.className = "mk-card";
       const gal = `<span class="mk-card-gallery" data-gal="${ids[i]}"></span>`;
       b.innerHTML = `<span class="mk-ico mk-ico-${ids[i]}" aria-hidden="true"></span>
-        <b>${esc(c.t)}</b><span class="mk-note">${esc(c.d)}</span>${gal}`;
+        <b>${esc(c.t)}</b>${gal}`;
       b.addEventListener("click", c.go);
       grid.appendChild(b);
     });
@@ -943,10 +933,7 @@
 
   function trendDescription(title) {
     const item = TREND_DESCRIPTIONS[title];
-    if (item) return item[lang()] || item.en;
-    return lang() === "ru"
-      ? "готовый визуальный сценарий: загрузите одну фотографию и получите ролик в выбранной стилистике."
-      : "a ready-made visual scenario: upload one photo and get a video in the selected style.";
+    return item ? (item[lang()] || item.en) : "";
   }
 
   function trendVisual(title, index, meta) {
@@ -978,7 +965,7 @@
       <button type="button" class="trend-detail-back" aria-label="${esc(back)}">← ${esc(back)}</button>
       <header class="trend-detail-head">
         <h1>${esc(displayTitle)}</h1>
-        <p>${esc(trendDescription(t.title))}</p>
+        ${TREND_DESCRIPTIONS[t.title] ? `<p>${esc(trendDescription(t.title))}</p>` : ""}
       </header>
       <section class="trend-detail-examples" aria-label="${esc(examples)}">
         <h2>${esc(examples)}</h2>
@@ -993,11 +980,8 @@
           </div>`).join("")}
         </div>
       </section>
-      <section class="trend-detail-generate">
-        <div>
-          <h2>${esc(generate)}</h2>
-          <p>${esc(lang() === "ru" ? "загрузите фотографию — остальное уже настроено в тренде." : "upload a photo — everything else is already set up in the trend.")}</p>
-        </div>
+      <section class="trend-detail-generate panel">
+        <span class="trend-detail-meta">${esc(trendMeta(t))}</span>
         <button type="button" class="trend-card-action trend-detail-action">
           <span>${esc(generate)}</span>
         </button>
@@ -1183,7 +1167,7 @@
     page.id = "trends-page";
     page.className = "trends-page";
     page.innerHTML = `<section class="trends-hero">
-      <h1>${lang() === "ru" ? "вирусные тренды" : "viral trends"}</h1>
+      <h1>${esc(T("nav.sections.trends", lang() === "ru" ? "Тренды" : "Trends"))}</h1>
       <div class="trends-filters" role="tablist"></div>
     </section><section class="trends-catalog"><p class="muted trends-loading">${esc(T("common.loading", "загружаю…"))}</p></section>`;
     app.appendChild(page);
@@ -1229,7 +1213,8 @@
             ? `<video src="${t.sample_url}" muted loop autoplay playsinline preload="metadata"
                  ${t.poster_url ? `poster="${t.poster_url}"` : ""}></video>`
             : t.poster_url ? `<img src="${t.poster_url}" alt="" loading="lazy" />`
-            : trendVisual(t.title, index, trendMeta(t))}
+            : trendVisual(t.title, index)}
+          ${trendMeta(t) ? `<em class="trend-ph-meta trend-card-meta">${esc(trendMeta(t))}</em>` : ""}
           <div class="trend-card-hover">
             <div class="trend-card-name">${esc(displayTitle)}</div>
             <button type="button" class="trend-card-action">
