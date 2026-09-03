@@ -381,6 +381,13 @@
     scrollbar-width: none;
   }
   .topbar.has-sections > .tb-sections::-webkit-scrollbar { display: none; }
+  /* Над доком стоит ряд этапов (#stage-jump, style.css): одна плашка —
+     у дока нет верхнего скругления, ширина та же. */
+  body:has(#stage-jump:not(:empty)) .topbar.has-sections > .tb-sections {
+    left: 12px; right: 12px; transform: none; width: auto; max-width: none;
+    border-radius: 0 0 18px 18px; border-top: 1px solid rgba(var(--ink-rgb), .08);
+    justify-content: space-around;
+  }
   .topbar.has-sections .tb-sec {
     flex-direction: column; gap: 2px; height: auto; padding: 5px 9px;
     font-size: 9px; font-weight: 700; line-height: 1.1;
@@ -469,7 +476,7 @@
   display: inline-block; margin-bottom: 10px; font-family: var(--font-mono); font-size: 11px;
   font-weight: 800; letter-spacing: .18em; color: var(--fire-ink); text-transform: lowercase;
 }
-.trends-hero h1 { margin: 0; font-family: var(--font-head); font-size: clamp(58px, 9vw, 132px); line-height: .88; letter-spacing: -.065em; text-transform: lowercase; }
+.trends-hero h1 { margin: 0; font-family: var(--font-head); font-size: clamp(58px, 9vw, 132px); line-height: .88; letter-spacing: -.065em; }
 .trends-hero p { max-width: 650px; margin: 22px auto 28px; color: var(--ink-muted); font-size: clamp(14px, 1.5vw, 18px); }
 .trends-filters {
   display: flex; flex-wrap: wrap; justify-content: center; align-content: center;
@@ -1451,7 +1458,7 @@
 }
 .mk-card b {
   font-family: var(--font-head); font-size: clamp(16px, 1.6vw, 19px);
-  line-height: 1.06; letter-spacing: -.035em; text-transform: lowercase;
+  line-height: 1.06; letter-spacing: -.035em;
 }
 .mk-note { color: var(--ink-muted); font-size: 12.5px; line-height: 1.4; }
 @media (max-width: 700px) {
@@ -1636,6 +1643,13 @@
                 0 8px 24px rgba(var(--ink-rgb), .16);
   }
   .topbar.has-sections > .tb-sections::-webkit-scrollbar { display: none; }
+  /* Над доком стоит ряд этапов (#stage-jump, style.css): одна плашка —
+     у дока нет верхнего скругления, ширина та же. */
+  body:has(#stage-jump:not(:empty)) .topbar.has-sections > .tb-sections {
+    left: 12px; right: 12px; transform: none; width: auto; max-width: none;
+    border-radius: 0 0 18px 18px; border-top: 1px solid rgba(var(--ink-rgb), .08);
+    justify-content: space-around;
+  }
   .topbar.has-sections .tb-sec { min-height: 0; padding: 4px 7px; gap: 2px; flex: none; }
   .topbar.has-sections .tb-sec[data-ico]::before,
   .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {
@@ -1711,7 +1725,7 @@
   display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px;
   align-items: start;
 }
-.trend-editor-main h1 { text-transform: lowercase; margin: 8px 0 14px; }
+.trend-editor-main h1 { margin: 8px 0 14px; }
 .trend-upload {
   display: flex; align-items: center; justify-content: center;
   min-height: 280px; border: 1.5px dashed rgba(var(--ink-rgb), .3);
@@ -1767,7 +1781,7 @@
 /* ═══════════ НАВИГАЦИЯ: НА КОМПЕ И ПЛАНШЕТЕ — ТОЛЬКО НАДПИСИ ═══════════
    Иконки разделов остаются мобильному доку (≤700px), где они и нужны
    большому пальцу. Выше — чистые слова, с маленькой буквы. */
-.topbar.has-sections .tb-sec { text-transform: lowercase; }
+.topbar.has-sections .tb-sec { text-transform: none; }
 @media (min-width: 701px) {
   .topbar.has-sections .tb-sec[data-ico]::before,
   .topbar.has-sections .tb-sections .tb-sec[data-ico]::before {

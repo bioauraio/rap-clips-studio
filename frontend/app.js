@@ -325,6 +325,13 @@ function showLogin() {
     tabs.querySelector('[data-tab="email"]').classList.toggle("hidden", !cfg.email);
     tabs.querySelector('[data-tab="phone"]').classList.toggle("hidden", !cfg.phone);
     tabs.classList.toggle("hidden", !cfg.email && !cfg.phone);
+    // Вкладка по умолчанию — Email; «Пароль» — только логин+пароль.
+    const first = cfg.email ? "email" : cfg.phone ? "phone" : "password";
+    const cur = tabs.querySelector("[data-tab].on");
+    if (!cur || cur.classList.contains("hidden")) {
+      const b = tabs.querySelector(`[data-tab="${first}"]`);
+      if (b) b.click();
+    }
   });
 }
 function showApp() {
@@ -634,14 +641,31 @@ if (signupBtn) signupBtn.addEventListener("click", ldStart);
 
 
 $("#logout-btn").addEventListener("click", async () => {
+  // Гость без логина/почты/телефона: после выхода аккаунт не найти —
+  // предлагаем сохранить.
+  const u = (me && me.user) || {};
+  const guest = me && me.authed && !u.login && !u.email && !u.phone;
+  if (guest) {
+    if (!confirm(t("auth.guestLeave"))) { $("#save-account-btn").click(); return; }
+  }
   // Даже если сервер не ответил, локально разлогиниваем: человек нажал «выйти»
   // и должен выйти, а не остаться в чужом аккаунте из-за сетевой ошибки.
   try { await api("/api/logout", { method: "POST" }); } catch (e) { /* всё равно выходим */ }
   me = { authed: false, user: null };
-  showWelcome();
+  location.replace("/");
 });
 
 $("#account-btn").addEventListener("click", () => openAccountModal("account"));
+// Лого → главная: показываем лендинг и залогиненному, без перезагрузки.
+{
+  const brand = $("#brand");
+  if (brand) brand.addEventListener("click", (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    try { history.pushState(null, "", "/home"); } catch (_) { /* file:// */ }
+    showWelcome();
+  });
+}
 // Админка — переход на отдельную страницу, а не модалка поверх студии.
 // Кнопка это <button>, а не <a>, ровно затем, чтобы взять форму и высоту
 // соседей по шапке из общего правила кнопок, а не заводить вторую.
@@ -729,8 +753,20 @@ $("#modal-overlay").addEventListener("click", (e) => {
   if (e.target === $("#modal-overlay")) closeModal();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#modal-overlay").classList.contains("hidden")) closeModal();
+  if (e.key !== "Escape") return;
+  if (!$("#modal-overlay").classList.contains("hidden")) { closeModal(); return; }
+  const login = $("#login");
+  if (login && !login.classList.contains("hidden")) closeLogin();
 });
+// Экран входа закрывается ✕ и Escape: назад на сайт (или в студию, если
+// сессия жива).
+function closeLogin() {
+  if (me && me.authed) showApp(); else showWelcome();
+}
+{
+  const lc = $("#login-close");
+  if (lc) lc.addEventListener("click", closeLogin);
+}
 
 // ═══════════ личный кабинет: «Аккаунт», «Тариф», «Амбассадор», «Выплаты» ═══════════
 // Кабинет живёт вкладками внутри общей модалки, а не отдельной страницей:
@@ -1407,7 +1443,8 @@ async function renderAccountPane(pane) {
   const tgSlot = $(".acc-tg-link", pane);
   if (tgSlot) {
     api("/api/auth/config").then((cfg) => {
-      if (cfg.telegram && cfg.telegram_bot) tgSlot.appendChild(tgWidget(cfg.telegram_bot));
+      const domOk = cfg.telegram_login_domain && location.hostname === cfg.telegram_login_domain;
+      if (cfg.telegram && cfg.telegram_bot && domOk) tgSlot.appendChild(tgWidget(cfg.telegram_bot));
     }).catch(() => {});
   }
   // Строка настроек кабинета: тема и язык работают общими делегатами на
@@ -4528,9 +4565,39 @@ $("#docs-make-eps").addEventListener("click", async () => {
 // Ключи этапов; подписи — в словаре (stages.*), чтобы степпер переводился.
 // Сюжета среди этапов нет: он общий на проект и живёт в своей панели, а
 // «Готовое» — не этап, а витрина клипа внизу карточки (.clip-dock).
-const STAGES = ["setup", "board", "anim"];
-// Активный этап на трек — переживает пере-рендеры поллинга.
+const STAGES = ["setup", "board", "anim", "clip"];
+// Активный этап на трек — переживает пере-рендеры поллинга и перезагрузку
+// (localStorage lolq_stage_<project>_<track>).
 const trackStages = new Map();
+const stageKey = (trId) => `lolq_stage_${activeProjectId || 0}_${trId}`;
+function rememberStage(trId, key) {
+  trackStages.set(trId, key);
+  try { localStorage.setItem(stageKey(trId), key); } catch (_) { /* приватный режим */ }
+}
+function recallStage(trId) {
+  if (trackStages.has(trId)) return trackStages.get(trId);
+  let v = null;
+  try { v = localStorage.getItem(stageKey(trId)); } catch (_) { v = null; }
+  if (v) trackStages.set(trId, v);
+  return v;
+}
+// Следующий незавершённый этап: нет аудио → 1, нет сцен/кадров → 2,
+// нет видео → 3, есть видео → 4.
+function nextStage(tr) {
+  const scenes = tr.scenes || [];
+  const withImg = scenes.filter((x) => x.image_url).length;
+  const withVid = scenes.filter((x) => x.video_url).length;
+  const needsAudio = curMode().needs_audio !== false;
+  if (needsAudio && !tr.audio_filename) return "setup";
+  if (!scenes.length || !withImg) return "board";
+  if (!withVid) return "anim";
+  return "clip";
+}
+const allFramesBusy = (tr) => (tr.scenes || []).some((x) => ["queued", "running"].includes(x.image_status));
+const allVideosBusy = (tr) => (tr.scenes || []).some((x) => ["queued", "running"].includes(x.video_status));
+// Что уже видели: когда следующий этап сдвинулся вперёд (генерация
+// завершилась) — открываем его сами.
+const trackFlowSeen = new Map();
 
 function stageStates(tr) {
   const scenes = tr.scenes || [];
@@ -4549,12 +4616,14 @@ function stageStates(tr) {
     anim: scenes.some((s) => s.video_status === "error") ? "error"
       : anyVidBusy ? "busy"
       : videosDone ? "done" : scenes.some((s) => s.video_url) ? "part" : "empty",
+    clip: tr.clip_status === "error" ? "error"
+      : busy(tr.clip_status) ? "busy"
+      : tr.clip_url ? "done" : "empty",
   };
 }
 
 function defaultStage(tr) {
-  // Клип больше не этап: трек с готовым видео открывается на «Анимации»,
-  // а сам клип всё равно виден внизу карточки на любом этапе.
+  if (tr.clip_url) return "clip";
   if ((tr.scenes || []).some((s) => s.video_url)) return "anim";
   if (tr.scenes_count) return "board";
   return "setup";
@@ -4564,36 +4633,93 @@ function defaultStage(tr) {
 // (в trackStages может лежать ключ, которого уже нет) — иначе трек откроется
 // без единой видимой панели.
 function activeStage(tr) {
-  // Когда включён верстак (nav.js), активный этап знает ОН: у app.js и у
-  // навигации иначе получаются два источника правды об одном и том же, и
-  // после каждого опроса render() возвращал бы свой этап, а MutationObserver
-  // через 30 мс — навовский. Видимое мигание раз в цикл поллинга.
-  const nav = window.QlolNav;
-  if (nav && nav.state && document.body.classList.contains("wb-on")) {
-    const def = (nav.MODES || [])
-      .filter((m) => m.id === nav.state.mode)
-      .flatMap((m) => m.steps || [])
-      .find((x) => x.id === nav.state.step);
-    if (def && STAGES.includes(def.pane)) return def.pane;
-  }
-  const cur = trackStages.get(tr.id);
+  const cur = recallStage(tr.id);
   return STAGES.includes(cur) ? cur : defaultStage(tr);
 }
 
 function setStage(card, key) {
-  // Этап строится в момент первого показа: невидимые ленты рисовать незачем,
-  // а раньше рисовались обе плюс витрина клипа.
+  // Этап строится в момент первого показа: невидимые ленты рисовать незачем.
   if (typeof card.__ensureStage === "function") card.__ensureStage(key);
-  $$(".stage-tab", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
-  // ЭТАПЫ ДРУГ ПОД ДРУГОМ. Блоки не сменяют друг друга, а лежат подряд:
-  // Настройки → Раскадровка → Анимация. Закреплённый тумблер сверху не
-  // прячет панели, а прокручивает страницу к нужному блоку.
-  if (card.classList.contains("stages-stacked")) {
-    const pane = $(`.stage-pane[data-stage="${key}"]`, card);
-    if (pane) pane.scrollIntoView({ behavior: "smooth", block: "start" });
-    return;
-  }
   $$(".stage-pane", card).forEach((el) => el.classList.toggle("on", el.dataset.stage === key));
+  if (card.dataset.id) rememberStage(Number(card.dataset.id), key);
+  const jump = document.querySelector("#stage-jump");
+  if (jump && jump.dataset.for === String(card.dataset.id)) {
+    $$(".stage-tab", jump).forEach((el) => {
+      el.classList.toggle("on", el.dataset.stage === key);
+      if (el.dataset.stage === key) el.classList.remove("next");
+    });
+  }
+  // Свечение «следующего шага» — только у кнопки открытого этапа.
+  $$(".next-step", card).forEach((el) => {
+    const pane = el.closest(".stage-pane");
+    el.classList.toggle("next-step-off", Boolean(pane) && !pane.classList.contains("on"));
+  });
+}
+
+/* Капсула этапов внизу экрана: [1 Настройка][2 Раскадровка][3 Анимация]
+   [4 Сборка]. Управляет раскрытым треком; активный — огонь, следующий
+   незавершённый — дыхание тенью (.next). */
+function renderStageJump(tr, card) {
+  const jump = document.querySelector("#stage-jump");
+  if (!jump || curMode().id === "mockup") return;
+  if (jump.dataset.kind === "mockup") { jump.dataset.kind = ""; jump.dataset.for = ""; jump.innerHTML = ""; }
+  const active = activeStage(tr);
+  const nxt = nextStage(tr);
+  if (jump.dataset.for !== String(tr.id) || jump.dataset.lang !== LANG || !jump.childElementCount) {
+    jump.dataset.for = String(tr.id);
+    jump.dataset.lang = LANG;
+    jump.innerHTML = "";
+    STAGES.forEach((key, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "stage-tab";
+      b.dataset.stage = key;
+      const num = document.createElement("span");
+      num.className = "st-num";
+      num.textContent = String(i + 1);
+      const cap = document.createElement("span");
+      cap.className = "st-cap";
+      cap.textContent = t("stages." + key);
+      b.append(num, cap);
+      b.addEventListener("click", () => {
+        const cur = document.querySelector(`.track-card[data-id="${jump.dataset.for}"]`) || card;
+        setStage(cur, key);
+      });
+      jump.appendChild(b);
+    });
+    // «✦» — агент проекта: на телефоне пузыря нет, вход здесь.
+    const ag = document.createElement("button");
+    ag.type = "button";
+    ag.className = "stage-tab agent";
+    ag.textContent = "✦";
+    ag.addEventListener("click", () => { const bb = document.querySelector("#pa-bubble"); if (bb) bb.click(); });
+    jump.appendChild(ag);
+  }
+  const states = stageStates(tr);
+  $$(".stage-tab", jump).forEach((el) => {
+    const k = el.dataset.stage;
+    el.classList.toggle("on", k === active);
+    el.classList.toggle("next", k === nxt && k !== active);
+    el.classList.toggle("done", states[k] === "done");
+    el.classList.toggle("busy", states[k] === "busy");
+  });
+}
+
+// Меню «⋯» (шапка трека, панель раскадровки): открыть/закрыть, закрытие
+// кликом мимо и Esc делает общий слушатель на документе.
+function bindMoreMenu(wrap) {
+  if (!wrap || wrap.dataset.bound) return;
+  wrap.dataset.bound = "1";
+  const more = $(".s-more", wrap);
+  const menu = $(".s-more-menu", wrap);
+  if (!more || !menu) return;
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".s-more-menu").forEach((m) => { if (m !== menu) m.classList.add("hidden"); });
+    const open = menu.classList.toggle("hidden") === false;
+    more.setAttribute("aria-expanded", String(open));
+  });
+  menu.addEventListener("click", () => menu.classList.add("hidden"));
 }
 
 // Стрелки ‹ › у горизонтальной ленты сцен.
@@ -4997,10 +5123,7 @@ function msStory(card, tr, mode, isFirst) {
   const mine = $(".ms-story-status", card);
   mine.textContent = st ? st.textContent : "";
   mine.className = "status ms-story-status " + (st ? st.className.replace("status", "").trim() : "");
-  const gen = $(".ms-story-gen", card);
   const real = $("#gen-story-btn");
-  gen.disabled = Boolean(real && real.disabled);
-  gen.addEventListener("click", () => { if (real) real.click(); });
   // Кнопка у комментария — тот же генератор сюжета, но флоу короче:
   // вписал пару фраз → нажал. Несохранённый комментарий сначала уезжает
   // на сервер, иначе генерация его не увидела бы.
@@ -5020,7 +5143,8 @@ function msStory(card, tr, mode, isFirst) {
       if (real) real.click();
     });
   }
-  $(".ms-story-save", card).addEventListener("click", () => {
+  const storySave = $(".ms-story-save", card);
+  if (storySave) storySave.addEventListener("click", () => {
     const btn = $("#save-project-btn");
     if (btn) btn.click();
   });
@@ -5973,38 +6097,6 @@ async function msCinemaBar(card, tr, mode) {
   });
 }
 
-/* Свёрнутая инструкция «Как это работает» — над настройкой режима. */
-function msHowto(card, mode) {
-  const setup = $(".mode-setup", card);
-  if (!setup || $(".ms-howto", card)) return;
-  const html = window.lolqHowto
-    ? window.lolqHowto({ clip: "clips", mockup: "marketing", ugc: "ugc",
-                         series: "clips" }[mode.id] || "clips")
-    : "";
-  if (!html) return;
-  const det = document.createElement("div");
-  det.innerHTML = html;
-  if (det.firstElementChild) setup.prepend(det.firstElementChild);
-}
-
-/* Шапка блока: одна строка, по которой видно всё решение целиком — режим,
-   каркас, стиль, движок и прогноз расхода. Она и есть ответ на «что я
-   вообще собрал», ради которого раньше приходилось листать пять мест. */
-function msSummary(card, tr, mode) {
-  /* Минимализм по прямому решению владельца 28.08: режим, пресет, стиль и
-     движок видно в их собственных местах, а плашка оставляет одно число,
-     которого больше нигде нет, — прогноз расхода. Мелко, muted, без
-     переносов. */
-  const box = $(".ms-summary", card);
-  if (!box) return;
-  const vid = videoEngineById(effVideoEngine(tr));
-  const img = imageEngineById(effImageEngine(tr));
-  const scenes = tr.scenes_count || (mode.scenes && mode.scenes.typ) || 30;
-  const per = (img ? img.frames_cost : 0) + (vid ? vid.video_cost : 0);
-  box.textContent = per > 0
-    ? t("modeSetup.forecast", { scenes, total: tNum(scenes * per) }) : "";
-}
-
 /* Сборка блока. Зовётся из renderTrack после движков и полей режима: к этому
    моменту все секции уже наполнены штатным кодом, и здесь остаётся только
    то, чего до единого блока в студии не было вовсе. */
@@ -6210,7 +6302,6 @@ function mountModeSetup(card, tr, isFirst) {
   msBible(card, mode, isFirst);
   msFrame(card, tr, mode);
   msPhotos(card, tr, mode);
-  msSummary(card, tr, mode);
 }
 
 
@@ -6260,97 +6351,16 @@ function renderTrack(tr) {
   });
   $(".t-title", card).value = tr.title;
 
-  // ── табы-этапы с точками-статусами
-  const states = stageStates(tr);
-  const active = activeStage(tr);
-  const tabsBox = $(".stage-tabs", card);
-  STAGES.forEach((key, i) => {
-    const name = t("stages." + key);
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "stage-tab" + (key === active ? " on" : "");
-    b.dataset.stage = key;
-    const num = document.createElement("span");
-    num.className = "st-num";
-    num.textContent = String(i + 1);
-    const dot = document.createElement("span");
-    dot.className = "stage-dot " + states[key];
-    b.append(num, document.createTextNode(name), dot);
-    b.addEventListener("click", () => {
-      trackStages.set(tr.id, key);
-      setStage(card, key);
-    });
-    tabsBox.appendChild(b);
-  });
-  // Все этапы разом: карточка работает одной прокручиваемой страницей,
-  // а таб-тумблер — навигацией по ней. Сам тумблер живёт в ЗАКРЕПЛЁННОЙ
-  // верхней панели (#stage-jump): владелец просил навигацию у названия,
-  // а не полосой посреди карточки.
-  card.classList.add("stages-stacked");
+  // ── этапы: табы (одна видимая панель), капсула #stage-jump внизу экрана.
+  // Генерация завершилась → следующий этап открываем сами.
   {
-    const jump = document.querySelector("#stage-jump");
-    if (jump && curMode().id !== "mockup" && jump.dataset.kind === "mockup") {
-      jump.dataset.kind = "";
-      jump.innerHTML = "";
-    }
-    if (jump && curMode().id !== "mockup"
-        && jump.dataset.for !== String(tr.id) && !jump.childElementCount) {
-      jump.dataset.for = String(tr.id);
-      [...STAGES, "clip"].forEach((key, i) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "stage-tab" + (key === active ? " on" : "");
-        b.dataset.stage = key;
-        const num = document.createElement("span");
-        num.className = "st-num";
-        num.textContent = String(i + 1);
-        b.append(num, document.createTextNode(t("stages." + key)));
-        b.addEventListener("click", () => {
-          $$(".stage-tab", jump).forEach((el) => el.classList.toggle("on", el === b));
-          // Управляем треком, чья карточка сейчас на экране.
-          const cards = $$(".track-card");
-          const cur = cards.find((c) => c.getBoundingClientRect().bottom > 220) || cards[0];
-          if (!cur) return;
-          if (key === "clip") {
-            const dock = $(".clip-dock", cur);
-            if (dock) dock.scrollIntoView({ behavior: "smooth", block: "start" });
-          } else {
-            trackStages.set(tr.id, key);
-            setStage(cur, key);
-          }
-        });
-        jump.appendChild(b);
-      });
-      // Подсветка следует прокрутке: тумблер показывает блок, который
-      // сейчас на экране, а не последний кликнутый.
-      const spy = () => {
-        const cards = $$(".track-card");
-        const cur = cards.find((c) => c.getBoundingClientRect().bottom > 220) || cards[0];
-        if (!cur) return;
-        const marks = [...STAGES.map((k) => [k, $(`.stage-pane[data-stage="${k}"]`, cur)]),
-                       ["clip", $(".clip-dock", cur)]];
-        let best = "setup";
-        for (const [k, el] of marks) {
-          if (el && el.getBoundingClientRect().top <= 260) best = k;
-        }
-        // «СБОРКА» НЕДОСТИЖИМА ОБЫЧНОЙ МЕРКОЙ: это низ карточки, и докрутить
-        // его верх до 260px нельзя — страница кончается раньше. Поэтому у
-        // последнего блока вторая примета: доскроллили до конца. Проверку
-        // включаем, только если документ вообще прокручивается, иначе при
-        // прокрутке внутри контейнера условие было бы верно всегда.
-        const sc = document.scrollingElement || document.documentElement;
-        const room = sc.scrollHeight - sc.clientHeight;
-        if (room > 40 && room - sc.scrollTop <= 40 && $(".clip-dock", cur)) best = "clip";
-        $$(".stage-tab", jump).forEach((el) =>
-          el.classList.toggle("on", el.dataset.stage === best));
-      };
-      // capture на document, а не window.scroll: после переезда на блоки
-      // прокрутка бывает внутри контейнера, и window-событие не приходит —
-      // тумблер залипал на «Настройке» при любом положении страницы.
-      document.addEventListener("scroll", spy, { passive: true, capture: true });
-      spy();
-    }
+    const nxt = nextStage(tr);
+    const seen = trackFlowSeen.get(tr.id);
+    if (seen && seen !== nxt && STAGES.indexOf(nxt) > STAGES.indexOf(seen)) rememberStage(tr.id, nxt);
+    trackFlowSeen.set(tr.id, nxt);
   }
+  const active = activeStage(tr);
+  if (!card.classList.contains("collapsed")) renderStageJump(tr, card);
   // Название проекта редактируется в «Настройке». Оригинальный input живёт
   // СКРЫТЫМ в шапке (карточки сносятся при каждой перерисовке — переносить
   // его сюда значило потерять вместе с картой и уронить рендер шапки, что
@@ -6369,35 +6379,13 @@ function renderTrack(tr) {
       setupPane.prepend(inp);
     }
   }
-  // Четвёртый пункт тумблера — «Сборка»: финальный клип с его кнопками.
-  {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "stage-tab";
-    b.dataset.stage = "clip";
-    const num = document.createElement("span");
-    num.className = "st-num";
-    num.textContent = "4";
-    b.append(num, document.createTextNode(t("stages.clip")));
-    b.addEventListener("click", () => {
-      $$(".stage-tab", card).forEach((el) => el.classList.toggle("on", el === b));
-      const dock = $(".clip-dock", card);
-      if (dock) dock.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    tabsBox.appendChild(b);
-  }
   setStage(card, active);
-  STAGES.forEach((k) => { if (typeof card.__ensureStage === "function") card.__ensureStage(k); });
-  // Каждый блок подписан своим именем — отдельные стеклянные панели должны
-  // читаться с любого места прокрутки.
-  $$(".stage-pane", card).forEach((p) => {
-    if (!$(".pane-head", p)) {
-      const h = document.createElement("div");
-      h.className = "pane-head";
-      h.textContent = t("stages." + p.dataset.stage);
-      p.prepend(h);
-    }
+  // Кнопки «Дальше →» внизу панелей.
+  $$(".stage-next", card).forEach((b) => {
+    b.addEventListener("click", () => setStage(card, b.dataset.next));
   });
+  bindMoreMenu($(".t-more-wrap", card));
+  bindMoreMenu($(".board-more-wrap", card));
 
   // «Закрепить ленту»: раскадровка и лента готовых видео листаются вместе —
   // прокрутка зеркалится долей, потому что карточки лент разной ширины.
@@ -6482,10 +6470,7 @@ function renderTrack(tr) {
     const cur = activeStage(tr);
     const idx = STAGES.indexOf(cur);
     const next = STAGES[idx + (dx < 0 ? 1 : -1)];
-    if (next) {
-      trackStages.set(tr.id, next);
-      setStage(card, next);
-    }
+    if (next) setStage(card, next);
   }, { passive: true });
 
   // ── этап 1: настройка (+ режиссёрская заметка трека, если сюжет её написал)
@@ -6663,7 +6648,6 @@ function renderTrack(tr) {
   // curMode() здесь напрямую: const modeNow объявлен НИЖЕ по функции, и
   // обращение к нему отсюда роняло весь рендер треков (TDZ) — лента пустела.
   msCinemaBar(card, tr, curMode());
-  msHowto(card, curMode());
   const allBtn = $(".gen-all-frames", card);
   const framesBusy = (tr.scenes || []).some((s) => ["queued", "running"].includes(s.image_status));
   // «(готовый кадр» — служебная метка бэкенда в image_prompt (backend/main.py),
@@ -6953,9 +6937,9 @@ function renderTrack(tr) {
     if (key === "board") fillScenes(boardBox, tr, "board", audioEl, card);
     if (key === "anim") fillScenes(animBox, tr, "anim", audioEl, card);
   };
-  // Этапы лежат друг под другом — строим ОБЕ ленты сразу (ранний forEach по
-  // STAGES выше отрабатывает до определения __ensureStage и ничего не строит).
-  STAGES.forEach((k) => card.__ensureStage(k));
+  // setStage выше отработал до определения __ensureStage — строим открытый
+  // этап здесь, остальные при первом переключении.
+  card.__ensureStage(activeStage(tr));
   bindSceneViews(card, tr, audioEl);
   $$(".strip-wrap", card).forEach(bindStrip);
 
@@ -7002,8 +6986,37 @@ function renderTrack(tr) {
              && !tr.clip_url) sel = ".assemble";
     if (sel) {
       const btn = sel.split(",").map((q) => $(q.trim(), card)).find(Boolean);
-      if (btn && !btn.disabled) btn.classList.add("next-step");
+      if (btn && !btn.disabled) {
+        btn.classList.add("next-step");
+        const pane = btn.closest(".stage-pane");
+        if (pane && !pane.classList.contains("on")) btn.classList.add("next-step-off");
+      }
     }
+    // ОДНА ОГНЕННАЯ КНОПКА НА ЭТАП. Низ панели: [стекло][огонь][Дальше →].
+    // Раскадровка: «Сгенерировать раскадровку» → «Кадры всех сцен»; когда
+    // кадры готовы — огонь уходит на «Дальше». Анимация: «Видео всех сцен».
+    const framesLeft = scenes.length && scenes.some((x) => !x.image_url);
+    const vidLeft = scenes.length && scenes.some((x) => x.image_url && !x.video_url);
+    const genB = $(".gen-scenes", card), framesB = $(".gen-all-frames", card);
+    const vidB = $(".gen-all-videos", card), cGenB = $(".ms-comment-gen", card);
+    if (genB) genB.classList.toggle("hidden", scenes.length > 0);
+    if (framesB) framesB.classList.toggle("hidden", !scenes.length || (!framesLeft && !allFramesBusy(tr)));
+    if (vidB) vidB.classList.toggle("hidden", !scenes.length || (!vidLeft && !allVideosBusy(tr)));
+    const again = $(".gen-scenes-again", card);
+    if (again) {
+      again.classList.toggle("hidden", !scenes.length);
+      again.disabled = Boolean(genB && genB.disabled);
+      again.addEventListener("click", () => { if (genB) genB.click(); });
+    }
+    const boardMore = $(".board-more-wrap", card);
+    if (boardMore) boardMore.classList.toggle("hidden", !scenes.length && !tr.storyboard_url);
+    const fireIn = (pane) => $$(".pane-foot .primary:not(.hidden)", pane).some((b) => !b.disabled);
+    $$(".stage-pane", card).forEach((pane) => {
+      const nb = $(".pane-foot .stage-next", pane);
+      if (!nb) return;
+      const setupFire = pane.dataset.stage === "setup" && cGenB && !cGenB.classList.contains("hidden");
+      nb.classList.toggle("primary", !(pane.dataset.stage === "setup" ? setupFire : fireIn(pane)));
+    });
   }
 
   // Автосборка: флаг живёт в localStorage, работу делает autoAssembleTick
@@ -9823,20 +9836,6 @@ function openModelModal(c, onDone = null) {
   });
 }
 
-// Гайд со скриншотами открывается модалкой — лендинг остаётся в один экран.
-{
-  const link = document.querySelector("#welcome-guide-link");
-  const modal = document.querySelector("#guide-modal");
-  const closeBtn = document.querySelector("#guide-close");
-  const close = () => modal && modal.classList.add("hidden");
-  if (link && modal) {
-    link.addEventListener("click", (e) => { e.preventDefault(); modal.classList.remove("hidden"); });
-    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
-    if (closeBtn) closeBtn.addEventListener("click", close);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
-  }
-}
-
 // ═════════════════════════ ГЛАВНАЯ СТРАНИЦА lolq.ai ═════════════════════════
 // Витрина сервиса и воронка: первый экран → как это работает → что внутри →
 // тарифы → докупка токенов → партнёрка → FAQ → подвал.
@@ -9955,9 +9954,7 @@ function ldBuildFooter() {
       <div class="ld-foot-col">
         <h4>${escHtml(c.title)}</h4>
         <ul>${(c.links || []).map((l) => {
-          if (l.action === "guide") {
-            return `<li><button type="button" data-ld-guide>${escHtml(l.label)}</button></li>`;
-          }
+          if (l.action === "guide") return "";
           // Пустой href = ссылки ещё нет: показываем честную метку «скоро»,
           // а не заглушку, ведущую в никуда. Метка — из словаря, не из CSS.
           return l.href
@@ -9965,7 +9962,6 @@ function ldBuildFooter() {
             : `<li><span class="ld-link-off">${escHtml(l.label)}<em>${escHtml(LTX("footer.soon"))}</em></span></li>`;
         }).join("")}</ul>
       </div>`).join("");
-    $$("[data-ld-guide]", cols).forEach((b) => b.addEventListener("click", ldOpenGuide));
   }
   // Правовая строка живёт в своём контейнере: перерисовка идемпотентна, и при
   // смене языка строки не дублируются, а авторская подпись остаётся на месте.
@@ -9976,10 +9972,6 @@ function ldBuildFooter() {
   }
 }
 
-function ldOpenGuide() {
-  const modal = document.querySelector("#guide-modal");
-  if (modal) modal.classList.remove("hidden");
-}
 
 // ────────── тарифы: живые данные с запасным вариантом ──────────
 function ldUsd(src, keyUsd, keyCents) {
@@ -10802,7 +10794,6 @@ async function renderOnboarding() {
       : t("onboarding.short", { n: tNum(onboarding.points),
                                 need: tNum(c.clip_total || 0) }))}</p>
     <div class="row ob-actions">
-      <button type="button" class="ob-guide">${escHtml(t("onboarding.guide"))}</button>
       <button type="button" class="ob-lesson">${escHtml(t("onboarding.lesson"))}</button>
     </div>`;
 
@@ -10812,7 +10803,6 @@ async function renderOnboarding() {
     catch (e) { /* не удалось запомнить — не повод оставлять чеклист на экране */ }
     box.classList.add("hidden");
   });
-  $(".ob-guide", box).addEventListener("click", ldOpenGuide);
   // «Как это работает» ведёт в первый урок школы, а не в отдельную простыню:
   // текст один и тот же, и держать его в двух местах нельзя.
   $(".ob-lesson", box).addEventListener("click", () => ldOpenLesson("first-clip"));
@@ -11173,6 +11163,70 @@ function paintThemeSwitch(mode) {
 }
 window.paintThemeSwitch = paintThemeSwitch;
 window.applyTheme = applyTheme;   // меню профиля (sections.js) листает тему
+/* ─── ГОЛОСОВОЙ ВВОД: микрофон у сценария/комментария и в строке чата ───
+   MediaRecorder → POST /api/stt (multipart, поле audio) → {text}; текст
+   дописывается в поле через пробел. Один делегат на документ: карточки
+   треков перерисовываются, кнопки в них — из шаблона. */
+(function sttBoot() {
+  const okMedia = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia
+    && window.MediaRecorder);
+  document.body.classList.toggle("mic-ok", okMedia);
+  if (!okMedia) return;
+  let rec = null, chunks = [], stream = null, activeBtn = null;
+  const targetOf = (btn) => {
+    const sel = btn.dataset.micFor || "";
+    const wrap = btn.closest(".ta-mic-wrap");
+    return (wrap && sel && wrap.querySelector(sel)) || (sel && document.querySelector(sel))
+      || (wrap && wrap.querySelector("textarea, input"));
+  };
+  const stop = () => {
+    if (rec && rec.state !== "inactive") rec.stop();
+    if (stream) stream.getTracks().forEach((tr) => tr.stop());
+    stream = null;
+    if (activeBtn) activeBtn.classList.remove("rec");
+  };
+  const finish = async (btn, field) => {
+    const type = (rec && rec.mimeType) || "audio/webm";
+    const blob = new Blob(chunks, { type });
+    chunks = [];
+    rec = null; activeBtn = null;
+    if (!blob.size || !field) return;
+    const fd = new FormData();
+    fd.append("audio", blob, type.includes("ogg") ? "voice.ogg" : "voice.webm");
+    btn.disabled = true;
+    try {
+      const r = await api("/api/stt", { method: "POST", body: fd });
+      const text = (r && r.text || "").trim();
+      if (text) {
+        field.value = (field.value ? field.value.replace(/\s+$/, "") + " " : "") + text;
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        field.focus();
+      }
+    } catch (e) { mkToast(t("auth.micFail")); }
+    btn.disabled = false;
+  };
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest && e.target.closest(".mic-btn");
+    if (!btn) return;
+    e.preventDefault();
+    if (rec) { stop(); return; }   // второй клик — стоп
+    const field = targetOf(btn);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (_) { mkToast(t("auth.micDenied")); return; }
+    const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm", "audio/mp4"]
+      .find((m) => MediaRecorder.isTypeSupported(m)) || "";
+    try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+    catch (_) { stop(); mkToast(t("auth.micFail")); return; }
+    chunks = [];
+    activeBtn = btn;
+    btn.classList.add("rec");
+    rec.addEventListener("dataavailable", (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); });
+    rec.addEventListener("stop", () => finish(btn, field));
+    rec.start();
+  });
+})();
+
 // Меню «⋯» карточки кадра гасим кликом мимо и по Esc — один слушатель на
 // документ вместо слушателя в каждой карточке (их на треке тридцать).
 document.addEventListener("click", () => {
@@ -11237,6 +11291,9 @@ function paAddMsg(cls, text) {
   div.className = "pa-msg " + cls;
   div.textContent = text;
   feed.appendChild(div);
+  // Ответ пришёл при закрытой панели — пузырь горит, пока не откроют.
+  const panel = paEl("pa-panel"), bubble = paEl("pa-bubble");
+  if (cls === "bot" && panel && bubble && panel.classList.contains("hidden")) bubble.classList.add("unread");
   feed.scrollTop = feed.scrollHeight;
   return div;
 }
@@ -11341,6 +11398,7 @@ function paInit() {
   bubble.addEventListener("click", async () => {
     const closed = panel.classList.contains("hidden");
     panel.classList.toggle("hidden", !closed);
+    bubble.classList.remove("unread");
     if (closed && !paEl("pa-feed").childElementCount) {
       await paAsk("");    // здоровается состоянием проекта
     }

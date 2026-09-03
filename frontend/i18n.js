@@ -87,6 +87,9 @@ const I18N = {
       sendCode: "send code",
       confirm: "confirm",
       wantSignup: "create account",
+      guestLeave: "Your guest account will be lost. Sign out anyway? Cancel to save the account.",
+      micDenied: "microphone access denied",
+      micFail: "speech recognition unavailable",
       wantSignin: "i have an account",
       forgot: "forgot password?",
       codeSentEmail: "we sent a code to your email — enter it below.",
@@ -166,7 +169,7 @@ const I18N = {
     nav: {
       aria: "service sections",
       sections: {
-        trends: "trends",
+        trends: "Trends",
         earn: "earn",
         marketing: "marketing",
         studio: "studio",
@@ -347,7 +350,7 @@ const I18N = {
       searchPh: "search feeds and prompts",
       noChats: "no feeds yet",
       hello: "what are we making today?",
-      helloHint: "pick the model right inside the input line: a text answer, an image, or video made from an image.",
+      helloHint: "",
       inputPh: "write what you need…",
       send: "send",
       sending: "sending…",
@@ -385,7 +388,7 @@ const I18N = {
       expired: "the file was removed after its storage window. The prompt is kept — press “Repeat”.",
       // Честная строка про оплату — ровно та формулировка, которую не стыдно
       // написать: цену мы показываем ДО отправки и не берём за неудачу.
-      payNote: "the price is shown before you send. If a generation fails, the tokens come back.",
+      payNote: "",
       retention: "images and video live {n} days on your plan. “To project” keeps them for good.",
       retentionAdmin: "files are kept without a time limit.",
       source: "first frame: the image above",
@@ -602,11 +605,7 @@ const I18N = {
         full: "series with seasons and episodes",
       },
       object: {
-        track: {
-      randomCast: "random cast",
-      randomCastTitle: "next storyboard: heroes spread across frames — somewhere one, somewhere two, a few frames with nobody",
-      shuffleCast: "reshuffle cast",
-      shuffleAsk: "reshuffle characters across the existing frames? Prompts will need rewriting for the new cast.", one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
+        track: { one: "track", many: "Tracks", add: "+ add track", empty: "no tracks yet",
                  save: "Save track", style: "Clip style", chars: "Album characters" },
         reel: { one: "video", many: "Videos", add: "+ add video", empty: "no videos yet",
                 save: "Save video", style: "Video style", chars: "Channel characters" },
@@ -654,12 +653,12 @@ const I18N = {
 
     // ─────────────── единый блок параметров режима ───────────────
     modeSetup: {
-      what: "1. What we shoot",
-      look: "2. How we shoot",
+      what: "What we shoot",
+      look: "How we shoot",
       frame: "frame",
       engines: "engines and price",
-      material: "3. Your material",
-      storyLabel: "project story (shared by every object)",
+      material: "Your material",
+      storyLabel: "Story",
       punch: "punch shots",
       aspect: "aspect",
       resolution: "image resolution",
@@ -671,7 +670,7 @@ const I18N = {
       },
       aspectLocked: "{engine} only shoots vertical — pick a Nano Banana engine for other shapes.",
       photos: "packshot references",
-      photosHint: "matched to these photos letter for letter.",
+      photosHint: "",
       photosAdd: "+ add a photo",
       needPhoto: "upload a packshot first — the product is matched against it",
       turnaround: "3D orbit (8 angles)",
@@ -732,10 +731,10 @@ const I18N = {
       label: "text model",
       lockedIn: "opens on {plan}",
       freeNote: "",
-      paidNote: "{n} tokens per scripting step: story, season bible, episode script, storyboard.",
+      paidNote: "",
       // Выбор пережил даунгрейд: он лежит в проекте и ждёт возврата на
       // тариф, но пишет сейчас не он. молчать об этом нельзя.
-      droppedNote: "{model} stays picked for this project, but it needs {plan} — until then the text is written by the line above.",
+      droppedNote: "",
     },
 
     // ─────────── перерисовка в новом стиле ───────────
@@ -778,9 +777,9 @@ const I18N = {
       projectSum: "{tracks} objects · {scenes} frames · {chars} characters",
       trackSum: "«{title}» · {scenes} frames",
       modeLink: "with all the material",
-      modeLinkNote: "frames, video, sheets and the track come along. They take no extra disk space: the copy shares the same files.",
+      modeLinkNote: "",
       modeNone: "template",
-      modeNoneNote: "structure, prompts, timings and characters only — no frames and no video. Draw it from scratch in a new style.",
+      modeNoneNote: "",
       disk: "{media} of material · 0 bytes on disk",
       diskNone: "no media — 0 bytes on disk",
       bringChars: "these characters will be brought along: {list}. Without them the frames keep the names but lose the faces.",
@@ -808,9 +807,9 @@ const I18N = {
       squeeze: "split the slot",
       spread: "take it from the next frames",
       tail: "make the clip longer",
-      squeezeNote: "this frame and the new one get {n}s each, the track length stays the same",
-      spreadNote: "the new frame gets {n}s, the following ones give them up (none goes under 2s)",
-      tailNote: "the storyboard grows by {n}s and becomes longer than the audio",
+      squeezeNote: "",
+      spreadNote: "",
+      tailNote: "",
       fellBack: "not possible here — falls back to making the clip longer",
       videoStale: "{n} frames already have video: it was shot for a different slot and will be trimmed on assembly",
       videoStaleOne: "the video was shot for a different length — assembly trims it to {n}s",
@@ -858,14 +857,14 @@ const I18N = {
     engines: {
       credits: "credits ran out",
       viaGateway: "{name} is drawing",
-      viaGatewayHint: "the paid engine refused, so the owner\u2019s subscription gateway took over: no credits are spent and there are no per-request limits, but it is slower.",
+      viaGatewayHint: "",
       ownShort: "own",
       title: "engines",
-      hint: "one choice for the whole {object}. Every frame follows it.",
+      hint: "",
       image: "frames",
       video: "video",
       auto: "by plan",
-      autoNote: "the plan picks the engine",
+      autoNote: "",
       inherit: "as set on the {object}",
       override: "change for this frame",
       cost: "{n} tokens per scene",
@@ -960,6 +959,7 @@ const I18N = {
 
     // ─────────── CRM: клиенты ───────────
     crm: {
+      points: "Tokens",
       total: "accounts",
       active7: "{n} seen this week",
       paying: "on a paid plan",
@@ -1145,8 +1145,8 @@ const I18N = {
       done: "line voiced — the audio goes into the scene build.",
     },
     base: {
-      empty: "пока пусто",
-      otherProject: "этот герой живёт в другом проекте — открой его там",
+      empty: "nothing here yet",
+      otherProject: "this character lives in another project — open it there",
     },
     item: {
       title: "item",
@@ -1223,10 +1223,14 @@ const I18N = {
       copied: "copied ✓ — paste it into your post", make: "Make a clip with the product",
     },
     track: {
+      randomCast: "random cast",
+      randomCastTitle: "next storyboard: heroes spread across frames — somewhere one, somewhere two, a few frames with nobody",
+      shuffleCast: "reshuffle cast",
+      shuffleAsk: "reshuffle characters across the existing frames? Prompts will need rewriting for the new cast.",
       audioUrl: "by link",
       audioUrlPh: "direct link to the audio file",
       audioUrlGo: "fetch",
-      audioUrlHint: "a direct link to a file — your cloud, the beatmaker\u2019s page, a distributor export. Links to videos and streaming will not work: audio can only be taken from there by breaking the platform\u2019s rules.",
+      audioUrlHint: "",
       audioGet: "download track",
       audioSwap: "upload track",
       audioTiny: "this file is only {n} bytes — it did not download fully. Get it again from the source.",
@@ -1249,8 +1253,8 @@ const I18N = {
       audioProfile: "audio profile",
       grain: "film grain over the whole clip",
       grainTitle: "16 mm ffmpeg grain over the assembled clip",
-      nostory: "no story (random punch frames)",
-      nostoryTitle: "the storyboard becomes independent random punch frames built from your comment — no story arc needed",
+      nostory: "No story",
+      nostoryTitle: "",
       comment: "comment",
       commentPh: "what you meant, the context",
       lyrics: "lyrics",
@@ -1271,15 +1275,15 @@ const I18N = {
       // поедут мимо панелей и захватят соседей.
       sheetStale: "the sheet was drawn for {a} frames, and now there are {b} — redraw it before slicing.",
       sheetStaleTitle: "the sheet does not match the current frames",
-      sheetEmpty: "no sheet yet",
+      sheetEmpty: "",
       sheetOpen: "open large",
       sheetOpenTitle: "open the sheet full screen",
       genSheet: "generate sheet",
       redrawSheet: "redraw sheet",
       sheetBusy: "drawing the sheet…",
       sliceSheet: "split the sheet into frames",
-      sheetZoomHint: "click the sheet to view it full size",
-      sheetGridNote: "storyboard sheet · {n} panels",
+      sheetZoomHint: "",
+      sheetGridNote: "",
       voiceAll: "voice the episode 🎙",
       voiceAllTitle: "voice every line with each character's pinned ElevenLabs voice",
       voiceAllQueued: "queued: {n} scene(s) with lines are being voiced.",
@@ -1293,7 +1297,7 @@ const I18N = {
       allFramesN: "frames for all scenes ({n})",
       allFramesBusy: "generating frames…",
       allFramesTitle: "the queue runs one scene at a time — you can close the tab, progress is kept",
-      allFramesNote: "the queue runs one scene at a time",
+      allFramesNote: "",
       allVideos: "animate all scenes",
       allVideosN: "animate all scenes ({n})",
       allVideosBusy: "generating video…",
@@ -1306,7 +1310,7 @@ const I18N = {
       animEmpty: "no video yet — generate it from the Storyboard stage: the Animate button on a scene card.",
       clipHead: "finished clip of the track",
       clipTitle: "finished clip — approved scenes: {a}/{b}",
-      clipEmpty: "no clip yet",
+      clipEmpty: "",
       assemble: "assemble clip",
       reassemble: "reassemble",
       assembleBusy: "assembling the clip…",
@@ -1438,9 +1442,9 @@ const I18N = {
       genModelTitle: "a sheet of angles in a 3D render style, built from the uploaded photos",
       photoDel: "delete photo",
       photosTitle: "photos",
-      photosHint: "these go into the turnaround as reference. Different angles beat more selfies.",
+      photosHint: "",
       modelsTitle: "turnarounds",
-      modelsHint: "scene frames use the last one. Generated sheets never go back in as reference.",
+      modelsHint: "",
       poseTitle: "which angle is this photo?",
       pose: {
         none: "angle?",
@@ -1603,7 +1607,7 @@ const I18N = {
         admin: "admin panel",
       },
       adminLink: "open the admin panel →",
-      adminNote: "clients, broadcasts, payouts, style editor and service settings",
+      adminNote: "",
       guest: "guest",
       noContacts: "account with no email and no login",
       statPlan: "plan",
@@ -2122,7 +2126,6 @@ const I18N = {
           { title: "Product", links: [
             { label: "How it works", href: "#ld-how" },
             { label: "Features", href: "#ld-features" },
-            { label: "Studio guide", action: "guide" },
             { label: "Styles breakdown", href: "/prompts/" },
           ] },
           { title: "Payments", links: [
@@ -2132,8 +2135,13 @@ const I18N = {
           ] },
           { title: "More", links: [
             { label: "qlolmusic — label", href: "/music" },
-            { label: "Support", href: "" },
+            { label: "Support", href: "https://t.me/lolqaibot" },
             { label: "Questions and answers", href: "#ld-faq" },
+          ] },
+          { title: "Contacts", links: [
+            { label: "Telegram", href: "https://t.me/lolqaibot" },
+            { label: "Instagram", href: "https://instagram.com/lolq.ai" },
+            { label: "MAX", href: "https://max.ru/lolqai" },
           ] },
         ],
         legal: [
@@ -2754,6 +2762,9 @@ const I18N = {
       sendCode: "получить код",
       confirm: "подтвердить",
       wantSignup: "создать аккаунт",
+      guestLeave: "Аккаунт гостя пропадёт. Выйти? «Отмена» — сохранить аккаунт.",
+      micDenied: "нет доступа к микрофону",
+      micFail: "распознавание недоступно",
       wantSignin: "у меня есть аккаунт",
       forgot: "забыли пароль?",
       codeSentEmail: "мы отправили код на почту — введи его ниже.",
@@ -2830,7 +2841,7 @@ const I18N = {
     nav: {
       aria: "разделы сервиса",
       sections: {
-        trends: "тренды",
+        trends: "Тренды",
         earn: "заработок",
         marketing: "маркетинг",
         studio: "студия",
@@ -3006,7 +3017,7 @@ const I18N = {
       searchPh: "поиск по лентам и промптам",
       noChats: "лент пока нет",
       hello: "чем займёмся сегодня?",
-      helloHint: "модель переключается прямо в строке ввода: текстовый ответ, картинка или видео из картинки.",
+      helloHint: "",
       inputPh: "напиши, что нужно…",
       send: "отправить",
       sending: "отправляю…",
@@ -3044,7 +3055,7 @@ const I18N = {
       expired: "файл удалён по сроку хранения. промпт остался — нажми «Повторить».",
       // Честная строка про оплату — ровно та формулировка, которую не стыдно
       // написать: цену мы показываем ДО отправки и не берём за неудачу.
-      payNote: "цена видна до отправки. если генерация упала, токены возвращаются.",
+      payNote: "",
       retention: "картинки и видео хранятся {n} дней на твоём тарифе. «В проект» снимает срок навсегда.",
       retentionAdmin: "файлы хранятся без ограничения по сроку.",
       source: "первый кадр: картинка выше",
@@ -3298,12 +3309,12 @@ const I18N = {
 
     // ─────────────── единый блок параметров режима ───────────────
     modeSetup: {
-      what: "1. что снимаем",
-      look: "2. как снимаем",
+      what: "Что снимаем",
+      look: "Как снимаем",
       frame: "кадр",
       engines: "движки и цена",
-      material: "3. твой материал",
-      storyLabel: "сюжет проекта (общий для всех объектов)",
+      material: "Материал",
+      storyLabel: "Сюжет",
       punch: "панч-кадры",
       aspect: "геометрия",
       resolution: "разрешение кадра",
@@ -3315,7 +3326,7 @@ const I18N = {
       },
       aspectLocked: "{engine} снимает только вертикаль — под другие формы выбери движок семейства Nano Banana.",
       photos: "фото упаковки",
-      photosHint: "совпадает с этими фото до буквы.",
+      photosHint: "",
       photosAdd: "+ добавить фото",
       needPhoto: "сначала загрузи фото упаковки — по нему совпадает предмет",
       turnaround: "3D-облёт (8 ракурсов)",
@@ -3376,10 +3387,10 @@ const I18N = {
       label: "текстовая модель",
       lockedIn: "открывается на {plan}",
       freeNote: "",
-      paidNote: "{n} токенов за сценарный шаг: сюжет, библия сезона, сценарий серии, раскадровка.",
+      paidNote: "",
       // Выбор пережил даунгрейд: он лежит в проекте и ждёт возврата на
       // тариф, но пишет сейчас не он. молчать об этом нельзя.
-      droppedNote: "{model} остаётся выбранным для этого проекта, но нужен {plan} — до тех пор текст пишет позиция выше.",
+      droppedNote: "",
     },
 
     // ─────────── перерисовка в новом стиле ───────────
@@ -3422,9 +3433,9 @@ const I18N = {
       projectSum: "{tracks} объектов · {scenes} кадров · {chars} персонажей",
       trackSum: "«{title}» · {scenes} кадров",
       modeLink: "со всем материалом",
-      modeLinkNote: "кадры, видео, листы и дорожка переезжают вместе. места на диске не занимают: копия смотрит на те же файлы.",
+      modeLinkNote: "",
       modeNone: "шаблон",
-      modeNoneNote: "только структура, промпты, тайминги и персонажи — без кадров и видео. отрисовать заново в новом стиле.",
+      modeNoneNote: "",
       disk: "{media} материала · 0 байт на диске",
       diskNone: "без медиа — 0 байт на диске",
       bringChars: "вместе с объектом приедут герои: {list}. без них кадры сохранят имена, но потеряют лица.",
@@ -3452,9 +3463,9 @@ const I18N = {
       squeeze: "поделить слот",
       spread: "забрать у следующих",
       tail: "удлинить клип",
-      squeezeNote: "этому кадру и новому достанется по {n} с, длина трека не изменится",
-      spreadNote: "новый кадр получит {n} с, следующие отдадут их (никто не короче 2 с)",
-      tailNote: "раскадровка вырастет на {n} с и станет длиннее дорожки",
+      squeezeNote: "",
+      spreadNote: "",
+      tailNote: "",
       fellBack: "здесь так не выйдет — вырождается в «удлинить клип»",
       videoStale: "у {n} кадров уже есть видео: оно снято под другой слот и будет подрезано при сборке",
       videoStaleOne: "видео снято под другую длину — сборка подрежет его до {n} с",
@@ -3502,14 +3513,14 @@ const I18N = {
     engines: {
       credits: "кончились кредиты",
       viaGateway: "рисует {name}",
-      viaGatewayHint: "платный движок отказал, работает шлюз по подписке владельца: кредиты не тратятся и лимитов на запросы нет, но получается медленнее.",
+      viaGatewayHint: "",
       ownShort: "свой",
       title: "движки",
-      hint: "один выбор на весь объект ({object}). все кадры идут по нему.",
+      hint: "",
       image: "кадры",
       video: "видео",
       auto: "по тарифу",
-      autoNote: "движок выбирает тариф",
+      autoNote: "",
       inherit: "как у объекта ({object})",
       override: "поменять для этого кадра",
       cost: "{n} токенов за сцену",
@@ -3603,7 +3614,12 @@ const I18N = {
     },
 
     // ─────────── CRM: клиенты ───────────
+    base: {
+      empty: "пока пусто",
+      otherProject: "Этот герой живёт в другом проекте — открой его там",
+    },
     crm: {
+      points: "Токены",
       total: "аккаунтов",
       active7: "{n} заходили за неделю",
       paying: "на платном тарифе",
@@ -3861,7 +3877,7 @@ const I18N = {
       audioUrl: "по ссылке",
       audioUrlPh: "прямая ссылка на аудиофайл",
       audioUrlGo: "забрать",
-      audioUrlHint: "прямая ссылка на файл — твоё облако, страница битмейкера, выгрузка от дистрибьютора. ссылки на ролики и стриминг не сработают: звук оттуда достаётся только в обход правил площадки.",
+      audioUrlHint: "",
       audioGet: "скачать трек",
       audioSwap: "загрузить трек",
       audioTiny: "в этом файле всего {n} байт — он не докачался. скачай его из источника заново.",
@@ -3888,8 +3904,8 @@ const I18N = {
       audioProfile: "профиль дорожки",
       grain: "плёночное зерно на весь клип",
       grainTitle: "ffmpeg-зерно 16 мм поверх всего собранного клипа",
-      nostory: "без сюжета (рандомные кадры)",
-      nostoryTitle: "раскадровка = независимые рандомные панч-кадры по комментарию, сквозной сюжет не нужен",
+      nostory: "Без сюжета",
+      nostoryTitle: "",
       comment: "комментарий",
       commentPh: "что имел в виду, контекст",
       lyrics: "текст песни",
@@ -3910,15 +3926,15 @@ const I18N = {
       // поедут мимо панелей и захватят соседей.
       sheetStale: "лист нарисован на {a} кадров, а сейчас их {b} — пересобери его перед нарезкой.",
       sheetStaleTitle: "лист не соответствует нынешним кадрам",
-      sheetEmpty: "листа ещё нет",
+      sheetEmpty: "",
       sheetOpen: "открыть крупно",
       sheetOpenTitle: "показать лист во весь экран",
       genSheet: "сгенерировать лист",
       redrawSheet: "перерисовать лист",
       sheetBusy: "рисую лист…",
       sliceSheet: "разложить лист по кадрам",
-      sheetZoomHint: "клик по листу — крупно",
-      sheetGridNote: "лист раскадровки · панелей: {n}",
+      sheetZoomHint: "",
+      sheetGridNote: "",
       voiceAll: "озвучить серию 🎙",
       voiceAllTitle: "озвучить все реплики голосами закреплённых персонажей (ElevenLabs)",
       voiceAllQueued: "в очереди: озвучиваются {n} кадров с репликами.",
@@ -3932,7 +3948,7 @@ const I18N = {
       allFramesN: "кадры всех сцен ({n})",
       allFramesBusy: "генерирую кадры…",
       allFramesTitle: "очередь идёт по одной сцене — вкладку можно закрыть, прогресс не теряется",
-      allFramesNote: "очередь идёт по одной сцене",
+      allFramesNote: "",
       allVideos: "видео всех сцен",
       allVideosN: "видео всех сцен ({n})",
       allVideosBusy: "генерирую видео…",
@@ -3945,7 +3961,7 @@ const I18N = {
       animEmpty: "видео ещё нет — сгенерируй их из «Раскадровки»: кнопка «Видео сцены» на карточке кадра.",
       clipHead: "готовый клип трека",
       clipTitle: "готовый клип — утверждено сцен: {a}/{b}",
-      clipEmpty: "клипа ещё нет",
+      clipEmpty: "",
       assemble: "собрать клип",
       reassemble: "пересобрать",
       assembleBusy: "собираю клип…",
@@ -4075,9 +4091,9 @@ const I18N = {
       genModelTitle: "лист ракурсов в 3D-рендер-стиле, собранный по загруженным фото",
       photoDel: "удалить фото",
       photosTitle: "фото",
-      photosHint: "именно они уходят референсом в разворот. разные ракурсы важнее количества селфи.",
+      photosHint: "",
       modelsTitle: "развороты",
-      modelsHint: "кадры сцен берут последний. сгенерированные листы в референсы больше не возвращаются.",
+      modelsHint: "",
       poseTitle: "какой это ракурс?",
       pose: {
         none: "ракурс?",
@@ -4238,7 +4254,7 @@ const I18N = {
         admin: "админка",
       },
       adminLink: "открыть админку →",
-      adminNote: "клиенты, рассылки, выплаты, редактор стилей и настройки сервиса",
+      adminNote: "",
       guest: "гость",
       noContacts: "аккаунт без почты и логина",
       statPlan: "тариф",
@@ -4747,7 +4763,6 @@ const I18N = {
           { title: "Продукт", links: [
             { label: "Как это работает", href: "#ld-how" },
             { label: "Возможности", href: "#ld-features" },
-            { label: "Гайд по студии", action: "guide" },
             { label: "Разбор стилей", href: "/ru/prompts/" },
           ] },
           { title: "Оплата", links: [
@@ -4757,8 +4772,13 @@ const I18N = {
           ] },
           { title: "Ещё", links: [
             { label: "qlolmusic — лейбл", href: "/music" },
-            { label: "Поддержка", href: "" },
+            { label: "Поддержка", href: "https://t.me/lolqaibot" },
             { label: "Вопросы и ответы", href: "#ld-faq" },
+          ] },
+          { title: "Контакты", links: [
+            { label: "Telegram", href: "https://t.me/lolqaibot" },
+            { label: "Instagram", href: "https://instagram.com/lolq.ai" },
+            { label: "MAX", href: "https://max.ru/lolqai" },
           ] },
         ],
         legal: [
@@ -5404,7 +5424,7 @@ function detectLang() {
     if (code === "ru") return "ru";
     if (code === "en") return "en";
   }
-  return "en";
+  return "ru";
 }
 
 // Путь в словаре: возвращает значение как есть (строка, массив, объект).

@@ -94,11 +94,19 @@ body {
 
 /* ────────── вход ────────── */
 .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-.login-box { display: flex; flex-direction: column; gap: 14px; width: 300px; }
-.login-box h1 {
-  font-family: var(--font-mono); font-size: 17px; letter-spacing: .28em;
-  text-transform: lowercase; text-align: center; margin-bottom: 10px;
-  color: var(--text);
+.login-box {
+  position: relative; display: flex; flex-direction: column; gap: 14px; width: 360px; max-width: calc(100vw - 24px);
+  padding: 24px 22px 20px; border-radius: 28px;
+  background: var(--panel); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(var(--ink-rgb), .10); box-shadow: 0 8px 28px rgba(var(--ink-rgb), .08);
+}
+.login-box .login-word {
+  font-family: var(--font-head); font-size: 22px; font-weight: 800; letter-spacing: -.02em;
+  text-align: center; margin-bottom: 6px; color: var(--text);
+}
+.login-close {
+  position: absolute; top: 10px; right: 10px; width: 34px; height: 34px; padding: 0;
+  border-radius: 50%; line-height: 1;
 }
 .login-box input {
   padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border);
@@ -324,12 +332,14 @@ body {
 }
 /* Градиентная полоса сверху панелей убрана (канон: оранжевый — только
    акцент действия, а не декор каждого блока). */
-.panel h2 {
-  font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .22em;
-  text-transform: lowercase; color: var(--accent-2-ink); margin: 0 0 14px;
-}
+.panel h2 { margin: 0 0 14px; }
 
-label { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em; text-transform: lowercase; color: var(--ink-muted); margin: 8px 0 4px; }
+label { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); margin: 8px 0 4px; }
+/* Заголовок секции — единый примитив канона. */
+.sec-h, .ms-h, .ms-fold > summary, .media-head, .panel h2, .modal-title {
+  font-family: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-muted);
+}
 textarea, input[type=text], input[type=number], input:not([type]), select {
   width: 100%; padding: 8px 10px; border-radius: 11px; border: 1.5px solid rgba(var(--ink-rgb),.14);
   background: var(--inset); color: var(--text); font-family: inherit; font-size: 13.5px;
@@ -382,13 +392,13 @@ button.primary:disabled {
   padding: 14px; margin-bottom: 14px;
   box-shadow: 0 4px 14px rgba(var(--ink-rgb), .10);
 }
-.track-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.track-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: nowrap; min-height: 36px; }
 .pos {
   font-family: var(--font-mono); font-weight: 800; font-size: 15px; min-width: 34px;
-  color: var(--accent-ink); text-shadow: 0 0 14px rgba(255,61,61,.35);
+  color: var(--ink-muted);
 }
 /* Название — по содержимому, а не во всю ширину: рядом теперь этапы. */
-.t-title { flex: 0 1 260px; min-width: 120px; font-weight: 700; font-size: 15.5px; }
+.t-title { flex: 1 1 200px; min-width: 100px; font-weight: 700; font-size: 15.5px; }
 /* Этапы живут в строке названия. Прокручиваются, если не влезают, но НЕ
    переносятся на свою строку — она съедала высоту впустую. */
 .track-head .stage-tabs {
@@ -548,9 +558,11 @@ button.primary:disabled {
 
 /* ────────── лист раскадровки / клип ────────── */
 .clip-dock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
-.media-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: lowercase; color: var(--ink-muted); margin-bottom: 8px; }
+.media-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .storyboard-box, .media-box {
   background: var(--inset); border: 1px solid rgba(var(--ink-rgb),.18); border-radius: 20px;
+}
+.storyboard-box { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--panel) 60%, transparent);
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 /* Лист — контрольный отпечаток фиксированной высоты, а не полотно во всю
@@ -763,7 +775,7 @@ button.primary:disabled {
   border: 1px solid rgba(var(--ink-rgb), .10); background: var(--card-solid);
   corner-shape: squircle;
 }
-.scene-card.active { border-color: var(--accent-2); border-left-color: var(--accent-2); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(255,122,41,.22); }
+.scene-card.active { transform: translateY(-2px); box-shadow: inset 0 0 0 1.5px var(--ink), 0 6px 20px rgba(var(--ink-rgb),.12); }
 /* Цветовое кодирование крупности убрано (канон авг-2026): радуга торцов
    спорила с единственным огненным акцентом. Крупность написана словами. */
 
@@ -775,7 +787,7 @@ button.primary:disabled {
 }
 .s-pos {
   font-family: var(--font-mono); font-weight: 800; font-size: 13px;
-  color: var(--accent-2-ink); white-space: nowrap; flex: none;
+  color: var(--ink-muted); white-space: nowrap; flex: none;
 }
 /* Меню «⋯» карточки кадра. */
 .s-more-wrap { position: relative; margin-left: auto; flex: none; }
@@ -988,10 +1000,7 @@ button.primary:disabled {
   box-shadow: 0 16px 48px rgba(var(--ink-rgb), .12);
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.modal-title {
-  font-family: var(--font-mono); font-size: 12px; font-weight: 800;
-  letter-spacing: .2em; text-transform: lowercase; color: var(--accent-2-ink);
-}
+.modal-title { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); }
 .modal-close { font-size: 15px; }
 
 .modal-tabs { display: flex; gap: 8px; margin-top: 12px; }
@@ -1049,12 +1058,11 @@ button.primary:disabled {
    четверть шапки карточки, ради картинки, которую человек ставит один раз и
    больше не смотрит. Теперь она стоит в одну строку с «#N», названием и
    статусом, а рассмотреть её можно наведением. */
-.track-cover { width: 64px; height: 64px; border-radius: 18px; }
-.track-cover .cover-ph { font-size: 22px; }
-.track-cover:hover { transform: scale(1.5); z-index: 5; transition: transform .16s; }
+.track-cover { width: 36px; height: 36px; border-radius: 12px; }
+.track-cover .cover-ph { font-size: 14px; }
 @media (max-width: 700px) {
-  .track-cover { width: 44px; height: 44px; border-radius: 20px; }
-  .track-cover .cover-ph { font-size: 16px; }
+  .track-cover { width: 36px; height: 36px; border-radius: 12px; }
+  .track-cover .cover-ph { font-size: 14px; }
   .track-cover:hover { transform: none; }
 }
 
@@ -2259,64 +2267,10 @@ button.primary:hover:not(:disabled) {
   background: var(--card-solid); border: 1px solid var(--border);
 }
 
-/* ════════════ ОНБОРДИНГ FREE: чеклист «первый клип» ════════════
-   Плитка на четыре пункта поверх уже существующего конвейера: она НЕ новый
-   движок, а витрина того же состояния, что рисует шкала этапов. Живёт до
-   первого собранного клипа и исчезает — чеклист, который висит вечно,
-   перестают читать. Разметку собирает renderOnboarding() в app.js. */
-.onboarding { border-color: var(--border-bright); }
-.ob-head { display: flex; align-items: center; gap: 10px; }
-.ob-head h2 { margin: 0; flex: 1; }
-.ob-count {
-  font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em;
-  color: var(--ink-muted); white-space: nowrap;
-}
-.onboarding .ob-hide { min-height: 28px; padding: 0 8px; line-height: 1; }
-.ob-bar {
-  height: 4px; border-radius: 999px; background: rgba(255, 122, 41, .16);
-  overflow: hidden; margin: 10px 0 12px;
-}
-.ob-bar i {
-  display: block; height: 100%; border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  transition: width .3s ease;
-}
-.ob-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.ob-steps li {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: 14px; border: 1px solid transparent;
-}
-/* Подсвечен РОВНО один шаг — следующий. Две подсветки на экране означают,
-   что человек снова выбирает, с чего начать, а это и есть то, от чего
-   чеклист должен избавлять. */
-.ob-steps li.now { background: var(--inset); border-color: var(--border); }
-.ob-steps li.done .ob-text b { color: var(--ink-muted); text-decoration: line-through; }
-.ob-mark {
-  flex: none; width: 22px; height: 22px; border-radius: 50%;
-  display: grid; place-items: center; font-family: var(--font-mono); font-size: 12px;
-  background: rgba(255, 122, 41, .12); color: var(--ink-muted);
-}
-.ob-steps li.done .ob-mark { background: rgba(20, 160, 107, .16); color: var(--ok-ink); }
-.ob-steps li.now .ob-mark { background: rgba(255,122,41,.14); color: var(--accent-2-ink); font-weight: 800; }
-.ob-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.ob-text b { font-weight: 600; font-size: 14px; }
-.ob-text em { font-style: normal; font-size: 12px; color: var(--ink-muted); }
-.ob-cost {
-  margin-left: auto; flex: none; font-family: var(--font-mono); font-size: 12px;
-  color: var(--accent-ink); white-space: nowrap;
-}
-.ob-note { margin: 12px 0 10px; font-size: 13px; color: var(--ink-muted); }
-.ob-actions { gap: 8px; }
-
 /* Замок на чипе стиля: тариф закрывает СЪЁМКУ, а не просмотр карточки. */
 .style-chip.locked { opacity: .6; cursor: not-allowed; }
 .style-chip-lock { margin-left: 4px; font-size: 11px; }
 
-@media (max-width: 720px) {
-  .ob-steps li { padding: 10px 8px; }
-  .ob-cost { margin-left: 0; width: 100%; }
-  .ob-steps li { flex-wrap: wrap; }
-}
 
 /* Ступени объёма ULTRA в кабинете: те же четыре тика, что на витрине, но
    компактно — карточка тарифа в кабинете уже колонки лендинга. */
@@ -2401,11 +2355,7 @@ button.primary:hover:not(:disabled) {
    Табами, а не выпадающим списком: движков восемь, и цена сцены у них
    отличается в тридцать раз — выбор такого веса обязан быть виден целиком,
    а не прятаться за схлопнутым select. */
-.t-engines {
-  margin: 12px 0 4px; padding: 12px;
-  border: 2px solid rgba(var(--ink-rgb), .10); border-radius: 20px;
-  background: var(--inset);
-}
+.t-engines { margin: 12px 0 4px; padding: 0; border: 0; background: transparent; }
 .t-engines-head {
   display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   margin-bottom: 8px;
@@ -3148,15 +3098,10 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
   box-shadow: 0 1px 2px rgba(var(--ink-rgb),.12);
 }
 .ms-summary:empty { display: none; }
-.ms-sec {
-  padding: 12px; border-radius: 20px;
-  border: 2px solid rgba(var(--ink-rgb), .10); background: var(--inset);
-}
-.ms-h, .ms-fold > summary {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
-  text-transform: lowercase; color: var(--ink-muted); font-weight: 800;
-  margin: 0 0 8px;
-}
+/* Секции настройки — без коробок в коробке: зазор 24px и заголовок. */
+.ms-sec { padding: 0; border: 0; background: transparent; }
+.mode-setup { gap: 24px; }
+.ms-h, .ms-fold > summary { margin: 0 0 8px; }
 .ms-fold > summary { cursor: pointer; margin: 0; }
 .ms-fold[open] > summary { margin-bottom: 10px; }
 .ms-fold-body { display: flex; flex-direction: column; gap: 8px; }
@@ -3369,7 +3314,6 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 9px; }
 }
 
 @media (max-width: 700px) {
-  .ms-sec { padding: 10px; }
   .ms-preset { flex: 1 1 100%; max-width: none; }
   .ms-row > label { min-width: 100%; }
 
@@ -3590,7 +3534,6 @@ details.s-engine-override { border-top: 1px solid rgba(var(--ink-rgb),.14); padd
      строкой, а это отдельное требование владельца. Правило идёт ПОСЛЕ и с той
      же специфичностью, поэтому выигрывает. */
   .topbar button, .topbar select, .topbar summary { min-height: 30px; }
-  .onboarding .ob-hide { min-height: 40px; min-width: 40px; }
 }
 
 /* ────────── кабинет: ровный дашборд ──────────
@@ -3877,17 +3820,22 @@ details.s-engine-override .eng-chip { font-size: 10.5px; padding: 5px 8px; }
 /* ── Агент проекта: пузырь и выдвижная панель ── */
 .pa-bubble {
   position: fixed; right: 18px; bottom: 18px; z-index: 60;
-  width: 52px; height: 52px; border-radius: 50%; font-size: 20px;
-  background: var(--fire-ink); color: var(--on-fire);
-  border: 1px solid rgba(var(--ink-rgb),.12); box-shadow: 0 1px 3px rgba(var(--ink-rgb),.16); cursor: pointer;
+  width: 46px; height: 46px; border-radius: 50%; font-size: 18px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  color: var(--ink); cursor: pointer;
+  border: 1px solid rgba(var(--ink-rgb),.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 6px 18px rgba(var(--ink-rgb),.12);
 }
+.pa-bubble.unread { background: var(--fire-ink); color: var(--on-fire); border-color: transparent; }
 .pa-bubble:active { transform: translateY(1px); box-shadow: none; }
-/* Телефон: пузырь агента поднимается НАД нижним доком разделов — иначе он
-   накрывает «Школу» и «Музыку», то есть закрывает навигацию собой. */
+/* Телефон: пузыря нет — вход «✦» стоит пунктом в ряду этапов. */
 @media (max-width: 700px) {
-  .pa-bubble { bottom: 86px; right: 12px; width: 46px; height: 46px; font-size: 18px; }
-  .pa-panel { bottom: 140px; right: 10px; }
+  .pa-bubble { display: none !important; }
+  .pa-panel { bottom: 110px; right: 10px; }
+  .stage-jump .stage-tab.agent { display: inline-flex; margin-left: auto; flex: none; }
 }
+.stage-jump .stage-tab.agent { display: none; }
 .pa-panel {
   position: fixed; right: 18px; bottom: 82px; z-index: 60;
   width: min(380px, calc(100vw - 36px)); height: min(520px, calc(100vh - 120px));
@@ -4216,31 +4164,6 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
 }
 
-/* Этапы — ОТДЕЛЬНЫЕ стеклянные блоки: Настройки → Раскадровка → Анимация →
-   Сборка. Воздух между панелями, жидкое стекло, подпись у каждого блока. */
-.stages-stacked .stage-pane {
-  display: block; scroll-margin-top: 190px;
-  background: color-mix(in srgb, var(--panel) 74%, transparent);
-  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(var(--ink-rgb), .10);
-  border-radius: 26px; corner-shape: squircle;
-  padding: 16px 16px 18px; margin-top: 24px;
-  box-shadow: 0 8px 28px rgba(var(--ink-rgb), .06);
-}
-.pane-head {
-  font-family: var(--font-mono); text-transform: lowercase;
-  letter-spacing: .14em; font-size: 12px; color: var(--accent-ink);
-  margin: 0 0 12px;
-}
-.track-card .stage-tabs {
-  position: sticky; top: 164px; z-index: 24;
-  background: color-mix(in srgb, var(--panel) 84%, transparent);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(var(--ink-rgb), .08);
-  border-radius: 16px; corner-shape: squircle;
-  box-shadow: 0 6px 20px rgba(var(--ink-rgb), .07);
-}
-.clip-dock { scroll-margin-top: 190px; }
 .strip-lock { margin: 2px 0 8px; }
 
 /* Лента прежних версий: мелкие миниатюры, крупно — в модалке */
@@ -4251,11 +4174,7 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
 .ver-thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .ver-modal-video { width: 100%; max-height: 70vh; border-radius: 12px; }
 
-/* Тумблер этапов в закреплённой верхней панели */
 .stage-jump { display: flex; gap: 4px; flex: none; }
-.stage-jump .stage-tab { padding: 7px 12px; font-size: 12px; }
-/* Карточный тумблер больше не нужен: навигация живёт в шапке */
-.track-card .stage-tabs { display: none; }
 /* Название проекта — в блоке «Настройка», а не в шапке */
 .tb-project .project-name { display: none; }
 .project-name-inline { display: block !important; width: 100%; max-width: 560px;
@@ -4276,8 +4195,29 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   width: 17px; height: 17px; border-radius: 50%; font-size: 10.5px;
   background: rgba(var(--ink-rgb), .10); color: var(--ink);
 }
-.stage-jump .stage-tab.on { background: var(--fire-ink); color: #fff; }
-.stage-jump .stage-tab.on .st-num { background: rgba(255,255,255,.28); color: #fff; }
+.stage-jump .stage-tab.on { background: var(--fire-ink); color: var(--on-fire); }
+.stage-jump .stage-tab.on .st-num { background: rgba(255,255,255,.28); color: var(--on-fire); }
+.stage-jump .stage-tab.done:not(.on) .st-num { background: color-mix(in srgb, var(--ok) 22%, transparent); }
+.stage-jump .stage-tab.busy:not(.on) .st-num { animation: stage-dot-pulse 1.1s ease-in-out infinite; }
+/* Следующий незавершённый этап: дыхание тенью, ничего не прыгает. */
+.stage-jump .stage-tab.next { animation: next-breath 2.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .stage-jump .stage-tab.next { animation: none; } }
+/* Огонь ведущей кнопки на закрытом этапе не дышит. */
+.next-step.next-step-off { animation: none; box-shadow: none; }
+
+/* Низ каждой панели этапа: [стекло][огонь][Дальше →]. */
+.pane-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.pane-foot > * { min-height: 34px; }
+.pane-foot .stage-next { margin-left: auto; }
+.pane-foot .stage-next::after { content: " →"; }
+.pane-foot .all-frames-note:empty { display: none; }
+/* Меню ⋯ колонкой (шапка трека, панель раскадровки). */
+.s-more-menu.menu-col { flex-direction: column; min-width: 190px; align-items: stretch; }
+.s-more-menu.menu-col button { text-align: left; padding: 7px 10px; white-space: nowrap; }
+.s-more-menu.menu-col button.hidden { display: none; }
+.t-more-wrap { margin-left: auto; }
+.board-bar .s-more-wrap { margin-left: auto; }
+.board-bar .board-more { min-height: 34px; padding: 0 10px; }
 
 /* Маленькая «скачать» в шапке карточки сцены */
 .s-dl {
@@ -4315,8 +4255,6 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
   /* Карточка сцены — почти во всю ширину, превью читаемые */
   .scene-card { flex-basis: min(88vw, 340px) !important; }
   .s-thumb { width: min(40vw, 152px); }
-  /* Блоки этапов — меньше отступов, больше воздуха контенту */
-  .stages-stacked .stage-pane { padding: 12px 10px 14px; border-radius: 20px; }
   .clip-dock-body { flex-direction: column; }
   /* Модалки на весь экран */
   .modal { width: 96vw; max-width: 96vw; max-height: 92vh; }
@@ -4326,8 +4264,8 @@ button.primary { box-shadow: 0 2px 14px rgba(200,96,20,.35); }
    десктопе (единственная ветка ниже), только поднят над доком разделов. */
 @media (max-width: 700px) {
   .topbar { position: sticky; top: 0; z-index: 40; }
-  /* Воздух под нижним доком разделов, чтобы последние кнопки не прятались. */
-  #app { padding-bottom: 132px; }
+  /* Воздух под нижней плашкой (этапы + разделы). */
+  #app { padding-bottom: 104px; }
 }
 
 /* ─────── Генератор под общей шапкой ───────
@@ -4382,10 +4320,31 @@ body:has(#app.chat-view) #stage-jump,
 body:has(#chat:not(.hidden)) #stage-jump,
 body:has(#music:not(.hidden)) #stage-jump,
 body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
-/* Телефон: нижний край занят доком разделов — капсула этапов над ним. */
+/* Телефон: одна стеклянная плашка из двух рядов — этапы (36px) над
+   разделами. Верхний ряд — #stage-jump, нижний — док разделов (sections.css);
+   рамка и blur общие: у ряда этапов нет нижнего скругления и нижней линии. */
 @media (max-width: 700px) {
-  .stage-jump { bottom: 72px; max-width: 94vw; }
-  .stage-jump .stage-tab { padding: 7px 10px; font-size: 11px; }
+  .stage-jump {
+    left: 12px; right: 12px; transform: none; max-width: none;
+    bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    border-radius: 18px 18px 0 0; border-bottom: 0;
+    padding: 4px 6px 3px; gap: 0; justify-content: flex-start;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3);
+    scroll-snap-type: x mandatory;
+  }
+  .stage-jump .stage-tab {
+    flex: 1 0 auto; height: 32px; padding: 0 9px; gap: 5px; font-size: 10px;
+    scroll-snap-align: start;
+  }
+  .stage-jump .stage-tab .st-num { width: 16px; height: 16px; font-size: 10px; }
+  #app.chat-view ~ #chat { padding-bottom: 0; }
+  #app { padding-bottom: 104px; }
+}
+@media (max-width: 420px) {
+  .stage-jump .stage-tab { padding: 0 8px; }
+}
+@media (max-width: 700px) {
+  body:has(#stage-jump:not(:empty)) #app { padding-bottom: 104px !important; }
 }
 
 /* ─────────── Маркетинг-студия (шаблоны мокапов) ─────────── */
@@ -4559,7 +4518,7 @@ body:has(#welcome:not(.hidden)) #stage-jump { display: none; }
   backdrop-filter: none; -webkit-backdrop-filter: none;
   padding: 0 2px; margin-bottom: 44px;
 }
-.mode-setup { gap: 30px; }
+.mode-setup { gap: 24px; }
 .clip-dock {
   margin-top: 30px; padding-top: 22px;
   border-top: 1px solid rgba(var(--ink-rgb), .10); /* волосяной разделитель */
@@ -4895,3 +4854,32 @@ body.mode-mockup .track-card .stage-pane:not([data-stage="setup"]) {
   .s-edit > .s-lyric, .s-edit > .s-note,
   .s-edit > .s-motion, .s-edit > .s-motion-last { grid-column: 1 / -1; }
 }
+
+/* ─── Подсказки-абзацы в студии не показываем: интерфейс ведёт, а не объясняет. ─── */
+.ms-text-note, .ms-hint, .ms-frame-note, .t-restyle-warn, .t-url-hint,
+.ms-photos-hint, .char-row-hint, .wp-hint, .sb-grid-note, .storyboard-side { display: none !important; }
+/* Панель «добавить трек» — без коробки (показывается только для альбома). */
+#add-track-panel.panel { background: transparent; border: 0; box-shadow: none; padding: 0;
+  backdrop-filter: none; -webkit-backdrop-filter: none; }
+#tracks-panel > h2 { display: none; }
+
+/* ─── Голосовой ввод: микрофон справа в поле ─── */
+.ta-mic-wrap { position: relative; }
+.ta-mic-wrap textarea { padding-right: 44px; }
+.mic-btn { display: none; }
+body.mic-ok .mic-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 50%; flex: none;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid rgba(var(--ink-rgb), .12); color: var(--ink); box-shadow: none;
+}
+.ta-mic-wrap .mic-btn { position: absolute; right: 6px; bottom: 6px; }
+.mic-btn::before {
+  content: ""; width: 16px; height: 16px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='3' width='6' height='11' rx='3'/><path d='M5 11a7 7 0 0 0 14 0'/><path d='M12 18v3'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='3' width='6' height='11' rx='3'/><path d='M5 11a7 7 0 0 0 14 0'/><path d='M12 18v3'/></svg>") center / contain no-repeat;
+}
+body.mic-ok .mic-btn.rec { background: var(--fire-ink); color: var(--on-fire); border-color: transparent;
+  animation: next-breath 1.2s ease-in-out infinite; }
+/* Пустая огненная кнопка без подписи не показывается. */
+.track-card button.primary:empty, #docs button.primary:empty { display: none; }

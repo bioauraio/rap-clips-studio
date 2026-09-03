@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -12,9 +12,10 @@
 <meta name="description" data-i18n-content="meta.description"
       content="Turn your own track into a 3-minute AI music video: story, storyboard, consistent characters, frame-to-frame motion and assembly. First clip free." />
 <title data-i18n="meta.title">AI music video studio for your own track — lolq.ai</title>
-<link rel="canonical" href="https://qlolapp.art/" />
-<link rel="alternate" hreflang="en" href="https://qlolapp.art/" />
-<link rel="alternate" hreflang="x-default" href="https://qlolapp.art/" />
+<link rel="canonical" href="https://lolq.ai/" />
+<link rel="alternate" hreflang="ru" href="https://lolq.ai/" />
+<link rel="alternate" hreflang="en" href="https://lolq.ai/?lang=en" />
+<link rel="alternate" hreflang="x-default" href="https://lolq.ai/" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="lolq.ai" />
 <meta property="og:title" data-i18n-content="meta.title"
@@ -135,9 +136,6 @@
           </div>
           <div id="ld-auth" class="auth-buttons"></div>
           <p class="ld-hero-trust" data-i18n="landing.hero.trust"></p>
-          <p class="ld-hero-more">
-            <a href="#" id="welcome-guide-link" data-i18n="landing.hero.guideLink"></a>
-          </p>
         </div>
 
         <figure class="ld-proof">
@@ -362,12 +360,13 @@
 
 <div id="login" class="login-screen hidden">
   <div class="login-box">
-    <h1 class="login-word">lolq<span class="brand-dot">.</span>ai</h1>
+    <button type="button" id="login-close" class="ghost login-close" data-i18n-title="modal.closeTitle">✕</button>
+    <div class="login-word">lolq<span class="brand-dot">.</span>ai</div>
     <!-- Вкладки способов входа: «Email» и «Телефон» появляются только когда
          сервер умеет слать письма/SMS (/api/auth/config). -->
     <div id="auth-tabs" class="auth-tabs hidden" role="tablist">
-      <button type="button" class="on" data-tab="password" data-i18n="auth.tab.password"></button>
-      <button type="button" data-tab="email" class="hidden" data-i18n="auth.tab.email"></button>
+      <button type="button" data-tab="password" data-i18n="auth.tab.password"></button>
+      <button type="button" data-tab="email" class="on hidden" data-i18n="auth.tab.email"></button>
       <button type="button" data-tab="phone" class="hidden" data-i18n="auth.tab.phone"></button>
     </div>
     <form id="login-form" class="auth-pane" data-pane="password">
@@ -416,7 +415,7 @@
      всё сломалось» вместо «за что меня заблокировали». -->
 <div id="blocked" class="login-screen hidden">
   <div class="login-box blocked-box">
-    <h1 class="login-word">lolq<span class="brand-dot">.</span>ai</h1>
+    <div class="login-word">lolq<span class="brand-dot">.</span>ai</div>
     <p class="blocked-title" data-i18n="blocked.title"></p>
     <p id="blocked-reason" class="blocked-reason"></p>
     <p class="blocked-help" data-i18n="blocked.help"></p>
@@ -430,7 +429,7 @@
          лендинг из приложения было невозможно вовсе. ?home — тот самый
          флаг, которым ldWantsLanding() пропускает на главную при живой
          сессии. -->
-    <a id="brand" class="brand" href="/?home" data-i18n-title="top.brandTitle">
+    <a id="brand" class="brand" href="/home" data-i18n-title="top.brandTitle">
       <img class="brand-mark" src="/img/logo-mark.svg" width="36" height="36" alt="" />
       <span class="brand-word">lolq<span class="brand-dot">.</span>ai</span>
     </a>
@@ -474,11 +473,6 @@
     <div class="tb-user">
       <!-- Тема: система / светлая / тёмная. атрибут ставится на <html>,
            палитра целиком на токенах — стиль и огонь одинаковы в обеих. -->
-      <div class="theme-switch" role="group" aria-label="Тема">
-        <button type="button" data-theme-set="system" title="как в системе">🖥</button>
-        <button type="button" data-theme-set="light" title="светлая">☀️</button>
-        <button type="button" data-theme-set="dark" title="тёмная">🌙</button>
-      </div>
       <div class="lang-switch" role="group" data-i18n-aria="lang.aria" data-i18n-title="lang.switchTitle">
         <button type="button" data-lang="en">EN</button>
         <button type="button" data-lang="ru">RU</button>
@@ -501,15 +495,12 @@
            над клипом. видна только владельцу (is_admin). -->
       <button id="admin-btn" class="account-btn admin-gear hidden" data-i18n-title="top.adminTitle">⚙</button>
       <button id="save-account-btn" class="hidden" data-i18n="top.saveAccount"></button>
-      <button id="logout-btn" class="ghost" data-i18n="top.logout"></button>
+      <button id="logout-btn" class="ghost hidden" data-i18n="top.logout"></button>
     </div>
   </header>
 
-  <!-- Онбординг «первый клип»: липкая плитка на четыре пункта. живёт до
-       первого собранного клипа и после него исчезает — чеклист, который
-       висит вечно, перестают читать. данные — GET /api/onboarding, там же
-       честный прогноз списания. -->
-  <section id="onboarding" class="panel onboarding hidden"></section>
+
+
 
   <!-- Отдельная студия режима «Мокапы»: hero + промпт-бар + витрина +
        галерея генераций. наполняет app.js (renderMockupStudio). -->
@@ -702,6 +693,7 @@
         <button type="button" id="mk-enhance" class="ghost mk-mini"></button>
         <button type="button" id="mk-params" class="ghost mk-mini" aria-controls="mk-panel"></button>
         <span id="cc-price" class="cc-price"></span>
+        <button type="button" id="cc-mic" class="mic-btn ghost" data-mic-for="#cc-text" aria-label="голос"></button>
         <button id="cc-send" type="button" class="primary cc-send"></button>
       </div>
       <p class="cc-note muted" id="cc-note"></p>
@@ -796,17 +788,19 @@
       </label>
       <span class="pos"></span>
       <input class="t-title" data-i18n-ph="track.titlePh" />
-      <!-- Этапы стоят в одной строке с названием: отдельной строкой они
-           съедали высоту, а название растягивалось на весь экран впустую.
-           НЕ ВЫНОСИТЬ обратно — владелец просил дважды. -->
-      <div class="stage-tabs"></div>
-      <button class="s-supergen primary" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
-      <div class="order-btns">
-        <button class="up ghost" data-i18n-title="common.moveUp">↑</button>
-        <button class="down ghost" data-i18n-title="common.moveDown">↓</button>
-        <button class="t-copy ghost" data-i18n-title="copy.trackTitle">⧉</button>
-        <button class="del ghost danger" data-i18n-title="track.delTitle">✕</button>
-      </div>
+      <!-- Одна строка: обложка, номер, название, ⋯. Супергенерация, порядок,
+           копия и удаление — в меню ⋯ (удаление последним). Этапы — в
+           нижней капсуле #stage-jump. -->
+      <span class="s-more-wrap t-more-wrap">
+        <button type="button" class="s-more t-more ghost" aria-expanded="false" aria-label="ещё">⋯</button>
+        <span class="s-more-menu menu-col hidden">
+          <button class="s-supergen ghost" data-i18n-title="track.supergenTitle" data-i18n="track.supergen"></button>
+          <button class="up ghost" data-i18n="common.moveUp"></button>
+          <button class="down ghost" data-i18n="common.moveDown"></button>
+          <button class="t-copy ghost" data-i18n="copy.trackTitle"></button>
+          <button class="del ghost danger" data-i18n="track.delTitle"></button>
+        </span>
+      </span>
     </div>
     <span class="supergen-note status"></span>
 
@@ -828,8 +822,6 @@
            потому что #tracks перерисовывается поллингом целиком. -->
       <section class="stage-pane" data-stage="setup">
         <div class="mode-setup">
-          <div class="ms-summary"></div>
-
           <section class="ms-sec" data-sec="what">
             <h4 class="ms-h" data-i18n="modeSetup.what"></h4>
             <p class="ms-hint muted"></p>
@@ -840,9 +832,11 @@
             <div class="ms-comment-row">
               <div class="ms-comment-col">
                 <label data-i18n="track.comment"></label>
-                <textarea class="t-comment" rows="2" data-i18n-ph="track.commentPh"></textarea>
+                <div class="ta-mic-wrap">
+                  <textarea class="t-comment" rows="2" data-i18n-ph="track.commentPh"></textarea>
+                  <button type="button" class="mic-btn ghost" data-mic-for=".t-comment" aria-label="голос"></button>
+                </div>
               </div>
-              <button type="button" class="ms-comment-gen primary hidden" data-i18n="story.gen"></button>
             </div>
             <!-- АРХИТЕКТУРА СЦЕНАРИЯ: слой «Сценарии» каталога карточками.
                  выбор пишется в track.scenario_key и уходит рамкой в
@@ -876,12 +870,11 @@
                  показывается ровно у одного объекта: сюжет общий на проект. -->
             <div class="ms-story hidden">
               <label data-i18n="modeSetup.storyLabel"></label>
-              <textarea class="ms-story-text" rows="3" data-i18n-ph="story.arcPh"></textarea>
-              <div class="row">
-                <button type="button" class="ms-story-save" data-i18n="common.save"></button>
-                <button type="button" class="ms-story-gen primary" data-i18n="story.gen"></button>
-                <span class="ms-story-status status"></span>
+              <div class="ta-mic-wrap">
+                <textarea class="ms-story-text" rows="3" data-i18n-ph="story.arcPh"></textarea>
+                <button type="button" class="mic-btn ghost" data-mic-for=".ms-story-text" aria-label="голос"></button>
               </div>
+              <span class="ms-story-status status"></span>
             </div>
             <!-- «Без сюжета» — это ВЫБОР ТИПА СЮЖЕТА, а не свойство плеера.
                  до этого чекбокс стоял под аудио, рядом с зерном плёнки. -->
@@ -1075,8 +1068,10 @@
             </div>
           </details>
 
-          <div class="row ms-foot">
-            <button class="save-track" data-i18n="track.saveTrack"></button>
+          <div class="row pane-foot ms-foot">
+            <button class="save-track ghost" data-i18n="track.saveTrack"></button>
+            <button type="button" class="ms-comment-gen primary hidden" data-i18n="story.gen"></button>
+            <button type="button" class="stage-next ghost" data-next="board" data-i18n="common.next"></button>
           </div>
         </div>
       </section>
@@ -1096,16 +1091,22 @@
             <!-- Cinema-бар: свободная сцена одним промптом, @ зовёт персонажа. -->
             <div class="cine-bar hidden"></div>
             <div class="board-bar">
-              <button class="gen-scenes primary" data-i18n="track.genScenes"></button>
-              <button class="gen-storyboard" data-i18n="track.genSheet"></button>
-              <button class="sb-open ghost" data-i18n-title="track.sheetOpenTitle" data-i18n="track.sheetOpen"></button>
-              <button class="slice-storyboard ghost" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
-              <!-- Нарезка под бит: границы сцен едут к ближайшим сильным долям.
-                   бесплатно — счёт на своём CPU, без токенов. -->
-              <button class="beat-align ghost" data-i18n-title="track.beatAlignTitle" data-i18n="track.beatAlign"></button>
               <span class="scenes-coverage hidden"></span>
               <span class="scenes-status status"></span>
               <span class="sb-status status"></span>
+              <!-- Лист, разложить, нарезать под бит, перерисовать — под ⋯;
+                   меню появляется, когда есть что делать (сцены/лист). -->
+              <span class="s-more-wrap board-more-wrap hidden">
+                <button type="button" class="s-more board-more ghost" aria-expanded="false" aria-label="ещё">⋯</button>
+                <span class="s-more-menu menu-col hidden">
+                  <button class="gen-scenes-again ghost" data-i18n="track.genScenes"></button>
+                  <button class="gen-storyboard ghost" data-i18n="track.genSheet"></button>
+                  <button class="sb-open ghost" data-i18n-title="track.sheetOpenTitle" data-i18n="track.sheetOpen"></button>
+                  <button class="slice-storyboard ghost" data-i18n-title="track.sliceTitle" data-i18n="track.sliceSheet"></button>
+                  <button class="beat-align ghost" data-i18n-title="track.beatAlignTitle" data-i18n="track.beatAlign"></button>
+                  <button class="redraw-frames ghost" data-i18n-title="restyle.redrawTitle" data-i18n="restyle.redraw"></button>
+                </span>
+              </span>
             </div>
           </div>
           <div class="storyboard-block board-right">
@@ -1139,14 +1140,12 @@
           <button class="strip-arrow strip-next" type="button" data-i18n-aria="common.next">›</button>
         </div>
         <button type="button" class="scenes-more ghost hidden"></button>
-        <div class="row">
-          <button class="add-scene" data-i18n="track.addScene"></button>
+        <div class="row pane-foot">
+          <button class="add-scene ghost" data-i18n="track.addScene"></button>
+          <button class="gen-scenes primary" data-i18n="track.genScenes"></button>
           <button class="gen-all-frames primary" data-i18n="track.allFrames"></button>
-          <button class="gen-all-videos primary" data-i18n-title="track.allVideosTitle" data-i18n="track.allVideos"></button>
-          <!-- Перерисовать ВСЁ в нынешнем стиле: то же действие, что кнопка в
-               «Как выглядит», но доступное с ленты кадров. -->
-          <button class="redraw-frames" data-i18n-title="restyle.redrawTitle" data-i18n="restyle.redraw"></button>
           <span class="all-frames-note muted"></span>
+          <button type="button" class="stage-next ghost" data-next="anim" data-i18n="common.next"></button>
         </div>
       </section>
 
@@ -1169,12 +1168,15 @@
           <summary class="muted versions-dock-sum"></summary>
           <div class="versions-strip"></div>
         </details>
+        <div class="row pane-foot">
+          <button class="gen-all-videos primary" data-i18n-title="track.allVideosTitle" data-i18n="track.allVideos"></button>
+          <button type="button" class="stage-next ghost" data-next="clip" data-i18n="common.next"></button>
+        </div>
       </section>
-    </div>
 
-    <!-- Готовый клип — не этап, а витрина трека: видна на любом этапе и всегда
-         показывает актуальную склейку. галочка «автосборка» пересобирает клип
-         сама, как только у трека появляется новое готовое видео сцены. -->
+      <!-- 4. сборка: готовый клип. галочка «автосборка» пересобирает клип
+           сама, как только у трека появляется новое готовое видео сцены. -->
+      <section class="stage-pane" data-stage="clip">
     <div class="clip-dock">
       <div class="media-head">
         <span class="clip-title" data-i18n="track.clipHead"></span>
@@ -1190,7 +1192,7 @@
             <input type="checkbox" class="t-autoasm" />
             <span data-i18n="track.autoAsm"></span>
           </label>
-          <div class="row">
+          <div class="row pane-foot">
             <button class="assemble primary" data-i18n="track.assemble"></button>
             <a class="clip-download ghost hidden" download data-i18n="track.download"></a>
           </div>
@@ -1201,6 +1203,8 @@
           </details>
         </div>
       </div>
+    </div>
+      </section>
     </div>
   </div>
 </template>
@@ -1465,69 +1469,8 @@
   </div>
 </div>
 
-<div id="guide-modal" class="guide-modal hidden">
-  <div class="guide-modal-card">
-    <div class="guide-modal-head">
-      <span class="guide-modal-title" data-i18n="guide.title"></span>
-      <button id="guide-close" class="ghost" data-i18n-title="modal.closeTitle">✕</button>
-    </div>
-    <div class="guide-modal-body">
-
-    <ol class="guide-list">
-      <li class="guide-step">
-        <div class="guide-copy">
-          <h3 class="guide-title" data-i18n="guide.chars.title"></h3>
-          <p class="guide-desc" data-i18n="guide.chars.text"></p>
-        </div>
-        <a class="guide-shot" href="/img/guide/characters.png" target="_blank" rel="noopener">
-          <img src="/img/guide/characters.png" width="900" height="397" alt="" data-i18n-alt="guide.chars.alt" loading="lazy" />
-        </a>
-      </li>
-      <li class="guide-step">
-        <div class="guide-copy">
-          <h3 class="guide-title" data-i18n="guide.setup.title"></h3>
-          <p class="guide-desc" data-i18n="guide.setup.text"></p>
-        </div>
-        <a class="guide-shot" href="/img/guide/setup.png" target="_blank" rel="noopener">
-          <img src="/img/guide/setup.png" width="900" height="739" alt="" data-i18n-alt="guide.setup.alt" loading="lazy" />
-        </a>
-      </li>
-      <li class="guide-step">
-        <div class="guide-copy">
-          <h3 class="guide-title" data-i18n="guide.board.title"></h3>
-          <p class="guide-desc" data-i18n="guide.board.text"></p>
-        </div>
-        <a class="guide-shot" href="/img/guide/board.png" target="_blank" rel="noopener">
-          <img src="/img/guide/board.png" width="900" height="1332" alt="" data-i18n-alt="guide.board.alt" loading="lazy" />
-        </a>
-      </li>
-      <li class="guide-step">
-        <div class="guide-copy">
-          <h3 class="guide-title" data-i18n="guide.anim.title"></h3>
-          <p class="guide-desc" data-i18n="guide.anim.text"></p>
-        </div>
-        <a class="guide-shot" href="/img/guide/anim.png" target="_blank" rel="noopener">
-          <img src="/img/guide/anim.png" width="900" height="678" alt="" data-i18n-alt="guide.anim.alt" loading="lazy" />
-        </a>
-      </li>
-      <li class="guide-step">
-        <div class="guide-copy">
-          <h3 class="guide-title" data-i18n="guide.ready.title"></h3>
-          <p class="guide-desc" data-i18n="guide.ready.text"></p>
-        </div>
-        <a class="guide-shot" href="/img/guide/ready.png" target="_blank" rel="noopener">
-          <img src="/img/guide/ready.png" width="900" height="1025" alt="" data-i18n-alt="guide.ready.alt" loading="lazy" />
-        </a>
-      </li>
-    </ol>
-  </div>
-  </div>
-</div>
-
-<!-- Реестр режимов — ПЕРВЫМ и ВСЕГДА: из него читают и классическая шапка
-     (app.js + mode-menu.js), и верстак (nav.js, за флагом ?nav=1). пока
-     реестр жил внутри nav.js, тумблер режимов существовал только под флагом,
-     то есть владелец в обычной студии его не видел вообще. -->
+<!-- Реестр режимов — ПЕРВЫМ и ВСЕГДА: из него читают шапка (app.js +
+     mode-menu.js) и лента разделов. -->
 <script src="/modes.js?v=196"></script>
 <script src="/i18n.js?v=196"></script>
 <script src="/app.js?v=196"></script>
@@ -1554,36 +1497,6 @@
      лента разделов и каталог живут разной жизнью, и правка одного не должна
      требовать перечитывания другого. -->
 <script src="/library.js?v=196"></script>
-<script>
-/* ВЕРСТАК (nav.css + nav.js) — ЗА ФЛАГОМ, а не по умолчанию.
-   навигация подменяет топбар и переключает панели поверх живого app.js;
-   на боевом сервисе такое включают, посмотрев на него своими глазами.
-   флаг: ?nav=1 включает и запоминает, ?nav=0 выключает и забывает.
-   откат — снять флаг, БЕЗ деплоя и без отката кода: для режима, в котором
-   владелец смотрит правки прямо на проде, это главное свойство.
-   автозапуск самого nav.js уважает data-nav-manual, поэтому чужие страницы
-   (демо nav-preview.html) он не задевает. */
-(function () {
-  var qs = new URLSearchParams(location.search);
-  var flag = qs.get("nav");
-  try {
-    if (flag === "1") localStorage.setItem("lolq_nav", "1");
-    if (flag === "0") localStorage.removeItem("lolq_nav");
-  } catch (e) { /* приватный режим */ }
-  var on = flag === "1";
-  if (!on && flag !== "0") {
-    try { on = localStorage.getItem("lolq_nav") === "1"; } catch (e) { on = false; }
-  }
-  if (!on) return;
-  var css = document.createElement("link");
-  css.rel = "stylesheet";
-  css.href = "/nav.css?v=196";
-  document.head.appendChild(css);
-  var js = document.createElement("script");
-  js.src = "/nav.js?v=196";
-  document.body.appendChild(js);
-})();
-</script>
 <!-- Навигация по этапам активного трека: fixed-капсула у нижнего края.
      живёт на уровне body — предок с backdrop-filter/transform превращает
      fixed в «прибит к предку» (так капсула и оказывалась в шапке). -->
