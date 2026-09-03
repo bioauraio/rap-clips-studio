@@ -3538,7 +3538,7 @@ async function applyModeShortcut(id) {
     ldPending = { style: want.style };
     // Объект появится позже (человек ещё не загрузил дорожку) — применим
     // стиль тем же отложенным механизмом, что и витрина промтов.
-    if (window.QlolNav) window.QlolNav.toast(t("modes.menu.shortcutWait"));
+    mkToast(t("modes.menu.shortcutWait"));
     return;
   }
   const keys = Array.from(new Set([want.style, ...(tr.style_keys || [])])).slice(0, 3);
