@@ -24,13 +24,40 @@
     .replace(/"/g, "&quot;");
 
   const num = (n) => Number(n || 0).toLocaleString("ru-RU");
-  const money = (cents) => "$" + (Number(cents || 0) / 100).toFixed(2);
-  const mb = (b) => (Number(b || 0) / 1024 / 1024).toFixed(1) + " МБ";
+  // Деньги — целые: центы в сводке ничего не решают, а глаз цепляют.
+  const money = (cents) => "$" + Math.round(Number(cents || 0) / 100).toLocaleString("ru-RU");
+  // Размер с автоединицей: 1,3 ГБ вместо 1331,2 МБ.
+  const size = (b) => {
+    let v = Number(b || 0);
+    const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+    return (i >= 2 ? v.toFixed(1) : Math.round(v)).toString().replace(".", ",") + " " + units[i];
+  };
   const when = (iso) => {
     if (!iso) return "—";
     const d = new Date(iso);
     return isNaN(d) ? "—" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
   };
+
+  /* Тост вне контейнера: сообщение переживает перерисовку панели, которая
+     раньше стирала «готово» в ту же миллисекунду, что показывала. */
+  let toastTimer = 0;
+  function toast(text, kind) {
+    let el = $(".adm-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "adm-toast";
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.className = "adm-toast on" + (kind ? " " + kind : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = "adm-toast"; }, kind === "err" ? 6000 : 3200);
+  }
+  // Ответ сохранения с warning («сохранено без перевода») — предупреждение,
+  // без него — тихое «сохранено».
+  const savedToast = (r) => (r && r.warning) ? toast(r.warning, "warn") : toast("сохранено", "ok");
 
   async function api(path, opts) {
     const o = Object.assign({ headers: {} }, opts || {});
@@ -61,32 +88,19 @@
      Порядок = порядок работы: сначала «что происходит», потом люди,
      потом деньги, и только потом настройки самого сервиса. */
   const TABS = [
-    { id: "stats", ico: "📊", title: "Сводка",
-      sub: "Регистрации, выручка и себестоимость по дням. Себестоимость — то, что мы реально платим kie.ai и Anthropic." },
-    { id: "users", ico: "👤", title: "Клиенты",
-      sub: "Поиск, тариф, токены и блокировка. Каждое действие пишется в журнал." },
-    { id: "broadcast", ico: "✉️", title: "Рассылка",
-      sub: "Сегменты считаются в момент отправки, а не сохраняются списком: сохранённый за неделю протухает." },
-    { id: "payouts", ico: "💸", title: "Выплаты",
-      sub: "Заявки амбассадоров партнёрки." },
-    { id: "demos", ico: "🎤", title: "Демки",
-      sub: "Заявки на лейбл со страницы «Дистрибуция»: анкета, права, файлы и отчёт технических проверок." },
-    { id: "ledger", ico: "🧾", title: "Журнал",
-      sub: "Инвариант: сумма строк журнала против фактического баланса. Расхождение = кто-то прошёл мимо кассы." },
-    { id: "prompts", ico: "🎬", title: "Промты",
-      sub: "Вся настройка промтов одной страницей: слои каталога, стили, референсы, тренды и шаблоны мокапов. Второго входа в эти разделы нет — два входа означали бы два разных представления о том, что сохранено." },
-    { id: "design", ico: "🎨", title: "Дизайн",
-      sub: "Живые токены дизайн-системы: огненный градиент, фон, стекло. Меняются без переката — theme.css отдаёт их поверх стилей." },
-    { id: "earn", ico: "💸", title: "Заработок",
-      sub: "Партнёрские продукты витрины /earn: название, награда, ссылка на лендинг и фото товара. Всё, что здесь включено, сразу видно партнёрам." },
-    { id: "market", ico: "🌍", title: "Рынок",
-      sub: "Сводная по конкурентам: цены, фишки, модели, дизайн. Публичная копия живёт на /competitors.html." },
-    { id: "pricing", ico: "📈", title: "Наценка",
-      sub: "Наш токен — своя валюта и не равен токену движка. Ползунок задаёт, во сколько раз мы продаём дороже себестоимости. Действует сразу." },
-    { id: "models", ico: "⚙️", title: "Модели",
-      sub: "Что живо по ключам, сколько стоит нам и сколько человеку. Только чтение — движки правятся кодом." },
-    { id: "settings", ico: "🔑", title: "Настройки",
-      sub: "Индикация ключей и каналов. Значений здесь нет и не будет: ключи живут в infra/.env." },
+    { id: "stats", ico: "📊", title: "Сводка" },
+    { id: "users", ico: "👤", title: "Клиенты" },
+    { id: "broadcast", ico: "✉️", title: "Рассылка" },
+    { id: "payouts", ico: "💸", title: "Выплаты" },
+    { id: "demos", ico: "🎤", title: "Демки" },
+    { id: "ledger", ico: "🧾", title: "Журнал" },
+    { id: "prompts", ico: "🎬", title: "Промты" },
+    { id: "design", ico: "🎨", title: "Дизайн" },
+    { id: "earn", ico: "💸", title: "Заработок" },
+    { id: "market", ico: "🌍", title: "Рынок" },
+    { id: "pricing", ico: "📈", title: "Наценка" },
+    { id: "models", ico: "⚙️", title: "Модели" },
+    { id: "settings", ico: "🔑", title: "Настройки" },
   ];
 
   const pane = () => $(".adm-pane");
@@ -141,7 +155,7 @@
     g.last = current;
     $(".adm-title").textContent = g.tabs.length > 1
       ? `${g.title} · ${spec.title}` : spec.title;
-    $(".adm-sub").textContent = spec.sub;
+    document.title = `${spec.title} — lolq.ai`;
     // Подраздел живёт в адресе вместе с разделом: перезагрузка страницы на
     // «Шаблонах мокапов» обязана вернуть на «Шаблоны мокапов», а не в начало.
     history.replaceState(null, "", "/admin?tab=" + current
@@ -201,8 +215,8 @@
           ${stat(num(live.household.characters), "персонажей")}
           ${stat(num(live.household.tracks), "треков")}
           ${live.household.disk.total ? stat(
-            mb(live.household.disk.free) + " своб.",
-            "диск: занято " + mb(live.household.disk.used)) : ""}
+            size(live.household.disk.free) + " своб.",
+            "диск: занято " + size(live.household.disk.used)) : ""}
         </div>
         <div class="adm-card">
           <div class="adm-row" style="align-items:center;flex-wrap:wrap">
@@ -234,7 +248,7 @@
           ${stat(money(d.cost_cents), "себестоимость генераций")}
           ${stat(money(margin), "разница")}
           ${stat(num(d.spent) + " ⚡", "токенов потрачено")}
-          ${stat(mb(d.storage.bytes), num(d.storage.files) + " файлов")}
+          ${stat(size(d.storage.bytes), num(d.storage.files) + " файлов")}
         </div>
         <div class="adm-card">
           <h3>По дням</h3>
@@ -291,27 +305,62 @@
       </div>
       <div class="u-out"></div>`;
     const out = $(".u-out", box);
+    // Страницы курсором: sort=new — cursor=id последней строки, points/seen —
+    // смещение. next_cursor=0 значит «дальше пусто».
+    let cursor = 0;
+    const query = (c) => new URLSearchParams({
+      q: $(".u-q", box).value.trim(),
+      plan: $(".u-plan", box).value,
+      sort: $(".u-sort", box).value,
+      limit: "50", cursor: String(c || 0),
+    }).toString();
+    const bind = (root) => $$(".u-card", root).forEach((b) =>
+      b.addEventListener("click", () => userCard(b.dataset.id)));
+    const more = async () => {
+      const btn = $(".u-more", out);
+      if (!btn || !cursor) return;
+      btn.disabled = true;
+      try {
+        const d = await api("/api/admin/users?" + query(cursor));
+        const tb = $("tbody", out);
+        const frag = document.createElement("tbody");
+        frag.innerHTML = d.items.map(userRow).join("");
+        bind(frag);
+        Array.from(frag.children).forEach((tr) => tb.appendChild(tr));
+        cursor = d.next_cursor || 0;
+        btn.classList.toggle("hidden", !cursor);
+        btn.disabled = false;
+      } catch (e) { toast(e.message || e, "err"); btn.disabled = false; }
+    };
     const load = async () => {
       loading(out);
+      cursor = 0;
       try {
-        const qs = new URLSearchParams({
-          q: $(".u-q", box).value.trim(),
-          plan: $(".u-plan", box).value,
-          sort: $(".u-sort", box).value,
-          limit: "50",
-        });
-        const d = await api("/api/admin/users?" + qs.toString());
+        const d = await api("/api/admin/users?" + query(0));
+        cursor = d.next_cursor || 0;
         out.innerHTML = `<div class="adm-card">
+          <h3>Клиенты <span class="adm-count">${num(d.total || 0)}</span></h3>
           <table class="adm-table">
             <thead><tr><th>кто</th><th>тариф</th><th class="num">токены</th>
               <th>последний вход</th><th></th></tr></thead>
             <tbody>${d.items.map(userRow).join("")}</tbody>
           </table>
           ${d.items.length ? "" : '<p class="muted">никого не нашлось</p>'}
+          <button type="button" class="ghost u-more ${cursor ? "" : "hidden"}"
+                  style="margin-top:8px">Ещё</button>
         </div>`;
-        $$(".u-card", out).forEach((b) => b.addEventListener("click", () => userCard(b.dataset.id)));
+        bind(out);
+        $(".u-more", out).addEventListener("click", more);
       } catch (e) { fail(out, e); }
     };
+    // Бесконечная прокрутка: у нижнего края страницы догружаем сами.
+    const onScroll = () => {
+      if (!box.isConnected) { window.removeEventListener("scroll", onScroll); return; }
+      const btn = $(".u-more", out);
+      if (!btn || btn.disabled || !cursor) return;
+      if (btn.getBoundingClientRect().top < window.innerHeight + 200) more();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
     $(".u-go", box).addEventListener("click", load);
     $(".u-q", box).addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
     load();
@@ -381,16 +430,13 @@
               `<option value="${esc(pl.id)}" ${pl.id === u.plan ? "selected" : ""}>${esc(pl.title)}</option>`).join("")}</select>
             <button type="button" class="pl-go">Сменить тариф</button>
             <button type="button" class="ghost danger b-go">${u.is_blocked ? "Разблокировать" : "Заблокировать"}</button>
-            <span class="p-msg"></span>
           </div>
-          <p class="adm-note">Каждое действие пишется в журнал вместе с тем, кто его сделал.</p>
         </div>
 
         <div class="adm-card">
           <h3>Заметки админа</h3>
           <textarea class="u-note" rows="3" style="width:100%">${esc(note.note || "")}</textarea>
-          <div class="adm-row"><button type="button" class="u-note-save">Сохранить заметку</button>
-            <span class="u-note-msg muted"></span></div>
+          <div class="adm-row"><button type="button" class="u-note-save">Сохранить заметку</button></div>
         </div>
 
         <div class="adm-card">
@@ -413,14 +459,13 @@
         </div>`;
 
       $(".u-back", box).addEventListener("click", () => open("users"));
-      const msg = $(".p-msg", box);
+      // Итог — тостом: перерисовка карточки стирала бы строку сообщения.
       const act = async (fn, okText) => {
-        msg.textContent = "…"; msg.className = "p-msg muted";
         try {
           await fn();
-          msg.className = "p-msg adm-ok"; msg.textContent = okText;
+          toast(okText, "ok");
           userCard(uid);
-        } catch (e) { msg.className = "p-msg adm-err"; msg.textContent = e.message || e; }
+        } catch (e) { toast(e.message || e, "err"); }
       };
       $(".p-go", box).addEventListener("click", () => act(() =>
         api(`/api/admin/users/${uid}/points`, { method: "POST",
@@ -438,13 +483,11 @@
           u.is_blocked ? "разблокирован" : "заблокирован");
       });
       $(".u-note-save", box).addEventListener("click", async () => {
-        const m = $(".u-note-msg", box);
-        m.textContent = "…";
         try {
           await api(`/api/admin/users/${uid}/note`, { method: "POST",
             body: { note: $(".u-note", box).value } });
-          m.textContent = "сохранено";
-        } catch (e) { m.textContent = "не вышло: " + (e.message || e); }
+          toast("сохранено", "ok");
+        } catch (e) { toast(e.message || e, "err"); }
       });
 
       // Лента: подгружаемая хронология всего по клиенту.
@@ -501,8 +544,6 @@
               <td class="num">${num(s.reach.tg)}</td>
               <td class="num">${num(s.reach.email)}</td></tr>`).join("")}</tbody>
           </table>
-          <p class="adm-note">Второе число важнее первого: «сегмент 900 человек» ничего
-            не значит, если почты нет ни у кого.</p>
         </div>
         <div class="adm-card">
           <h3>Написать</h3>
@@ -533,9 +574,6 @@
               <button type="button" class="primary c-send">Отправить сегменту</button>
               <span class="c-msg"></span>
             </div>
-            <p class="adm-note">Порядок кнопок = порядок работы: сначала посмотреть на
-              себе, потом отправлять людям. Канал без транспорта не притворяется
-              отправленным — он честно говорит, чего не хватает.</p>
           </div>
         </div>
         <div class="adm-card">
@@ -552,18 +590,24 @@
             : '<p class="muted">рассылок ещё не было</p>'}
         </div>`;
       const msg = $(".c-msg", box);
+      // Черновик переиспользуется: «сначала себе», потом «отправить» с теми же
+      // полями — одна рассылка, а не две строки в таблице. Изменил текст —
+      // будет новый черновик.
+      let draft = { id: 0, sig: "" };
+      const fields = () => ({
+        title: $(".c-title", box).value.trim(),
+        channel: $(".c-channel", box).value,
+        segment: $(".c-segment", box).value,
+        subject: $(".c-subject", box).value.trim(),
+        body: $(".c-body", box).value,
+        transactional: $(".c-trans", box).checked,
+      });
       const make = async () => {
-        const c = await api("/api/admin/campaigns", {
-          method: "POST",
-          body: {
-            title: $(".c-title", box).value.trim(),
-            channel: $(".c-channel", box).value,
-            segment: $(".c-segment", box).value,
-            subject: $(".c-subject", box).value.trim(),
-            body: $(".c-body", box).value,
-            transactional: $(".c-trans", box).checked,
-          },
-        });
+        const f = fields();
+        const sig = JSON.stringify(f);
+        if (draft.id && draft.sig === sig) return draft.id;
+        const c = await api("/api/admin/campaigns", { method: "POST", body: f });
+        draft = { id: c.id, sig };
         return c.id;
       };
       const run = async (test) => {
@@ -595,19 +639,36 @@
     try {
       const d = await api("/api/admin/payouts");
       const items = d.items || d.payouts || [];
+      const STATUS = { new: "новая", paid: "выплачено", rejected: "отклонена" };
       box.innerHTML = `<div class="adm-card">
         ${items.length ? `<table class="adm-table">
           <thead><tr><th>когда</th><th>кому</th><th class="num">сумма</th>
-            <th>реквизиты</th><th>статус</th></tr></thead>
+            <th>реквизиты</th><th>статус</th><th></th></tr></thead>
           <tbody>${items.map((p) => `<tr>
             <td>${when(p.created_at)}</td>
-            <td>${esc((p.ambassador && p.ambassador.name) || ("#" + (p.ambassador_id || "")))}
+            <td>${esc((p.ambassador && p.ambassador.name) || ("#" + ((p.ambassador && p.ambassador.id) || p.ambassador_id || "")))}
               ${p.ambassador && p.ambassador.tg ? `<br /><span class="muted">@${esc(p.ambassador.tg)}</span>` : ""}</td>
             <td class="num">${num(Math.round((p.amount_kopeks || 0) / 100))} ₽</td>
             <td>${esc(p.details || "")}</td>
-            <td>${esc(p.status)}</td></tr>`).join("")}</tbody></table>`
+            <td>${esc(STATUS[p.status] || p.status)}${p.comment ? `<br /><span class="muted">${esc(p.comment)}</span>` : ""}</td>
+            <td>${p.status === "new" ? `<div class="adm-row" style="flex-wrap:nowrap">
+              <button type="button" class="po-act" data-id="${p.id}" data-st="paid">Выплачено</button>
+              <button type="button" class="ghost po-act" data-id="${p.id}" data-st="rejected">Отклонить</button>
+            </div>` : ""}</td></tr>`).join("")}</tbody></table>`
           : '<p class="muted">заявок нет</p>'}
       </div>`;
+      $$(".po-act", box).forEach((b) => b.addEventListener("click", async () => {
+        const rejected = b.dataset.st === "rejected";
+        const comment = rejected ? prompt("Причина (увидит партнёр):") : "";
+        if (rejected && comment === null) return;
+        b.disabled = true;
+        try {
+          await api(`/api/admin/payouts/${b.dataset.id}`, { method: "POST",
+            body: { status: b.dataset.st, comment: comment || "" } });
+          toast(rejected ? "отклонена" : "выплачено", "ok");
+          renderPayouts(box);
+        } catch (e) { toast(e.message || e, "err"); b.disabled = false; }
+      }));
     } catch (e) { fail(box, e); }
   }
 
@@ -652,10 +713,8 @@
         <div class="adm-row">
           <h3>Партнёрские продукты <span class="adm-count">${rows.length}</span></h3>
           <span style="flex:1"></span>
-          <button type="button" class="primary e-new">+ продукт</button>
+          <button type="button" class="ghost e-new">+ продукт</button>
         </div>
-        <p class="adm-note">Награда партнёру считается от заказа и платится за ПЕРВУЮ
-          покупку клиента. Фото товара = постер карточки на витрине.</p>
         <div class="e-list"></div>
       </div>`;
     const list = $(".e-list", box);
@@ -865,6 +924,7 @@
           const b = document.createElement("button");
           b.type = "button";
           b.className = "adm-item" + (it.key === layerKey ? " on" : "");
+          b.setAttribute("aria-label", it.label || it.key);
           b.innerHTML = `<span>${esc(it.label || it.key)}</span>
             <span class="adm-mark">${it.hidden ? "скрыт" : it.overridden ? "изменён" : ""}${
               it.builtin ? "" : " свой"}</span>`;
@@ -885,6 +945,7 @@
         await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(key.trim().toLowerCase())}`,
                   { method: "PUT", body: { label: { ru: key, en: key } } });
         layerKey = key.trim().toLowerCase();
+        layerQuery = "";   // иначе новая карточка не проходит старый фильтр
         renderLayers(box);
       } catch (e) { alert(e.message); }
     });
@@ -917,8 +978,6 @@
       layerKey = null;
       ed.innerHTML = `<div class="adm-card s-empty">
         <span class="s-empty-ico">🎬</span><b>Выбери карточку слева</b>
-        <span class="muted">Правки ложатся наложением поверх файла каталога:
-          заводской текст никуда не девается и возвращается одной кнопкой.</span>
       </div>`;
     }
   }
@@ -1022,7 +1081,7 @@
                 : c.preview_url
                   ? `<img src="${esc(c.preview_url)}" style="width:96px;aspect-ratio:3/4;object-fit:cover;border-radius:10px">`
                   : '<span class="muted">превью нет — загрузи или сгенерируй</span>'}
-              <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--adm-border,#ccc);border-radius:8px">
+              <label class="ghost" style="cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:8px">
                 Загрузить свою картинку
                 <input type="file" class="l-prev-up" accept="image/*" style="display:none">
               </label>
@@ -1049,8 +1108,7 @@
               ${c.preview_gallery.map((g) =>
                 `<img src="${esc(g.url)}" data-fn="${esc(g.filename)}"
                    title="сделать главной"
-                   style="width:54px;aspect-ratio:3/4;object-fit:cover;border-radius:8px;cursor:pointer;${
-                     c.preview_url === g.url ? "outline:2px solid #c1401b;" : "opacity:.75;"}">`).join("")}
+                   class="l-g${c.preview_url === g.url ? " on" : ""}">`).join("")}
             </div>` : ""}
           </div>
           ${card.join("")}
@@ -1065,9 +1123,6 @@
                   c.hidden ? "Вернуть на витрину" : "Скрыть с витрины"}</button>`
               : '<button type="button" class="ghost danger l-del">Удалить карточку</button>'}
           </div>
-          <p class="adm-note">Правится наложение, а не файл: связи карточек
-            (сочетается / конфликтует / подходящие стили) наложением не трогаются —
-            разъехавшаяся ссылка ломает сборку молча. Их меняют коммитом.</p>
         </div>
       </div>`;
 
@@ -1167,8 +1222,9 @@
       msg.className = "l-msg muted";
       msg.textContent = patch.translate.length ? "перевожу и сохраняю…" : "сохраняю…";
       try {
-        await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
-                  { method: "PUT", body: patch });
+        const r = await api(`/api/admin/prompts/${layerKind}/${encodeURIComponent(layerKey)}`,
+                            { method: "PUT", body: patch });
+        savedToast(r);
         renderLayers(host);
       } catch (e) { msg.className = "l-msg adm-err"; msg.textContent = e.message; }
     });
@@ -1222,12 +1278,8 @@
           <h3>Шаблоны трендов <span class="adm-count">${rows.length}</span></h3>
           <span style="flex:1"></span>
           <button type="button" class="ghost t-ru-all">Перевести каталог на русский</button>
-          <button type="button" class="primary t-new">+ тренд</button>
+          <button type="button" class="ghost t-new">+ тренд</button>
         </div>
-        <p class="adm-note">Правь ПО-РУССКИ: в модель уходит английский перевод,
-          он пересобирается сам при сохранении. Постер — то, что человек видит
-          на витрине /trends до генерации: прикрепи свой или сгенерируй по
-          промпту кадра.</p>
         <div class="t-list"></div>
       </div>`;
     const list = $(".t-list", box);
@@ -1309,9 +1361,9 @@
         }
         msg.textContent = body.translate ? "перевожу и сохраняю…" : "сохраняю…";
         try {
-          await api("/api/admin/trends", { method: "POST", body });
-          msg.className = "t-msg adm-ok";
-          msg.textContent = "сохранено";
+          const r = await api("/api/admin/trends", { method: "POST", body });
+          msg.className = "t-msg " + (r.warning ? "adm-warn" : "adm-ok");
+          msg.textContent = r.warning || "сохранено";
         } catch (e) { msg.className = "t-msg adm-err"; msg.textContent = e.message; }
       });
       $(".t-anim", card).addEventListener("click", async () => {
@@ -1401,17 +1453,38 @@
             ${(d.categories || []).map((c) =>
               `<option value="${esc(c)}" ${c === mockCat ? "selected" : ""}>${esc(c)}</option>`).join("")}
           </select>
-          <button type="button" class="primary m-new">+ шаблон</button>
+          <button type="button" class="ghost m-new">+ шаблон</button>
         </div>
-        <p class="adm-note">Промпт сцены уходит в модель после жёсткой охраны этикетки
-          («тот самый товар с фото») — её дописывает сервер, сюда вставлять не нужно.</p>
         <div class="m-list"></div>
       </div>`;
     const list = $(".m-list", box);
-    const q = mockQuery.trim().toLowerCase();
-    const rows = (d.items || []).filter((t) => (!mockCat || t.category === mockCat)
-      && (!q || (t.ru || "").toLowerCase().includes(q) || t.id.toLowerCase().includes(q)));
-    rows.forEach((t) => {
+    // Поиск и категория фильтруют локально по уже загруженному списку —
+    // без повторного запроса и без потери фокуса в поле поиска.
+    const paint = () => {
+      const q = mockQuery.trim().toLowerCase();
+      const rows = (d.items || []).filter((t) => (!mockCat || t.category === mockCat)
+        && (!q || (t.ru || "").toLowerCase().includes(q) || t.id.toLowerCase().includes(q)));
+      list.innerHTML = "";
+      rows.forEach((t) => list.appendChild(mockupCard(t, d, box)));
+      if (!rows.length) list.innerHTML = '<p class="muted">ничего не нашлось</p>';
+    };
+    paint();
+    const search = $(".m-search", box);
+    search.addEventListener("input", () => { mockQuery = search.value; paint(); });
+    $(".m-cat", box).addEventListener("change", (e) => { mockCat = e.target.value; paint(); });
+    $(".m-new", box).addEventListener("click", async () => {
+      const id = prompt("Ключ шаблона (латиница, цифры, подчёркивание)");
+      if (!id) return;
+      try {
+        await api(`/api/admin/mockups/${encodeURIComponent(id.trim().toLowerCase())}`,
+                  { method: "PUT", body: { ru: id, en: id, category: "product" } });
+        mockQuery = "";   // новый шаблон не должен прятаться за старым фильтром
+        renderMockups(box);
+      } catch (e) { alert(e.message); }
+    });
+  }
+
+  function mockupCard(t, d, box) {
       const card = document.createElement("div");
       card.className = "adm-card";
       card.innerHTML = `
@@ -1457,6 +1530,8 @@
             <div class="adm-row">
               <button type="button" class="primary m-save">Сохранить</button>
               <button type="button" class="ghost m-prev">Сгенерировать превью</button>
+              ${t.builtin && t.overridden && !t.hidden
+                ? '<button type="button" class="ghost m-reset">Вернуть заводской</button>' : ""}
               ${t.builtin
                 ? `<button type="button" class="ghost m-hide">${
                     t.hidden ? "Вернуть в каталог" : "Скрыть из каталога"}</button>`
@@ -1491,11 +1566,19 @@
         msg.className = "m-msg muted";
         msg.textContent = "сохраняю…";
         try {
-          await api(`/api/admin/mockups/${encodeURIComponent(t.id)}`,
-                    { method: "PUT", body: body() });
-          msg.className = "m-msg adm-ok";
-          msg.textContent = "сохранено";
+          const r = await api(`/api/admin/mockups/${encodeURIComponent(t.id)}`,
+                              { method: "PUT", body: body() });
+          msg.className = "m-msg " + (r.warning ? "adm-warn" : "adm-ok");
+          msg.textContent = r.warning || "сохранено";
         } catch (e) { msg.className = "m-msg adm-err"; msg.textContent = e.message; }
+      });
+      const mreset = $(".m-reset", card);
+      if (mreset) mreset.addEventListener("click", async () => {
+        if (!confirm("Снять все правки и вернуть заводской шаблон?")) return;
+        try {
+          await api(`/api/admin/mockups/${encodeURIComponent(t.id)}`, { method: "DELETE" });
+          renderMockups(box);
+        } catch (e) { alert(e.message); }
       });
       $(".m-prev", card).addEventListener("click", async () => {
         msg.className = "m-msg muted";
@@ -1527,23 +1610,7 @@
           renderMockups(box);
         } catch (e) { alert(e.message); }
       });
-      list.appendChild(card);
-    });
-    if (!rows.length) list.innerHTML = '<p class="muted">ничего не нашлось</p>';
-    const search = $(".m-search", box);
-    search.addEventListener("change", () => { mockQuery = search.value; renderMockups(box); });
-    $(".m-cat", box).addEventListener("change", (e) => {
-      mockCat = e.target.value; renderMockups(box);
-    });
-    $(".m-new", box).addEventListener("click", async () => {
-      const id = prompt("Ключ шаблона (латиница, цифры, подчёркивание)");
-      if (!id) return;
-      try {
-        await api(`/api/admin/mockups/${encodeURIComponent(id.trim().toLowerCase())}`,
-                  { method: "PUT", body: { ru: id, en: id, category: "product" } });
-        renderMockups(box);
-      } catch (e) { alert(e.message); }
-    });
+      return card;
   }
 
   let stylesHost = null;   // куда рисуется каталог стилей: своя панель вкладки «Промты»
@@ -1585,6 +1652,7 @@
             const b = document.createElement("button");
             b.type = "button";
             b.className = "adm-item" + (s.key === styleKey ? " on" : "");
+            b.setAttribute("aria-label", (s.label && s.label.ru) || s.key);
             b.innerHTML = `<span>${esc((s.label && s.label.ru) || s.key)}</span>
               <span class="adm-mark">${s.overridden ? "изменён" : ""}${s.builtin ? "" : " свой"}${
                 s.assets ? ` · ${s.assets}📎` : ""}</span>`;
@@ -1605,9 +1673,6 @@
           <div class="adm-card s-empty">
             <span class="s-empty-ico">${isRef ? "📎" : "🎨"}</span>
             <b>${isRef ? "Выбери референс слева" : "Выбери стиль слева"}</b>
-            <span class="muted">${isRef
-              ? "Авторские пресеты по чужим роликам: промпт, миниатюры-референсы и ссылка на исходник."
-              : "Промпт, описание, референсы сеткой и сценарная база — всё в одной карточке."}</span>
           </div>`;
       }
     } catch (e) { fail(box, e); }
@@ -1650,8 +1715,9 @@
       msg.className = "s-msg muted";
       msg.textContent = patch.translate ? "перевожу и сохраняю…" : "сохраняю…";
       try {
-        await api("/api/admin/styles/" + encodeURIComponent(key),
-                  { method: "PUT", body: patch });
+        const r = await api("/api/admin/styles/" + encodeURIComponent(key),
+                            { method: "PUT", body: patch });
+        savedToast(r);
         styleEditor(box, key);
       } catch (e) {
         msg.className = "s-msg adm-err";
@@ -1725,8 +1791,8 @@
                 <label>Английский промпт — ровно этот текст уходит в модель первым блоком каждого кадра.
                   Правь руками только для тонкой доводки.</label>
                 <textarea class="f-prompt" rows="10">${esc(d.prompt || "")}</textarea>
-                <p class="adm-note"><span class="p-len"></span>${d.builtin
-                  ? " · заводской: " + (d.builtin_prompt || "").length + " симв." : ""}</p>
+                <span class="muted p-meta"><span class="p-len"></span>${d.builtin
+                  ? " · заводской: " + (d.builtin_prompt || "").length + " симв." : ""}</span>
                 ${files.length ? `<div class="adm-row">${files.map((f) =>
                   `<button type="button" class="f-from ghost" data-id="${f.id}">взять из ${esc(f.title || f.filename)}</button>`).join("")}</div>` : ""}
                 ${d.builtin ? '<button type="button" class="ghost f-orig">Показать заводской</button>' : ""}
@@ -1778,8 +1844,6 @@
           <label>База для сценариев</label>
           <textarea class="f-story" rows="7"
             placeholder="${esc(STORY_PLACEHOLDER)}">${esc(d.story_manual || "")}</textarea>
-          <p class="adm-note">Влияет на <b>СЮЖЕТ и раскадровку</b>, не на картинку.
-            Картинка — в Промпте и Референсах.</p>
           ${(d.story_auto || []).length ? `<div class="s-auto">
             <b>Сцены из роликов автора — собираются сами из подписей кадров:</b>
             <ul>${d.story_auto.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
@@ -1825,7 +1889,10 @@
       try {
         await api(`/api/admin/styles/${encodeURIComponent(key)}/meta`,
                   { method: "POST", body: { kind: e.target.value } });
-        renderStyles(stylesHost || pane());
+        // Карточка переехала в другой раздел — идём за ней, не теряя её из
+        // виду: вкладка меняется, styleKey остаётся.
+        promptTab = e.target.value === "reference" ? "refs" : "styles";
+        open("prompts");
       } catch (err) { alert(err.message); }
     });
 
@@ -1984,6 +2051,16 @@
              ${e.enabled ? "checked" : ""} /><i></i></label>` : "";
       const stat = (e) => `<td class="num">${num(e.uses || 0)}</td>
         <td class="num">${num(e.earned || 0)}</td>`;
+      // Честный статус: не «жив», а ЧЕМ жив — ключ / шлюз подписки / нет.
+      // live_via отдаёт crm.admin_models для текстовых моделей; остальным
+      // хватает live.
+      const VIA = { key: ["on", "ключ"], gateway: ["on", "шлюз подписки"], none: ["off", "нет"] };
+      const alive = (e) => {
+        const v = VIA[e.live_via || e.claude_channel];
+        if (v) return `<span class="adm-pill ${v[0]}">${v[1]}</span>`;
+        return e.live ? '<span class="adm-pill on">жив</span>'
+                      : '<span class="adm-pill off">ключа нет</span>';
+      };
       const table = (title, rows, extra) => `<div class="adm-card">
         <h3>${esc(title)}</h3>
         <table class="adm-table">
@@ -1998,8 +2075,7 @@
           <td>${tgl(e)}</td>
           <td><b>${esc(e.title)}</b><br /><span class="muted">${esc(e.note || "")}</span></td>
           <td>${esc(e.channel)}</td>
-          <td>${e.live ? '<span class="adm-pill on">жив</span>'
-                        : '<span class="adm-pill off">ключа нет</span>'}</td>
+          <td>${alive(e)}</td>
           <td class="num">${num(e.points)}</td>
           <td class="num">$${Number(e.usd || 0).toFixed(3)}</td>
           ${stat(e)}
@@ -2029,9 +2105,7 @@
           <td class="num">${num(e.points)}</td>
           <td class="num">$${Number(e.usd || 0).toFixed(3)}</td>
           ${stat(e)}</tr>`).join(""))
-        + `<p class="adm-note">Один токен = $${d.point_usd} себестоимости. Цена в токенах
-           выводится из этой константы и долларовых цен движков, поэтому разойтись с
-           реальными расходами она не может.</p>`;
+        + `<p class="muted" style="font-size:12px">1 токен = $${d.point_usd} себестоимости</p>`;
       box.addEventListener("change", async (ev) => {
         const t = ev.target.closest("[data-toggle]");
         if (!t) return;
@@ -2059,9 +2133,6 @@
                           : '<span class="adm-pill off">не задан</span>'}</td>
               <td class="muted">${esc(k.note)}</td></tr>`).join("")}</tbody>
           </table>
-          <p class="adm-note">Значений здесь нет и не будет. Ключи живут в
-            <code>infra/.env</code>: редактор ключей в вебе — это способ увести их
-            одним XSS. Чтобы добавить ключ, положи его в .env и перезапусти сервис.</p>
         </div>
         <div class="adm-card">
           <h3>Каналы</h3>
@@ -2164,39 +2235,6 @@
   }
 
   /* ─────────── дизайн-токены ─────────── */
-  /* Тумблеры моделей внутри вкладки «Модели» рисует renderModels ниже;
-     здесь — общий блок сохранения. */
-  async function modelsToggleBlock(box) {
-    let d;
-    try { d = await api("/api/admin/models-toggle"); } catch (e) { return; }
-    const wrap = document.createElement("div");
-    wrap.className = "adm-card";
-    wrap.innerHTML = `<b>Показ моделей клиентам</b>
-      <p class="muted">Выключенная модель пропадает из выбора у клиентов —
-      для экономии токенов и управления ассортиментом. Действует сразу.</p>
-      <div class="adm-mt-list"></div>
-      <div class="adm-price-acts">
-        <button type="button" class="adm-mt-save primary">Применить</button>
-        <span class="adm-price-msg muted"></span></div>`;
-    const list = wrap.querySelector(".adm-mt-list");
-    d.models.forEach((m) => {
-      const l = document.createElement("label");
-      l.className = "adm-mt-row";
-      l.innerHTML = `<input type="checkbox" ${m.enabled ? "checked" : ""}
-        data-id="${m.id}" /> <span>${m.title}</span>
-        <i class="muted">${m.kind}</i>`;
-      list.appendChild(l);
-    });
-    wrap.querySelector(".adm-mt-save").addEventListener("click", async () => {
-      const off = [...list.querySelectorAll("input:not(:checked)")].map((i) => i.dataset.id);
-      const msg = wrap.querySelector(".adm-price-msg");
-      try { await api("/api/admin/models-toggle", { method: "POST", body: { disabled: off } }); }
-      catch (e) { msg.textContent = String(e.message || e); return; }
-      msg.textContent = "применено";
-    });
-    box.prepend(wrap);
-  }
-
   async function renderDesign(box) {
     let d;
     try { d = await api("/api/admin/design"); } catch (e) { return fail(box, e); }
@@ -2219,8 +2257,6 @@
           <button type="button" class="adm-d-reset ghost">Сбросить к канону</button>
           <span class="adm-price-msg muted"></span>
         </div>
-        <p class="muted">Действует на весь сервис сразу: /api/theme.css кладёт
-        токены поверх стилей. Канон — в docs/DESIGN_SYSTEM.md.</p>
       </div>`;
     const msg = box.querySelector(".adm-price-msg");
     const collect = () => {
@@ -2257,7 +2293,7 @@
             ${x.cover_url ? `<img src="${esc(x.cover_url)}" style="width:56px;height:56px;border-radius:8px;object-fit:cover">` : ""}
             <div style="flex:1;min-width:220px">
               <b>${esc(x.artist)} — ${esc(x.track_title)}</b>
-              <div class="muted">${esc(x.genre || "жанр не указан")} · ${esc((x.created_at || "").slice(0, 16).replace("T", " "))} · ИИ: ${esc(x.ai_disclosure || "—")}${x.isrc ? " · ISRC " + esc(x.isrc) : ""}</div>
+              <div class="muted">${esc(x.genre || "жанр не указан")} · ${when(x.created_at)} · ИИ: ${esc(x.ai_disclosure || "—")}${x.isrc ? " · ISRC " + esc(x.isrc) : ""}</div>
               <div class="muted">контакт: ${esc(x.contact)}${x.socials ? " · " + esc(x.socials.split("\n")[0]) : ""}</div>
               ${x.comment ? `<div class="muted">${esc(x.comment)}</div>` : ""}
               ${checks}
@@ -2312,6 +2348,12 @@
     if (want === "journal") return open("ledger");
     if (want === "styles" || want === "refstyles") {
       promptTab = want === "refstyles" ? "refs" : "styles";
+      return open("prompts");
+    }
+    // ?tab=trends / layers / mockups / refs — прямые закладки на подвкладки
+    // «Промтов».
+    if (P_TABS.some(([id]) => id === want)) {
+      promptTab = want;
       return open("prompts");
     }
     open(want || "stats");

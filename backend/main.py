@@ -5606,8 +5606,13 @@ async def admin_layer_preview_generate(layer: str, key: str, request: Request,
         pass
     if engine not in mediagen.IMAGE_ENGINES:
         raise HTTPException(400, f"нет такого движка кадров: {engine}")
+    # _generate_layer_preview внутри зовёт asyncio.run — из async-хендлера
+    # это «cannot be called from a running event loop», поэтому уводим в
+    # пул потоков (в отдельном потоке своего цикла нет).
+    from starlette.concurrency import run_in_threadpool
     try:
-        fname = _generate_layer_preview(db, layer, card, engine=engine)
+        fname = await run_in_threadpool(_generate_layer_preview, db, layer, card,
+                                        engine=engine)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"превью не вышло: {_err_text(e, 200)}")
     previews = _layer_previews()
@@ -5659,13 +5664,21 @@ async def admin_layer_preview_animate(layer: str, key: str, request: Request,
         "{location}", "the scene in the frame")
     if not motion:
         raise HTTPException(400, "у карточки пуст промпт движения")
-    try:
+    from starlette.concurrency import run_in_threadpool
+
+    def _animate() -> str:
+        # Синхронный кусок в пуле потоков: asyncio.run из async-хендлера
+        # падает «cannot be called from a running event loop».
         mediagen.reset_task()
-        fname = asyncio.run(mediagen.animate_scene(
+        out = asyncio.run(mediagen.animate_scene(
             prompt=motion, first_path=poster, last_path=None,
             duration_sec=6, provider="free", engine=engine, aspect="3:4"))
-        _reg_file(db, fname, None, kind="layer_preview")
+        _reg_file(db, out, None, kind="layer_preview")
         db.commit()
+        return out
+
+    try:
+        fname = await run_in_threadpool(_animate)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"оживить не вышло: {_err_text(e, 200)}")
     previews = _layer_previews()
@@ -14456,8 +14469,10 @@ def _payout_dict(p: Payout) -> dict:
         "id": p.id, "amount_kopeks": p.amount_kopeks,
         "amount": round(p.amount_kopeks / 100, 2),
         "details": p.details, "status": p.status, "comment": p.comment,
-        "created_at": p.created_at.isoformat() if p.created_at else "",
-        "updated_at": p.updated_at.isoformat() if p.updated_at else "",
+        # С таймзоной: голый isoformat SQLite-даты браузер читал как
+        # местное время, и заявка «уезжала» на часы.
+        "created_at": _as_utc(p.created_at).isoformat() if p.created_at else "",
+        "updated_at": _as_utc(p.updated_at).isoformat() if p.updated_at else "",
     }
 
 

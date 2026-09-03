@@ -20,9 +20,14 @@
   position: sticky; top: 0; height: 100vh;
 }
 .adm-brand {
-  font-family: var(--font-mono); font-size: 14px; letter-spacing: .22em;
-  text-transform: uppercase; text-decoration: none; color: var(--text);
-  font-weight: 800;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-head); font-size: 15px; letter-spacing: .04em;
+  text-decoration: none; color: var(--text); font-weight: 800;
+}
+/* Марка: огненная точка перед словом — знак приложения, не кнопка. */
+.adm-brand::before {
+  content: ""; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--fire-ink); flex: none;
 }
 .adm-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
 .adm-tab {
@@ -34,7 +39,12 @@
   font-size: 13.5px; font-weight: 600; text-align: left; width: 100%;
 }
 .adm-tab:hover { border-color: var(--border); background: var(--inset); }
-.adm-tab.on { color: var(--on-accent); background: var(--fire-ink); border-color: transparent; }
+/* Активный пункт — стекло и кольцо, не огонь: огонь только у главного действия. */
+.adm-tab.on {
+  color: var(--text); background: var(--card-solid);
+  border-color: var(--border-bright);
+  box-shadow: 0 1px 4px rgba(var(--ink-rgb), .08);
+}
 .adm-tab-ico { font-size: 15px; }
 .adm-side-foot { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .adm-back { color: var(--accent-2-ink); text-decoration: none; font-weight: 600; }
@@ -43,7 +53,6 @@
 .adm-main { padding: 26px 28px 60px; max-width: 1180px; }
 .adm-head { margin-bottom: 18px; }
 .adm-title { margin: 0 0 4px; font-size: 22px; font-family: var(--font-head); }
-.adm-sub { margin: 0; font-size: 13px; line-height: 1.5; max-width: 70ch; }
 
 .adm-card {
   border: 1px solid var(--border); border-radius: 16px;
@@ -118,12 +127,11 @@
   background: none; color: var(--text);
 }
 .adm-item:hover { background: var(--inset); border-color: var(--border); }
-.adm-item.on { border-color: var(--border-bright); background: var(--inset); }
+.adm-item.on { border-color: var(--border-bright); background: var(--card-solid); }
 .adm-mark { font-size: 11px; color: var(--accent-2-ink); font-weight: 700; }
 
 .adm-fields { display: flex; flex-direction: column; gap: 12px; }
 .adm-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.adm-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 6px 0 0; }
 .adm-count { font-size: 11.5px; color: var(--muted); }
 
 .adm-assets { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
@@ -137,20 +145,54 @@
 
 .adm-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 12px; }
 .adm-tabs button { height: 34px; padding: 0 12px; font-size: 13px; }
-.adm-tabs button.on { color: var(--on-accent); background: var(--fire-ink); border-color: transparent; }
+.adm-tabs button.on { color: var(--text); background: var(--card-solid); border-color: var(--border-bright); }
 
 .adm-err { color: var(--danger); font-size: 13px; }
 .adm-ok { color: var(--ok); font-size: 13px; }
+.adm-warn { color: var(--accent-2-ink); font-size: 13px; }
+
+/* Тост: живёт вне панели, поэтому переживает её перерисовку. */
+.adm-toast {
+  position: fixed; left: 50%; bottom: 22px; z-index: 50;
+  transform: translate(-50%, 12px); opacity: 0; pointer-events: none;
+  padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: var(--text); background: var(--card-solid);
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 8px 28px rgba(var(--ink-rgb), .14);
+  transition: opacity .18s, transform .18s;
+}
+.adm-toast.on { opacity: 1; transform: translate(-50%, 0); }
+.adm-toast.ok { color: var(--ok-ink); }
+.adm-toast.warn { color: var(--accent-2-ink); }
+.adm-toast.err { color: var(--danger-ink); }
+
+/* Галерея превью карточки: главный кадр — кольцо, не оранжевая обводка. */
+.l-g {
+  width: 54px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px;
+  cursor: pointer; opacity: .75;
+}
+.l-g.on { opacity: 1; box-shadow: 0 0 0 2px var(--card-solid), 0 0 0 3.5px var(--border-bright); }
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 
 @media (max-width: 860px) {
   .adm { grid-template-columns: 1fr; }
-  .adm-side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
-  .adm-nav { flex-direction: row; flex-wrap: wrap; }
-  .adm-tab { width: auto; }
-  .adm-main { padding: 18px 14px 50px; }
+  .adm-side {
+    position: static; height: auto; flex-direction: row; flex-wrap: wrap;
+    align-items: center; gap: 10px; padding: 12px 12px;
+  }
+  .adm-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .adm-tab { width: auto; height: 34px; padding: 0 10px; font-size: 13px; }
+  .adm-side-foot { flex-direction: row; gap: 10px; width: 100%; }
+  .adm-main { padding: 14px 12px 60px; }
+  .adm-head { margin-bottom: 12px; }
+  .adm-title { font-size: 19px; }
+  .adm-card { overflow-x: auto; min-width: 0; padding: 12px; }
+  .adm-table { min-width: 520px; }
+  .adm-grid { grid-template-columns: 1fr 1fr; }
   .adm-split { grid-template-columns: 1fr; }
+  .s-side { position: static; max-height: none; }
+  .adm-list { max-height: 40vh; }
 }
 
 /* Наценка: ползунок и то, во что он превращается для клиента. */
@@ -171,35 +213,29 @@
 /* Рынок: встроенная сводка по конкурентам с фильтром. */
 .adm-market-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
 .adm-market-q { flex: 1; max-width: 340px; padding: 7px 11px; border-radius: 10px;
-  border: 1.5px solid rgba(45,33,26,.3); font-size: 13px; }
-.adm-market-frame { width: 100%; height: calc(100vh - 210px); border: 1px solid rgba(45,33,26,.2);
-  border-radius: 12px; background: #fff; }
+  border: 1px solid var(--border-bright); background: var(--inset); color: var(--text); font-size: 13px; }
+.adm-market-frame { width: 100%; height: calc(100vh - 210px); border: 1px solid var(--border);
+  border-radius: 12px; background: var(--card-solid); }
 
 /* Дизайн-токены: строки «подпись — контролы» + живой образец градиента. */
 .adm-design { display: flex; flex-direction: column; gap: 14px; max-width: 560px; }
 .adm-d-row { display: flex; align-items: center; gap: 10px; }
 .adm-d-row label { width: 150px; font-size: 12.5px; font-weight: 700; }
-.adm-d-fire { width: 120px; height: 26px; border-radius: 999px; border: 1px solid rgba(45,33,26,.25); }
-
-/* Тумблеры моделей: плотный список чекбоксов. */
-.adm-mt-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 6px 14px; margin: 10px 0; }
-.adm-mt-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
-.adm-mt-row i { margin-left: auto; font-size: 10px; }
+.adm-d-fire { width: 120px; height: 26px; border-radius: 999px; border: 1px solid var(--border-bright); }
 
 /* Тумблер модели прямо в строке цен. */
 .adm-sw { position: relative; display: inline-block; width: 34px; height: 20px; }
 .adm-sw input { opacity: 0; width: 0; height: 0; }
 .adm-sw i {
   position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
-  background: rgba(45,33,26,.18); transition: background .15s;
+  background: rgba(var(--ink-rgb), .18); transition: background .15s;
 }
 .adm-sw i::before {
   content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-  border-radius: 50%; background: #fff; transition: transform .15s;
+  border-radius: 50%; background: var(--card-solid); transition: transform .15s;
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
 }
-.adm-sw input:checked + i { background: linear-gradient(95deg,#e0503a,#f0913c); }
+.adm-sw input:checked + i { background: var(--fire-ink); }
 .adm-sw input:checked + i::before { transform: translateX(14px); }
 
 /* ─────────── Стили/Референсы v132: двухколонник, поиск, масс-загрузка ─────────── */
@@ -210,11 +246,12 @@
   border: 1px solid rgba(var(--ink-rgb), .14); border-radius: 12px;
   background: var(--inset); font: inherit; color: var(--text);
 }
+/* Выбранная строка списка — стекло и кольцо; огонь остаётся «Сохранить». */
 .adm-item.on {
-  background: var(--fire-ink); color: var(--on-fire);
-  border-color: rgba(var(--ink-rgb), .12);
+  background: var(--card-solid); color: var(--text);
+  border-color: var(--border-bright);
+  box-shadow: 0 1px 4px rgba(var(--ink-rgb), .08);
 }
-.adm-item.on .adm-mark { color: var(--on-fire); opacity: .8; }
 .s-empty {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 48px 24px; text-align: center;
@@ -332,15 +369,15 @@
 .adm-tab-ico svg { width: 16px; height: 16px; display: block; }
 
 /* Дашборд Сводки: тревожная карточка (мало кредитов у поставщика). */
-.adm-stat-bad { border-color: var(--danger, #c0392b); }
-.adm-stat-bad b { color: var(--danger, #c0392b); }
+.adm-stat-bad { border-color: var(--danger); }
+.adm-stat-bad b { color: var(--danger-ink); }
 
 /* CRM-лента клиента. */
 .u-tl-row { display: flex; align-items: center; gap: 10px; padding: 7px 0;
-  border-bottom: 1px solid var(--adm-border, rgba(45,33,26,.08)); }
+  border-bottom: 1px solid var(--border); }
 .u-tl-row:last-child { border-bottom: 0; }
 .u-tl-ico { flex: none; width: 26px; height: 26px; display: flex; align-items: center;
-  justify-content: center; border-radius: 50%; background: rgba(45,33,26,.06); font-size: 13px; }
+  justify-content: center; border-radius: 50%; background: var(--inset); font-size: 13px; }
 .u-tl-row img { width: 34px; height: 44px; object-fit: cover; border-radius: 6px; flex: none; }
 .u-tl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .u-tl-body b { font-size: 12.5px; }
