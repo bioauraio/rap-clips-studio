@@ -42,7 +42,7 @@ FRONTEND_DIR = os.environ.get("CONTENT_OUT_DIR", os.path.join(ROOT, "frontend"))
 
 # Канонический origin. На проде переопределяется переменной окружения —
 # в sitemap и canonical обязаны попасть абсолютные адреса боевого домена.
-ORIGIN = os.environ.get("CONTENT_ORIGIN", "https://qlolapp.art").rstrip("/")
+ORIGIN = os.environ.get("CONTENT_ORIGIN", "https://lolq.ai").rstrip("/")
 
 SITE_NAME = "lolq.ai"
 LANGS = ("en", "ru")

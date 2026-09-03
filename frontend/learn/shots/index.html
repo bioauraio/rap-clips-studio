@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shot devices: how one scene is filmed — School</title>
+<meta name="description" content="The shot library is the third layer after styles and story frames. What the frame pair means, why a device here is the difference between the first and last frame, and the six shots every clip is built from." />
+<link rel="canonical" href="https://lolq.ai/learn/shots/" />
+<link rel="alternate" hreflang="en" href="https://lolq.ai/learn/shots/" />
+<link rel="alternate" hreflang="ru" href="https://lolq.ai/ru/learn/shots/" />
+<link rel="alternate" hreflang="x-default" href="https://lolq.ai/learn/shots/" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="lolq.ai" />
+<meta property="og:title" content="Shot devices: how one scene is filmed — School" />
+<meta property="og:description" content="The shot library is the third layer after styles and story frames. What the frame pair means, why a device here is the difference between the first and last frame, and the six shots every clip is built from." />
+<meta property="og:url" content="https://lolq.ai/learn/shots/" />
+<meta property="og:image" content="https://lolq.ai/img/guide/board.png" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="ru_RU" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Shot devices: how one scene is filmed — School" />
+<meta name="twitter:description" content="The shot library is the third layer after styles and story frames. What the frame pair means, why a device here is the difference between the first and last frame, and the six shots every clip is built from." />
+<meta name="twitter:image" content="https://lolq.ai/img/guide/board.png" />
+<link rel="icon" type="image/svg+xml" href="/img/logo-mark.svg" />
+<link rel="stylesheet" href="/blog.css?v=1" />
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"LearningResource","name":"Shot devices: how one scene is filmed","description":"The shot library is the third layer after styles and story frames. What the frame pair means, why a device here is the difference between the first and last frame, and the six shots every clip is built from.","inLanguage":"en","datePublished":"2026-08-22","dateModified":"2026-08-22","timeRequired":"PT7M","isAccessibleForFree":true,"learningResourceType":"tutorial","url":"https://lolq.ai/learn/shots/","provider":{"@type":"Organization","name":"lolq.ai","url":"https://lolq.ai/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"lolq.ai","item":"https://lolq.ai/"},{"@type":"ListItem","position":2,"name":"School","item":"https://lolq.ai/learn/"},{"@type":"ListItem","position":3,"name":"Shot devices: how one scene is filmed"}]}</script>
+</head>
+<body>
+<header class="bh">
+  <a class="bh-brand" href="/"><img src="/img/logo-mark.svg" width="26" height="26" alt="" /><span>lolq<span class="dot">.</span>ai</span></a>
+  <nav class="bh-nav">
+    <a href="/blog/">Journal</a>
+    <a href="/#ld-how">How it works</a>
+    <a href="/#ld-pricing">Pricing</a>
+    <a class="bh-cta" href="/">Start free</a>
+  </nav>
+</header>
+<main class="bw">
+<article class="bpost">
+<p class="bmeta"><a href="/learn/">← All lessons</a>
+ · 7 min read <a class="blang" href="/ru/learn/shots/" hreflang="ru">Читать по-русски</a></p>
+<h1 id="shot-devices-how-one-scene-is-filmed">Shot devices: how one scene is filmed</h1>
+<p>The studio has three layers and they do not replace each other.</p>
+<div class="tw"><table><thead><tr><th>Layer</th><th>Answers</th><th>Where it lives</th></tr></thead><tbody><tr><td><strong>Style</strong></td><td>what the whole clip looks like</td><td>Prompts section, Styles tab</td></tr><tr><td><strong>Story frame</strong></td><td>what we are filming at all</td><td>same section, Frames tab</td></tr><tr><td><strong>Shot device</strong></td><td>how <strong>one</strong> scene is filmed</td><td>Devices tab</td></tr></tbody></table></div>
+<p>A style and a story frame are set once per track. A device lands on one scene card and touches nothing else in the project. That is why there are fifty-six devices and only fifteen styles.</p>
+<h2 id="a-device-is-the-difference-between-two-frames">A device is the difference between two frames</h2>
+<p>A scene here has two image prompts: <strong>prompt</strong> (the first frame) and <strong>last frame prompt</strong>. A paid engine builds the video between them. So motion is not defined by a camera path — it is defined by <strong>how the last frame differs from the first</strong>.</p>
+<p>This is worth spelling out, because every other prompt bank on the internet works the other way. There a device is a line like "drone orbit, 8 metre radius, 84 degrees". That line does not fit our frame pair at all: we do not have a minute of flight, we have "here is the start, here is the end, get there".</p>
+<p>So a push-in looks like this here:</p>
+<ul><li><strong>first frame:</strong> medium shot, character from the waist up, air above the head;</li><li><strong>last frame:</strong> same character, same light, same clothes — but only head and</li></ul>
+<p>shoulders, filling two thirds of the frame;</p>
+<ul><li><strong>motion:</strong> camera travels on one axis, subject stays put.</li></ul>
+<p>Three fields instead of one trajectory. In exchange it works on any engine that takes a first and last frame, and does not depend on whether the model knows the word "dolly".</p>
+<h2 id="there-is-no-style-inside-a-device">There is no style inside a device</h2>
+<p>The device texts contain no words about film, anime, grade or grain. That is deliberate: the pipeline supplies the style, and if the device supplied one too, the prompt would carry two different worlds and the model would pick between them on its own.</p>
+<p>Practical consequence: <strong>the same device works identically on Ghibli and on VHS.</strong> You can change the style of the whole track without touching a single scene.</p>
+<h2 id="what-apply-actually-does">What Apply actually does</h2>
+<p>A device card has slots: <code>{character}</code>, <code>{location}</code>, <code>{time of day}</code> and so on. Fill them, press <strong>Apply</strong>, and five fields land on the scene card at once — first frame prompt, last frame prompt, motion prompt, shot size and camera move.</p>
+<p>This is free. A device is text, and text costs no credits in this studio. You only pay when you press <strong>Generate frames</strong>.</p>
+<p>An unfilled slot substitutes the example from the dictionary. That is better than leaving <code>{character}</code> in the prompt: models read curly braces literally and draw the braces.</p>
+<h2 id="the-six-shots-every-clip-is-built-from">The six shots every clip is built from</h2>
+<p>Below is the pack that applies in one click. It exists to cure the single most common storyboard disease.</p>
+<p><strong>The disease:</strong> all thirty scenes are medium shots. The clip reads flat and you cannot see why by eye — every individual frame is fine.</p>
+<p><strong>The cure:</strong> five different shot sizes across the first six scenes.</p>
+<div class="tw"><table><thead><tr><th>#</th><th>Device</th><th>Shot size</th><th>What it does</th></tr></thead><tbody><tr><td>1</td><td>City establishing shot</td><td>establishing</td><td>says where we are, once</td></tr><tr><td>2</td><td>Push in on the face</td><td>medium → close-up</td><td>a moment of attention</td></tr><tr><td>3</td><td>Cut-in detail</td><td>extreme close-up</td><td>punctuation</td></tr><tr><td>4</td><td>Locked-off frame</td><td>wide</td><td>somewhere to breathe</td></tr><tr><td>5</td><td>Walking alongside</td><td>medium</td><td>the sense the track is going somewhere</td></tr><tr><td>6</td><td>Pull back to reveal</td><td>close-up → wide</td><td>scale in a single scene</td></tr></tbody></table></div>
+<p>All six are open on the free plan.</p>
+<h3 id="steps">Steps</h3>
+<ol><li>Build the storyboard as usual — <strong>Generate storyboard</strong>.</li><li>Open the lesson and press <strong>Apply pack</strong>. It lands on the first six scenes.</li><li>Fill three slots once for the whole pack: <strong>character</strong>, <strong>location</strong>, **time of</li></ol>
+<p>day**. The same character in all six — otherwise the pack does not assemble into a clip, it scatters into six postcards.</p>
+<ol><li>Walk the strip and fix the text where a device is not about that lyric. A device</li></ol>
+<p>is a starting point, not a verdict.</p>
+<ol><li>Only now press <strong>Generate frames</strong>.</li></ol>
+<h3 id="what-to-look-at">What to look at</h3>
+<p>Open the <strong>contact sheet</strong> after the frames are generated. Six thumbnails in a row should be obviously different sizes: city, face, fingernail, room, stride, whole room. If everything on the sheet looks equally close, the devices did not land — check that you pressed <strong>Save frame</strong> before regenerating.</p>
+<h3 id="the-usual-mistakes">The usual mistakes</h3>
+<p><strong>Slots filled differently in different scenes.</strong> "Guy in a hoodie" in scene one and "the hero" in scene four are two different people to the model. Fill the pack once.</p>
+<p><strong>Applying the pack after the frames are already drawn.</strong> The text is replaced, the pictures are not, and it looks like the button is broken. Apply before generating, or press <strong>Regenerate frames</strong> straight after — that is free.</p>
+<p><strong>Putting a push-in on the cheap engine.</strong> Grok animates only the first frame: it has nowhere to put the difference between the two. The device card says so — "needs an engine with first and last frame". Devices without that mark work on Grok.</p>
+<p><strong>Taking all six and stopping there.</strong> The pack covers six scenes out of thirty. After that it is the same five shot sizes on rotation, by hand.</p>
+<h2 id="the-artefact">The artefact</h2>
+<p><strong>Pack "Six shots every clip is built from"</strong> (<code>basic_shots</code>) — six cards, applied in one click to the first six scenes. Slots: character, location, time of day. Free plan.</p>
+<hr />
+<p>Next: <strong><a href="09-light.md">Light: five sources and what each one costs</a></strong> — the one decision that changes a frame more than shot size does.</p>
+<aside class="bcta">
+  <p>Make a clip from your own track — the first one is free</p>
+  <a class="bbtn" href="/">Open the studio</a>
+</aside>
+</article>
+</main>
+<footer class="bf">
+  <a href="/">lolq.ai</a> · <a href="/blog/">Journal</a> · <a href="/music.html">qlolmusic</a>
+</footer>
+</body>
+</html>
