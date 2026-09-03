@@ -387,6 +387,10 @@ function showApp() {
   else if (["/trends", "/academy", "/prompts", "/marketing"].includes(path)) {
     const id = path.slice(1);
     setTimeout(() => {
+      // /prompts: кнопки раздела в шапке нет — открываем каталог напрямую.
+      if (id === "prompts" && window.QlolSections && window.QlolSections.openLibrary) {
+        window.QlolSections.openLibrary(); return;
+      }
       // Кнопка раздела есть и в шапке (.tb-sec), и в рельсе верстака
       // (.sec-btn) — ищем по data-sec, чтобы работали обе разметки.
       const btn = document.querySelector(`[data-sec="${id}"]`);

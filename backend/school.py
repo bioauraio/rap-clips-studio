@@ -209,6 +209,8 @@ def _course_card(db: Session, user: User | None, c: Course) -> dict:
         "authors": _authors_of(db, c.id),
         "rating": rating,
         "reviews": reviews,
+        "soon": bool(ids) and all(
+            _is_stub(l) for l in db.query(Lesson).filter(Lesson.id.in_(ids))),
     }
 
 

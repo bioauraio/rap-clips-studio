@@ -2056,7 +2056,7 @@
       // хватает live.
       const VIA = { key: ["on", "ключ"], gateway: ["on", "шлюз подписки"], none: ["off", "нет"] };
       const alive = (e) => {
-        const v = VIA[e.live_via || e.claude_channel];
+        const v = VIA[e.live_via || e.live_channel || e.claude_channel];
         if (v) return `<span class="adm-pill ${v[0]}">${v[1]}</span>`;
         return e.live ? '<span class="adm-pill on">жив</span>'
                       : '<span class="adm-pill off">ключа нет</span>';
