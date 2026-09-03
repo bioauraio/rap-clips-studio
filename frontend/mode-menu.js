@@ -124,8 +124,7 @@
     if (!cap) return;
     const m = R().byId(activeId()) || R().byId("clip");
     cap.innerHTML = "";
-    cap.append(el("span", "mode-ico", m.icon),
-               el("span", "mode-cap", m.title),
+    cap.append(el("span", "mode-cap", m.title),
                el("span", "mode-caret", "▾"));
     cap.title = m.full || m.title;
     cap.setAttribute("aria-expanded", state.open ? "true" : "false");
@@ -348,7 +347,8 @@
       }
       const b = el("button", "mode-seg-btn" + (m.id === activeId() ? " on" : ""));
       b.type = "button";
-      b.append(el("span", "mode-seg-ico", m.icon), el("span", "mode-seg-cap", m.title));
+      b.append(R().svgEl ? R().svgEl(m, "mode-seg-ico mode-svg") : el("span", "mode-seg-ico", m.icon),
+               el("span", "mode-seg-cap", m.title));
       b.addEventListener("click", (e) => {
         e.stopPropagation();                     // см. комментарий в paintSeg
         if (R().isExternal(m)) { close(); m.external(); return; }

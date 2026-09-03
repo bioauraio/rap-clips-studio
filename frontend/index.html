@@ -48,6 +48,9 @@
 {"@type":"Offer","name":"PRO MAX","price":"100","priceCurrency":"USD","description":"3400 credits a month — Seedance 2.5 and Kling 3.0 Pro"},
 {"@type":"Offer","name":"ULTRA","price":"299","priceCurrency":"USD","description":"From 10500 to 104000 credits a month — every engine"}]}
 </script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" />
 <link rel="stylesheet" href="/style.css?v=196" />
 <link rel="stylesheet" href="/api/theme.css" />
 <link rel="stylesheet" href="/landing.css?v=196" />
@@ -184,7 +187,7 @@
       </div>
       <div class="ld-modes-grid">
         <a class="ld-mode-card" href="/studio"><img src="/img/shots/clip.jpg" loading="lazy" alt=""/><b>клипы</b><span>клип под свой трек: сцены, кадры, сборка</span></a>
-        <a class="ld-mode-card" href="/studio"><img src="/img/shots/frame-6.jpg" loading="lazy" alt=""/><b>фильмы и сериалы</b><span>сезоны, серии, диалоги персонажей</span></a>
+        <a class="ld-mode-card" href="/studio?kind=series"><img src="/img/shots/frame-6.jpg" loading="lazy" alt=""/><b>фильмы и сериалы</b><span>сезоны, серии, диалоги персонажей</span></a>
         <a class="ld-mode-card" href="/marketing"><img src="/img/shots/frame-4.jpg" loading="lazy" alt=""/><b>мокапы</b><span>предметная съёмка товара по одному фото</span></a>
         <a class="ld-mode-card" href="/marketing"><img src="/img/shots/frame-5.jpg" loading="lazy" alt=""/><b>UGC-блогеры</b><span>сквозной ИИ-ведущий для бренда</span></a>
         <a class="ld-mode-card" href="/trends"><img src="/img/shots/frame-2.jpg" loading="lazy" alt=""/><b>тренды</b><span>фото → вирусный ролик по шаблону</span></a>
@@ -623,7 +626,7 @@
       </div>
     </div>
     <div id="mk-tabs" class="mk-tabs" role="tablist"></div>
-    <button id="chat-new" class="primary chat-new" data-i18n="chat.new"></button>
+    <button id="chat-new" class="ghost chat-new" data-i18n="chat.new"></button>
     <input id="chat-search" class="chat-search" data-i18n-ph="chat.searchPh" />
     <div id="chat-list" class="chat-list"></div>
     <div id="mk-projects" class="mk-projects hidden"></div>
@@ -925,7 +928,7 @@
                  есть кадры, а стиль сменили. цена и потери — до нажатия. -->
             <div class="ms-restyle hidden">
               <div class="row">
-                <button type="button" class="t-restyle primary"></button>
+                <button type="button" class="t-restyle ghost"></button>
                 <span class="t-restyle-status status"></span>
               </div>
               <p class="t-restyle-warn muted"></p>
@@ -1037,7 +1040,7 @@
                   <div class="t-url-row hidden">
                     <input class="t-url-input" type="url"
                            data-i18n-ph="track.audioUrlPh" />
-                    <button type="button" class="t-url-go primary"
+                    <button type="button" class="t-url-go ghost"
                             data-i18n="track.audioUrlGo"></button>
                   </div>
                   <p class="t-url-hint muted hidden" data-i18n="track.audioUrlHint"></p>
@@ -1260,7 +1263,7 @@
     </div>
     <div class="char-models hidden"></div>
     <div class="row">
-      <button class="c-save primary" data-i18n="common.save"></button>
+      <button class="c-save ghost" data-i18n="common.save"></button>
       <label class="c-upload-label">
         <input type="file" class="c-photo-input hidden" accept="image/*" multiple />
         <span class="c-upload-btn" data-i18n="character.upload"></span>
@@ -1435,7 +1438,7 @@
         <button class="s-gen-mid s-gen-ico"></button>
       </div>
       <div class="row s-video-row">
-        <button class="s-gen-video primary" data-i18n="scene.genVideo"></button>
+        <button class="s-gen-video ghost" data-i18n="scene.genVideo"></button>
         <span class="s-video-status status"></span>
       </div>
     </div>

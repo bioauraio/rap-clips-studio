@@ -95,7 +95,11 @@ function buildStylePicker(container, currentKeys, onChange) {
       cb.disabled = Boolean(s.locked);
       cb.addEventListener("change", () => {
         if (cb.checked) {
-          if (order.length >= maxMix) { cb.checked = false; return; }
+          if (order.length >= maxMix) {
+            cb.checked = false;
+            if (typeof mkToast === "function") mkToast(t("stylePicker.maxMix", { n: maxMix }));
+            return;
+          }
           order.push(s.key);
         } else {
           const i = order.indexOf(s.key);
@@ -111,6 +115,11 @@ function buildStylePicker(container, currentKeys, onChange) {
         lock.className = "style-chip-lock";
         lock.textContent = "🔒";
         label.appendChild(lock);
+        // Клик по закрытому стилю ведёт к тарифу, а не в пустоту.
+        label.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          if (typeof openAccountModal === "function" && me && me.authed) openAccountModal("plan");
+        });
       }
       chipsBox.appendChild(label);
     }
@@ -595,10 +604,24 @@ $("#phone-form").addEventListener("submit", async (e) => {
 // за амбассадором ещё до первой оплаты.
 // Вернувшемуся с живой сессией новый аккаунт НЕ заводим: /api/start всегда
 // создаёт свежего гостя и перезаписывает cookie — человек потерял бы проекты.
-async function ldStart() {
+async function ldStart(kind) {
   if (!(me && me.authed)) {
     await api("/api/start" + (refCode ? `?ref=${encodeURIComponent(refCode)}` : ""), { method: "POST" });
     me = await api("/api/me");
+  }
+  // Карточка режима с лендинга («фильмы и сериалы») — сразу проект нужного
+  // вида, а не обычный клип.
+  const want = typeof kind === "string" ? kind : new URLSearchParams(location.search).get("kind");
+  if (want && ["series", "ugc", "single", "album"].includes(want)) {
+    try {
+      const list = await api("/api/projects");
+      const have = (list || []).find((p) => p.kind === want);
+      const created = have || await api("/api/projects", { method: "POST",
+        body: { name: t("modes." + (want === "series" ? "series" : "clip") + ".title") || want, kind: want } });
+      activeProjectId = created.id;
+      localStorage.setItem("rc_project", activeProjectId);
+    } catch (_) { /* режим не завёлся — открываем студию как есть */ }
+    stripQueryParam("kind");
   }
   showApp();
   // Раздел «Промты» заканчивается действием: выбранный стиль или каркас
@@ -2202,7 +2225,7 @@ async function renderCrmPane(pane) {
 
 function fmtUsdCents(cents) {
   const v = (Number(cents) || 0) / 100;
-  return "$" + (v >= 100 ? Math.round(v) : v.toFixed(2));
+  return "$" + Math.round(v);
 }
 
 async function loadClients(pane, reset) {
@@ -5035,7 +5058,9 @@ function msPresets(card, tr, mode) {
     : modeFormats(mode);
   const cur = isClip ? (tr.clip_preset_key || "") : (tr.format_key || "");
 
-  if (isClip && !items.length && !(stylesCatalog && stylesCatalog.failed)) {
+  // Дорисовываем только пока каталог НЕ приехал: пустой список пресетов в
+  // приехавшем каталоге иначе крутил loadStyles().then(msPresets) без конца.
+  if (isClip && !items.length && !stylesCatalog) {
     // Каталог ещё едет — дорисуем, когда приедет. Пустое место здесь читается
     // как «каркасов нет», а их шесть.
     loadStyles().then(() => { if (card.isConnected) msPresets(card, tr, mode); });
@@ -7702,8 +7727,9 @@ function renderScene(s, audioEl, mode = "board") {
   const lastBtn = $(".s-gen-last", card);
   if (firstBtn) {
     firstBtn.disabled = imgBusy;
-    if (sceneImgSpec) firstBtn.title = `${t("scene.genBothTitle")} · ⚡ ${tNum(sceneImgSpec.frames_cost)}`;
-    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "both", sceneImgOverride(card)));
+    // Подпись ⚡1 = один кадр: шлём which=first, а не пару (пара стоила вдвое).
+    if (sceneImgSpec) firstBtn.title = `${t("scene.genFrames")} · ⚡ ${tNum(halfCost)}`;
+    firstBtn.addEventListener("click", () => genSceneFrames(s.id, "first", sceneImgOverride(card)));
   }
   if (lastBtn) {
     lastBtn.disabled = imgBusy;
@@ -9560,6 +9586,8 @@ rebuildAddTrackPicker();
   // (ссылка с ?home или якорь #ld-…): тогда первый экран зовёт в студию.
   // Исключение — открытый генератор (/generator): это витрина, гость ходит
   // по ней без сессии, и уводить его на лендинг = отобрать страницу из рук.
+  const wantKind = new URLSearchParams(location.search).get("kind");
+  if (wantKind && !$("#generator-page")) { await ldStart(wantKind); return; }
   if (me.authed && !ldWantsLanding()) showApp();
   // /login — прямая ссылка на вход, её шлют в поддержке и кладут в закладку.
   // Гость по ней попадал на лендинг и должен был искать кнопку входа сам.
@@ -10087,8 +10115,8 @@ function ldClipsLine(points, engine) {
 // Доллар остаётся префиксом на любом языке (валюта одна и та же), а вот
 // разряды разделяются по-местному: $2,870 в английском, $2 870 в русском.
 function ldMoney(usd) {
-  const n = Number(usd) || 0;
-  const digits = Number.isInteger(n) ? 0 : 2;
+  const n = Math.round(Number(usd) || 0);
+  const digits = 0;
   try {
     return "$" + new Intl.NumberFormat(tLocale(), {
       minimumFractionDigits: digits, maximumFractionDigits: digits,
@@ -10145,7 +10173,7 @@ function ldVolumeLine(row) {
       n: tNum(row.clips), word: tPlural(row.clips, T.clipWord), engine: row.title,
     });
   }
-  return tFill(T.volScenes, { n: tNum(row.scenes), engine: row.title });
+  return tFill(T.volScenes, { n: tNum(row.scenes), word: tPlural(row.scenes, T.sceneWord || tRaw("dash.sceneWord")), engine: row.title });
 }
 
 // Строка-заголовок карточки берётся ИЗ ТОЙ ЖЕ расшифровки, что и список под
@@ -10174,8 +10202,8 @@ function ldVolumeBlock(volume) {
   const head = pick.map((r) => `<li>${escHtml(ldVolumeLine(r))}</li>`).join("");
   const table = rows.map((r) => `<tr><td>${escHtml(r.title)}</td>`
     + `<td>${escHtml(tFill(T.volCost, { n: tNum(r.scene_cost) }))}</td>`
-    + `<td>${escHtml(r.clips >= 1 ? tFill(T.volClipsShort, { n: tNum(r.clips) })
-                                  : tFill(T.volScenesShort, { n: tNum(r.scenes) }))}</td></tr>`).join("");
+    + `<td>${escHtml(r.clips >= 1 ? tFill(T.volClipsShort, { n: tNum(r.clips), word: tPlural(r.clips, T.clipWord) })
+                                  : tFill(T.volScenesShort, { n: tNum(r.scenes), word: tPlural(r.scenes, T.sceneWord || tRaw("dash.sceneWord")) }))}</td></tr>`).join("");
   return `<ul class="ld-vol">${head}
       <li>${escHtml(tFill(T.volImages, { n: tNum(volume.images) }))}</li>
     </ul>
@@ -10438,9 +10466,6 @@ function ldRenderTopup() {
          «дешевле чего», цена токена — на вопрос «сколько это стоит», и
          второй вопрос человек задаёт первым. Заодно видно, что пакет дороже
          подписочного токена, — то есть строка работает на подписку. -->
-    <div class="ld-readout-per muted">${escHtml(tFill(T.perPoint, {
-      price: ldMoney(Math.round(pack.usd / pack.points * 100000) / 100),
-    }))}</div>
     <ul>
       <li>${escHtml(tFill(T.clipsTop, ldClipsVars(pack.points, "top")))}</li>
       <li class="muted">${escHtml(tFill(T.clipsGrok, ldClipsVars(pack.points, "grok")))}</li>
@@ -10511,7 +10536,7 @@ function ldStyleCard(s) {
     <p class="ld-card-meta muted">${escHtml((s.music && s.music.text) || "")}</p>
     <div class="ld-card-tags">${tags}</div>
     <div class="ld-card-foot">
-      <span class="muted">${escHtml(s.uses ? tFill(T.uses, { n: tNum(s.uses) }) : T.usesNone)}</span>
+      <span class="muted">${escHtml(s.uses ? tFill(T.uses, { n: tNum(s.uses), word: tPlural(s.uses, LT("pricing.clipWord")) }) : T.usesNone)}</span>
       ${s.locked
         // Закрытый тарифом стиль НЕ прикидывается доступным: сервер такой ключ
         // молча выбросит, и кнопка «взять» на нём означала бы тихий отказ —
