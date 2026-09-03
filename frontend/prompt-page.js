@@ -55,13 +55,36 @@
     let d;
     try { d = await api(`/api/p/${encodeURIComponent(layer)}/${encodeURIComponent(key)}`); }
     catch (e) {
+      // Нет такого слоя/ключа — не табличка с ошибкой, а каталог промтов:
+      // ссылка могла устареть, человеку нужен список, а не тупик.
+      if (!e || !e.status || e.status === 404) { toCatalog(); return; }
       p.innerHTML = `<p class="muted" style="text-align:center;padding:60px">${esc(e.message)}</p>`;
       return;
     }
     render(p, d);
   }
 
+  function toCatalog() {
+    close(false);
+    history.replaceState({}, "", "/prompts");
+    if (window.QlolSections && window.QlolSections.openLibrary) window.QlolSections.openLibrary();
+  }
+
+  /* Пример галереи: {url, poster} по контракту; kind — совместимость со
+     старым ответом. Видео узнаём по постеру или расширению. */
+  function isVideo(x) {
+    if (x.kind) return x.kind === "video";
+    return Boolean(x.poster) || /\.(mp4|webm|mov)(\?|$)/i.test(String(x.url || ""));
+  }
+
   function render(p, d) {
+    const label = d.label || d.title || d.key || "";
+    document.title = `${label} — lolq.ai`;
+    const examples = (d.examples || []).filter((x) => x && x.url);
+    if (d.preview_url && !examples.some((x) => x.url === d.preview_url)) {
+      examples.unshift({ url: d.preview_url, kind: "image" });
+    }
+    const prompt = (ru() && d.prompt_ru) || d.prompt || "";
     const useCap = {
       trends: t("Использовать в трендах", "Use in trends"),
       mockup: t("Снять с моим продуктом", "Shoot with my product"),
@@ -73,24 +96,23 @@
           <button type="button" class="ghosty pp-back">← ${t("назад", "back")}</button>
         </nav>
         <header class="pp-head">
-          <h1>${esc(d.title)}</h1>
-          ${d.desc ? `<p class="pp-desc">${esc(d.desc)}</p>` : ""}
+          <h1>${esc(label)}</h1>
           <button type="button" class="pp-use">${esc(useCap)}</button>
+          ${d.desc ? `<p class="pp-desc">${esc(d.desc)}</p>` : ""}
+          ${d.hint ? `<p class="pp-hint">${esc(d.hint)}</p>` : ""}
         </header>
         <div class="pp-gallery">
-          ${(d.examples || []).map((x) => x.kind === "video"
-            ? `<video src="${esc(x.url)}" muted loop playsinline preload="metadata"
+          ${examples.map((x) => isVideo(x)
+            ? `<video src="${esc(x.url)}" ${x.poster ? `poster="${esc(x.poster)}"` : ""} muted loop playsinline preload="metadata"
                  onmouseenter="this.play()" onmouseleave="this.pause()"></video>`
-            : `<img src="${esc(x.url)}" alt="" loading="lazy"/>`).join("")
-            || `<p class="pp-muted">${t("примеры скоро появятся", "examples coming soon")}</p>`}
+            : `<img src="${esc(x.url)}" alt="" loading="lazy"/>`).join("")}
           ${d.is_admin && (d.layer === "trend" || d.layer === "mockup")
-            ? `<button type="button" class="pp-more-ex">＋ ${t("сгенерить ещё пример ⚡0", "one more example ⚡0")}</button>` : ""}
+            ? `<button type="button" class="pp-more-ex">＋ ${t("ещё пример ⚡0", "one more example ⚡0")}</button>` : ""}
         </div>
-        ${d.prompt ? `<section class="pp-prompt">
-          <h2>${d.is_admin ? t("Промпт", "Prompt") : t("Что получится", "What you get")}</h2>
-          ${d.is_admin && d.prompt_ru ? `<pre class="pp-pre">${esc(d.prompt_ru)}</pre>
+        ${prompt ? `<section class="pp-prompt">
+          ${d.is_admin && d.prompt_ru && d.prompt ? `<pre class="pp-pre">${esc(d.prompt_ru)}</pre>
             <details><summary class="pp-muted">EN</summary><pre class="pp-pre">${esc(d.prompt)}</pre></details>`
-            : `<pre class="pp-pre">${esc(d.prompt)}</pre>`}
+            : `<pre class="pp-pre">${esc(prompt)}</pre>`}
         </section>` : ""}
       </section>`;
     $(".pp-back", p).addEventListener("click", () => close());
